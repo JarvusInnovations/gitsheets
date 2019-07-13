@@ -27,7 +27,10 @@ export default {
           ? ( <div>
             <ins class="font-bold no-underline">{this.newValue}</ins>
             <br/>
-            <del class="italic">{this.oldValue}</del>
+            { this.newValue != this.oldValue
+              && <del class="italic">{this.oldValue}</del>
+            }
+
           </div> )
           : this.oldValue
         }
