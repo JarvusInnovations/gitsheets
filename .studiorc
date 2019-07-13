@@ -1,0 +1,57 @@
+#!/bin/bash
+
+SITE_HOST="http://datagit.dev01.slatepowered.net"
+
+
+echo
+echo
+echo "--> Installing development tools"
+hab pkg install core/node jarvus/cadaver
+hab pkg binlink core/node
+hab pkg binlink core/coreutils env --dest /usr/bin
+
+
+echo
+echo "--> Bootstrapping project"
+pushd /src > /dev/null
+[ -z "${SKIP_NPM_INSTALL}" ] && hab pkg exec core/node npm install
+popd > /dev/null
+
+
+echo
+echo "--> Setting up studio commands"
+
+npm-run() {
+    pushd /src > /dev/null
+    hab pkg exec core/node npm run $@
+    popd > /dev/null
+}
+
+echo "    * Use 'serve' to build and launch a hot-reloading web server"
+serve() {
+    npm-run serve
+}
+
+echo "    * Use 'build' to compile and minify for production"
+build() {
+    npm-run build
+}
+
+echo "    * Use 'publish' to build and upload to \$SITE_HOST [${SITE_HOST}]"
+publish() {
+    rm -rf /src/dist
+    npm-run build
+
+    pushd /src/dist > /dev/null
+    hab pkg exec jarvus/cadaver \
+        cadaver-put-recursive \
+        . \
+        "${SITE_HOST}/develop/site-root"
+    popd > /dev/null
+}
+
+echo
+echo "--> Developer studio ready!"
+echo "    If you're on Mac or Windows, be sure you opened port 8080 through Docker:"
+echo
+echo "    export HAB_DOCKER_OPTS='-p 8080:8080'"
