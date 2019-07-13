@@ -37,7 +37,7 @@ export default {
 
   methods: {
     generateFakeNewValue: val => {
-      if (Math.random() < 0.7) {
+      if (Math.random() < 0.5) {
         return val;
       }
       return val ? val+1 : null;
