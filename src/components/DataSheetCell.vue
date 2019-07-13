@@ -28,7 +28,8 @@ export default {
             <ins class="font-bold no-underline">{this.newValue}</ins>
             <br/>
             { this.newValue != this.oldValue
-              && <del class="italic">{this.oldValue}</del>
+              ? <del class="italic">{this.oldValue}</del>
+              : <span>&nbsp;</span>
             }
 
           </div> )
