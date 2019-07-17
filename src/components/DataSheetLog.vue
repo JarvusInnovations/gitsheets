@@ -168,7 +168,6 @@ li {
 <style lang="postcss">
 .DataSheetLog {
   @apply border-l overflow-y-scroll px-5 py-3;
-  width: 20rem;
 
   &__stats {
     @apply mb-2;

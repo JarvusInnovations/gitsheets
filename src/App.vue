@@ -1,18 +1,13 @@
 <template>
-  <div id="App" class="flex flex-col">
+  <div id="App">
     <div class="px-3 py-2">
       <label>
         <input v-model="showUnchanged" type="checkbox" />
         Show unchanged rows
       </label>
     </div>
-    <div class="flex flex-1 overflow-hidden border-t">
-      <DataSheet
-        class="flex-1"
-        :columns="columns"
-        :records="students"
-        :show-unchanged="showUnchanged"
-      />
+    <div class="DataSheet-ct">
+      <DataSheet :columns="columns" :records="students" :show-unchanged="showUnchanged" />
       <DataSheetLog :records="students" />
     </div>
   </div>
@@ -42,10 +37,15 @@ export default {
 <style lang="postcss">
 #App {
   @apply overflow-hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
   height: 100vh;
   width: 100vw;
 }
 
-body {
+.DataSheet-ct {
+  @apply border-t overflow-hidden;
+  display: grid;
+  grid-template-columns: 1fr 20rem;
 }
 </style>
