@@ -58,7 +58,7 @@ td {
 
 <style lang="postcss">
 table {
-  @apply bg-white table-fixed min-w-full;
+  @apply bg-white table-fixed min-w-full whitespace-no-wrap;
 }
 
 thead {
@@ -90,7 +90,7 @@ th {
 
 td {
   &[class*="status"] {
-    @apply border-t border-b;
+    @apply align-top border-t border-b;
     background-image: linear-gradient(rgba(0, 0, 0, 0.02), transparent);
   }
 
@@ -99,7 +99,12 @@ td {
   }
 
   &.-status-updated {
-    @apply bg-blue-100 border-blue-200 text-blue-800;
+    @apply bg-blue-100 border-blue-200;
+
+    ins,
+    del {
+      @apply text-blue-800;
+    }
   }
 
   &.-status-removed {
@@ -115,6 +120,10 @@ td {
 
     &.-status-updated {
       @apply bg-blue-200 text-blue-900;
+
+      ins {
+        @apply text-blue-900;
+      }
 
       del {
         @apply no-underline;
