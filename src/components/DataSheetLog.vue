@@ -28,7 +28,7 @@
 </template>
 
 <script>
-import commits from '../assets/commits.json';
+import commits from '../assets/data/commits.json';
 
 import FigureStat from './FigureStat';
 import FieldLabeled from './forms/FieldLabeled';
