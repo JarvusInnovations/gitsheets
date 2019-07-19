@@ -1,19 +1,13 @@
 const fs = require('fs')
-const path = require('path')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
-const makeDir = require('make-dir')
 const handlebars = require('handlebars')
+const { Repo, TreeObject } = require('hologit/lib')
 
 exports.command = 'explode <file>'
 exports.desc = 'Create a TOML file for every row of a CSV <file>'
 
 exports.builder = {
-  'output-dir': {
-    alias: 'o',
-    describe: 'Directory to write TOML files to',
-    demand: true
-  },
   'filename-template': {
     alias: 'ft',
     describe: 'Handlebars template to construct each file name. e.g. "{{id}}"',
@@ -21,18 +15,26 @@ exports.builder = {
   }
 }
 
-exports.handler = async function explode ({ file, outputDir, filenameTemplate }) {
-  await makeDir(outputDir)
+exports.handler = async function explode ({ file, filenameTemplate }) {
   const renderFilename = handlebars.compile(filenameTemplate)
+
+  const repo = await Repo.getFromEnvironment()
+  const treeObject = new TreeObject(repo)
+
+  const pendingWriteChilds = []
 
   fs.createReadStream(file)
     .pipe(csvParser())
     .on('data', async (row) => {
       const tomlRow = TOML.stringify(sortKeys(row))
-      const filename = renderFilename(row)
-      const filepath = path.resolve(outputDir, filename)
+      const fileName = renderFilename(row)
 
-      await fs.promises.writeFile(filepath, tomlRow) // TODO: sub for stable api
+      pendingWriteChilds.push(treeObject.writeChild(fileName, tomlRow))
+    })
+    .on('end', async () => {
+      await Promise.all(pendingWriteChilds)
+      const hash = await treeObject.write()
+      console.log(hash)
     })
 }
 
