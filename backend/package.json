@@ -20,6 +20,7 @@
     "@iarna/toml": "^2.2.3",
     "csv-parser": "^2.3.0",
     "git-client": "^1.6.1",
+    "handlebars": "^4.1.2",
     "make-dir": "^3.0.0",
     "winston": "^3.2.1",
     "yargs": "^13.2.4"
