@@ -1,0 +1,30 @@
+{
+  "name": "datagit",
+  "version": "0.1.0",
+  "description": "A toolkit for using a git repository to store low-volume, high-touch, human-scale data",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/JarvusInnovations/datagit.git"
+  },
+  "author": "timwis <tim@timwis.com>",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/JarvusInnovations/datagit/issues"
+  },
+  "homepage": "https://github.com/JarvusInnovations/datagit#readme",
+  "dependencies": {
+    "@iarna/toml": "^2.2.3",
+    "csv-parser": "^2.3.0",
+    "git-client": "^1.6.1",
+    "make-dir": "^3.0.0",
+    "winston": "^3.2.1",
+    "yargs": "^13.2.4"
+  },
+  "devDependencies": {
+    "jest": "^24.8.0"
+  }
+}
