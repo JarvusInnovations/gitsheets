@@ -1,43 +1,60 @@
 const fs = require('fs')
-const path = require('path')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
-const makeDir = require('make-dir')
+const handlebars = require('handlebars')
+const { Repo, TreeObject } = require('hologit/lib')
 
 exports.command = 'explode <file>'
 exports.desc = 'Create a TOML file for every row of a CSV <file>'
 
 exports.builder = {
-  'output-dir': {
-    alias: 'o',
-    describe: 'Directory to write TOML files to',
-    demand: true
-  },
   'filename-template': {
     alias: 'ft',
-    describe: 'Field name to use as the file name',
+    describe: 'Handlebars template to construct each file name. e.g. "{{id}}"',
     demand: true
   }
 }
 
-exports.handler = async function explode ({ file, outputDir, filenameTemplate }) {
-  await makeDir(outputDir)
+exports.handler = async function handler ({ file, filenameTemplate }) {
+  const fileStream = fs.createReadStream(file)
+  const hash = await explode({ fileStream, filenameTemplate })
+  console.log(hash)
+}
 
-  fs.createReadStream(file)
-    .pipe(csvParser())
-    .on('data', async (row) => {
-      const tomlRow = TOML.stringify(sortKeys(row))
+exports.explode = explode
 
-      const filename = row[filenameTemplate]
-      if (!filename) throw new Error('Row missing value for --filename-template')
-      const filepath = path.resolve(outputDir, filename)
+async function explode ({ fileStream, filenameTemplate }) {
+  const renderFilename = handlebars.compile(filenameTemplate)
 
-      await fs.promises.writeFile(filepath, tomlRow) // TODO: sub for stable api
-    })
+  const repo = await Repo.getFromEnvironment()
+  const treeObject = new TreeObject(repo)
+
+  return new Promise ((resolve, reject) => {
+    const pendingWrites = []
+
+    fileStream
+      .pipe(csvParser())
+      .on('data', async (row) => {
+        const tomlRow = TOML.stringify(sortKeys(row))
+        const fileName = renderFilename(row)
+
+        pendingWrites.push(treeObject.writeChild(fileName, tomlRow))
+      })
+      .on('end', async () => {
+        await Promise.all(pendingWrites)
+        resolve(treeObject.write()) // resolves to hash
+      })
+      .on('error', reject)
+  })
 }
 
 function sortKeys (unsorted) {
   const sorted = {}
-  Object.keys(unsorted).sort().forEach((key) => sorted[key] = unsorted[key])
+
+  Object
+    .keys(unsorted)
+    .sort()
+    .forEach((key) => sorted[key] = unsorted[key])
+
   return sorted
 }

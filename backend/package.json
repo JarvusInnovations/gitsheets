@@ -4,7 +4,7 @@
   "description": "A toolkit for using a git repository to store low-volume, high-touch, human-scale data",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest"
   },
   "repository": {
     "type": "git",
@@ -20,11 +20,14 @@
     "@iarna/toml": "^2.2.3",
     "csv-parser": "^2.3.0",
     "git-client": "^1.6.1",
-    "make-dir": "^3.0.0",
+    "handlebars": "^4.1.2",
+    "hologit": "^0.15.0",
     "winston": "^3.2.1",
     "yargs": "^13.2.4"
   },
   "devDependencies": {
-    "jest": "^24.8.0"
+    "common-tags": "^1.8.0",
+    "jest": "^24.8.0",
+    "to-readable-stream": "^2.1.0"
   }
 }
