@@ -18,10 +18,9 @@ async function createServer (gitRef) {
 
   app.use(async (ctx) => {
     const rows = []
-    // TODO: TreeObject.prototype.getChildren doesn't work as expected
-    await treeObject._loadBaseChildren()
-    const keyedChildren = treeObject._baseChildren
-    for (let [key, child] of Object.entries(keyedChildren)) {
+    const keyedChildren = await treeObject.getChildren()
+    for (let key in keyedChildren) {
+      const child = keyedChildren[key]
       const contents = await child.read()
       const data = TOML.parse(contents)
       rows.push(data) // We could alternatively stream JSON LD here

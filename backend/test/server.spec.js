@@ -15,7 +15,6 @@ describe('server', () => {
       .get('/')
       .expect(200)
       .then((res) => {
-        console.log(res.body)
         expect(Array.isArray(res.body)).toBe(true)
         expect(res.body.length).toBe(3)
       })
