@@ -22,12 +22,14 @@
     "git-client": "^1.6.1",
     "handlebars": "^4.1.2",
     "hologit": "^0.15.0",
+    "koa": "^2.7.0",
     "winston": "^3.2.1",
     "yargs": "^13.2.4"
   },
   "devDependencies": {
     "common-tags": "^1.8.0",
     "jest": "^24.8.0",
+    "supertest": "^4.0.2",
     "to-readable-stream": "^2.1.0"
   }
 }
