@@ -15,31 +15,46 @@ exports.builder = {
   }
 }
 
-exports.handler = async function explode ({ file, filenameTemplate }) {
+exports.handler = async function handler ({ file, filenameTemplate }) {
+  const fileStream = fs.createReadStream(file)
+  const hash = await explode({ fileStream, filenameTemplate })
+  console.log(hash)
+}
+
+exports.explode = explode
+
+async function explode ({ fileStream, filenameTemplate }) {
   const renderFilename = handlebars.compile(filenameTemplate)
 
   const repo = await Repo.getFromEnvironment()
   const treeObject = new TreeObject(repo)
 
-  const pendingWriteChilds = []
+  return new Promise ((resolve, reject) => {
+    const pendingWrites = []
 
-  fs.createReadStream(file)
-    .pipe(csvParser())
-    .on('data', async (row) => {
-      const tomlRow = TOML.stringify(sortKeys(row))
-      const fileName = renderFilename(row)
+    fileStream
+      .pipe(csvParser())
+      .on('data', async (row) => {
+        const tomlRow = TOML.stringify(sortKeys(row))
+        const fileName = renderFilename(row)
 
-      pendingWriteChilds.push(treeObject.writeChild(fileName, tomlRow))
-    })
-    .on('end', async () => {
-      await Promise.all(pendingWriteChilds)
-      const hash = await treeObject.write()
-      console.log(hash)
-    })
+        pendingWrites.push(treeObject.writeChild(fileName, tomlRow))
+      })
+      .on('end', async () => {
+        await Promise.all(pendingWrites)
+        resolve(treeObject.write()) // resolves to hash
+      })
+      .on('error', reject)
+  })
 }
 
 function sortKeys (unsorted) {
   const sorted = {}
-  Object.keys(unsorted).sort().forEach((key) => sorted[key] = unsorted[key])
+
+  Object
+    .keys(unsorted)
+    .sort()
+    .forEach((key) => sorted[key] = unsorted[key])
+
   return sorted
 }
