@@ -2,8 +2,7 @@ const fs = require('fs')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
 const handlebars = require('handlebars')
-const execa = require('execa')
-const toReadableStream = require('to-readable-stream')
+const { Repo, BlobObject } = require('hologit/lib')
 
 exports.command = 'explode <file>'
 exports.desc = 'Create a TOML file for every row of a CSV <file>'
@@ -26,30 +25,26 @@ exports.explode = explode
 
 async function explode ({ fileStream, filenameTemplate }) {
   const renderFilename = handlebars.compile(filenameTemplate)
+  const repo = await Repo.getFromEnvironment();
+  const tree = repo.createTree();
 
   return new Promise ((resolve, reject) => {
     const pendingWrites = []
 
     fileStream
       .pipe(csvParser())
-      .on('data', (row) => {
-        const fileName = renderFilename(row)
+      .on('data', async (row) => {
         const tomlRow = TOML.stringify(sortKeys(row))
-        const input = toReadableStream(tomlRow)
+        const fileName = renderFilename(row)
 
-        const subprocess = execa('git', ['hash-object', '-w', '--stdin'], { input })
-        pendingWrites.push(subprocess.then(({ stdout }) => {
-          return { fileName, hash: stdout }
-        }))
+        pendingWrites.push(tree.writeChild(fileName, tomlRow));
       })
       .on('end', async () => {
-        const objects = await Promise.all(pendingWrites)
-        const tree = createTreeOfBlobs(objects)
-        const input = toReadableStream(tree)
+        await Promise.all(pendingWrites)
 
-        const subprocess = execa('git', ['mktree'], { input })
-        const { stdout } = await subprocess
-        resolve(stdout)
+        tree.write()
+          .then(resolve)
+          .catch(reject);
       })
       .on('error', reject)
   })
@@ -64,13 +59,4 @@ function sortKeys (unsorted) {
     .forEach((key) => sorted[key] = unsorted[key])
 
   return sorted
-}
-
-function createTreeOfBlobs (objects) {
-  const mode = '100644'
-  const type = 'blob'
-  return objects
-    .filter((object) => object.hash.length > 0) // HOTFIX: Fixes race condition from captureOutputTrimmed
-    .map((object) => `${mode} ${type} ${object.hash}\t${object.fileName}`)
-    .join('\n') + '\n'
 }

@@ -22,7 +22,7 @@
     "execa": "^2.0.3",
     "git-client": "^1.6.1",
     "handlebars": "^4.1.2",
-    "hologit": "^0.15.0",
+    "hologit": "^0.18.1",
     "koa": "^2.7.0",
     "koa-router": "^7.4.0",
     "to-readable-stream": "^2.1.0",
