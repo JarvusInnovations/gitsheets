@@ -1,6 +1,6 @@
 const toReadableStream = require('to-readable-stream')
 const { stripIndent } = require('common-tags')
-const { explode } = require('../commands/explode')
+const { explode } = require('../lib')
 
 const csv = stripIndent`
   id,first_name,last_name
@@ -11,7 +11,7 @@ const csv = stripIndent`
 const expectedHash = 'fb070046498551bb49ce253ef13daddcb56949c1'
 
 describe('explode', () => {
-  test('shit happens', async () => {
+  test('returns expected tree hash', async () => {
     const fileStream = toReadableStream(csv)
     const filenameTemplate = '{{id}}'
     const hash = await explode({ fileStream, filenameTemplate })

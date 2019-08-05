@@ -1,7 +1,7 @@
 const Koa = require('koa')
-const { Repo, TreeObject } = require('hologit/lib')
-const TOML = require('@iarna/toml')
 const Router = require('koa-router')
+const git = require('git-client')
+const { explode, listRows } = require('./lib')
 
 module.exports = createServer
 
@@ -15,18 +15,8 @@ async function createServer (gitRef) {
   const app = new Koa()
   const router = new Router()
 
-  const repo = await Repo.getFromEnvironment()
-  const treeObject = await TreeObject.createFromRef(repo, gitRef)
-
   router.get('/', async (ctx) => {
-    const rows = []
-    const keyedChildren = await treeObject.getChildren()
-    for (let key in keyedChildren) {
-      const child = keyedChildren[key]
-      const contents = await child.read()
-      const data = TOML.parse(contents)
-      rows.push(data) // We could alternatively stream JSON LD here
-    }
+    const rows = await listRows(gitRef)
     ctx.body = rows
   })
 
