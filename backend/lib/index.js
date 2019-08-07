@@ -72,6 +72,7 @@ module.exports = class GitSheets {
     for (let key in keyedChildren) {
       const child = keyedChildren[key]
       const data = await this.parseBlob(child)
+      data._id = key
       rows.push(data)
     }
     return rows

@@ -50,6 +50,7 @@ describe('server', () => {
 
     expect(Array.isArray(response.body)).toBe(true)
     expect(response.body.length).toBe(getCsvRowCount(sampleData))
+    expect(response.body[0]).toHaveProperty('_id')
   })
 
   describe('import', () => {
