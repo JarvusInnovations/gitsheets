@@ -2,46 +2,52 @@ const Koa = require('koa')
 const Router = require('koa-router')
 const assert = require('http-assert')
 const git = require('git-client')
-const { explode, listRows } = require('./lib')
+const GitSheets = require('./lib')
 
 const validRefPattern = /^[\w-]+$/
-const validFilenameTemplatePattern = /^[{}\w-\/]+$/
+const validPathTemplatePattern = /^[{}\w-\/]+$/
 
 module.exports = createServer
 
 if (!module.parent) {
-  createServer().then((app) => {
-    app.listen(3000)
-  })
+  GitSheets.create()
+    .then(createServer)
+    .then((app) => {
+      app.listen(3000)
+    })
 }
 
-async function createServer () {
+async function createServer (gitSheets) {
   const app = new Koa()
   const router = new Router()
 
   router.get('/:ref', async (ctx) => {
     const ref = ctx.params.ref
     assert(validRefPattern.test(ref), 400, 'invalid ref')
-    const rows = await listRows(ref)
+    const rows = await gitSheets.getRows(ref)
     ctx.body = rows
   })
 
   router.post('/:ref/import', async (ctx) => {
     const ref = ctx.params.ref
-    const fileStream = ctx.req
-    const filenameTemplate = ctx.request.query.filenameTemplate
+    const readStream = ctx.req
+    const pathTemplate = ctx.request.query.path
 
-    assert(filenameTemplate, 400, 'missing filenameTemplate query param')
+    assert(pathTemplate, 400, 'missing path query param')
     assert(ctx.request.type == 'text/csv', 400, 'content-type must be text/csv')
     assert(validRefPattern.test(ref), 400, 'invalid ref')
-    assert(validFilenameTemplatePattern.test(filenameTemplate), 400, 'invalid filenameTemplate')
+    assert(validPathTemplatePattern.test(pathTemplate), 400, 'invalid path template')
 
     try {
-      const treeHash = await explode({ fileStream, filenameTemplate })
-      const commitHash = await git.commitTree(treeHash, { p: ref, m: 'import' })
-      const branchName = `pr-${Date.now()}`
-      await git.branch(branchName, commitHash)
-      ctx.body = { branch: branchName }
+      const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate })
+      const branch = `pr-${Date.now()}`
+      await gitSheets.saveTreeToNewBranch({
+        treeHash,
+        parentRef: ref,
+        branch,
+        msg: 'import'
+      })
+      ctx.body = { branch }
     } catch (err) {
       ctx.status = 500
     }
