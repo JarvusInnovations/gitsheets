@@ -32,6 +32,7 @@ async function createServer (gitSheets) {
     const ref = ctx.params.ref
     const readStream = ctx.req
     const pathTemplate = ctx.request.query.path
+    const branch = ctx.request.query.branch || ref
 
     assert(pathTemplate, 400, 'missing path query param')
     assert(ctx.request.type == 'text/csv', 400, 'content-type must be text/csv')
@@ -40,14 +41,21 @@ async function createServer (gitSheets) {
 
     try {
       const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate })
-      const branch = `pr-${Date.now()}`
-      await gitSheets.saveTreeToNewBranch({
-        treeHash,
-        parentRef: ref,
-        branch,
-        msg: 'import'
-      })
-      ctx.body = { branch }
+      if (branch === ref) {
+        await gitSheets.saveTreeToExistingBranch({
+          treeHash,
+          branch,
+          msg: 'import'
+        })
+      } else {
+        await gitSheets.saveTreeToNewBranch({
+          treeHash,
+          parentRef: ref,
+          branch,
+          msg: 'import'
+        })
+      }
+      ctx.status = 204
     } catch (err) {
       ctx.status = 500
     }

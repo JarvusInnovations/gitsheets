@@ -47,18 +47,25 @@ describe('server', () => {
   })
 
   describe('import', () => {
-    test('creates a proposal branch with exploded data', async () => {
+    test('creates commit on current branch with exploded data', async () => {
       const response = await request(server.callback())
         .post('/master/import?path={{id}}')
         .type('csv')
+        .send(sampleData)
+        .expect(204)
+
+      const treeItems = await getTreeItems(gitSheets, 'master')
+      expect(treeItems.length).toBe(getCsvRowCount(sampleData))
+    })
+
+    test('creates commit on new branch when specified', async () => {
+      const response = await request(server.callback())
+        .post('/master/import?path={{id}}&branch=proposal')
+        .type('csv')
         .send(sampleDataChanged)
-        .expect(200)
+        .expect(204)
 
-      expect(response.body).toHaveProperty('branch')
-      const branch = response.body.branch
-      expect(branch).toMatch('pr-')
-
-      const treeItems = await getTreeItems(gitSheets, branch)
+      const treeItems = await getTreeItems(gitSheets, 'proposal')
       expect(treeItems.length).toBe(getCsvRowCount(sampleDataChanged))
     })
 
