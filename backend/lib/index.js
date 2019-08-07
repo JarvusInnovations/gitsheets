@@ -71,11 +71,64 @@ module.exports = class GitSheets {
     const rows = []
     for (let key in keyedChildren) {
       const child = keyedChildren[key]
-      const contents = await child.read()
-      const data = TOML.parse(contents)
+      const data = await this.parseBlob(child)
       rows.push(data)
     }
     return rows
+  }
+
+  async getDiffs (srcRef, dstRef) {
+    const srcTree = await this.repo.createTreeFromRef(srcRef)
+    const srcChildren = await srcTree.getChildren()
+
+    const dstTree = await this.repo.createTreeFromRef(dstRef)
+    const dstChildren = await dstTree.getChildren()
+
+    const parsedDiffOutput = await this.getParsedDiffOutput(srcRef, dstRef)
+
+    const pendingDiffs = parsedDiffOutput.map(async (diff) => {
+      switch (diff.status) {
+        case 'A':
+          return {
+            _id: diff.file,
+            status: 'added',
+            value:  await this.parseBlob(dstChildren[diff.file])
+          }
+        case 'D':
+          return {
+            _id: diff.file,
+            status: 'removed',
+            value: await this.parseBlob(srcChildren[diff.file])
+          }
+        case 'M':
+          return {
+            _id: diff.file,
+            status: 'modified',
+            value: {
+              src: await this.parseBlob(srcChildren[diff.file]),
+              dst: await this.parseBlob(dstChildren[diff.file])
+            }
+          }
+      }
+    })
+
+    return Promise.all(pendingDiffs)
+  }
+
+  async getParsedDiffOutput (srcRef, dstRef) {
+    const diffOutput = await this.git.diff({'name-status': true}, srcRef, dstRef)
+    const diffs = diffOutput
+      .split('\n')
+      .map((line) => {
+        const [ status, file ] = line.split('\t')
+        return { status, file }
+      })
+    return diffs
+  }
+
+  async parseBlob (blob) {
+    const contents = await blob.read()
+    return TOML.parse(contents)
   }
 }
 

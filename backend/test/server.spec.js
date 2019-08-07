@@ -36,7 +36,12 @@ describe('server', () => {
   })
 
   test('lists rows', async () => {
-    await loadData(gitSheets, sampleData, '{{id}}')
+    await loadData(gitSheets, {
+      data: sampleData, 
+      ref: 'master',
+      branch: 'master',
+      pathTemplate: '{{id}}'
+    })
 
     const response = await request(server.callback())
       .get('/master')

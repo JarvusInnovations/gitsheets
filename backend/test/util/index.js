@@ -27,14 +27,24 @@ async function teardownRepo (gitSheets) {
   await del([gitDir])
 }
 
-async function loadData (gitSheets, data, pathTemplate) {
+async function loadData (gitSheets, { data, ref, branch, pathTemplate }) {
   const readStream = toReadableStream(data)
   const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate })
-  await gitSheets.saveTreeToExistingBranch({
-    treeHash,
-    branch: 'master',
-    msg: 'sample data'
-  })
+
+  if (ref === branch) {
+    await gitSheets.saveTreeToExistingBranch({
+      treeHash,
+      branch,
+      msg: 'sample data on current branch'
+    })
+  } else {
+    await gitSheets.saveTreeToNewBranch({
+      treeHash,
+      parentRef: ref,
+      branch,
+      msg: 'sample data on new branch'
+    })
+  }
 }
 
 function getCsvRowCount (string) {
