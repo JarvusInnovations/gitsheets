@@ -61,6 +61,17 @@ async function createServer (gitSheets) {
     }
   })
 
+  router.get('/:srcRef/compare/:dstRef', async (ctx) => {
+    const srcRef = ctx.params.srcRef
+    const dstRef = ctx.params.dstRef
+
+    assert(validRefPattern.test(srcRef), 400, 'invalid src ref')
+    assert(validRefPattern.test(dstRef), 400, 'invalid dst ref')
+
+    const diffs = await gitSheets.getDiffs(srcRef, dstRef)
+    ctx.body = diffs
+  })
+
   return app
     .use(router.routes())
     .use(router.allowedMethods())

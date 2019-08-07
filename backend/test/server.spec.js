@@ -13,6 +13,7 @@ const {
 const TEST_GIT_DIR = './test/tmp/server-test-repo/.git'
 const SAMPLE_DATA = './test/fixtures/sample_data.csv'
 const SAMPLE_DATA_CHANGED = './test/fixtures/sample_data_changed.csv'
+const SAMPLE_DATA_CHANGES_COUNT = 4
 
 describe('server', () => {
   let gitSheets
@@ -93,6 +94,30 @@ describe('server', () => {
       const response = await request(server.callback())
         .post('/master/import?path={{id}}')
         .expect(400)
+    })
+  })
+
+  describe('compare', () => {
+    test('returns expected number of diffs', async () => {
+      await loadData(gitSheets, {
+        data: sampleData,
+        ref: 'master',
+        branch: 'master',
+        pathTemplate: '{{id}}'
+      })
+      await loadData(gitSheets, {
+        data: sampleDataChanged,
+        ref: 'master',
+        branch: 'proposal',
+        pathTemplate: '{{id}}'
+      })
+
+      const response = await request(server.callback())
+        .get('/master/compare/proposal')
+        .expect(200)
+      
+      expect(Array.isArray(response.body)).toBe(true)
+      expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
     })
   })
 })
