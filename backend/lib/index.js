@@ -18,6 +18,15 @@ module.exports = class GitSheets {
     this.git = git
   }
 
+  async checkIsValidRepo () {
+    try {
+      await this.git.status()
+      return true
+    } catch (err) {
+      return false
+    }
+  }
+
   async makeTreeFromCsv ({ readStream, pathTemplate, ref }) {
     const renderPath = handlebars.compile(pathTemplate)
     const tree = (ref)
@@ -28,8 +37,8 @@ module.exports = class GitSheets {
       const pendingWrites = []
 
       readStream
-        .pipe(csvParser())
-        .on('data', async (row) => {
+        .pipe(csvParser({ strict: true }))
+        .on('data', (row) => {
           const tomlRow = TOML.stringify(sortKeys(row))
           const fileName = renderPath(row)
 
