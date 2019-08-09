@@ -4,7 +4,7 @@ const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
 
 module.exports = class GitSheets {
-  static async create(gitDir) {
+  static async create(gitDir = null) {
     const repo = (gitDir)
       ? new Repo({ gitDir })
       : await Repo.getFromEnvironment()
