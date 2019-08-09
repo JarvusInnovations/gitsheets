@@ -1,6 +1,36 @@
-const yargs = require('yargs')
+// setup logger
+const logger = require('winston')
+module.exports = { logger }
 
-const argv = yargs
+if (process.env.DEBUG) {
+  logger.level = 'debug'
+}
+
+
+// all logger output to STDERR
+for (const level in logger.levels) {
+  logger.default.transports.console.stderrLevels[level] = true;
+}
+
+
+// route command line
+require('yargs')
+  .version(require('../package.json').version)
+  .option('d', {
+    alias: 'debug',
+    type: 'boolean',
+    default: false,
+    global: true,
+  })
+  .check(function (argv) {
+    if (argv.debug) {
+      logger.level = 'debug'
+    } else if (argv.quiet) {
+      logger.level = 'error'
+    }
+
+    return true;
+  })
   .commandDir('../commands')
   .demandCommand()
   .argv
