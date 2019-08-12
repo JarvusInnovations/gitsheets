@@ -197,5 +197,46 @@ describe('server', () => {
       const expectedPatch = { op: 'replace', path: '/last_name', value: 'Footsford' }
       expect(modifiedDiff.value[0]).toMatchObject(expectedPatch)
     })
+
+    test('merging merges branches', async () => {
+      await request(server.callback())
+        .post('/master/compare/proposal')
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/master')
+
+      const changedRowId = '3'
+      const changedRow = response.body.find((row) => row.id === changedRowId)
+      expect(changedRow).toBeDefined()
+      expect(changedRow.last_name).toBe('Footsford')
+    })
+
+    test('merging deletes merged branch', async () => {
+      await request(server.callback())
+        .post('/master/compare/proposal')
+        .expect(204)
+
+      await request(server.callback())
+        .get('/proposal')
+        .expect(404)
+    })
+
+    test('merging on non-ancestor throws error', async () => {
+      const conflictingData = stripIndent`
+        id,first_name,last_name,email,dob
+        1,empty,empty,empty,empty
+      `
+      await loadData(gitSheets, {
+        data: conflictingData,
+        ref: 'master',
+        branch: 'master',
+        pathTemplate: '{{id}}'
+      })
+
+      await request(server.callback())
+        .post('/master/compare/proposal')
+        .expect(409)
+    })
   })
 })
