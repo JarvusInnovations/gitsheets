@@ -222,6 +222,21 @@ describe('server', () => {
         .expect(404)
     })
 
-    // TODO: merging on non-ancestor throws error
+    test('merging on non-ancestor throws error', async () => {
+      const conflictingData = stripIndent`
+        id,first_name,last_name,email,dob
+        1,empty,empty,empty,empty
+      `
+      await loadData(gitSheets, {
+        data: conflictingData,
+        ref: 'master',
+        branch: 'master',
+        pathTemplate: '{{id}}'
+      })
+
+      await request(server.callback())
+        .post('/master/compare/proposal')
+        .expect(409)
+    })
   })
 })

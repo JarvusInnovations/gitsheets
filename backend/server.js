@@ -98,8 +98,16 @@ async function createServer (gitSheets) {
     ctx.assert(validRefPattern.test(srcRef), 400, 'invalid src ref')
     ctx.assert(validRefPattern.test(dstRef), 400, 'invalid dst ref')
 
-    await gitSheets.merge(srcRef, dstRef)
-    ctx.status = 204
+    try {
+      await gitSheets.merge(srcRef, dstRef)
+      ctx.status = 204
+    } catch (err) {
+      if (err.message.includes('not an ancestor of')) {
+        ctx.throw(409, err.message)
+      } else {
+        throw err
+      }
+    }
   })
 
   async function errorHandler (ctx, next) {
