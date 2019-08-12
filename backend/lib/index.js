@@ -2,6 +2,7 @@ const { Repo } = require('hologit/lib')
 const handlebars = require('handlebars')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
+const jsonpatch = require('fast-json-patch')
 
 module.exports = class GitSheets {
   static async create(gitDir = null) {
@@ -111,13 +112,12 @@ module.exports = class GitSheets {
             value: await this.parseBlob(srcChildren[diff.file])
           }
         case 'M':
+          const src = await this.parseBlob(srcChildren[diff.file])
+          const dst = await this.parseBlob(dstChildren[diff.file])
           return {
             _id: diff.file,
             status: 'modified',
-            value: {
-              src: await this.parseBlob(srcChildren[diff.file]),
-              dst: await this.parseBlob(dstChildren[diff.file])
-            }
+            value: jsonpatch.compare(src, dst)
           }
       }
     })

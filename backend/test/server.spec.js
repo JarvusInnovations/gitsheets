@@ -161,7 +161,7 @@ describe('server', () => {
   })
 
   describe('compare', () => {
-    test('returns expected number of diffs', async () => {
+    beforeEach(async () => {
       await loadData(gitSheets, {
         data: sampleData,
         ref: 'master',
@@ -174,13 +174,28 @@ describe('server', () => {
         branch: 'proposal',
         pathTemplate: '{{id}}'
       })
+    })
 
+    test('returns expected number of diffs', async () => {
       const response = await request(server.callback())
         .get('/master/compare/proposal')
         .expect(200)
       
       expect(Array.isArray(response.body)).toBe(true)
       expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
+    })
+
+    test('computes expected json patch for modified row', async () => {
+      const response = await request(server.callback())
+        .get('/master/compare/proposal')
+
+      const modifiedDiff = response.body.find((diff) => diff.status === 'modified')
+
+      expect(modifiedDiff).toBeTruthy()
+      expect(modifiedDiff.value.length).toBe(1)
+
+      const expectedPatch = { op: 'replace', path: '/last_name', value: 'Footsford' }
+      expect(modifiedDiff.value[0]).toMatchObject(expectedPatch)
     })
   })
 })

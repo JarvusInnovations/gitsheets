@@ -19,6 +19,7 @@
   "dependencies": {
     "@iarna/toml": "^2.2.3",
     "csv-parser": "^2.3.0",
+    "fast-json-patch": "^2.2.1",
     "handlebars": "^4.1.2",
     "hologit": "^0.18.1",
     "http-assert": "^1.4.1",
