@@ -61,7 +61,8 @@ module.exports = class GitSheets {
       p: branch,
       m: msg
     })
-    await this.git.updateRef(branch, commitHash)
+    const qualifiedBranch = await this.getQualifiedRef(branch)
+    await this.git.updateRef(qualifiedBranch, commitHash)
   }
 
   async saveTreeToNewBranch ({ treeHash, parentRef, branch, msg = '' }) {
@@ -125,6 +126,18 @@ module.exports = class GitSheets {
     return Promise.all(pendingDiffs)
   }
 
+  async merge (srcRef, dstRef) {
+    try {
+      await this.git.mergeBase({'is-ancestor': true}, srcRef, dstRef)
+    } catch (err) {
+      throw new Error(`${srcRef} is not an ancestor of ${dstRef}`)
+    }
+    const qualifiedSrcRef = await this.getQualifiedRef(srcRef)
+    const qualifiedDstRef = await this.getQualifiedRef(dstRef)
+    await this.git.updateRef(qualifiedSrcRef, qualifiedDstRef)
+    await this.git.branch({'d': true}, dstRef)
+  }
+
   async getParsedDiffOutput (srcRef, dstRef) {
     const diffOutput = await this.git.diff({'name-status': true}, srcRef, dstRef)
     const diffs = diffOutput
@@ -139,6 +152,10 @@ module.exports = class GitSheets {
   async parseBlob (blob) {
     const contents = await blob.read()
     return TOML.parse(contents)
+  }
+
+  getQualifiedRef (ref) {
+    return this.git.revParse({'symbolic-full-name': true}, ref)
   }
 }
 

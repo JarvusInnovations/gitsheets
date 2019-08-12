@@ -83,14 +83,23 @@ async function createServer (gitSheets) {
   })
 
   router.get('/:srcRef/compare/:dstRef', async (ctx) => {
-    const srcRef = ctx.params.srcRef
-    const dstRef = ctx.params.dstRef
+    const { srcRef, dstRef } = ctx.params
 
     ctx.assert(validRefPattern.test(srcRef), 400, 'invalid src ref')
     ctx.assert(validRefPattern.test(dstRef), 400, 'invalid dst ref')
 
     const diffs = await gitSheets.getDiffs(srcRef, dstRef)
     ctx.body = diffs
+  })
+
+  router.post('/:srcRef/compare/:dstRef', async (ctx) => {
+    const { srcRef, dstRef } = ctx.params
+
+    ctx.assert(validRefPattern.test(srcRef), 400, 'invalid src ref')
+    ctx.assert(validRefPattern.test(dstRef), 400, 'invalid dst ref')
+
+    await gitSheets.merge(srcRef, dstRef)
+    ctx.status = 204
   })
 
   async function errorHandler (ctx, next) {
