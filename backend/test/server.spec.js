@@ -194,7 +194,12 @@ describe('server', () => {
       expect(modifiedDiff).toBeTruthy()
       expect(modifiedDiff.value.length).toBe(1)
 
-      const expectedPatch = { op: 'replace', path: '/last_name', value: 'Footsford' }
+      const expectedPatch = {
+        op: 'replace',
+        path: '/last_name',
+        from: 'Hansford',
+        value: 'Footsford'
+      }
       expect(modifiedDiff.value[0]).toMatchObject(expectedPatch)
     })
 

@@ -118,7 +118,7 @@ module.exports = class GitSheets {
           return {
             _id: diff.file,
             status: 'modified',
-            value: jsonpatch.compare(src, dst)
+            value: this.compareObjects(src, dst)
           }
       }
     })
@@ -152,6 +152,30 @@ module.exports = class GitSheets {
   async parseBlob (blob) {
     const contents = await blob.read()
     return TOML.parse(contents)
+  }
+
+  compareObjects (src, dst) {
+    const includeTestOps = true
+    const ops = jsonpatch.compare(src, dst, includeTestOps)
+    return this.mergeTestAndReplaceOps(ops)
+  }
+
+  mergeTestAndReplaceOps (items) {
+    const mergeableItems = items.map((item) => {
+      if (item.op === 'test') return { path: item.path, from: item.value }
+      else return item
+    })
+    const keyedItems = mergeableItems.reduce((accum, item) => {
+      if (accum.has(item.path)) {
+        const currentItem = accum.get(item.path)
+        accum.set(item.path, { ...currentItem, ...item })
+      } else {
+        accum.set(item.path, item)
+      }
+      return accum
+    }, new Map())
+
+    return Array.from(keyedItems.values())
   }
 
   getQualifiedRef (ref) {
