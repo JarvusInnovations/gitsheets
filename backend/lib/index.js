@@ -28,6 +28,32 @@ module.exports = class GitSheets {
     }
   }
 
+  async getConfig (ref) {
+    const tree = await this.repo.createTreeFromRef(ref)
+    const child = await tree.getChild('.gitsheets/config')
+    return this.parseBlob(child)
+  }
+
+  async saveConfig (config, ref = null) {
+    const treeHash = await this.makeConfigTree(config, ref)
+    await this.saveTreeToExistingBranch({
+      treeHash,
+      branch: ref,
+      msg: 'save config'
+    })
+  }
+
+  async makeConfigTree (config, ref = null) {
+    const tomlConfig = TOML.stringify(config)
+    const path = '.gitsheets/config'
+    const tree = (ref)
+      ? await this.repo.createTreeFromRef(ref)
+      : this.repo.createTree()
+
+    await tree.writeChild(path, tomlConfig)
+    return tree.write()
+  }
+
   async makeTreeFromCsv ({ readStream, pathTemplate, ref }) {
     const renderPath = handlebars.compile(pathTemplate)
     const tree = (ref)

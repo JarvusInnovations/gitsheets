@@ -1,6 +1,7 @@
 const Koa = require('koa')
 const Router = require('koa-router')
 const git = require('git-client')
+const bodyParser = require('koa-bodyparser')
 const GitSheets = require('./lib')
 
 const validRefPattern = /^[\w-]+$/
@@ -27,6 +28,43 @@ async function createServer (gitSheets) {
   router.get('/:ref', async (ctx) => {
     const ref = ctx.params.ref
     ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
+
+    try {
+      const config = await gitSheets.getConfig(ref)
+      ctx.body = { config }
+    } catch (err) {
+      if (err.message.startsWith('invalid tree ref')) {
+        ctx.throw(404, 'unknown ref')
+      } else {
+        throw err
+      }
+    }
+  })
+
+  router.put('/:ref', bodyParser(), async (ctx) => {
+    const ref = ctx.params.ref
+    const path = ctx.request.body.path
+
+    ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
+    ctx.assert(validPathTemplatePattern.test(path), 400, 'invalid path template')
+
+    try {
+      const config = { path }
+      await gitSheets.saveConfig(config, ref)
+      ctx.status = 204
+    } catch (err) {
+      if (err.message.startsWith('invalid tree ref')) {
+        ctx.throw(404, 'unknown ref')
+      } else {
+        throw err
+      }
+    }
+  })
+
+  router.get('/:ref/records', async (ctx) => {
+    const ref = ctx.params.ref
+    ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
+
     try {
       const rows = await gitSheets.getRows(ref)
       ctx.body = rows
@@ -42,13 +80,23 @@ async function createServer (gitSheets) {
   router.post('/:ref/import', async (ctx) => {
     const ref = ctx.params.ref
     const readStream = ctx.req
-    const pathTemplate = ctx.request.query.path
     const branch = ctx.request.query.branch || ref
 
-    ctx.assert(pathTemplate, 400, 'missing path query param')
     ctx.assert(ctx.request.type == 'text/csv', 415, 'content-type must be text/csv')
     ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
-    ctx.assert(validPathTemplatePattern.test(pathTemplate), 400, 'invalid path template')
+
+    let pathTemplate
+    try {
+      const config = await gitSheets.getConfig(ref)
+      ctx.assert(config.path, 500, 'repository is missing path template config')
+      pathTemplate = config.path
+    } catch (err) {
+      if (err.message.startsWith('invalid tree ref')) {
+        ctx.throw(404, 'unknown ref')
+      } else {
+        throw err
+      }
+    }
 
     let treeHash
     try {

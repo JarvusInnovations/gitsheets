@@ -46,14 +46,12 @@ describe('lib', () => {
     await loadData(gitSheets, {
       data: sampleData,
       ref: 'master',
-      branch: 'master',
-      pathTemplate: '{{id}}'
+      branch: 'master'
     })
     await loadData(gitSheets, {
       data: sampleDataChanged,
       ref: 'master',
-      branch: 'proposal',
-      pathTemplate: '{{id}}'
+      branch: 'proposal'
     })
 
     const diffs = await gitSheets.getDiffs('master', 'proposal')
