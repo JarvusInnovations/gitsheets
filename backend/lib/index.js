@@ -2,6 +2,7 @@ const { Repo } = require('hologit/lib')
 const handlebars = require('handlebars')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
+const jsonpatch = require('fast-json-patch')
 
 module.exports = class GitSheets {
   static async create(gitDir = null) {
@@ -60,7 +61,8 @@ module.exports = class GitSheets {
       p: branch,
       m: msg
     })
-    await this.git.updateRef(branch, commitHash)
+    const qualifiedBranch = await this.getQualifiedRef(branch)
+    await this.git.updateRef(qualifiedBranch, commitHash)
   }
 
   async saveTreeToNewBranch ({ treeHash, parentRef, branch, msg = '' }) {
@@ -111,18 +113,29 @@ module.exports = class GitSheets {
             value: await this.parseBlob(srcChildren[diff.file])
           }
         case 'M':
+          const src = await this.parseBlob(srcChildren[diff.file])
+          const dst = await this.parseBlob(dstChildren[diff.file])
           return {
             _id: diff.file,
             status: 'modified',
-            value: {
-              src: await this.parseBlob(srcChildren[diff.file]),
-              dst: await this.parseBlob(dstChildren[diff.file])
-            }
+            value: this.compareObjects(src, dst)
           }
       }
     })
 
     return Promise.all(pendingDiffs)
+  }
+
+  async merge (srcRef, dstRef) {
+    try {
+      await this.git.mergeBase({'is-ancestor': true}, srcRef, dstRef)
+    } catch (err) {
+      throw new Error(`${srcRef} is not an ancestor of ${dstRef}`)
+    }
+    const qualifiedSrcRef = await this.getQualifiedRef(srcRef)
+    const qualifiedDstRef = await this.getQualifiedRef(dstRef)
+    await this.git.updateRef(qualifiedSrcRef, qualifiedDstRef)
+    await this.git.branch({'d': true}, dstRef)
   }
 
   async getParsedDiffOutput (srcRef, dstRef) {
@@ -139,6 +152,34 @@ module.exports = class GitSheets {
   async parseBlob (blob) {
     const contents = await blob.read()
     return TOML.parse(contents)
+  }
+
+  compareObjects (src, dst) {
+    const includeTestOps = true
+    const ops = jsonpatch.compare(src, dst, includeTestOps)
+    return this.mergeTestAndReplaceOps(ops)
+  }
+
+  mergeTestAndReplaceOps (items) {
+    const mergeableItems = items.map((item) => {
+      if (item.op === 'test') return { path: item.path, from: item.value }
+      else return item
+    })
+    const keyedItems = mergeableItems.reduce((accum, item) => {
+      if (accum.has(item.path)) {
+        const currentItem = accum.get(item.path)
+        accum.set(item.path, { ...currentItem, ...item })
+      } else {
+        accum.set(item.path, item)
+      }
+      return accum
+    }, new Map())
+
+    return Array.from(keyedItems.values())
+  }
+
+  getQualifiedRef (ref) {
+    return this.git.revParse({'symbolic-full-name': true}, ref)
   }
 }
 
