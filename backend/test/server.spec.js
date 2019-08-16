@@ -59,7 +59,7 @@ describe('server', () => {
     test('updates config', async () => {
       await request(server.callback())
         .put('/master')
-        .send({ path: '{{id}}-updated'})
+        .send({ config: { path: '{{id}}-updated'} })
         .expect(204)
 
       const response = await request(server.callback())

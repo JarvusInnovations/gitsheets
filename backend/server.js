@@ -43,7 +43,7 @@ async function createServer (gitSheets) {
 
   router.put('/:ref', bodyParser(), async (ctx) => {
     const ref = ctx.params.ref
-    const path = ctx.request.body.path
+    const path = ctx.request.body.config && ctx.request.body.config.path
 
     ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
     ctx.assert(validPathTemplatePattern.test(path), 400, 'invalid path template')
