@@ -129,7 +129,43 @@ describe('server', () => {
         .expect(204)
 
       const treeItems = await getTreeItems(gitSheets, 'master')
-      expect(treeItems.length).toBe(getCsvRowCount(sampleData))
+      const expectedCount = getCsvRowCount(sampleData) + 1 // .gitsheets subtree
+      expect(treeItems.length).toBe(expectedCount)
+    })
+
+    test('maintains existing config', async () => {
+      await request(server.callback())
+        .post('/master/import')
+        .type('csv')
+        .send(sampleData)
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/master')
+      
+      expect(response.body.config).toHaveProperty('path')
+      expect(response.body.config.path).toBe('{{id}}')
+    })
+
+    test('truncates and loads', async () => {
+      await request(server.callback())
+        .post('/master/import')
+        .type('csv')
+        .send(sampleData)
+        .expect(204)
+
+      await request(server.callback())
+        .post('/master/import')
+        .type('csv')
+        .send(sampleDataChanged)
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/master/records')
+
+      const DELETED_RECORD_ID = '5'
+      const deletedRecord = response.body.find((record) => record.id === DELETED_RECORD_ID)
+      expect(deletedRecord).not.toBeDefined()
     })
 
     test('creates commit on new branch when specified', async () => {
@@ -140,7 +176,8 @@ describe('server', () => {
         .expect(204)
 
       const treeItems = await getTreeItems(gitSheets, 'proposal')
-      expect(treeItems.length).toBe(getCsvRowCount(sampleDataChanged))
+      const expectedCount = getCsvRowCount(sampleDataChanged) + 1 // .gitsheets subtree
+      expect(treeItems.length).toBe(expectedCount)
     })
 
     test('sending non-csv data throws an error', async () => {

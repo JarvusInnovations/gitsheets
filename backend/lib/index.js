@@ -54,11 +54,14 @@ module.exports = class GitSheets {
     return tree.write()
   }
 
-  async makeTreeFromCsv ({ readStream, pathTemplate, ref }) {
+  async makeTreeFromCsv ({ readStream, pathTemplate, ref = null }) {
     const renderPath = handlebars.compile(pathTemplate)
-    const tree = (ref)
-      ? await this.repo.createTreeFromRef(ref)
-      : this.repo.createTree()
+    const tree = this.repo.createTree()
+
+    if (ref) {
+      const srcTree = await this.repo.createTreeFromRef(ref)
+      await tree.merge(srcTree, { files: ['.gitsheets/*'] })
+    }
 
     return new Promise ((resolve, reject) => {
       const pendingWrites = []

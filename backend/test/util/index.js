@@ -31,7 +31,7 @@ async function teardownRepo (gitSheets) {
 async function loadData (gitSheets, { data, ref, branch }) {
   const readStream = toReadableStream(data)
   const pathTemplate = '{{id}}'
-  const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate })
+  const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate, ref })
 
   if (ref === branch) {
     await gitSheets.saveTreeToExistingBranch({

@@ -88,7 +88,7 @@ async function createServer (gitSheets) {
     let pathTemplate
     try {
       const config = await gitSheets.getConfig(ref)
-      ctx.assert(config.path, 500, 'repository is missing path template config')
+      ctx.assert(config && config.path, 500, 'repository is missing path template config')
       pathTemplate = config.path
     } catch (err) {
       if (err.message.startsWith('invalid tree ref')) {
@@ -100,7 +100,7 @@ async function createServer (gitSheets) {
 
     let treeHash
     try {
-      treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate })
+      treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate, ref })
     } catch (err) {
       ctx.throw(422, err.message)
     }

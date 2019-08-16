@@ -10,7 +10,7 @@ const csv = stripIndent`
   2,Grace,Hopper
   3,Radia,Perlman
 `
-const expectedHash = 'fb070046498551bb49ce253ef13daddcb56949c1'
+const expectedHash = 'e9f02749cb91f919f25a3c55899ded04f63a7b1b'
 const TEST_GIT_DIR = './test/tmp/lib-test-repo/.git'
 const SAMPLE_DATA = './test/fixtures/sample_data.csv'
 const SAMPLE_DATA_CHANGED = './test/fixtures/sample_data_changed.csv'
@@ -38,7 +38,8 @@ describe('lib', () => {
   test('makeTreeFromCsv returns expected tree hash', async () => {
     const readStream = toReadableStream(csv)
     const pathTemplate = '{{id}}'
-    const hash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate })
+    const ref = 'master'
+    const hash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate, ref })
     expect(hash).toBe(expectedHash)
   })
 
