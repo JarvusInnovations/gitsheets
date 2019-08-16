@@ -18,8 +18,9 @@ async function setupRepo (gitSheets) {
   await gitSheets.git.commit({
     'allow-empty': true,
     'allow-empty-message': true,
-    m: ''
+    m: 'initial commit'
   })
+  await gitSheets.saveConfig({ path: '{{id}}' }, 'master')
 }
 
 async function teardownRepo (gitSheets) {
@@ -27,9 +28,10 @@ async function teardownRepo (gitSheets) {
   await del([gitDir])
 }
 
-async function loadData (gitSheets, { data, ref, branch, pathTemplate }) {
+async function loadData (gitSheets, { data, ref, branch }) {
   const readStream = toReadableStream(data)
-  const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate })
+  const pathTemplate = '{{id}}'
+  const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate, ref })
 
   if (ref === branch) {
     await gitSheets.saveTreeToExistingBranch({

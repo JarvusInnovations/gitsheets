@@ -1,4 +1,4 @@
-const { Repo } = require('hologit/lib')
+const { Repo, BlobObject } = require('hologit/lib')
 const handlebars = require('handlebars')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
@@ -28,11 +28,40 @@ module.exports = class GitSheets {
     }
   }
 
-  async makeTreeFromCsv ({ readStream, pathTemplate, ref }) {
-    const renderPath = handlebars.compile(pathTemplate)
+  async getConfig (ref) {
+    const tree = await this.repo.createTreeFromRef(ref)
+    const child = await tree.getChild('.gitsheets/config')
+    return child && this.parseBlob(child)
+  }
+
+  async saveConfig (config, ref = null) {
+    const treeHash = await this.makeConfigTree(config, ref)
+    await this.saveTreeToExistingBranch({
+      treeHash,
+      branch: ref,
+      msg: 'save config'
+    })
+  }
+
+  async makeConfigTree (config, ref = null) {
+    const tomlConfig = TOML.stringify(config)
+    const path = '.gitsheets/config'
     const tree = (ref)
       ? await this.repo.createTreeFromRef(ref)
       : this.repo.createTree()
+
+    await tree.writeChild(path, tomlConfig)
+    return tree.write()
+  }
+
+  async makeTreeFromCsv ({ readStream, pathTemplate, ref = null }) {
+    const renderPath = handlebars.compile(pathTemplate)
+    const tree = this.repo.createTree()
+
+    if (ref) {
+      const srcTree = await this.repo.createTreeFromRef(ref)
+      await tree.merge(srcTree, { files: ['.gitsheets/*'] })
+    }
 
     return new Promise ((resolve, reject) => {
       const pendingWrites = []
@@ -82,9 +111,11 @@ module.exports = class GitSheets {
     const rows = []
     for (let key in keyedChildren) {
       const child = keyedChildren[key]
-      const data = await this.parseBlob(child)
-      data._id = key
-      rows.push(data)
+      if (child instanceof BlobObject) {
+        const data = await this.parseBlob(child)
+        data._id = key
+        rows.push(data)
+      }
     }
     return rows
   }

@@ -45,40 +45,72 @@ describe('server', () => {
       .toThrow()
   })
 
-  describe('list rows', () => {
+  describe('config', () => {
+    test('base endpoint returns config', async () => {
+      const response = await request(server.callback())
+        .get('/master')
+        .expect(200)
+
+      expect(response.body).toHaveProperty('config')
+      expect(response.body.config).toHaveProperty('path')
+      expect(response.body.config.path).toBe('{{id}}')
+    })
+
+    test('updates config', async () => {
+      await request(server.callback())
+        .put('/master')
+        .send({ config: { path: '{{id}}-updated'} })
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/master')
+      
+      expect(response.body.config.path).toBe('{{id}}-updated')
+    })
+  })
+
+  describe('list records', () => {
     test('lists rows with _id field in each row', async () => {
       await loadData(gitSheets, {
         data: sampleData, 
         ref: 'master',
-        branch: 'master',
-        pathTemplate: '{{id}}'
+        branch: 'master'
       })
 
       const response = await request(server.callback())
-        .get('/master')
+        .get('/master/records')
         .expect(200)
 
       expect(Array.isArray(response.body)).toBe(true)
       expect(response.body.length).toBe(getCsvRowCount(sampleData))
       expect(response.body[0]).toHaveProperty('_id')
     })
+
+    test('returns empty array if no data', async () => {
+      const response = await request(server.callback())
+        .get('/master/records')
+        .expect(200)
+
+      expect(Array.isArray(response.body)).toBe(true)
+      expect(response.body.length).toBe(0)
+    })
     
     test('requesting invalid ref throws error', async () => {
       await request(server.callback())
-        .get('/;echo%20hi')
+        .get('/;echo%20hi/records')
         .expect(400)
     })
 
     test('requesting nonexistent ref throws 404', async () => {
       await request(server.callback())
-        .get('/unicorns')
+        .get('/unicorns/records')
         .expect(404)
     })
 
     test.skip('requesting a non-gitsheet-style branch returns empty array with count in header', async () => {
       // commit a csv file (non exploded) and request the branch
       const response = await request(server.callback())
-        .get('/master')
+        .get('/master/records')
         .expect(200)
 
       expect(Array.isArray(response.body)).toBe(true)
@@ -91,44 +123,73 @@ describe('server', () => {
   describe('import', () => {
     test('creates commit on current branch with exploded data', async () => {
       await request(server.callback())
-        .post('/master/import?path={{id}}')
+        .post('/master/import')
         .type('csv')
         .send(sampleData)
         .expect(204)
 
       const treeItems = await getTreeItems(gitSheets, 'master')
-      expect(treeItems.length).toBe(getCsvRowCount(sampleData))
+      const expectedCount = getCsvRowCount(sampleData) + 1 // .gitsheets subtree
+      expect(treeItems.length).toBe(expectedCount)
+    })
+
+    test('maintains existing config', async () => {
+      await request(server.callback())
+        .post('/master/import')
+        .type('csv')
+        .send(sampleData)
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/master')
+      
+      expect(response.body.config).toHaveProperty('path')
+      expect(response.body.config.path).toBe('{{id}}')
+    })
+
+    test('truncates and loads', async () => {
+      await request(server.callback())
+        .post('/master/import')
+        .type('csv')
+        .send(sampleData)
+        .expect(204)
+
+      await request(server.callback())
+        .post('/master/import')
+        .type('csv')
+        .send(sampleDataChanged)
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/master/records')
+
+      const DELETED_RECORD_ID = '5'
+      const deletedRecord = response.body.find((record) => record.id === DELETED_RECORD_ID)
+      expect(deletedRecord).not.toBeDefined()
     })
 
     test('creates commit on new branch when specified', async () => {
       await request(server.callback())
-        .post('/master/import?path={{id}}&branch=proposal')
+        .post('/master/import?branch=proposal')
         .type('csv')
         .send(sampleDataChanged)
         .expect(204)
 
       const treeItems = await getTreeItems(gitSheets, 'proposal')
-      expect(treeItems.length).toBe(getCsvRowCount(sampleDataChanged))
-    })
-
-    test('omitting path throws an error', async () => {
-      await request(server.callback())
-        .post('/master/import')
-        .type('csv')
-        .send(sampleDataChanged)
-        .expect(400)
+      const expectedCount = getCsvRowCount(sampleDataChanged) + 1 // .gitsheets subtree
+      expect(treeItems.length).toBe(expectedCount)
     })
 
     test('sending non-csv data throws an error', async () => {
       await request(server.callback())
-        .post('/master/import?path={{id}}')
+        .post('/master/import')
         .send({ foo: 'bar' })
         .expect(415)
     })
 
     test.skip('omitting data throws an error', async () => {
       await request(server.callback())
-        .post('/master/import?path={{id}}')
+        .post('/master/import')
         .expect(400)
     })
 
@@ -139,7 +200,7 @@ describe('server', () => {
         foo,"bar
       `
       await request(server.callback())
-        .post('/master/import?path={{id}}')
+        .post('/master/import')
         .type('csv')
         .send(malformedCsvData)
         .expect(422)
@@ -147,7 +208,7 @@ describe('server', () => {
 
     test('importing onto nonexistent branch throws an error', async () => {
       await request(server.callback())
-        .post('/unicorns/import?path={{id}}')
+        .post('/unicorns/import')
         .type('csv')
         .send(sampleData)
         .expect(404)
@@ -165,14 +226,12 @@ describe('server', () => {
       await loadData(gitSheets, {
         data: sampleData,
         ref: 'master',
-        branch: 'master',
-        pathTemplate: '{{id}}'
+        branch: 'master'
       })
       await loadData(gitSheets, {
         data: sampleDataChanged,
         ref: 'master',
-        branch: 'proposal',
-        pathTemplate: '{{id}}'
+        branch: 'proposal'
       })
     })
 
@@ -209,7 +268,7 @@ describe('server', () => {
         .expect(204)
 
       const response = await request(server.callback())
-        .get('/master')
+        .get('/master/records')
 
       const changedRowId = '3'
       const changedRow = response.body.find((row) => row.id === changedRowId)
@@ -223,7 +282,7 @@ describe('server', () => {
         .expect(204)
 
       await request(server.callback())
-        .get('/proposal')
+        .get('/proposal/records')
         .expect(404)
     })
 
@@ -235,8 +294,7 @@ describe('server', () => {
       await loadData(gitSheets, {
         data: conflictingData,
         ref: 'master',
-        branch: 'master',
-        pathTemplate: '{{id}}'
+        branch: 'master'
       })
 
       await request(server.callback())
