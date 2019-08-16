@@ -1,4 +1,4 @@
-const { Repo } = require('hologit/lib')
+const { Repo, BlobObject } = require('hologit/lib')
 const handlebars = require('handlebars')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
@@ -108,9 +108,11 @@ module.exports = class GitSheets {
     const rows = []
     for (let key in keyedChildren) {
       const child = keyedChildren[key]
-      const data = await this.parseBlob(child)
-      data._id = key
-      rows.push(data)
+      if (child instanceof BlobObject) {
+        const data = await this.parseBlob(child)
+        data._id = key
+        rows.push(data)
+      }
     }
     return rows
   }

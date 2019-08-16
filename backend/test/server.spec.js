@@ -85,6 +85,15 @@ describe('server', () => {
       expect(response.body.length).toBe(getCsvRowCount(sampleData))
       expect(response.body[0]).toHaveProperty('_id')
     })
+
+    test('returns empty array if no data', async () => {
+      const response = await request(server.callback())
+        .get('/master/records')
+        .expect(200)
+
+      expect(Array.isArray(response.body)).toBe(true)
+      expect(response.body.length).toBe(0)
+    })
     
     test('requesting invalid ref throws error', async () => {
       await request(server.callback())
