@@ -8,8 +8,14 @@ export default new Router({
   mode: 'history',
   routes: [
     {
-      path: '/:gitRef?',
+      path: '/:srcRef?',
       name: 'sheet',
+      component: Sheet,
+      props: true,
+    },
+    {
+      path: '/:srcRef/compare/:dstRef',
+      name: 'compare',
       component: Sheet,
       props: true,
     },

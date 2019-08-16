@@ -1,6 +1,6 @@
 <template lang="pug">
   .DataSheetCell
-    template(v-if="status==='updated' && oldValue != newValue")
+    template(v-if="status==='modified' && oldValue != newValue")
       ins {{ newValue }}
       del {{ oldValue }}
     template(v-else)

@@ -149,7 +149,7 @@ module.exports = class GitSheets {
           return {
             _id: diff.file,
             status: 'modified',
-            value: this.compareObjects(src, dst)
+            patch: this.compareObjects(src, dst)
           }
       }
     })

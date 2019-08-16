@@ -5,21 +5,21 @@
         tr
           th(v-for="col in columns" :key="col.name") {{ col.name }}
       transition-group(name="row" tag="tbody")
-        tr(v-for="r in records" :key="r._id" v-show="showUnchanged || r.status")
-          td(v-for="col in columns" :key="col.name" :class="r.status? '-status-'+ r.status: null")
-            DataSheetCell(
-              :status="r.status"
-              :old-value="r[col.name]"
-              :new-value="generateFakeNewValue(r[col.name])"
-            )
+        DataSheetRow(
+          v-for="record in mergedRecords"
+          :key="record._id"
+          v-show="showUnchanged || record.status"
+          :record="record"
+          :columns="columns"
+        )
 </template>
 
 <script>
-import DataSheetCell from './DataSheetCell';
+import DataSheetRow from './DataSheetRow';
 
 export default {
   name: 'DataSheet',
-  components: { DataSheetCell },
+  components: { DataSheetRow },
   props: {
     columns: {
       type: Array,
@@ -29,22 +29,45 @@ export default {
       type: Array,
       required: true,
     },
+    diffs: {
+      type: Array,
+      default: () => [],
+    },
     showUnchanged: {
       type: Boolean,
       default: true,
     },
   },
-
-  methods: {
-    generateFakeNewValue: val => {
-      if (Math.random() < 0.5) {
-        return val;
-      }
-      return val ? val+1 : null;
+  computed: {
+    keyedDiffs () {
+      return this.diffs.reduce((accum, item) => {
+        accum[item._id] = item;
+        return accum;
+      }, {});
     },
+    keyedRecords () {
+      return this.records.reduce((accum, item) => {
+        const { _id, ...value } = item
+        accum[_id] = {
+          _id,
+          status: null,
+          value,
+        };
+        return accum;
+      }, {});
+    },
+    mergedRecords () {
+      const diffsKeys = Object.keys(this.keyedDiffs);
+      const recordsKeys = Object.keys(this.keyedRecords);
+      const mergedKeys = new Set([...diffsKeys, ...recordsKeys]);
 
-    getStatusClass: status => {
-      return statusClasses[status];
+      return Array.from(mergedKeys).reduce((accum, key) => {
+        accum[key] = {
+          ...this.keyedRecords[key],
+          ...this.keyedDiffs[key],
+        };
+        return accum;
+      }, {});
     },
   },
 };
@@ -98,7 +121,7 @@ td {
     @apply bg-green-100 border-green-200 text-green-800 font-bold;
   }
 
-  &.-status-updated {
+  &.-status-modified {
     @apply bg-blue-100 border-blue-200;
 
     ins,
@@ -118,7 +141,7 @@ td {
       @apply bg-green-200 text-green-900;
     }
 
-    &.-status-updated {
+    &.-status-modified {
       @apply bg-blue-200 text-blue-900;
 
       ins {
