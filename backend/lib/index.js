@@ -31,7 +31,7 @@ module.exports = class GitSheets {
   async getConfig (ref) {
     const tree = await this.repo.createTreeFromRef(ref)
     const child = await tree.getChild('.gitsheets/config')
-    return this.parseBlob(child)
+    return child && this.parseBlob(child)
   }
 
   async saveConfig (config, ref = null) {
