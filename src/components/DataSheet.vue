@@ -5,7 +5,7 @@
         tr
           th(v-for="col in columns" :key="col.name") {{ col.name }}
       transition-group(name="row" tag="tbody")
-        tr(v-for="r in records" :key="r.id" v-show="showUnchanged || r.status")
+        tr(v-for="r in records" :key="r._id" v-show="showUnchanged || r.status")
           td(v-for="col in columns" :key="col.name" :class="r.status? '-status-'+ r.status: null")
             DataSheetCell(
               :status="r.status"
