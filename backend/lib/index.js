@@ -107,9 +107,13 @@ module.exports = class GitSheets {
       ? await this.repo.createTreeFromRef(ref)
       : this.repo.createTree()
 
-    const keyedChildren = await tree.getChildren() // results are on __proto__
+    const keyedChildren = await tree.getBlobMap()
     const rows = []
     for (let key in keyedChildren) {
+      if (key.startsWith('.gitsheets/')) {
+        continue;
+      }
+
       const child = keyedChildren[key]
       if (child instanceof BlobObject) {
         const data = await this.parseBlob(child)
@@ -122,10 +126,10 @@ module.exports = class GitSheets {
 
   async getDiffs (srcRef, dstRef) {
     const srcTree = await this.repo.createTreeFromRef(srcRef)
-    const srcChildren = await srcTree.getChildren()
+    const srcChildren = await srcTree.getBlobMap()
 
     const dstTree = await this.repo.createTreeFromRef(dstRef)
-    const dstChildren = await dstTree.getChildren()
+    const dstChildren = await dstTree.getBlobMap()
 
     const parsedDiffOutput = await this.getParsedDiffOutput(srcRef, dstRef)
 
