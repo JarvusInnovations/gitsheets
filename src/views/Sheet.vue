@@ -1,15 +1,19 @@
 <template lang="pug">
-  DataSheet(:columns="columns" :records="records" :diffs="diffs")
+  .DataSheet-ct
+    DataSheet(:columns="columns" :records="mergedRecords")
+    DataSheetLog(:records="mergedRecords")
 </template>
 
 <script>
 import { mapState, mapActions } from 'vuex';
 
 import DataSheet from '@/components/DataSheet.vue';
+import DataSheetLog from '@/components/DataSheetLog.vue';
 
 export default {
   components: {
     DataSheet,
+    DataSheetLog,
   },
   props: {
     srcRef: {
@@ -25,10 +29,42 @@ export default {
     ...mapState(['records', 'diffs']),
     columns () {
       if (this.records.length > 0) {
-        return Object.keys(this.records[0]).map((key) => ({ name: key }));
+        const { _id, ...record } = this.records[0]
+        return Object.keys(record).map((key) => ({ name: key }));
       } else {
         return [];
       }
+    },
+    keyedDiffs () {
+      return this.diffs.reduce((accum, item) => {
+        accum[item._id] = item;
+        return accum;
+      }, {});
+    },
+    keyedRecords () {
+      return this.records.reduce((accum, item) => {
+        const { _id, ...value } = item
+        accum[_id] = {
+          _id,
+          status: null,
+          value,
+        };
+        return accum;
+      }, {});
+    },
+    mergedRecords () {
+      const diffsKeys = Object.keys(this.keyedDiffs);
+      const recordsKeys = Object.keys(this.keyedRecords);
+      const mergedKeys = new Set([...diffsKeys, ...recordsKeys]);
+
+      const merged = Array.from(mergedKeys).reduce((accum, key) => {
+        accum[key] = {
+          ...this.keyedRecords[key],
+          ...this.keyedDiffs[key],
+        };
+        return accum;
+      }, {});
+      return Object.values(merged);
     },
   },
   watch: {
@@ -54,3 +90,11 @@ export default {
   },
 };
 </script>
+
+<style lang="postcss">
+.DataSheet-ct {
+  @apply border-t overflow-hidden;
+  display: grid;
+  grid-template-columns: 1fr 20rem;
+}
+</style>
