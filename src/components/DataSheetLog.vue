@@ -7,14 +7,22 @@
         li(v-for="(count, status) in changeCounts" :key="status" :class="'-status-' + status")
           FigureStat(:stat="count" :label="status")
 
-      form(@submit.prevent="onSubmit")
+      form(@submit.prevent="onSubmitCommit")
         FieldLabeled.h-20(
           fieldName="message",
           fieldType="textarea",
           placeholderText="What will this commit do to the database?"
           :showLabel="false"
+          required
           v-model="commitMessage")
         SubmitButton.mt-3.w-full {{ commitButtonText }}
+
+    .b-indigo-100.p-5.-m-5.border-b
+      h3 Upload new version
+
+      form(@submit.prevent="onSubmitUpload")
+        input(type="file" name="file" accept=".csv" required ref="file")
+        SubmitButton.mt-3.w-full Select file
 </template>
 
 <script>
@@ -119,8 +127,11 @@ export default {
     },
   },
   methods: {
-    onSubmit() {
-      this.$emit('submit', this.commitMessage);
+    onSubmitCommit () {
+      this.$emit('commit', this.commitMessage);
+    },
+    onSubmitUpload () {
+      this.$emit('upload', this.$refs.file.files[0]);
     },
   },
 }

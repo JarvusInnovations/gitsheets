@@ -1,11 +1,12 @@
 <template lang="pug">
   .DataSheet-ct
     DataSheet(:columns="columns" :records="mergedRecords")
-    DataSheetLog(:records="mergedRecords")
+    DataSheetLog(:records="mergedRecords" @upload="onUpload")
 </template>
 
 <script>
 import { mapState, mapActions } from 'vuex';
+import { uniqueNamesGenerator } from 'unique-names-generator';
 
 import DataSheet from '@/components/DataSheet.vue';
 import DataSheetLog from '@/components/DataSheetLog.vue';
@@ -75,7 +76,7 @@ export default {
     dstRef: 'fetch',
   },
   methods: {
-    ...mapActions(['getRecords', 'getDiffs']),
+    ...mapActions(['getRecords', 'getDiffs', 'import']),
     async fetch () {
       try {
         await this.getRecords(this.srcRef);
@@ -86,6 +87,20 @@ export default {
       } catch (err) {
         console.error(err.message);
       }
+    },
+    async onUpload (file) {
+      const srcRef = this.dstRef || this.srcRef;
+      const branch = this.generateBranchName();
+
+      try {
+        await this.import({ srcRef, file, branch });
+        this.$router.push(`/${srcRef}/compare/${branch}`);
+      } catch (err) {
+        console.error(err.message)
+      }
+    },
+    generateBranchName () {
+      return uniqueNamesGenerator({ separator: '-' });
     },
   },
 };

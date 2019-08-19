@@ -6,6 +6,7 @@
       textarea.FieldLabeled__control(
         :name="fieldName",
         :id="fieldName",
+        :required="required"
         :placeholder="placeholderText") {{ value }}
 
     template(v-else)
@@ -13,6 +14,7 @@
         :name="fieldName",
         :id="fieldName",
         :type="fieldType",
+        :required="required"
         :placeholder="placeholderText",
         :value="value")
 </template>
@@ -46,6 +48,10 @@ export default {
       type: String,
       default: null,
     },
+    required: {
+      type: Boolean,
+      default: false,
+    }
   },
 
   computed: {

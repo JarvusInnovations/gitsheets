@@ -28,5 +28,13 @@ export default new Vuex.Store({
       const response = await api.get(`/${srcRef}/compare/${dstRef}`);
       commit('SET_DIFFS', response.data);
     },
+    async import (_context, { srcRef, file, branch }) {
+      await api({
+        method: 'post',
+        url: `/${srcRef}/import?branch=${branch}`,
+        data: file,
+        headers: {'content-type': 'text/csv'},
+      });
+    },
   },
 });
