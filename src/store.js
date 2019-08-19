@@ -18,6 +18,10 @@ export default new Vuex.Store({
     SET_DIFFS (state, diffs) {
       state.diffs = diffs;
     },
+    RESET_SHEET (state) {
+      state.records = [];
+      state.diffs = [];
+    },
   },
   actions: {
     async getRecords ({ commit }, srcRef) {
@@ -27,6 +31,9 @@ export default new Vuex.Store({
     async getDiffs ({ commit }, { srcRef, dstRef }) {
       const response = await api.get(`/${srcRef}/compare/${dstRef}`);
       commit('SET_DIFFS', response.data);
+    },
+    async merge (_context, { srcRef, dstRef }) {
+      await api.post(`/${srcRef}/compare/${dstRef}`);
     },
     async import (_context, { srcRef, file, branch }) {
       await api({

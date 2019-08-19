@@ -9,6 +9,7 @@
 
       form(@submit.prevent="onSubmitCommit")
         FieldLabeled.h-20(
+          v-show="false"
           fieldName="message",
           fieldType="textarea",
           placeholderText="What will this commit do to the database?"

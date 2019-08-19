@@ -1,11 +1,11 @@
 <template lang="pug">
   .DataSheet-ct
     DataSheet(:columns="columns" :records="mergedRecords")
-    DataSheetLog(:records="mergedRecords" @upload="onUpload")
+    DataSheetLog(:records="mergedRecords" @commit="onCommit" @upload="onUpload")
 </template>
 
 <script>
-import { mapState, mapActions } from 'vuex';
+import { mapState, mapActions, mapMutations } from 'vuex';
 import { uniqueNamesGenerator } from 'unique-names-generator';
 
 import DataSheet from '@/components/DataSheet.vue';
@@ -76,14 +76,34 @@ export default {
     dstRef: 'fetch',
   },
   methods: {
-    ...mapActions(['getRecords', 'getDiffs', 'import']),
+    ...mapActions([
+      'getRecords',
+      'getDiffs',
+      'merge',
+      'import',
+    ]),
+    ...mapMutations({
+      resetSheet: 'RESET_SHEET',
+    }),
     async fetch () {
       try {
+        this.resetSheet();
         await this.getRecords(this.srcRef);
         if (this.dstRef) {
           const { srcRef, dstRef } = this
           await this.getDiffs({ srcRef, dstRef });
         }
+      } catch (err) {
+        console.error(err.message);
+      }
+    },
+    async onCommit (msg) {
+      const srcRef = this.srcRef;
+      const dstRef = this.dstRef;
+
+      try {
+        await this.merge({ srcRef, dstRef });
+        this.$router.push(`/${srcRef}`);
       } catch (err) {
         console.error(err.message);
       }
@@ -96,7 +116,7 @@ export default {
         await this.import({ srcRef, file, branch });
         this.$router.push(`/${srcRef}/compare/${branch}`);
       } catch (err) {
-        console.error(err.message)
+        console.error(err.message);
       }
     },
     generateBranchName () {
