@@ -262,6 +262,13 @@ describe('server', () => {
       expect(modifiedDiff.patch[0]).toMatchObject(expectedPatch)
     })
 
+    test('comparing identical refs returns empty array', async () => {
+      const response = await request(server.callback())
+        .get('/master/compare/master')
+
+      expect(response.body.length).toBe(0)
+    })
+
     test('merging merges branches', async () => {
       await request(server.callback())
         .post('/master/compare/proposal')

@@ -133,30 +133,32 @@ module.exports = class GitSheets {
 
     const parsedDiffOutput = await this.getParsedDiffOutput(srcRef, dstRef)
 
-    const pendingDiffs = parsedDiffOutput.map(async (diff) => {
-      switch (diff.status) {
-        case 'A':
-          return {
-            _id: diff.file,
-            status: 'added',
-            value:  await this.parseBlob(dstChildren[diff.file])
-          }
-        case 'D':
-          return {
-            _id: diff.file,
-            status: 'removed',
-            value: await this.parseBlob(srcChildren[diff.file])
-          }
-        case 'M':
-          const src = await this.parseBlob(srcChildren[diff.file])
-          const dst = await this.parseBlob(dstChildren[diff.file])
-          return {
-            _id: diff.file,
-            status: 'modified',
-            patch: this.compareObjects(src, dst)
-          }
-      }
-    })
+    const pendingDiffs = parsedDiffOutput
+      .filter((diff) => ['A', 'D', 'M'].includes(diff.status))
+      .map(async (diff) => {
+        switch (diff.status) {
+          case 'A':
+            return {
+              _id: diff.file,
+              status: 'added',
+              value:  await this.parseBlob(dstChildren[diff.file])
+            }
+          case 'D':
+            return {
+              _id: diff.file,
+              status: 'removed',
+              value: await this.parseBlob(srcChildren[diff.file])
+            }
+          case 'M':
+            const src = await this.parseBlob(srcChildren[diff.file])
+            const dst = await this.parseBlob(dstChildren[diff.file])
+            return {
+              _id: diff.file,
+              status: 'modified',
+              patch: this.compareObjects(src, dst)
+            }
+        }
+      })
 
     return Promise.all(pendingDiffs)
   }
@@ -177,6 +179,7 @@ module.exports = class GitSheets {
     const diffOutput = await this.git.diff({'name-status': true}, srcRef, dstRef)
     const diffs = diffOutput
       .split('\n')
+      .filter((line) => line.length > 0)
       .map((line) => {
         const [ status, file ] = line.split('\t')
         return { status, file }
