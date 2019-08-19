@@ -1,6 +1,6 @@
 <template lang="pug">
   .overflow-y-scroll
-    table.DataSheet
+    table.DataSheet(data-test="sheet")
       thead
         tr
           th(v-for="col in columns" :key="col.name") {{ col.name }}
@@ -11,6 +11,7 @@
           v-show="showUnchanged || record.status"
           :record="record"
           :columns="columns"
+          :class="record.status ? `-status-${record.status}` : null"
         )
 </template>
 
@@ -21,10 +22,6 @@ export default {
   name: 'DataSheet',
   components: { DataSheetRow },
   props: {
-    columns: {
-      type: Array,
-      required: true,
-    },
     records: {
       type: Array,
       required: true,
@@ -32,6 +29,15 @@ export default {
     showUnchanged: {
       type: Boolean,
       default: true,
+    },
+  },
+  computed: {
+    columns () {
+      if (this.records.length > 0) {
+        return Object.keys(this.records[0].value).map((key) => ({ name: key }));
+      } else {
+        return [];
+      }
     },
   },
 };

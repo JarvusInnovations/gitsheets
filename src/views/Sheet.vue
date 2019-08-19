@@ -1,6 +1,6 @@
 <template lang="pug">
   .DataSheet-ct
-    DataSheet(:columns="columns" :records="mergedRecords")
+    DataSheet(:records="mergedRecords")
     DataSheetLog(:records="mergedRecords" @commit="onCommit" @upload="onUpload")
 </template>
 
@@ -28,14 +28,6 @@ export default {
   },
   computed: {
     ...mapState(['records', 'diffs']),
-    columns () {
-      if (this.records.length > 0) {
-        const { _id, ...record } = this.records[0]
-        return Object.keys(record).map((key) => ({ name: key }));
-      } else {
-        return [];
-      }
-    },
     keyedDiffs () {
       return this.diffs.reduce((accum, item) => {
         accum[item._id] = item;

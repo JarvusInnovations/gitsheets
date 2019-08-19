@@ -7,7 +7,7 @@
         li(v-for="(count, status) in changeCounts" :key="status" :class="'-status-' + status")
           FigureStat(:stat="count" :label="status")
 
-      form(@submit.prevent="onSubmitCommit")
+      form(@submit.prevent="onSubmitCommit" data-test="commit-form")
         FieldLabeled.h-20(
           v-show="false"
           fieldName="message",
@@ -21,8 +21,8 @@
     .b-indigo-100.p-5.-m-5.border-b
       h3 Upload new version
 
-      form(@submit.prevent="onSubmitUpload")
-        input(type="file" name="file" accept=".csv" required ref="file")
+      form(@submit.prevent="onSubmitUpload" data-test="upload-form")
+        input(type="file" name="file" accept=".csv" required ref="file" data-test="upload-file")
         SubmitButton.mt-3.w-full Select file
 </template>
 
