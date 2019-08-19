@@ -6,12 +6,14 @@ A toolkit for using a git repository to store low-volume, high-touch, human-scal
 
 ```
 npm install
+cd backend && npm install
 ```
 
 ### Compiles and hot-reloads for development
 
 ```
 npm run serve
+cd backend && npm start
 ```
 
 ### Compiles and minifies for production
@@ -23,6 +25,9 @@ npm run build
 ### Run your tests
 
 ```
+git init tests
+cd tests && git commit -m 'init' --allow-empty'
+cd ../backend && GIT_DIR=../tests/.git npm start
 npm run test
 ```
 

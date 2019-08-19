@@ -107,9 +107,13 @@ module.exports = class GitSheets {
       ? await this.repo.createTreeFromRef(ref)
       : this.repo.createTree()
 
-    const keyedChildren = await tree.getChildren() // results are on __proto__
+    const keyedChildren = await tree.getBlobMap()
     const rows = []
     for (let key in keyedChildren) {
+      if (key.startsWith('.gitsheets/')) {
+        continue;
+      }
+
       const child = keyedChildren[key]
       if (child instanceof BlobObject) {
         const data = await this.parseBlob(child)
@@ -122,37 +126,39 @@ module.exports = class GitSheets {
 
   async getDiffs (srcRef, dstRef) {
     const srcTree = await this.repo.createTreeFromRef(srcRef)
-    const srcChildren = await srcTree.getChildren()
+    const srcChildren = await srcTree.getBlobMap()
 
     const dstTree = await this.repo.createTreeFromRef(dstRef)
-    const dstChildren = await dstTree.getChildren()
+    const dstChildren = await dstTree.getBlobMap()
 
     const parsedDiffOutput = await this.getParsedDiffOutput(srcRef, dstRef)
 
-    const pendingDiffs = parsedDiffOutput.map(async (diff) => {
-      switch (diff.status) {
-        case 'A':
-          return {
-            _id: diff.file,
-            status: 'added',
-            value:  await this.parseBlob(dstChildren[diff.file])
-          }
-        case 'D':
-          return {
-            _id: diff.file,
-            status: 'removed',
-            value: await this.parseBlob(srcChildren[diff.file])
-          }
-        case 'M':
-          const src = await this.parseBlob(srcChildren[diff.file])
-          const dst = await this.parseBlob(dstChildren[diff.file])
-          return {
-            _id: diff.file,
-            status: 'modified',
-            value: this.compareObjects(src, dst)
-          }
-      }
-    })
+    const pendingDiffs = parsedDiffOutput
+      .filter((diff) => ['A', 'D', 'M'].includes(diff.status))
+      .map(async (diff) => {
+        switch (diff.status) {
+          case 'A':
+            return {
+              _id: diff.file,
+              status: 'added',
+              value:  await this.parseBlob(dstChildren[diff.file])
+            }
+          case 'D':
+            return {
+              _id: diff.file,
+              status: 'removed',
+              value: await this.parseBlob(srcChildren[diff.file])
+            }
+          case 'M':
+            const src = await this.parseBlob(srcChildren[diff.file])
+            const dst = await this.parseBlob(dstChildren[diff.file])
+            return {
+              _id: diff.file,
+              status: 'modified',
+              patch: this.compareObjects(src, dst)
+            }
+        }
+      })
 
     return Promise.all(pendingDiffs)
   }
@@ -173,6 +179,7 @@ module.exports = class GitSheets {
     const diffOutput = await this.git.diff({'name-status': true}, srcRef, dstRef)
     const diffs = diffOutput
       .split('\n')
+      .filter((line) => line.length > 0)
       .map((line) => {
         const [ status, file ] = line.split('\t')
         return { status, file }

@@ -1,30 +1,29 @@
 <template lang="pug">
   .DataSheetLog
-    .bg-indigo-100.p-5.-m-5.border-b
+    .bg-indigo-100.p-5.-m-5.border-b(v-if="changeCountTotal > 0")
       h3 Unsaved changes
 
       ul.DataSheetLog__stats
         li(v-for="(count, status) in changeCounts" :key="status" :class="'-status-' + status")
           FigureStat(:stat="count" :label="status")
 
-      form(method="post", @submit.prevent="handleCommitPost")
+      form(@submit.prevent="onSubmitCommit" data-test="commit-form")
         FieldLabeled.h-20(
+          v-show="false"
           fieldName="message",
           fieldType="textarea",
           placeholderText="What will this commit do to the database?"
           :showLabel="false"
-          :value="defaultCommitMessage")
+          required
+          v-model="commitMessage")
         SubmitButton.mt-3.w-full {{ commitButtonText }}
 
-    h3.mt-8 Commit history
+    .b-indigo-100.p-5.-m-5.border-b
+      h3 Upload new version
 
-    div
-      LogCommit(v-for="commit in sortedCommits"
-        :key="commit.id"
-        :id="commit.id",
-        :date="new Date(commit.date)",
-        :author="commit.author",
-        :message="commit.message")
+      form(@submit.prevent="onSubmitUpload" data-test="upload-form")
+        input(type="file" name="file" accept=".csv" required ref="file" data-test="upload-file")
+        SubmitButton.mt-3.w-full Select file
 </template>
 
 <script>
@@ -54,35 +53,27 @@ export default {
 
   data() {
     return {
-      commits: commits,
+      commitMessage: '',
     }
   },
 
   computed: {
-    changeCounts() {
-      let groups = this.getChangesGroupedByStatus(),
-        counts = {},
-        group;
-
-      for (group in groups) {
-        counts[group] = groups[group].length;
-      }
-
-      return counts;
+    changeCounts () {
+      return this.records.reduce((accum, record) => {
+        if (record.status) {
+          accum[record.status] = accum[record.status] || 0;
+          accum[record.status]++;
+        }
+        return accum;
+      }, {});
     },
-
+    changeCountTotal () {
+      return Object.values(this.changeCounts).reduce((accum, item) => accum += item, 0);
+    },
     commitButtonText() {
-      let groups = this.getChangesGroupedByStatus(),
-        totalChanges = 0,
-        group;
-
-      for (group in groups) {
-        totalChanges += groups[group].length;
-      }
-
-      return `Commit ${totalChanges} change${totalChanges===1 ? null : 's'}`;
+      const noun = (this.changeCountTotal === 1) ? 'change' : 'changes';
+      return `Commit ${this.changeCountTotal} ${noun}`;
     },
-
     defaultCommitMessage() {
       let messages = [],
         messageOutput = '';
@@ -94,8 +85,8 @@ export default {
         messages.push(`add ${counts.added}`);
       }
 
-      if (counts.updated) {
-        messages.push(`update ${counts.updated}`);
+      if (counts.modified) {
+        messages.push(`update ${counts.modified}`);
       }
 
       if (counts.removed) {
@@ -116,40 +107,32 @@ export default {
       }
 
       // capitalize and return
-      return messageOutput.charAt(0).toUpperCase() + messageOutput.slice(1) + ' students';
+      return messageOutput.length
+        ? messageOutput.charAt(0).toUpperCase() + messageOutput.slice(1) + ' records'
+        : '';
     },
-
     sortedCommits() {
       return commits.sort((a, b) => {
         return new Date(b.date) - new Date(a.date);
       });
     },
   },
-
-  methods: {
-    handleCommitPost() {
-      alert('Ok')
-    },
-
-    getChangesGroupedByStatus() {
-      let groups = {};
-
-      this.records.forEach(r => {
-        let status = r.status,
-          group;
-
-        if (status) {
-          group = groups[r.status];
-
-          if (!group) {
-            group = groups[r.status] = [];
-          }
-
-          group.push(r);
+  watch: {
+    defaultCommitMessage: {
+      immediate: true,
+      handler (newValue, oldValue) {
+        if (!this.commitMessage || this.commitMessage === oldValue) {
+          this.commitMessage = newValue;
         }
-      });
-
-      return groups;
+      },
+    },
+  },
+  methods: {
+    onSubmitCommit () {
+      this.$emit('commit', this.commitMessage);
+    },
+    onSubmitUpload () {
+      this.$emit('upload', this.$refs.file.files[0]);
     },
   },
 }
@@ -182,7 +165,7 @@ li {
   @apply text-red-700;
 }
 
-.-status-updated {
+.-status-modified {
   @apply text-blue-700;
 }
 </style>

@@ -251,7 +251,7 @@ describe('server', () => {
       const modifiedDiff = response.body.find((diff) => diff.status === 'modified')
 
       expect(modifiedDiff).toBeTruthy()
-      expect(modifiedDiff.value.length).toBe(1)
+      expect(modifiedDiff.patch.length).toBe(1)
 
       const expectedPatch = {
         op: 'replace',
@@ -259,7 +259,14 @@ describe('server', () => {
         from: 'Hansford',
         value: 'Footsford'
       }
-      expect(modifiedDiff.value[0]).toMatchObject(expectedPatch)
+      expect(modifiedDiff.patch[0]).toMatchObject(expectedPatch)
+    })
+
+    test('comparing identical refs returns empty array', async () => {
+      const response = await request(server.callback())
+        .get('/master/compare/master')
+
+      expect(response.body.length).toBe(0)
     })
 
     test('merging merges branches', async () => {
