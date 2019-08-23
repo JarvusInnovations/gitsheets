@@ -1,5 +1,5 @@
 const { Repo, BlobObject } = require('hologit/lib')
-const handlebars = require('handlebars')
+const maxstache = require('maxstache')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
 const jsonpatch = require('fast-json-patch')
@@ -55,7 +55,6 @@ module.exports = class GitSheets {
   }
 
   async makeTreeFromCsv ({ readStream, pathTemplate, ref = null }) {
-    const renderPath = handlebars.compile(pathTemplate)
     const tree = this.repo.createTree()
 
     if (ref) {
@@ -70,7 +69,7 @@ module.exports = class GitSheets {
         .pipe(csvParser({ strict: true }))
         .on('data', (row) => {
           const tomlRow = TOML.stringify(sortKeys(row))
-          const fileName = renderPath(row)
+          const fileName = maxstache(pathTemplate, row)
 
           pendingWrites.push(tree.writeChild(fileName, tomlRow));
         })

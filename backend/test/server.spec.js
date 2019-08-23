@@ -73,6 +73,7 @@ describe('server', () => {
     test('lists rows with _id field in each row', async () => {
       await loadData(gitSheets, {
         data: sampleData, 
+        pathTemplate: '{{id}}',
         ref: 'master',
         branch: 'master'
       })
@@ -225,11 +226,13 @@ describe('server', () => {
     beforeEach(async () => {
       await loadData(gitSheets, {
         data: sampleData,
+        pathTemplate: '{{id}}',
         ref: 'master',
         branch: 'master'
       })
       await loadData(gitSheets, {
         data: sampleDataChanged,
+        pathTemplate: '{{id}}',
         ref: 'master',
         branch: 'proposal'
       })
@@ -300,6 +303,7 @@ describe('server', () => {
       `
       await loadData(gitSheets, {
         data: conflictingData,
+        pathTemplate: '{{id}}',
         ref: 'master',
         branch: 'master'
       })

@@ -46,17 +46,34 @@ describe('lib', () => {
   test('getDiffs returns expected number of diffs', async () => {
     await loadData(gitSheets, {
       data: sampleData,
+      pathTemplate: '{{id}}',
       ref: 'master',
       branch: 'master'
     })
     await loadData(gitSheets, {
       data: sampleDataChanged,
+      pathTemplate: '{{id}}',
       ref: 'master',
       branch: 'proposal'
     })
 
     const diffs = await gitSheets.getDiffs('master', 'proposal')
     expect(diffs.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
+  })
+
+  test('path templates support spaces in variable names', async () => {
+    const data = stripIndent`
+      First Name,Last Name
+      Ada,Lovelace
+      Grace,Hopper
+      Radia,Perlman
+    `
+    await loadData(gitSheets, {
+      data,
+      pathTemplate: '{{Last Name}}',
+      ref: 'master',
+      branch: 'master'
+    })
   })
 })
 

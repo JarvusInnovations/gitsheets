@@ -5,7 +5,7 @@ const bodyParser = require('koa-bodyparser')
 const GitSheets = require('./lib')
 
 const validRefPattern = /^[\w-]+$/
-const validPathTemplatePattern = /^[{}\w-\/]+$/
+const validPathTemplatePattern = /^[{}\w- \/]+$/
 
 module.exports = createServer
 

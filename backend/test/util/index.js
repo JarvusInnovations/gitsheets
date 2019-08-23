@@ -28,9 +28,8 @@ async function teardownRepo (gitSheets) {
   await del([gitDir])
 }
 
-async function loadData (gitSheets, { data, ref, branch }) {
+async function loadData (gitSheets, { data, ref, branch, pathTemplate }) {
   const readStream = toReadableStream(data)
-  const pathTemplate = '{{id}}'
   const treeHash = await gitSheets.makeTreeFromCsv({ readStream, pathTemplate, ref })
 
   if (ref === branch) {

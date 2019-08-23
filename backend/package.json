@@ -20,12 +20,12 @@
     "@iarna/toml": "^2.2.3",
     "csv-parser": "^2.3.0",
     "fast-json-patch": "^2.2.1",
-    "handlebars": "^4.1.2",
     "hologit": "^0.21.0",
     "http-assert": "^1.4.1",
     "koa": "^2.7.0",
     "koa-bodyparser": "^4.2.1",
     "koa-router": "^7.4.0",
+    "maxstache": "^1.0.7",
     "to-readable-stream": "^2.1.0",
     "winston": "^2.4.3",
     "yargs": "^13.2.4"
