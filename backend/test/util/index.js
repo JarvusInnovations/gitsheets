@@ -20,7 +20,7 @@ async function setupRepo (gitSheets) {
     'allow-empty-message': true,
     m: 'initial commit'
   })
-  await gitSheets.saveConfig({ path: '{{id}}' }, 'master')
+  await gitSheets.saveConfig({ path: '{{last_name}}/{{first_name}}' }, 'master')
 }
 
 async function teardownRepo (gitSheets) {

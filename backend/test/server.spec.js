@@ -53,19 +53,19 @@ describe('server', () => {
 
       expect(response.body).toHaveProperty('config')
       expect(response.body.config).toHaveProperty('path')
-      expect(response.body.config.path).toBe('{{id}}')
+      expect(response.body.config.path).toBe('{{last_name}}/{{first_name}}')
     })
 
     test('updates config', async () => {
       await request(server.callback())
         .put('/master')
-        .send({ config: { path: '{{id}}-updated'} })
+        .send({ config: { path: '{{last_name}}/{{first_name}}-updated'} })
         .expect(204)
 
       const response = await request(server.callback())
         .get('/master')
       
-      expect(response.body.config.path).toBe('{{id}}-updated')
+      expect(response.body.config.path).toBe('{{last_name}}/{{first_name}}-updated')
     })
   })
 
@@ -73,7 +73,7 @@ describe('server', () => {
     test('lists rows with _id field in each row', async () => {
       await loadData(gitSheets, {
         data: sampleData, 
-        pathTemplate: '{{id}}',
+        pathTemplate: '{{last_name}}/{{first_name}}',
         ref: 'master',
         branch: 'master'
       })
@@ -145,7 +145,7 @@ describe('server', () => {
         .get('/master')
       
       expect(response.body.config).toHaveProperty('path')
-      expect(response.body.config.path).toBe('{{id}}')
+      expect(response.body.config.path).toBe('{{last_name}}/{{first_name}}')
     })
 
     test('truncates and loads', async () => {
@@ -226,13 +226,13 @@ describe('server', () => {
     beforeEach(async () => {
       await loadData(gitSheets, {
         data: sampleData,
-        pathTemplate: '{{id}}',
+        pathTemplate: '{{last_name}}/{{first_name}}',
         ref: 'master',
         branch: 'master'
       })
       await loadData(gitSheets, {
         data: sampleDataChanged,
-        pathTemplate: '{{id}}',
+        pathTemplate: '{{last_name}}/{{first_name}}',
         ref: 'master',
         branch: 'proposal'
       })
@@ -253,7 +253,7 @@ describe('server', () => {
 
       const modifiedDiff = response.body.find((diff) => diff.status === 'modified')
 
-      expect(modifiedDiff).toBeTruthy()
+      expect(modifiedDiff).toBeDefined()
       expect(modifiedDiff.patch.length).toBe(1)
 
       const expectedPatch = {
@@ -303,7 +303,7 @@ describe('server', () => {
       `
       await loadData(gitSheets, {
         data: conflictingData,
-        pathTemplate: '{{id}}',
+        pathTemplate: '{{last_name}}/{{first_name}}',
         ref: 'master',
         branch: 'master'
       })

@@ -133,7 +133,7 @@ module.exports = class GitSheets {
     const parsedDiffOutput = await this.getParsedDiffOutput(srcRef, dstRef)
 
     const pendingDiffs = parsedDiffOutput
-      .filter((diff) => ['A', 'D', 'M'].includes(diff.status))
+      .filter((diff) => ['A', 'D', 'M', 'R'].includes(diff.status))
       .map(async (diff) => {
         switch (diff.status) {
           case 'A':
@@ -148,7 +148,7 @@ module.exports = class GitSheets {
               status: 'removed',
               value: await this.parseBlob(srcChildren[diff.file])
             }
-          case 'M':
+          case 'M': {
             const src = await this.parseBlob(srcChildren[diff.file])
             const dst = await this.parseBlob(dstChildren[diff.file])
             return {
@@ -156,6 +156,16 @@ module.exports = class GitSheets {
               status: 'modified',
               patch: this.compareObjects(src, dst)
             }
+          }
+          case 'R': {
+            const src = await this.parseBlob(srcChildren[diff.file])
+            const dst = await this.parseBlob(dstChildren[diff.dstFile])
+            return {
+              _id: diff.file,
+              status: 'modified',
+              patch: this.compareObjects(src, dst)
+            }
+          }
         }
       })
 
@@ -180,8 +190,12 @@ module.exports = class GitSheets {
       .split('\n')
       .filter((line) => line.length > 0)
       .map((line) => {
-        const [ status, file ] = line.split('\t')
-        return { status, file }
+        const [ status, file, dstFile ] = line.split('\t')
+        return {
+          status: status.charAt(0), // remove any score
+          file,
+          dstFile
+        }
       })
     return diffs
   }
