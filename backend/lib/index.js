@@ -133,29 +133,41 @@ module.exports = class GitSheets {
     const parsedDiffOutput = await this.getParsedDiffOutput(srcRef, dstRef)
 
     const pendingDiffs = parsedDiffOutput
-      .filter((diff) => ['A', 'D', 'M'].includes(diff.status))
+      .filter((diff) => ['A', 'D', 'M', 'R'].includes(diff.status))
       .map(async (diff) => {
-        switch (diff.status) {
+        const { status, path, newPath } = diff
+
+        switch (status) {
           case 'A':
             return {
-              _id: diff.file,
+              _id: path,
               status: 'added',
-              value:  await this.parseBlob(dstChildren[diff.file])
+              value:  await this.parseBlob(dstChildren[path])
             }
           case 'D':
             return {
-              _id: diff.file,
+              _id: path,
               status: 'removed',
-              value: await this.parseBlob(srcChildren[diff.file])
+              value: await this.parseBlob(srcChildren[path])
             }
-          case 'M':
-            const src = await this.parseBlob(srcChildren[diff.file])
-            const dst = await this.parseBlob(dstChildren[diff.file])
+          case 'M': {
+            const src = await this.parseBlob(srcChildren[path])
+            const dst = await this.parseBlob(dstChildren[path])
             return {
-              _id: diff.file,
+              _id: path,
               status: 'modified',
               patch: this.compareObjects(src, dst)
             }
+          }
+          case 'R': {
+            const src = await this.parseBlob(srcChildren[path])
+            const dst = await this.parseBlob(dstChildren[newPath])
+            return {
+              _id: path,
+              status: 'modified',
+              patch: this.compareObjects(src, dst)
+            }
+          }
         }
       })
 
@@ -180,8 +192,12 @@ module.exports = class GitSheets {
       .split('\n')
       .filter((line) => line.length > 0)
       .map((line) => {
-        const [ status, file ] = line.split('\t')
-        return { status, file }
+        const [ status, path, newPath ] = line.split('\t')
+        return {
+          status: status.charAt(0), // remove any score
+          path,
+          newPath
+        }
       })
     return diffs
   }

@@ -59,13 +59,13 @@ describe('server', () => {
     test('updates config', async () => {
       await request(server.callback())
         .put('/master')
-        .send({ config: { path: '{{id}}-updated'} })
+        .send({ config: { path: '{{last_name}}/{{first_name}}'} })
         .expect(204)
 
       const response = await request(server.callback())
         .get('/master')
       
-      expect(response.body.config.path).toBe('{{id}}-updated')
+      expect(response.body.config.path).toBe('{{last_name}}/{{first_name}}')
     })
   })
 
@@ -85,6 +85,29 @@ describe('server', () => {
       expect(Array.isArray(response.body)).toBe(true)
       expect(response.body.length).toBe(getCsvRowCount(sampleData))
       expect(response.body[0]).toHaveProperty('_id')
+    })
+
+    test('lists rows with nested paths', async () => {
+      await request(server.callback())
+        .put('/master')
+        .send({ config: { path: '{{last_name}}/{{first_name}}'} })
+        .expect(204)
+
+      await loadData(gitSheets, {
+        data: sampleData, 
+        pathTemplate: '{{last_name}}/{{first_name}}',
+        ref: 'master',
+        branch: 'master'
+      })
+
+      const response = await request(server.callback())
+        .get('/master/records')
+        .expect(200)
+
+      expect(Array.isArray(response.body)).toBe(true)
+      expect(response.body.length).toBe(getCsvRowCount(sampleData))
+      expect(response.body[0]).toHaveProperty('_id')
+      expect(response.body[0]._id).toContain('/')
     })
 
     test('returns empty array if no data', async () => {
@@ -223,94 +246,122 @@ describe('server', () => {
   })
 
   describe('compare', () => {
-    beforeEach(async () => {
-      await loadData(gitSheets, {
-        data: sampleData,
-        pathTemplate: '{{id}}',
-        ref: 'master',
-        branch: 'master'
-      })
-      await loadData(gitSheets, {
-        data: sampleDataChanged,
-        pathTemplate: '{{id}}',
-        ref: 'master',
-        branch: 'proposal'
-      })
-    })
-
-    test('returns expected number of diffs', async () => {
-      const response = await request(server.callback())
-        .get('/master/compare/proposal')
-        .expect(200)
-      
-      expect(Array.isArray(response.body)).toBe(true)
-      expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
-    })
-
-    test('computes expected json patch for modified row', async () => {
-      const response = await request(server.callback())
-        .get('/master/compare/proposal')
-
-      const modifiedDiff = response.body.find((diff) => diff.status === 'modified')
-
-      expect(modifiedDiff).toBeTruthy()
-      expect(modifiedDiff.patch.length).toBe(1)
-
-      const expectedPatch = {
-        op: 'replace',
-        path: '/last_name',
-        from: 'Hansford',
-        value: 'Footsford'
-      }
-      expect(modifiedDiff.patch[0]).toMatchObject(expectedPatch)
-    })
-
-    test('comparing identical refs returns empty array', async () => {
-      const response = await request(server.callback())
-        .get('/master/compare/master')
-
-      expect(response.body.length).toBe(0)
-    })
-
-    test('merging merges branches', async () => {
-      await request(server.callback())
-        .post('/master/compare/proposal')
-        .expect(204)
-
-      const response = await request(server.callback())
-        .get('/master/records')
-
-      const changedRowId = '3'
-      const changedRow = response.body.find((row) => row.id === changedRowId)
-      expect(changedRow).toBeDefined()
-      expect(changedRow.last_name).toBe('Footsford')
-    })
-
-    test('merging deletes merged branch', async () => {
-      await request(server.callback())
-        .post('/master/compare/proposal')
-        .expect(204)
-
-      await request(server.callback())
-        .get('/proposal/records')
-        .expect(404)
-    })
-
-    test('merging on non-ancestor throws error', async () => {
-      const conflictingData = stripIndent`
-        id,first_name,last_name,email,dob
-        1,empty,empty,empty,empty
-      `
-      await loadData(gitSheets, {
-        data: conflictingData,
-        pathTemplate: '{{id}}',
-        ref: 'master',
-        branch: 'master'
+    describe('top-level paths', () => {
+      beforeEach(async () => {
+        await loadData(gitSheets, {
+          data: sampleData,
+          pathTemplate: '{{id}}',
+          ref: 'master',
+          branch: 'master'
+        })
+        await loadData(gitSheets, {
+          data: sampleDataChanged,
+          pathTemplate: '{{id}}',
+          ref: 'master',
+          branch: 'proposal'
+        })
       })
 
-      await request(server.callback())
-        .post('/master/compare/proposal')
-        .expect(409)
+      test('returns expected number of diffs', async () => {
+        const response = await request(server.callback())
+          .get('/master/compare/proposal')
+          .expect(200)
+        
+        expect(Array.isArray(response.body)).toBe(true)
+        expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
+      })
+
+      test('computes expected json patch for modified row', async () => {
+        const response = await request(server.callback())
+          .get('/master/compare/proposal')
+
+        const modifiedDiff = response.body.find((diff) => diff.status === 'modified')
+
+        expect(modifiedDiff).toBeDefined()
+        expect(modifiedDiff.patch.length).toBe(1)
+
+        const expectedPatch = {
+          op: 'replace',
+          path: '/last_name',
+          from: 'Hansford',
+          value: 'Footsford'
+        }
+        expect(modifiedDiff.patch[0]).toMatchObject(expectedPatch)
+      })
+
+      test('comparing identical refs returns empty array', async () => {
+        const response = await request(server.callback())
+          .get('/master/compare/master')
+
+        expect(response.body.length).toBe(0)
+      })
+
+      test('merging merges branches', async () => {
+        await request(server.callback())
+          .post('/master/compare/proposal')
+          .expect(204)
+
+        const response = await request(server.callback())
+          .get('/master/records')
+
+        const changedRowId = '3'
+        const changedRow = response.body.find((row) => row.id === changedRowId)
+        expect(changedRow).toBeDefined()
+        expect(changedRow.last_name).toBe('Footsford')
+      })
+
+      test('merging deletes merged branch', async () => {
+        await request(server.callback())
+          .post('/master/compare/proposal')
+          .expect(204)
+
+        await request(server.callback())
+          .get('/proposal/records')
+          .expect(404)
+      })
+
+      test('merging on non-ancestor throws error', async () => {
+        const conflictingData = stripIndent`
+          id,first_name,last_name,email,dob
+          1,empty,empty,empty,empty
+        `
+        await loadData(gitSheets, {
+          data: conflictingData,
+          pathTemplate: '{{last_name}}/{{first_name}}',
+          ref: 'master',
+          branch: 'master'
+        })
+
+        await request(server.callback())
+          .post('/master/compare/proposal')
+          .expect(409)
+      })
+    })
+
+    describe('nested paths', () => {
+      beforeEach(async () => {
+        await loadData(gitSheets, {
+          data: sampleData,
+          pathTemplate: '{{last_name}}/{{first_name}}',
+          ref: 'master',
+          branch: 'master'
+        })
+        await loadData(gitSheets, {
+          data: sampleDataChanged,
+          pathTemplate: '{{last_name}}/{{first_name}}',
+          ref: 'master',
+          branch: 'proposal'
+        })
+      })
+
+      test('returns expected number of diffs', async () => {
+        const response = await request(server.callback())
+          .get('/master/compare/proposal')
+          .expect(200)
+        
+        expect(Array.isArray(response.body)).toBe(true)
+        expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
+      })
     })
   })
 })
