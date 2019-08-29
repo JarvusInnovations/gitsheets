@@ -183,7 +183,7 @@ module.exports = class GitSheets {
     const qualifiedSrcRef = await this.getQualifiedRef(srcRef)
     const qualifiedDstRef = await this.getQualifiedRef(dstRef)
     await this.git.updateRef(qualifiedSrcRef, qualifiedDstRef)
-    await this.git.branch({'d': true}, dstRef)
+    await this.git.branch({'D': true}, dstRef) // force delete in case srcRef is not checked out
   }
 
   async getParsedDiffOutput (srcRef, dstRef) {
