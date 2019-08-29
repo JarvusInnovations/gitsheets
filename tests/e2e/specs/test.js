@@ -12,7 +12,7 @@ describe('e2e', () => {
     cy.exec(`mkdir -p ${gitDirParent}`);
     cy.exec(`git init ${gitDirParent}`).then(() => {;
       cy.exec('git commit -m "init" --allow-empty', { env });
-      cy.request('PUT', '/api/master', { config: { path: '{{id}}' } });
+      cy.request('PUT', '/api/config/master', { config: { path: '{{id}}' } });
     });
   })
 
@@ -29,7 +29,7 @@ describe('e2e', () => {
       mimeType: 'text/csv',
     });
     cy.get('[data-test=upload-form]').submit();
-    cy.location('pathname').should('match', /^\/master\/compare\//);
+    cy.location('pathname').should('match', /^\/compare\/master../);
 
     // Renders correct number of "added" rows
     cy.get('[data-test=sheet] tbody tr')
@@ -38,11 +38,41 @@ describe('e2e', () => {
 
     // Merges and redirects to base branch
     cy.get('[data-test=commit-form]').submit();
-    cy.location('pathname').should('be', '/master');
+    cy.location('pathname').should('be', '/records/master');
 
     // Renders correct number of rows
     cy.get('[data-test=sheet] tbody tr')
       .should('have.length', 10)
+      .should('not.have.class', '-status-added');
+  })
+
+  it('Supports nested branch names', function () {
+    cy.request({
+      method: 'POST',
+      url: '/api/import/master?branch=proposal/alpha',
+      body: this.sampleData,
+      headers: { 'content-type': 'text/csv' },
+    });
+    cy.request({
+      method: 'POST',
+      url: '/api/import/proposal/alpha?branch=proposal/beta',
+      body: this.sampleDataChanged,
+      headers: { 'content-type': 'text/csv' },
+    });
+
+    cy.visit('/compare/proposal/alpha..proposal/beta');
+
+    // Renders correct number of diff rows
+    cy.get('[data-test=sheet] tbody tr')
+      .should('have.length', 11);
+
+    // Merges and redirects to base branch
+    cy.get('[data-test=commit-form]').submit();
+    cy.location('pathname').should('be', '/records/proposal/alpha');
+
+    // Renders correct number of rows
+    cy.get('[data-test=sheet] tbody tr')
+      .should('have.length', 9)
       .should('not.have.class', '-status-added');
   })
 })
