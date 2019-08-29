@@ -23,7 +23,7 @@
 
       form(@submit.prevent="onSubmitUpload" data-test="upload-form")
         input(type="file" name="file" accept=".csv" required ref="file" data-test="upload-file")
-        SubmitButton.mt-3.w-full Select file
+        SubmitButton.mt-3.w-full Upload file
 </template>
 
 <script>

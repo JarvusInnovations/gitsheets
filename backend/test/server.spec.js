@@ -48,7 +48,7 @@ describe('server', () => {
   describe('config', () => {
     test('base endpoint returns config', async () => {
       const response = await request(server.callback())
-        .get('/master')
+        .get('/config/master')
         .expect(200)
 
       expect(response.body).toHaveProperty('config')
@@ -58,12 +58,12 @@ describe('server', () => {
 
     test('updates config', async () => {
       await request(server.callback())
-        .put('/master')
+        .put('/config/master')
         .send({ config: { path: '{{last_name}}/{{first_name}}'} })
         .expect(204)
 
       const response = await request(server.callback())
-        .get('/master')
+        .get('/config/master')
       
       expect(response.body.config.path).toBe('{{last_name}}/{{first_name}}')
     })
@@ -79,7 +79,7 @@ describe('server', () => {
       })
 
       const response = await request(server.callback())
-        .get('/master/records')
+        .get('/records/master')
         .expect(200)
 
       expect(Array.isArray(response.body)).toBe(true)
@@ -89,7 +89,7 @@ describe('server', () => {
 
     test('lists rows with nested paths', async () => {
       await request(server.callback())
-        .put('/master')
+        .put('/config/master')
         .send({ config: { path: '{{last_name}}/{{first_name}}'} })
         .expect(204)
 
@@ -101,7 +101,7 @@ describe('server', () => {
       })
 
       const response = await request(server.callback())
-        .get('/master/records')
+        .get('/records/master')
         .expect(200)
 
       expect(Array.isArray(response.body)).toBe(true)
@@ -112,7 +112,7 @@ describe('server', () => {
 
     test('returns empty array if no data', async () => {
       const response = await request(server.callback())
-        .get('/master/records')
+        .get('/records/master')
         .expect(200)
 
       expect(Array.isArray(response.body)).toBe(true)
@@ -121,20 +121,20 @@ describe('server', () => {
     
     test('requesting invalid ref throws error', async () => {
       await request(server.callback())
-        .get('/;echo%20hi/records')
+        .get('/records/;echo%20hi')
         .expect(400)
     })
 
     test('requesting nonexistent ref throws 404', async () => {
       await request(server.callback())
-        .get('/unicorns/records')
+        .get('/records/unicorns')
         .expect(404)
     })
 
     test.skip('requesting a non-gitsheet-style branch returns empty array with count in header', async () => {
       // commit a csv file (non exploded) and request the branch
       const response = await request(server.callback())
-        .get('/master/records')
+        .get('/records/master')
         .expect(200)
 
       expect(Array.isArray(response.body)).toBe(true)
@@ -147,7 +147,7 @@ describe('server', () => {
   describe('import', () => {
     test('creates commit on current branch with exploded data', async () => {
       await request(server.callback())
-        .post('/master/import')
+        .post('/import/master')
         .type('csv')
         .send(sampleData)
         .expect(204)
@@ -159,13 +159,13 @@ describe('server', () => {
 
     test('maintains existing config', async () => {
       await request(server.callback())
-        .post('/master/import')
+        .post('/import/master')
         .type('csv')
         .send(sampleData)
         .expect(204)
 
       const response = await request(server.callback())
-        .get('/master')
+        .get('/config/master')
       
       expect(response.body.config).toHaveProperty('path')
       expect(response.body.config.path).toBe('{{id}}')
@@ -173,19 +173,19 @@ describe('server', () => {
 
     test('truncates and loads', async () => {
       await request(server.callback())
-        .post('/master/import')
+        .post('/import/master')
         .type('csv')
         .send(sampleData)
         .expect(204)
 
       await request(server.callback())
-        .post('/master/import')
+        .post('/import/master')
         .type('csv')
         .send(sampleDataChanged)
         .expect(204)
 
       const response = await request(server.callback())
-        .get('/master/records')
+        .get('/records/master')
 
       const DELETED_RECORD_ID = '5'
       const deletedRecord = response.body.find((record) => record.id === DELETED_RECORD_ID)
@@ -194,7 +194,7 @@ describe('server', () => {
 
     test('creates commit on new branch when specified', async () => {
       await request(server.callback())
-        .post('/master/import?branch=proposal')
+        .post('/import/master?branch=proposal')
         .type('csv')
         .send(sampleDataChanged)
         .expect(204)
@@ -204,16 +204,31 @@ describe('server', () => {
       expect(treeItems.length).toBe(expectedCount)
     })
 
+    test('supports creating nested branch names', async () => {
+      await request(server.callback())
+        .post('/import/master?branch=proposal/foo')
+        .type('csv')
+        .send(sampleDataChanged)
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/records/proposal/foo')
+        .expect(200)
+
+      expect(Array.isArray(response.body)).toBe(true)
+      expect(response.body.length).toBe(getCsvRowCount(sampleDataChanged))
+    })
+
     test('sending non-csv data throws an error', async () => {
       await request(server.callback())
-        .post('/master/import')
+        .post('/import/master')
         .send({ foo: 'bar' })
         .expect(415)
     })
 
     test.skip('omitting data throws an error', async () => {
       await request(server.callback())
-        .post('/master/import')
+        .post('/import/master')
         .expect(400)
     })
 
@@ -224,7 +239,7 @@ describe('server', () => {
         foo,"bar
       `
       await request(server.callback())
-        .post('/master/import')
+        .post('/import/master')
         .type('csv')
         .send(malformedCsvData)
         .expect(422)
@@ -232,7 +247,7 @@ describe('server', () => {
 
     test('importing onto nonexistent branch throws an error', async () => {
       await request(server.callback())
-        .post('/unicorns/import')
+        .post('/import/unicorns')
         .type('csv')
         .send(sampleData)
         .expect(404)
@@ -264,7 +279,7 @@ describe('server', () => {
 
       test('returns expected number of diffs', async () => {
         const response = await request(server.callback())
-          .get('/master/compare/proposal')
+          .get('/compare/master..proposal')
           .expect(200)
         
         expect(Array.isArray(response.body)).toBe(true)
@@ -273,7 +288,7 @@ describe('server', () => {
 
       test('computes expected json patch for modified row', async () => {
         const response = await request(server.callback())
-          .get('/master/compare/proposal')
+          .get('/compare/master..proposal')
 
         const modifiedDiff = response.body.find((diff) => diff.status === 'modified')
 
@@ -291,18 +306,18 @@ describe('server', () => {
 
       test('comparing identical refs returns empty array', async () => {
         const response = await request(server.callback())
-          .get('/master/compare/master')
+          .get('/compare/master..master')
 
         expect(response.body.length).toBe(0)
       })
 
       test('merging merges branches', async () => {
         await request(server.callback())
-          .post('/master/compare/proposal')
+          .post('/compare/master..proposal')
           .expect(204)
 
         const response = await request(server.callback())
-          .get('/master/records')
+          .get('/records/master')
 
         const changedRowId = '3'
         const changedRow = response.body.find((row) => row.id === changedRowId)
@@ -312,11 +327,11 @@ describe('server', () => {
 
       test('merging deletes merged branch', async () => {
         await request(server.callback())
-          .post('/master/compare/proposal')
+          .post('/compare/master..proposal')
           .expect(204)
 
         await request(server.callback())
-          .get('/proposal/records')
+          .get('/records/proposal')
           .expect(404)
       })
 
@@ -333,12 +348,44 @@ describe('server', () => {
         })
 
         await request(server.callback())
-          .post('/master/compare/proposal')
+          .post('/compare/master..proposal')
           .expect(409)
       })
     })
 
-    describe('nested paths', () => {
+    describe('nested branch names', () => {
+      beforeEach(async () => {
+        await loadData(gitSheets, {
+          data: sampleData,
+          pathTemplate: '{{last_name}}/{{first_name}}',
+          ref: 'master',
+          branch: 'proposal/alpha'
+        })
+        await loadData(gitSheets, {
+          data: sampleDataChanged,
+          pathTemplate: '{{last_name}}/{{first_name}}',
+          ref: 'proposal/alpha',
+          branch: 'proposal/beta'
+        })
+      })
+
+      test('returns expected number of diffs', async () => {
+        const response = await request(server.callback())
+          .get('/compare/proposal/alpha..proposal/beta')
+          .expect(200)
+        
+        expect(Array.isArray(response.body)).toBe(true)
+        expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
+      })
+
+      test('merging returns expected status code', async () => {
+        await request(server.callback())
+          .post('/compare/proposal/alpha..proposal/beta')
+          .expect(204)
+      })
+    })
+
+    describe('nested path templates', () => {
       beforeEach(async () => {
         await loadData(gitSheets, {
           data: sampleData,
@@ -356,7 +403,7 @@ describe('server', () => {
 
       test('returns expected number of diffs', async () => {
         const response = await request(server.callback())
-          .get('/master/compare/proposal')
+          .get('/compare/master..proposal')
           .expect(200)
         
         expect(Array.isArray(response.body)).toBe(true)

@@ -4,7 +4,7 @@ const git = require('git-client')
 const bodyParser = require('koa-bodyparser')
 const GitSheets = require('./lib')
 
-const validRefPattern = /^[\w-]+$/
+const validRefPattern = /^[\w-\/]+$/
 const validPathTemplatePattern = /^[{}\w- \/]+$/
 
 module.exports = createServer
@@ -25,7 +25,7 @@ async function createServer (gitSheets) {
     throw new Error(`invalid repo ${gitSheets.repo.gitDir}`)
   }
 
-  router.get('/:ref', async (ctx) => {
+  router.get('/config/:ref+', async (ctx) => {
     const ref = ctx.params.ref
     ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
 
@@ -41,7 +41,7 @@ async function createServer (gitSheets) {
     }
   })
 
-  router.put('/:ref', bodyParser(), async (ctx) => {
+  router.put('/config/:ref+', bodyParser(), async (ctx) => {
     const ref = ctx.params.ref
     const path = ctx.request.body.config && ctx.request.body.config.path
 
@@ -61,7 +61,7 @@ async function createServer (gitSheets) {
     }
   })
 
-  router.get('/:ref/records', async (ctx) => {
+  router.get('/records/:ref+', async (ctx) => {
     const ref = ctx.params.ref
     ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
 
@@ -77,7 +77,7 @@ async function createServer (gitSheets) {
     }
   })
 
-  router.post('/:ref/import', async (ctx) => {
+  router.post('/import/:ref+', async (ctx) => {
     const ref = ctx.params.ref
     const readStream = ctx.req
     const branch = ctx.request.query.branch || ref
@@ -130,7 +130,7 @@ async function createServer (gitSheets) {
     }
   })
 
-  router.get('/:srcRef/compare/:dstRef', async (ctx) => {
+  router.get('/compare/:srcRef([\\w-\\/]+)..:dstRef([\\w-\\/]+)', async (ctx) => {
     const { srcRef, dstRef } = ctx.params
 
     ctx.assert(validRefPattern.test(srcRef), 400, 'invalid src ref')
@@ -140,7 +140,7 @@ async function createServer (gitSheets) {
     ctx.body = diffs
   })
 
-  router.post('/:srcRef/compare/:dstRef', async (ctx) => {
+  router.post('/compare/:srcRef([\\w-\\/]+)..:dstRef([\\w-\\/]+)', async (ctx) => {
     const { srcRef, dstRef } = ctx.params
 
     ctx.assert(validRefPattern.test(srcRef), 400, 'invalid src ref')

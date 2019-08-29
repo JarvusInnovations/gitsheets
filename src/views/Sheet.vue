@@ -95,7 +95,7 @@ export default {
 
       try {
         await this.merge({ srcRef, dstRef });
-        this.$router.push(`/${srcRef}`);
+        this.$router.push(`/records/${srcRef}`);
       } catch (err) {
         console.error(err.message);
       }
@@ -106,7 +106,7 @@ export default {
 
       try {
         await this.import({ srcRef, file, branch });
-        this.$router.push(`/${srcRef}/compare/${branch}`);
+        this.$router.push(`/compare/${srcRef}..${branch}`);
       } catch (err) {
         console.error(err.message);
       }

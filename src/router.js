@@ -8,13 +8,14 @@ export default new Router({
   mode: 'history',
   routes: [
     {
-      path: '/:srcRef?',
+      path: '/records/:srcRef([\\w-\\/]+)?',
+      alias: '/',
       name: 'sheet',
       component: Sheet,
       props: true,
     },
     {
-      path: '/:srcRef/compare/:dstRef',
+      path: '/compare/:srcRef([\\w-\\/]+)..:dstRef([\\w-\\/]+)',
       name: 'compare',
       component: Sheet,
       props: true,

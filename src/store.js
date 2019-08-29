@@ -25,20 +25,20 @@ export default new Vuex.Store({
   },
   actions: {
     async getRecords ({ commit }, srcRef) {
-      const response = await api.get(`/${srcRef}/records`);
+      const response = await api.get(`/records/${srcRef}`);
       commit('SET_RECORDS', response.data);
     },
     async getDiffs ({ commit }, { srcRef, dstRef }) {
-      const response = await api.get(`/${srcRef}/compare/${dstRef}`);
+      const response = await api.get(`/compare/${srcRef}..${dstRef}`);
       commit('SET_DIFFS', response.data);
     },
     async merge (_context, { srcRef, dstRef }) {
-      await api.post(`/${srcRef}/compare/${dstRef}`);
+      await api.post(`/compare/${srcRef}..${dstRef}`);
     },
     async import (_context, { srcRef, file, branch }) {
       await api({
         method: 'post',
-        url: `/${srcRef}/import?branch=${branch}`,
+        url: `/import/${srcRef}?branch=${branch}`,
         data: file,
         headers: {'content-type': 'text/csv'},
       });
