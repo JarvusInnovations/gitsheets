@@ -79,6 +79,8 @@ export default {
     }),
     async fetch () {
       const { srcRef, dstRef } = this
+      const loader = this.$loading.show();
+
       try {
         this.resetSheet();
         await this.getRecords(srcRef);
@@ -94,21 +96,28 @@ export default {
       } catch (err) {
         this.$awn.alert(`Failed to retrieve branch ${srcRef}`);
         console.error(err.message);
+      } finally {
+        loader.hide();
       }
     },
     async onCommit (msg) {
       const { srcRef, dstRef } = this;
+      const loader = this.$loading.show();
+
       try {
         await this.merge({ srcRef, dstRef });
         this.$router.push({ name: 'records', params: { srcRef } });
       } catch (err) {
         this.$awn.alert(`Failed to merge ${srcRef} onto ${dstRef}`);
         console.error(err.message);
+      } finally {
+        loader.hide();
       }
     },
     async onUpload (file) {
       const srcRef = this.dstRef || this.srcRef;
       const branch = this.generateBranchName();
+      const loader = this.$loading.show();
 
       try {
         await this.import({ srcRef, file, branch });
@@ -116,6 +125,8 @@ export default {
       } catch (err) {
         this.$awn.alert(`Failed to import file branching from ${srcRef}`);
         console.error(err.message);
+      } finally {
+        loader.hide();
       }
     },
     generateBranchName () {
