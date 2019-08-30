@@ -131,8 +131,9 @@ export default {
     onSubmitCommit () {
       this.$emit('commit', this.commitMessage);
     },
-    onSubmitUpload () {
+    onSubmitUpload (event) {
       this.$emit('upload', this.$refs.file.files[0]);
+      event.target.reset();
     },
   },
 }
