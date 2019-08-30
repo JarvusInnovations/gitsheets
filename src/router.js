@@ -10,7 +10,7 @@ export default new Router({
     {
       path: '/records/:srcRef([\\w-\\/]+)?',
       alias: '/',
-      name: 'sheet',
+      name: 'records',
       component: Sheet,
       props: true,
     },

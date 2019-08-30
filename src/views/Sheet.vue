@@ -78,25 +78,31 @@ export default {
       resetSheet: 'RESET_SHEET',
     }),
     async fetch () {
+      const { srcRef, dstRef } = this
       try {
         this.resetSheet();
-        await this.getRecords(this.srcRef);
-        if (this.dstRef) {
-          const { srcRef, dstRef } = this
-          await this.getDiffs({ srcRef, dstRef });
+        await this.getRecords(srcRef);
+
+        if (dstRef) {
+          try {
+            await this.getDiffs({ srcRef, dstRef });
+          } catch (err) {
+            this.$awn.alert(`Failed to retrieve diffs between ${srcRef} and ${dstRef}`)
+            console.error(err.message);
+          }
         }
       } catch (err) {
+        this.$awn.alert(`Failed to retrieve branch ${srcRef}`);
         console.error(err.message);
       }
     },
     async onCommit (msg) {
-      const srcRef = this.srcRef;
-      const dstRef = this.dstRef;
-
+      const { srcRef, dstRef } = this;
       try {
         await this.merge({ srcRef, dstRef });
-        this.$router.push(`/records/${srcRef}`);
+        this.$router.push({ name: 'records', params: { srcRef } });
       } catch (err) {
+        this.$awn.alert(`Failed to merge ${srcRef} onto ${dstRef}`);
         console.error(err.message);
       }
     },
@@ -106,8 +112,9 @@ export default {
 
       try {
         await this.import({ srcRef, file, branch });
-        this.$router.push(`/compare/${srcRef}..${branch}`);
+        this.$router.push({ name: 'compare', params: { srcRef, dstRef: branch } });
       } catch (err) {
+        this.$awn.alert(`Failed to import file branching from ${srcRef}`);
         console.error(err.message);
       }
     },
