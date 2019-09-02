@@ -131,6 +131,24 @@ describe('server', () => {
         .expect(404)
     })
 
+    test('lists rows as csv if requested', async () => {
+      await loadData(gitSheets, {
+        data: sampleData, 
+        pathTemplate: '{{id}}',
+        ref: 'master',
+        branch: 'master'
+      })
+
+      const response = await request(server.callback())
+        .get('/records/master')
+        .accept('text/csv')
+        .expect(200)
+
+      expect(getCsvRowCount(response.text)).toBe(getCsvRowCount(sampleData))
+      expect(response.type).toBe('text/csv')
+      expect(response.headers).toHaveProperty('content-disposition')
+    })
+
     test.skip('requesting a non-gitsheet-style branch returns empty array with count in header', async () => {
       // commit a csv file (non exploded) and request the branch
       const response = await request(server.callback())
