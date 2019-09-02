@@ -3,6 +3,7 @@ const maxstache = require('maxstache')
 const csvParser = require('csv-parser')
 const TOML = require('@iarna/toml')
 const jsonpatch = require('fast-json-patch')
+const { Readable } = require('stream')
 
 module.exports = class GitSheets {
   static async create(gitDir = null) {
@@ -106,21 +107,27 @@ module.exports = class GitSheets {
       ? await this.repo.createTreeFromRef(ref)
       : this.repo.createTree()
 
-    const keyedChildren = await tree.getBlobMap()
-    const rows = []
-    for (let key in keyedChildren) {
-      if (key.startsWith('.gitsheets/')) {
-        continue;
-      }
+    const blobMap = await tree.getBlobMap()
+    let blobsRemaining = Object.entries(blobMap)
+      .filter(([key, blob]) => {
+        return !key.startsWith('.gitsheets/')
+          && blob instanceof BlobObject
+      })
 
-      const child = keyedChildren[key]
-      if (child instanceof BlobObject) {
-        const data = await this.parseBlob(child)
-        data._id = key
-        rows.push(data)
+    const parseBlob = this.parseBlob.bind(this)
+
+    return new Readable({
+      objectMode: true,
+      async read () {
+        if (blobsRemaining.length > 0) {
+          const [key, blob] = blobsRemaining.shift() // mutates blobsRemaining
+          const data = await parseBlob(blob)
+          this.push({ ...data, _id: key })
+        } else {
+          this.push(null)
+        }
       }
-    }
-    return rows
+    })
   }
 
   async getDiffs (srcRef, dstRef) {

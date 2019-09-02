@@ -3,7 +3,7 @@ const Router = require('koa-router')
 const git = require('git-client')
 const bodyParser = require('koa-bodyparser')
 const { format: csvFormat } = require('fast-csv')
-const intoStream = require('into-stream')
+const JsonStringify = require('streaming-json-stringify')
 const GitSheets = require('./lib')
 
 const validRefPattern = /^[\w-\/]+$/
@@ -82,11 +82,15 @@ async function createServer (gitSheets) {
       case 'csv':
         ctx.type = 'text/csv'
         ctx.set('Content-Disposition', `attachment; filename=${ref}.csv`)
-        ctx.body = intoStream.object(rows)
-          .pipe(csvFormat({ headers: true }))
+        ctx.body = rows.pipe(csvFormat({ headers: true }))
         break
       default:
-        ctx.body = rows
+        try {
+          ctx.type = 'application/json'
+          ctx.body = rows.pipe(JsonStringify())
+        } catch (err) {
+          console.error('error setting body', err.message)
+        }
     }
   })
 

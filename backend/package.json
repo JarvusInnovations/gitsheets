@@ -23,11 +23,11 @@
     "fast-json-patch": "^2.2.1",
     "hologit": "^0.21.0",
     "http-assert": "^1.4.1",
-    "into-stream": "^5.1.0",
     "koa": "^2.7.0",
     "koa-bodyparser": "^4.2.1",
     "koa-router": "^7.4.0",
     "maxstache": "^1.0.7",
+    "streaming-json-stringify": "^3.1.0",
     "to-readable-stream": "^2.1.0",
     "winston": "^2.4.3",
     "yargs": "^13.2.4"
