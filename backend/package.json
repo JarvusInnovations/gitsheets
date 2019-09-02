@@ -36,6 +36,7 @@
   "devDependencies": {
     "common-tags": "^1.8.0",
     "del": "^5.0.0",
+    "into-stream": "^5.1.0",
     "jest": "^24.8.0",
     "make-dir": "^3.0.0",
     "supertest": "^4.0.2"
