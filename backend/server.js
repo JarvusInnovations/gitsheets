@@ -65,6 +65,7 @@ async function createServer (gitSheets) {
 
   router.get('/records/:ref+', async (ctx) => {
     const ref = ctx.params.ref
+    const format = ctx.query.format
     ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
 
     let rows
@@ -78,7 +79,7 @@ async function createServer (gitSheets) {
       }
     }
 
-    switch (ctx.accepts('json', 'csv')) {
+    switch (format || ctx.accepts('json', 'csv')) {
       case 'csv':
         ctx.type = 'text/csv'
         ctx.set('Content-Disposition', `attachment; filename=${ref}.csv`)
