@@ -7,7 +7,8 @@
         :name="fieldName",
         :id="fieldName",
         :required="required"
-        :placeholder="placeholderText") {{ value }}
+        :placeholder="placeholderText"
+        @input="$emit('input', $event.target.value)") {{ value }}
 
     template(v-else)
       input.FieldLabeled__control(
@@ -15,8 +16,9 @@
         :id="fieldName",
         :type="fieldType",
         :required="required"
-        :placeholder="placeholderText",
-        :value="value")
+        :placeholder="placeholderText"
+        :value="value"
+        @input="$emit('input', $event.target.value)")
 </template>
 
 <script>
