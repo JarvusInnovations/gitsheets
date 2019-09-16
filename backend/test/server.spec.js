@@ -1,52 +1,57 @@
+const makeDir = require('make-dir');
+const del = require('del');
 const request = require('supertest')
 const fs = require('fs')
 const { stripIndent } = require('common-tags')
-const GitSheets = require('../lib')
+const intoStream = require('into-stream');
+const GitSheets = require('../lib/GitSheets')
 const createServer = require('../server')
-const {
-  setupRepo,
-  teardownRepo,
-  loadData,
-  getCsvRowCount,
-  getTreeItems
-} = require('./util')
 
-const TEST_GIT_DIR = './test/tmp/server-test-repo/.git'
-const INVALID_GIT_DIR = './test/tmp/invalid-repo/.git'
+const GIT_DIR = './test/tmp/server-test-repo/.git'
 const SAMPLE_DATA = './test/fixtures/sample_data.csv'
 const SAMPLE_DATA_CHANGED = './test/fixtures/sample_data_changed.csv'
 const SAMPLE_DATA_CHANGES_COUNT = 4
 
-describe('server', () => {
+describe('Server', () => {
   let gitSheets
   let server
   let sampleData
   let sampleDataChanged
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sampleData = fs.readFileSync(SAMPLE_DATA).toString()
     sampleDataChanged = fs.readFileSync(SAMPLE_DATA_CHANGED).toString()
+
+    gitSheets = await GitSheets.create(GIT_DIR)
+
+    // Stateful helper functions
+    importFixture = (fixture, branch) => gitSheets.import({
+      data: intoStream.object(fixture),
+      dataType: 'csv',
+      parentRef: 'master',
+      saveToBranch: branch,
+    });
   })
 
   beforeEach(async () => {
-    gitSheets = await GitSheets.create(TEST_GIT_DIR)
-    await setupRepo(gitSheets)
+    await makeDir(GIT_DIR);
+    await gitSheets.git.init();
+    await gitSheets.git.commit({
+      m: 'init',
+      'allow-empty': true,
+    });
+
     server = await createServer(gitSheets)
   })
 
   afterEach(async () => {
-    await teardownRepo(gitSheets)
+    await del([GIT_DIR]);
   })
 
-  test('starting server without valid git repo throws error', async () => {
-    const localGitSheets = await GitSheets.create(INVALID_GIT_DIR)
-    await expect(createServer(localGitSheets))
-      .rejects
-      .toThrow()
-  })
-
-  describe('config', () => {
+  describe('Config', () => {
     test('base endpoint returns config', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+
       const response = await request(server.callback())
         .get('/config/master')
         .expect(200)
@@ -57,6 +62,8 @@ describe('server', () => {
     })
 
     test('updates config', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+
       await request(server.callback())
         .put('/config/master')
         .send({ config: { path: '{{last_name}}/{{first_name}}'} })
@@ -69,172 +76,17 @@ describe('server', () => {
     })
   })
 
-  describe('list records', () => {
-    test('lists rows with _id field in each row', async () => {
-      await loadData(gitSheets, {
-        data: sampleData, 
-        pathTemplate: '{{id}}',
-        ref: 'master',
-        branch: 'master'
-      })
-
-      const response = await request(server.callback())
-        .get('/records/master')
-        .expect(200)
-
-      expect(Array.isArray(response.body)).toBe(true)
-      expect(response.body.length).toBe(getCsvRowCount(sampleData))
-      expect(response.body[0]).toHaveProperty('_id')
+  describe('Import', () => {
+    beforeEach(async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
     })
 
-    test('lists rows with nested paths', async () => {
-      await request(server.callback())
-        .put('/config/master')
-        .send({ config: { path: '{{last_name}}/{{first_name}}'} })
-        .expect(204)
-
-      await loadData(gitSheets, {
-        data: sampleData, 
-        pathTemplate: '{{last_name}}/{{first_name}}',
-        ref: 'master',
-        branch: 'master'
-      })
-
-      const response = await request(server.callback())
-        .get('/records/master')
-        .expect(200)
-
-      expect(Array.isArray(response.body)).toBe(true)
-      expect(response.body.length).toBe(getCsvRowCount(sampleData))
-      expect(response.body[0]).toHaveProperty('_id')
-      expect(response.body[0]._id).toContain('/')
-    })
-
-    test('returns empty array if no data', async () => {
-      const response = await request(server.callback())
-        .get('/records/master')
-        .expect(200)
-
-      expect(Array.isArray(response.body)).toBe(true)
-      expect(response.body.length).toBe(0)
-    })
-    
-    test('requesting invalid ref throws error', async () => {
-      await request(server.callback())
-        .get('/records/;echo%20hi')
-        .expect(400)
-    })
-
-    test('requesting nonexistent ref throws 404', async () => {
-      await request(server.callback())
-        .get('/records/unicorns')
-        .expect(404)
-    })
-
-    test('lists rows as csv if requested', async () => {
-      await loadData(gitSheets, {
-        data: sampleData, 
-        pathTemplate: '{{id}}',
-        ref: 'master',
-        branch: 'master'
-      })
-
-      const response = await request(server.callback())
-        .get('/records/master')
-        .accept('text/csv')
-        .expect(200)
-
-      expect(getCsvRowCount(response.text)).toBe(getCsvRowCount(sampleData))
-      expect(response.type).toBe('text/csv')
-      expect(response.headers).toHaveProperty('content-disposition')
-    })
-
-    test.skip('requesting a non-gitsheet-style branch returns empty array with count in header', async () => {
-      // commit a csv file (non exploded) and request the branch
-      const response = await request(server.callback())
-        .get('/records/master')
-        .expect(200)
-
-      expect(Array.isArray(response.body)).toBe(true)
-      expect(response.body.lenegth).toBe(0)
-      expect(response.header).toHaveProperty('X-GitSheets-Invalid-Items')
-      expect(response.header['X-GitSheets-Invalid-Items']).toBe(1)
-    })
-  })
-
-  describe('import', () => {
-    test('creates commit on current branch with exploded data', async () => {
+    test('returns expected status on success', async () => {
       await request(server.callback())
         .post('/import/master')
-        .type('csv')
         .send(sampleData)
-        .expect(204)
-
-      const treeItems = await getTreeItems(gitSheets, 'master')
-      const expectedCount = getCsvRowCount(sampleData) + 1 // .gitsheets subtree
-      expect(treeItems.length).toBe(expectedCount)
-    })
-
-    test('maintains existing config', async () => {
-      await request(server.callback())
-        .post('/import/master')
         .type('csv')
-        .send(sampleData)
         .expect(204)
-
-      const response = await request(server.callback())
-        .get('/config/master')
-      
-      expect(response.body.config).toHaveProperty('path')
-      expect(response.body.config.path).toBe('{{id}}')
-    })
-
-    test('truncates and loads', async () => {
-      await request(server.callback())
-        .post('/import/master')
-        .type('csv')
-        .send(sampleData)
-        .expect(204)
-
-      await request(server.callback())
-        .post('/import/master')
-        .type('csv')
-        .send(sampleDataChanged)
-        .expect(204)
-
-      const response = await request(server.callback())
-        .get('/records/master')
-
-      const DELETED_RECORD_ID = '5'
-      const deletedRecord = response.body.find((record) => record.id === DELETED_RECORD_ID)
-      expect(deletedRecord).not.toBeDefined()
-    })
-
-    test('creates commit on new branch when specified', async () => {
-      await request(server.callback())
-        .post('/import/master?branch=proposal')
-        .type('csv')
-        .send(sampleDataChanged)
-        .expect(204)
-
-      const treeItems = await getTreeItems(gitSheets, 'proposal')
-      const expectedCount = getCsvRowCount(sampleDataChanged) + 1 // .gitsheets subtree
-      expect(treeItems.length).toBe(expectedCount)
-    })
-
-    test('supports creating nested branch names', async () => {
-      await request(server.callback())
-        .post('/import/master?branch=proposal/foo')
-        .type('csv')
-        .send(sampleDataChanged)
-        .expect(204)
-
-      const response = await request(server.callback())
-        .get('/records/proposal/foo')
-        .expect(200)
-
-      expect(Array.isArray(response.body)).toBe(true)
-      expect(response.body.length).toBe(getCsvRowCount(sampleDataChanged))
     })
 
     test('sending non-csv data throws an error', async () => {
@@ -270,163 +122,120 @@ describe('server', () => {
         .send(sampleData)
         .expect(404)
     })
-
-    test.skip('importing onto new branch throws an error', async () => {
-      // create git dir without initial commit
-    })
-
-    // TODO: TOML parse errors, invalid path templates
   })
 
-  describe('compare', () => {
-    describe('top-level paths', () => {
-      beforeEach(async () => {
-        await loadData(gitSheets, {
-          data: sampleData,
-          pathTemplate: '{{id}}',
-          ref: 'master',
-          branch: 'master'
-        })
-        await loadData(gitSheets, {
-          data: sampleDataChanged,
-          pathTemplate: '{{id}}',
-          ref: 'master',
-          branch: 'proposal'
-        })
-      })
-
-      test('returns expected number of diffs', async () => {
-        const response = await request(server.callback())
-          .get('/compare/master..proposal')
-          .expect(200)
-        
-        expect(Array.isArray(response.body)).toBe(true)
-        expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
-      })
-
-      test('computes expected json patch for modified row', async () => {
-        const response = await request(server.callback())
-          .get('/compare/master..proposal')
-
-        const modifiedDiff = response.body.find((diff) => diff.status === 'modified')
-
-        expect(modifiedDiff).toBeDefined()
-        expect(modifiedDiff.patch.length).toBe(1)
-
-        const expectedPatch = {
-          op: 'replace',
-          path: '/last_name',
-          from: 'Hansford',
-          value: 'Footsford'
-        }
-        expect(modifiedDiff.patch[0]).toMatchObject(expectedPatch)
-      })
-
-      test('comparing identical refs returns empty array', async () => {
-        const response = await request(server.callback())
-          .get('/compare/master..master')
-
-        expect(response.body.length).toBe(0)
-      })
-
-      test('merging merges branches', async () => {
-        await request(server.callback())
-          .post('/compare/master..proposal')
-          .expect(204)
-
-        const response = await request(server.callback())
-          .get('/records/master')
-
-        const changedRowId = '3'
-        const changedRow = response.body.find((row) => row.id === changedRowId)
-        expect(changedRow).toBeDefined()
-        expect(changedRow.last_name).toBe('Footsford')
-      })
-
-      test('merging deletes merged branch', async () => {
-        await request(server.callback())
-          .post('/compare/master..proposal')
-          .expect(204)
-
-        await request(server.callback())
-          .get('/records/proposal')
-          .expect(404)
-      })
-
-      test('merging on non-ancestor throws error', async () => {
-        const conflictingData = stripIndent`
-          id,first_name,last_name,email,dob
-          1,empty,empty,empty,empty
-        `
-        await loadData(gitSheets, {
-          data: conflictingData,
-          pathTemplate: '{{last_name}}/{{first_name}}',
-          ref: 'master',
-          branch: 'master'
-        })
-
-        await request(server.callback())
-          .post('/compare/master..proposal')
-          .expect(409)
-      })
+  describe('Export', () => {
+    beforeEach(async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
     })
 
-    describe('nested branch names', () => {
-      beforeEach(async () => {
-        await loadData(gitSheets, {
-          data: sampleData,
-          pathTemplate: '{{last_name}}/{{first_name}}',
-          ref: 'master',
-          branch: 'proposal/alpha'
-        })
-        await loadData(gitSheets, {
-          data: sampleDataChanged,
-          pathTemplate: '{{last_name}}/{{first_name}}',
-          ref: 'proposal/alpha',
-          branch: 'proposal/beta'
-        })
-      })
+    test('returns array of objects', async () => {
+      await importFixture(sampleData, 'master');
 
-      test('returns expected number of diffs', async () => {
-        const response = await request(server.callback())
-          .get('/compare/proposal/alpha..proposal/beta')
-          .expect(200)
-        
-        expect(Array.isArray(response.body)).toBe(true)
-        expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
-      })
+      const response = await request(server.callback())
+        .get('/records/master')
+        .expect(200)
 
-      test('merging returns expected status code', async () => {
-        await request(server.callback())
-          .post('/compare/proposal/alpha..proposal/beta')
-          .expect(204)
-      })
+      expect(Array.isArray(response.body)).toBe(true)
+      expect(response.body.length).toBe(getCsvRowCount(sampleData))
+      expect(response.body[0]).toHaveProperty('_id')
     })
 
-    describe('nested path templates', () => {
-      beforeEach(async () => {
-        await loadData(gitSheets, {
-          data: sampleData,
-          pathTemplate: '{{last_name}}/{{first_name}}',
-          ref: 'master',
-          branch: 'master'
-        })
-        await loadData(gitSheets, {
-          data: sampleDataChanged,
-          pathTemplate: '{{last_name}}/{{first_name}}',
-          ref: 'master',
-          branch: 'proposal'
-        })
+    test('requesting invalid ref throws error', async () => {
+      await request(server.callback())
+        .get('/records/;echo%20hi')
+        .expect(400)
+    })
+
+    test('requesting nonexistent ref throws 404', async () => {
+      await request(server.callback())
+        .get('/records/unicorns')
+        .expect(404)
+    })
+
+    test('lists rows as csv if requested', async () => {
+      await importFixture(sampleData, 'master');
+
+      const response = await request(server.callback())
+        .get('/records/master')
+        .accept('text/csv')
+        .expect(200)
+
+      expect(getCsvRowCount(response.text)).toBe(getCsvRowCount(sampleData))
+      expect(response.type).toBe('text/csv')
+      expect(response.headers).toHaveProperty('content-disposition')
+    })
+  })
+
+  describe('Compare', () => {
+    beforeEach(async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+    })
+
+    test('returns expected number of diffs', async () => {
+      await importFixture(sampleData, 'master');
+      await importFixture(sampleDataChanged, 'proposal');
+
+      const response = await request(server.callback())
+        .get('/compare/master..proposal')
+        .expect(200)
+      
+      expect(Array.isArray(response.body)).toBe(true)
+      expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
+    })
+
+    test('supports nested branch names', async () => {
+      await importFixture(sampleData, 'proposal/alpha');
+      await importFixture(sampleDataChanged, 'proposal/beta');
+
+
+      await request(server.callback())
+        .get('/compare/proposal/alpha..proposal/beta')
+        .expect(200)
+    })
+  })
+
+  describe('Merge', () => {
+    beforeEach(async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+    })
+
+    test('merging merges branches', async () => {
+      await importFixture(sampleData, 'master');
+      await importFixture(sampleDataChanged, 'proposal');
+
+      await request(server.callback())
+        .post('/compare/master..proposal')
+        .expect(204)
+
+      const response = await request(server.callback())
+        .get('/records/master')
+
+      const changedRowId = '3'
+      const changedRow = response.body.find((row) => row.id === changedRowId)
+      expect(changedRow).toBeDefined()
+      expect(changedRow.last_name).toBe('Footsford')
+    })
+
+    test('supports nested branch names', async () => {
+      await importFixture(sampleData, 'proposal/alpha');
+      await gitSheets.import({
+        data: intoStream.object(sampleDataChanged),
+        dataType: 'csv',
+        parentRef: 'proposal/alpha',
+        saveToBranch: 'proposal/beta',
       })
 
-      test('returns expected number of diffs', async () => {
-        const response = await request(server.callback())
-          .get('/compare/master..proposal')
-          .expect(200)
-        
-        expect(Array.isArray(response.body)).toBe(true)
-        expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
-      })
+      await request(server.callback())
+        .post('/compare/proposal/alpha..proposal/beta')
+        .expect(204)
     })
   })
 })
+
+function getCsvRowCount (string) {
+  return string
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .length - 1
+}

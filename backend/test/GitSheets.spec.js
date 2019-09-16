@@ -1,52 +1,47 @@
 const makeDir = require('make-dir');
 const del = require('del');
 const intoStream = require('into-stream');
-const { stripIndent } = require('common-tags');
+const getStream = require('get-stream');
 
-const GitSheets = require('../lib/index2');
+const GitSheets = require('../lib/GitSheets');
 const {
   ConfigError,
   InvalidRefError,
+  MergeError,
 } = require('../lib/errors');
 
 const GIT_DIR = process.env.GIT_DIR || 'test/tmp/GitSheets-test-repo/.git';
 
 const sampleData = {
-  initial: {
-    array: [
-      {id: '1', first_name: 'Ada', last_name: 'Lovelace' },
-      {id: '2', first_name: 'Grace', last_name: 'Hopper' },
-      {id: '3', first_name: 'Radia', last_name: 'Perlman' },
-    ],
-    csv: stripIndent`
-      id,first_name,last_name
-      1,Ada,Lovelace
-      2,Grace,Hopper
-      3,Radia,Perlman
-    `,
-  },
-  changed: {
-    array: [
-      {id: '1', first_name: 'Ada', last_name: 'Lovelace' },
-      {id: '2', first_name: 'Grace', last_name: 'Hopper-Suffix' },
-      {id: '4', first_name: 'Another', last_name: 'Example' },
-      {id: '5', first_name: 'Foo', last_name: 'Bar' },
-    ],
-    csv: stripIndent`
-      id,first_name,last_name
-      1,Ada,Lovelace
-      2,Grace,Hopper-Suffix
-      4,Another,Example
-      5,Foo,Bar
-    `,
-  }
-}
+  initial: [
+    {id: '1', first_name: 'Ada', last_name: 'Lovelace' },
+    {id: '2', first_name: 'Grace', last_name: 'Hopper' },
+    {id: '3', first_name: 'Radia', last_name: 'Perlman' },
+  ],
+  changed: [
+    {id: '1', first_name: 'Ada', last_name: 'Lovelace' },
+    {id: '2', first_name: 'Grace', last_name: 'Hopper-Suffix' },
+    {id: '4', first_name: 'Another', last_name: 'Example' },
+    {id: '5', first_name: 'Foo', last_name: 'Bar' },
+  ],
+};
 
 describe('GitSheets lib', () => {
   let gitSheets;
+  let importFixture;
+
+  beforeAll(async () => {
+    gitSheets = await GitSheets.create(GIT_DIR);
+
+    // Stateful helper functions
+    importFixture = (fixture, branch) => gitSheets.import({
+      data: intoStream.object(sampleData[fixture]),
+      parentRef: 'master',
+      saveToBranch: branch,
+    });
+  });
 
   beforeEach(async () => {
-    gitSheets = await GitSheets.create(GIT_DIR);
     await makeDir(GIT_DIR);
     await gitSheets.git.init();
     await gitSheets.git.commit({
@@ -110,53 +105,140 @@ describe('GitSheets lib', () => {
         .toThrow(ConfigError);
     });
 
-    describe('_writeDataToTree', () => {
-      // This could be replaced by a hard-coded tree hash comparison
-      // since they're idempotent, but this gives a bit more visibility
-      // if something breaks.
-      test('creates expected file for each item', async () => {
-        const data = intoStream.object(sampleData.initial.array);
-        const treeObject = await gitSheets._createTruncatedTree('master');
-        const pathTemplate = '{{id}}';
-        await gitSheets._writeDataToTree({ data, treeObject, pathTemplate });
+    test('creates commit on current branch with expected file for each item', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
 
-        const keyedChildren = await treeObject.getBlobMap();
-        const keys = Object.keys(keyedChildren);
-        expect(keys).toEqual(['1', '2', '3']);
+      await gitSheets.import({
+        data: intoStream.object(sampleData.initial),
+        parentRef: 'master',
+        saveToBranch: 'master',
+      });
 
-        await Promise.all(keys.map(async (key) => {
-          const sampleDataItem = sampleData.find((item) => item.id === key);
-          const contents = await keyedChildren[key].read();
-          const data = gitSheets._deserialize(contents);
-          expect(data).toEqual(sampleDataItem);
-        }));
-      })
+      const response = await gitSheets.git.lsTree('master');
+      const tree = parseTree(response);
+
+      const blobs = tree.filter((item) => item.type === 'blob');
+      expect (blobs.length).toBe(sampleData.initial.length);
+
+      await Promise.all(blobs.map(verifyBlob));
+
+      async function verifyBlob ({ hash, file }) {
+        const sampleDataItem = sampleData.initial.find((item) => item.id === file);
+        expect(sampleDataItem).toBeDefined();
+
+        const contents = await gitSheets.git.catFile('blob', hash);
+        const data = gitSheets._deserialize(contents);
+        expect(data).toEqual(sampleDataItem);
+      }
+    });
+
+    test('maintains config', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+
+      await gitSheets.import({
+        data: intoStream.object(sampleData.initial),
+        parentRef: 'master',
+        saveToBranch: 'master',
+      });
+
+      const path = await gitSheets.getConfigItem('master', 'path');
+      expect(path).toBe('{{id}}');
+    });
+
+    test('truncates and loads', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+
+      await gitSheets.import({
+        data: intoStream.object(sampleData.initial),
+        parentRef: 'master',
+        saveToBranch: 'master',
+      });
+
+      await gitSheets.import({
+        data: intoStream.object(sampleData.changed),
+        parentRef: 'master',
+        saveToBranch: 'master',
+      });
+
+      const response = await gitSheets.git.lsTree('master');
+      const tree = parseTree(response);
+
+      const blobs = tree.filter((item) => item.type === 'blob');
+      expect(blobs.length).toBe(sampleData.changed.length);
+
+      const DELETED_ITEM_ID = '5';
+      const deletedItem = tree.find((item) => item.id === DELETED_ITEM_ID);
+      expect(deletedItem).not.toBeDefined();
+    });
+
+    test('supports merge mode', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+
+      await gitSheets.import({
+        data: intoStream.object(sampleData.initial),
+        parentRef: 'master',
+        saveToBranch: 'master',
+      });
+
+      await gitSheets.import({
+        data: intoStream.object(sampleData.changed),
+        parentRef: 'master',
+        saveToBranch: 'master',
+        merge: true,
+      });
+
+      const response = await gitSheets.git.lsTree('master');
+      const tree = parseTree(response);
+
+      const blobs = tree.filter((item) => item.type === 'blob');
+
+      const mergedSampleData = sampleData.initial
+        .concat(sampleData.changed)
+        .reduce((accum, item) => accum.set(item.id, item), new Map());
+
+      expect(blobs.length).toBe(mergedSampleData.size);
+    });
+
+    test('supports branching', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+
+      await gitSheets.import({
+        data: intoStream.object(sampleData.initial),
+        parentRef: 'master',
+        saveToBranch: 'master',
+      });
+
+      await gitSheets.import({
+        data: intoStream.object(sampleData.changed),
+        parentRef: 'master',
+        saveToBranch: 'proposal',
+      });
+
+      const response = await gitSheets.git.lsTree('proposal');
+      const tree = parseTree(response);
+
+      const blobs = tree.filter((item) => item.type === 'blob');
+      expect(blobs.length).toBe(sampleData.changed.length);
     });
   });
 
   describe('Export', () => {
     test('returns expected number of objects', async () => {
       await gitSheets.setConfigItem('master', 'path', '{{id}}');
-      await gitSheets.import({
-        data: intoStream.object(sampleData.initial.array),
-        parentRef: 'master',
-        saveToBranch: 'master',
-      });
+      await importFixture('initial', 'master');
 
-      const rows = await gitSheets.export('master');
+      const exportStream = await gitSheets.export('master');
+      const rows = await getStream.array(exportStream);
       expect(Array.isArray(rows)).toBe(true);
-      expect(rows.length).toBe(sampleData.initial.array.length);
+      expect(rows.length).toBe(sampleData.initial.length);
     });
 
     test('supports nested paths', async () => {
       await gitSheets.setConfigItem('master', 'path', '{{last_name}}/{{first_name}}');
-      await gitSheets.import({
-        data: intoStream.object(sampleData.initial.array),
-        parentRef: 'master',
-        saveToBranch: 'master',
-      });
+      await importFixture('initial', 'master');
 
-      const rows = await gitSheets.export('master');
+      const exportStream = await gitSheets.export('master');
+      const rows = await getStream.array(exportStream);
       rows.forEach((row) => {
         expect(row).toHaveProperty('_id');
         expect(row._id).toBe(`${row.last_name}/${row.first_name}`);
@@ -164,7 +246,8 @@ describe('GitSheets lib', () => {
     });
 
     test('returns empty array if no data', async () => {
-      const rows = await gitSheets.export('master');
+      const exportStream = await gitSheets.export('master');
+      const rows = await getStream.array(exportStream);
       expect(Array.isArray(rows)).toBe(true);
       expect(rows.length).toBe(0);
     });
@@ -179,20 +262,108 @@ describe('GitSheets lib', () => {
   describe('Compare', () => {
     it('returns expected number of diffs', async () => {
       await gitSheets.setConfigItem('master', 'path', '{{id}}');
-      await gitSheets.import({
-        data: intoStream.object(sampleData.initial.array),
-        parentRef: 'master',
-        saveToBranch: 'master',
-      });
-      await gitSheets.import({
-        data: intoStream.object(sampleData.changed.array),
-        parentRef: 'master',
-        saveToBranch: 'proposed',
-      });
+      await importFixture('initial', 'master');
+      await importFixture('changed', 'proposed');
 
       const diffs = await gitSheets.compare('master', 'proposed');
       expect(Array.isArray(diffs)).toBe(true);
       expect(diffs.length).toBe(4);
     });
+
+    it('computes expected json patch for modified row', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+      await importFixture('initial', 'master');
+      await importFixture('changed', 'proposed');
+
+      const diffs = await gitSheets.compare('master', 'proposed');
+      const modifiedDiff = diffs.find((diff) => diff.status === 'modified');
+
+      expect(modifiedDiff).toBeDefined();
+      expect(modifiedDiff.patch.length).toBe(1);
+
+      const expectedPatch = {
+        op: 'replace',
+        path: '/last_name',
+        from: 'Hopper',
+        value: 'Hopper-Suffix',
+      };
+      expect(modifiedDiff.patch[0]).toMatchObject(expectedPatch);
+    });
+
+    it('returns empty array for identical refs', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+      await importFixture('initial', 'master');
+      await importFixture('initial', 'proposed');
+
+      const diffs = await gitSheets.compare('master', 'proposed');
+      expect(diffs).toEqual([]);
+    });
+
+    it('supports nested path templates', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{last_name}}/{{first_name}}');
+      await importFixture('initial', 'master');
+      await importFixture('changed', 'proposed');
+
+      const diffs = await gitSheets.compare('master', 'proposed');
+      expect(Array.isArray(diffs)).toBe(true);
+      expect(diffs.length).toBe(4);
+    })
+  });
+
+  describe('Merge', () => {
+    it('merges branches', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+      await importFixture('initial', 'master');
+      await importFixture('changed', 'proposed');
+
+      await gitSheets.merge('master', 'proposed');
+
+      const response = await gitSheets.git.lsTree('master');
+      const tree = parseTree(response);
+
+      const blobs = tree.filter((item) => item.type === 'blob');
+      expect(blobs.length).toBe(sampleData.changed.length);
+    });
+
+    it('deletes merged branch', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+      await importFixture('initial', 'master');
+      await importFixture('changed', 'proposed');
+
+      await gitSheets.merge('master', 'proposed');
+
+      await expect(gitSheets.export('proposed'))
+        .rejects
+        .toThrow(InvalidRefError);
+    });
+
+    it('throws error when merging onto non-ancestor', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+      await importFixture('initial', 'master');
+      await importFixture('changed', 'proposed');
+
+      const conflictingData = [
+        { id: 1, first_name: 'empty', last_name: 'empty', email: 'empty', dob: 'empty' },
+      ];
+
+      await gitSheets.import({
+        data: intoStream.object(conflictingData),
+        parentRef: 'master',
+        saveToBranch: 'master',
+      });
+
+      await expect(gitSheets.merge('master', 'proposed'))
+        .rejects
+        .toThrow(MergeError);
+    });
   });
 });
+
+function parseTree (treeOutput) {
+  const TREE_PATTERN = /(?<mode>\d{6}) (?<type>\w+) (?<hash>\w+)\t(?<file>.+)/;
+
+  return treeOutput
+    .trim()
+    .split('\n')
+    .map((line) => TREE_PATTERN.exec(line).groups);
+}

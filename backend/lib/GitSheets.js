@@ -1,13 +1,15 @@
 const { Repo, BlobObject } = require('hologit/lib');
-const { ReadableStream } = require('stream');
+const { Readable } = require('stream');
 const TOML = require('@iarna/toml');
 const maxstache = require('maxstache');
 const jsonpatch = require('fast-json-patch');
+const csvParser = require('csv-parser');
 
 const {
   SerializationError,
   ConfigError,
   InvalidRefError,
+  MergeError,
 } = require('./errors')
 
 const DIFF_PATTERN = /([A-Z])\d*\t(\S+)\t?(\S*)/;
@@ -34,8 +36,16 @@ module.exports = class GitSheets {
   constructor (repo, git) {
     this.repo = repo;
     this.git = git;
+    this.version = 2;
   }
 
+  /**
+   * Get config object from .gitsheets/config on a particular ref
+   * @public
+   * @param {string} ref - Ref of tree (e.g. master)
+   * @return {Promise<Object>}
+   * @throws {ConfigError}
+   */
   async getConfig (ref) {
     const tree = await this._createTreeFromRef(ref);
     const child = await tree.getChild('.gitsheets/config'); // TODO: Wrap errors
@@ -45,6 +55,14 @@ module.exports = class GitSheets {
     return this._deserialize(contents);
   }
 
+  /**
+   * Get a specific property from the config object
+   * @public
+   * @param {string} ref - Ref of tree (e.g. master)
+   * @param {string} key - Top-level property name (e.g. path)
+   * @return {Promise<*>}
+   * @throws {ConfigError}
+   */
   async getConfigItem (ref, key) {
     const config = await this.getConfig(ref);
     if (!config.hasOwnProperty(key)) {
@@ -57,9 +75,10 @@ module.exports = class GitSheets {
   /**
    * Save a config object to .gitsheets/config on an existing branch
    * @public
-   * @param {treeish} ref - Ref of parent tree
+   * @param {string} ref - Ref of parent tree (e.g. master)
    * @param {Object} config - Config object to save
-   * @return {Promise}
+   * @return {Promise<void>}
+   * @throws {ConfigError}
    */
   async setConfig (ref, config) {
     const path = '.gitsheets/config';
@@ -74,6 +93,15 @@ module.exports = class GitSheets {
     });
   }
 
+  /**
+   * Save a specific config property. Merges with existing config, if any.
+   * @public
+   * @param {string} ref - Ref of parent tree (e.g. master)
+   * @param {string} key - Top-level property name (e.g. path)
+   * @param {*} value - Value to set
+   * @return {Promise<void>}
+   * @throws {ConfigError}
+   */
   async setConfigItem (ref, key, value) {
     const config = await this.getConfig(ref);
     const newConfig = { ...config, [key]: value };
@@ -84,9 +112,9 @@ module.exports = class GitSheets {
    * Serialise a dataset and commit it onto current or new branch
    * @public
    * @param {Object} opts
-   * @param {ReadableStream} opts.data - Stream of data to be imported
+   * @param {Readable} opts.data - Stream of data to be imported
    * @param {string} [opts.dataType] - Type of input data (valid: csv)
-   * @param {treeish} opts.parentRef - Ref of parent tree
+   * @param {string} opts.parentRef - Ref of parent tree
    * @param {boolean} opts.merge - Whether to merge/upsert data, as opposed to replace
    * @param {string} [opts.saveToBranch] - Branch name to create or update. Omit to not save.
    * @return {Promise<string>} - Tree hash
@@ -128,27 +156,44 @@ module.exports = class GitSheets {
     return treeHash;
   }
 
+  /**
+   * Deserialize a dataset from a particular ref
+   * @public
+   * @param {string} ref - Ref of tree (e.g. master)
+   * @returns {Promise<Readable>}
+   */
   async export (ref) {
     const treeObject = await this._createTreeFromRef(ref);
 
-    const keyedChildren = await treeObject.getBlobMap();
-    const pendingReads = Object.entries(keyedChildren)
-      .reduce((accum, [key, child]) => {
-        if (key.startsWith('.gitsheets/')) return accum;
+    const blobMap = await treeObject.getBlobMap();
+    let blobsRemaining = Object.entries(blobMap)
+      .filter(this._isDataBlob)
 
-        if (child instanceof BlobObject) {
-          accum.push(
-            child.read() // TODO: Wrap errors
-              .then(this._deserialize)
+    const deserialize = this._deserialize.bind(this);
+    return new Readable({
+      objectMode: true,
+      async read () {
+        if (blobsRemaining.length > 0) {
+          const [key, blob] = blobsRemaining.shift() // mutates array
+          this.push(
+            await blob.read()
+              .then(deserialize)
               .then((data) => ({ ...data, _id: key }))
           );
+        } else {
+          this.push(null);
         }
-        return accum;
-      }, []);
-    
-    return Promise.all(pendingReads);
+      },
+    })
   }
 
+  /**
+   * Compare a dataset between two refs and return the diffs
+   * @public
+   * @param {string} srcRef - Ref of original state (e.g. master)
+   * @param {string} dstRef - Ref of new state (e.g. proposal)
+   * @returns {Promise<Array>}
+   */
   async compare (srcRef, dstRef) {
     const [srcBlobMap, dstBlobMap] = await Promise.all([
       this._getBlobMapFromRef(srcRef),
@@ -183,6 +228,55 @@ module.exports = class GitSheets {
     return Promise.all(fullDiffs);
   }
 
+  /**
+   * Create a merge commit between two refs and update srcRef to point to it
+   * Note: Only works if srcRef is ancestor of dstRef
+   * Note: Force deletes dstRef
+   * @public
+   * @param {string} srcRef - Ref of original state (e.g. master)
+   * @param {string} dstRef - Ref of new state (e.g. proposal)
+   * @param {string} [msg=Merge <dstRef>] - Message of merge commit
+   * @returns {Promise<void>}
+   * @throws {MergeError}
+   */
+  async merge (srcRef, dstRef, msg = null) {
+    await this._verifyIsAncestor(srcRef, dstRef);
+    const commitMsg = msg || `Merge ${dstRef}`;
+
+    const [
+      qualifiedSrcRef,
+      srcCommitHash,
+      dstCommitHash,
+      dstTreeHash,
+    ] = await Promise.all([
+      this._getQualifiedRef(srcRef),
+      this._getCommitHash(srcRef),
+      this._getCommitHash(dstRef),
+      this._getTreeHash(dstRef),
+    ]);
+
+    const mergeCommitHash = await this.git.commitTree(dstTreeHash, {
+      p: [ srcCommitHash, dstCommitHash ],
+      m: commitMsg,
+    });
+
+    // TODO: Wrap errors
+    await this.git.updateRef(qualifiedSrcRef, mergeCommitHash);
+    await this.git.branch({D: true}, dstRef); // force delete in case srcRef is not checked out
+  }
+
+  _isDataBlob ([key, blob]) {
+    return !key.startsWith('.gitsheets/') && blob instanceof BlobObject;
+  }
+
+  async _verifyIsAncestor (srcRef, dstRef) {
+    try {
+      await this.git.mergeBase({'is-ancestor': true}, srcRef, dstRef);
+    } catch (err) {
+      throw new MergeError(`${srcRef} is not an ancestor of ${dstRef}`);
+    }
+  }
+
   async _getBlobMapFromRef (ref) {
     const treeObject = await this._createTreeFromRef(ref);
     return treeObject.getBlobMap();
@@ -202,6 +296,7 @@ module.exports = class GitSheets {
     return output
       .trim()
       .split('\n')
+      .filter((line) => line.length > 0)
       .map(this._parseDiffLine)
       .filter((diff) => diff.status !== null)
   }
@@ -220,8 +315,25 @@ module.exports = class GitSheets {
   _compareObjects (src, dst) {
     const includeTestOps = true;
     const ops = jsonpatch.compare(src, dst, includeTestOps);
-    return ops;
-    // return this.mergeTestAndReplaceOps(ops);
+    return this._mergeTestAndReplaceOps(ops);
+  }
+
+  _mergeTestAndReplaceOps (items) {
+    const mergeableItems = items.map((item) => {
+      if (item.op === 'test') return { path: item.path, from: item.value };
+      else return item;
+    })
+    const keyedItems = mergeableItems.reduce((accum, item) => {
+      if (accum.has(item.path)) {
+        const currentItem = accum.get(item.path);
+        accum.set(item.path, { ...currentItem, ...item });
+      } else {
+        accum.set(item.path, item);
+      }
+      return accum;
+    }, new Map());
+
+    return Array.from(keyedItems.values());
   }
 
   /**
@@ -244,7 +356,9 @@ module.exports = class GitSheets {
             .then(resolve)
             .catch(reject);
         })
-        .on('error', reject); // TODO: Wrap errors?
+        .on('error', (err) => {
+          reject(new SerializationError(err.message))
+        })
     })
   }
 
@@ -336,5 +450,15 @@ module.exports = class GitSheets {
   _getQualifiedRef (ref) {
     // TODO: Wrap errors
     return this.git.revParse({'symbolic-full-name': true}, ref);
+  }
+
+  _getCommitHash (ref) {
+    return this.git.revParse({verify: true}, ref);
+  }
+
+  async _getTreeHash (ref) {
+    const tree = await this._createTreeFromRef(ref);
+    const hash = await tree.getHash();
+    return hash
   }
 }
