@@ -261,7 +261,7 @@ module.exports = class GitSheets {
     });
 
     // TODO: Wrap errors
-    await this.git.updateRef(qualifiedSrcRef, mergeCommitHash);
+    await this.git.updateRef(qualifiedSrcRef, mergeCommitHash, srcCommitHash);
     await this.git.branch({D: true}, dstRef); // force delete in case srcRef is not checked out
   }
 
