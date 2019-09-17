@@ -24,6 +24,13 @@
       form(@submit.prevent="onSubmitUpload" data-test="upload-form")
         input(type="file" name="file" accept=".csv" required ref="file" data-test="upload-file")
         SubmitButton.mt-3.w-full Upload file
+
+    .b-indigo-100.p-5.-m-5.border-b(v-if="records.length > 0")
+      h3 Download
+
+      p Get a copy of this sheet for editing in a spreadsheet application.
+
+      a.BaseButton.-primary.DownloadButton.mt-3.w-full(:href="exportUrl" download) Download CSV
 </template>
 
 <script>
@@ -48,6 +55,10 @@ export default {
     records: {
       type: Array,
       required: true,
+    },
+    exportUrl: {
+      type: String,
+      default: null,
     },
   },
 
@@ -131,8 +142,9 @@ export default {
     onSubmitCommit () {
       this.$emit('commit', this.commitMessage);
     },
-    onSubmitUpload () {
+    onSubmitUpload (event) {
       this.$emit('upload', this.$refs.file.files[0]);
+      event.target.reset();
     },
   },
 }
@@ -167,5 +179,10 @@ li {
 
 .-status-modified {
   @apply text-blue-700;
+}
+
+.DownloadButton {
+  display: inline-block;
+  text-align: center;
 }
 </style>

@@ -1,11 +1,16 @@
 <template lang="pug">
   .DataSheet-ct
     DataSheet(:records="mergedRecords")
-    DataSheetLog(:records="mergedRecords" @commit="onCommit" @upload="onUpload")
+    DataSheetLog(
+      :records="mergedRecords"
+      :export-url="constructExportUrl(dstRef || srcRef)"
+      @commit="onCommit"
+      @upload="onUpload"
+    )
 </template>
 
 <script>
-import { mapState, mapActions, mapMutations } from 'vuex';
+import { mapState, mapGetters, mapActions, mapMutations } from 'vuex';
 import { uniqueNamesGenerator } from 'unique-names-generator';
 
 import DataSheet from '@/components/DataSheet.vue';
@@ -28,6 +33,7 @@ export default {
   },
   computed: {
     ...mapState(['records', 'diffs']),
+    ...mapGetters(['constructExportUrl']),
     keyedDiffs () {
       return this.diffs.reduce((accum, item) => {
         accum[item._id] = item;

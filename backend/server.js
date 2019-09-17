@@ -2,6 +2,8 @@ const Koa = require('koa')
 const Router = require('koa-router')
 const git = require('git-client')
 const bodyParser = require('koa-bodyparser')
+const { format: csvFormat } = require('fast-csv')
+const JsonStringify = require('streaming-json-stringify')
 const GitSheets = require('./lib')
 
 const validRefPattern = /^[\w-\/]+$/
@@ -63,17 +65,33 @@ async function createServer (gitSheets) {
 
   router.get('/records/:ref+', async (ctx) => {
     const ref = ctx.params.ref
+    const format = ctx.query.format
     ctx.assert(validRefPattern.test(ref), 400, 'invalid ref')
 
+    let rows
     try {
-      const rows = await gitSheets.getRows(ref)
-      ctx.body = rows
+      rows = await gitSheets.getRows(ref)
     } catch (err) {
       if (err.message.startsWith('invalid tree ref')) {
         ctx.throw(404, 'unknown ref')
       } else {
         throw err
       }
+    }
+
+    switch (format || ctx.accepts('json', 'csv')) {
+      case 'csv':
+        ctx.type = 'text/csv'
+        ctx.set('Content-Disposition', `attachment; filename=${ref}.csv`)
+        ctx.body = rows.pipe(csvFormat({ headers: true }))
+        break
+      default:
+        try {
+          ctx.type = 'application/json'
+          ctx.body = rows.pipe(JsonStringify())
+        } catch (err) {
+          console.error('error setting body', err.message)
+        }
     }
   })
 

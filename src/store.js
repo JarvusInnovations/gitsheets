@@ -11,6 +11,11 @@ export default new Vuex.Store({
     records: [],
     diffs: [],
   },
+  getters: {
+    constructExportUrl (state) {
+      return (ref) => `/api/records/${ref}?format=csv`;
+    },
+  },
   mutations: {
     SET_RECORDS (state, records) {
       state.records = records;
