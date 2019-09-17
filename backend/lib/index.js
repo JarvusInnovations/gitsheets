@@ -181,15 +181,24 @@ module.exports = class GitSheets {
     return Promise.all(pendingDiffs)
   }
 
-  async merge (srcRef, dstRef) {
+  async merge (srcRef, dstRef, msg = null) {
     try {
       await this.git.mergeBase({'is-ancestor': true}, srcRef, dstRef)
     } catch (err) {
       throw new Error(`${srcRef} is not an ancestor of ${dstRef}`)
     }
+    const commitMsg = msg || `Merge ${dstRef}`
+    const dstTree = await this.repo.createTreeFromRef(dstRef)
+    const dstTreeHash = await dstTree.getHash()
+    const srcCommitHash = await this.git.revParse({verify: true}, srcRef)
+    const dstCommitHash = await this.git.revParse({verify: true}, dstRef)
+    const mergeCommitHash  = await this.git.commitTree(dstTreeHash, {
+      p: [srcCommitHash, dstCommitHash],
+      m: commitMsg
+    })
+
     const qualifiedSrcRef = await this.getQualifiedRef(srcRef)
-    const qualifiedDstRef = await this.getQualifiedRef(dstRef)
-    await this.git.updateRef(qualifiedSrcRef, qualifiedDstRef)
+    await this.git.updateRef(qualifiedSrcRef, mergeCommitHash, srcCommitHash)
     await this.git.branch({'D': true}, dstRef) // force delete in case srcRef is not checked out
   }
 

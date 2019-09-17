@@ -160,12 +160,13 @@ async function createServer (gitSheets) {
 
   router.post('/compare/:srcRef([\\w-\\/]+)..:dstRef([\\w-\\/]+)', async (ctx) => {
     const { srcRef, dstRef } = ctx.params
+    const msg = ctx.query.msg
 
     ctx.assert(validRefPattern.test(srcRef), 400, 'invalid src ref')
     ctx.assert(validRefPattern.test(dstRef), 400, 'invalid dst ref')
 
     try {
-      await gitSheets.merge(srcRef, dstRef)
+      await gitSheets.merge(srcRef, dstRef, msg)
       ctx.status = 204
     } catch (err) {
       if (err.message.includes('not an ancestor of')) {

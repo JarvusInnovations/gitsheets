@@ -106,12 +106,12 @@ export default {
         loader.hide();
       }
     },
-    async onCommit (msg) {
+    async onCommit (commitMsg) {
       const { srcRef, dstRef } = this;
       const loader = this.$loading.show();
 
       try {
-        await this.merge({ srcRef, dstRef });
+        await this.merge({ srcRef, dstRef, commitMsg });
         this.$router.push({ name: 'records', params: { srcRef } });
       } catch (err) {
         this.$awn.alert(`Failed to merge ${srcRef} onto ${dstRef}`);

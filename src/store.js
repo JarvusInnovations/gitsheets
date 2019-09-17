@@ -37,8 +37,12 @@ export default new Vuex.Store({
       const response = await api.get(`/compare/${srcRef}..${dstRef}`);
       commit('SET_DIFFS', response.data);
     },
-    async merge (_context, { srcRef, dstRef }) {
-      await api.post(`/compare/${srcRef}..${dstRef}`);
+    async merge (_context, { srcRef, dstRef, commitMsg }) {
+      await api({
+        method: 'post',
+        url: `/compare/${srcRef}..${dstRef}`,
+        params: { msg: commitMsg },
+      });
     },
     async import (_context, { srcRef, file, branch }) {
       await api({
