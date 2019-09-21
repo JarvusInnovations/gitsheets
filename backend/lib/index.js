@@ -1,6 +1,7 @@
 const { Repo, BlobObject } = require('hologit/lib')
 const maxstache = require('maxstache')
 const csvParser = require('csv-parser')
+const sortKeys = require('sort-keys')
 const TOML = require('@iarna/toml')
 const jsonpatch = require('fast-json-patch')
 const { Readable } = require('stream')
@@ -13,6 +14,10 @@ module.exports = class GitSheets {
     const git = await repo.getGit()
 
     return new GitSheets(repo, git)
+  }
+
+  static stringifyRecord (data) {
+    return TOML.stringify(sortKeys(data, { deep: true }))
   }
 
   constructor (repo, git) {
@@ -45,7 +50,7 @@ module.exports = class GitSheets {
   }
 
   async makeConfigTree (config, ref = null) {
-    const tomlConfig = TOML.stringify(config)
+    const tomlConfig = GitSheets.stringifyRecord(config)
     const path = '.gitsheets/config'
     const tree = (ref)
       ? await this.repo.createTreeFromRef(ref)
@@ -69,7 +74,7 @@ module.exports = class GitSheets {
       readStream
         .pipe(csvParser({ strict: true }))
         .on('data', (row) => {
-          const tomlRow = TOML.stringify(sortKeys(row))
+          const tomlRow = GitSheets.stringifyRecord(row)
           const fileName = maxstache(pathTemplate, row)
 
           pendingWrites.push(tree.writeChild(fileName, tomlRow));
@@ -250,15 +255,4 @@ module.exports = class GitSheets {
   getQualifiedRef (ref) {
     return this.git.revParse({'symbolic-full-name': true}, ref)
   }
-}
-
-function sortKeys (unsorted) {
-  const sorted = {}
-
-  Object
-    .keys(unsorted)
-    .sort()
-    .forEach((key) => sorted[key] = unsorted[key])
-
-  return sorted
 }

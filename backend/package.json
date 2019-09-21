@@ -2,7 +2,7 @@
   "name": "gitsheets",
   "version": "0.1.0",
   "description": "A toolkit for using a git repository to store low-volume, high-touch, human-scale data",
-  "main": "index.js",
+  "main": "lib/index.js",
   "scripts": {
     "test": "jest"
   },
@@ -27,6 +27,7 @@
     "koa-bodyparser": "^4.2.1",
     "koa-router": "^7.4.0",
     "maxstache": "^1.0.7",
+    "sort-keys": "^4.0.0",
     "streaming-json-stringify": "^3.1.0",
     "to-readable-stream": "^2.1.0",
     "winston": "^2.4.3",
