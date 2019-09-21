@@ -1,5 +1,5 @@
 {
-  "name": "datagit",
+  "name": "gitsheets",
   "version": "0.1.0",
   "description": "A toolkit for using a git repository to store low-volume, high-touch, human-scale data",
   "main": "index.js",
@@ -8,14 +8,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/JarvusInnovations/datagit.git"
+    "url": "git+ssh://git@github.com/JarvusInnovations/gitsheets.git"
   },
   "author": "timwis <tim@timwis.com>",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/JarvusInnovations/datagit/issues"
+    "url": "https://github.com/JarvusInnovations/gitsheets/issues"
   },
-  "homepage": "https://github.com/JarvusInnovations/datagit#readme",
+  "homepage": "https://github.com/JarvusInnovations/gitsheets#readme",
   "dependencies": {
     "@iarna/toml": "^2.2.3",
     "csv-parser": "^2.3.0",
