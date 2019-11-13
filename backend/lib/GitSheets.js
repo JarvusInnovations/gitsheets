@@ -178,7 +178,7 @@ module.exports = class GitSheets {
           this.push(
             await blob.read()
               .then(deserialize)
-              .then((data) => ({ ...data, _id: key }))
+              .then((data) => ({ ...data, _path: key.substr(0, key.length-5) }))
           );
         } else {
           this.push(null);
@@ -204,22 +204,22 @@ module.exports = class GitSheets {
 
     const fullDiffs = diffs.map(({ status, path, newPath }) => ({
       added: async () => ({
-        _id: path,
+        _path: path,
         status,
         value: await this._parseBlob(dstBlobMap[path]),
       }),
       deleted: async () => ({
-        _id: path,
+        _path: path,
         status,
         value: await this._parseBlob(srcBlobMap[path]),
       }),
       modified: async () => ({
-        _id: path,
+        _path: path,
         status,
         patch: await this._generatePatch(srcBlobMap[path], dstBlobMap[path]),
       }),
       renamed: async () => ({
-        _id: path,
+        _path: path,
         status: 'modified',
         patch: await this._generatePatch(srcBlobMap[path], dstBlobMap[newPath]),
       }),
@@ -266,7 +266,7 @@ module.exports = class GitSheets {
   }
 
   _isDataBlob ([key, blob]) {
-    return !key.startsWith('.gitsheets/') && blob instanceof BlobObject;
+    return !key.startsWith('.gitsheets/') && key.endsWith('.toml') && blob instanceof BlobObject;
   }
 
   async _verifyIsAncestor (srcRef, dstRef) {
@@ -348,7 +348,7 @@ module.exports = class GitSheets {
           const path = this._renderTemplate(pathTemplate, row);
           const contents = this._serialize(row);
 
-          pendingWrites.push(treeObject.writeChild(path, contents));
+          pendingWrites.push(treeObject.writeChild(`${path}.toml`, contents));
         })
         .on('end', () => {
           Promise.all(pendingWrites)

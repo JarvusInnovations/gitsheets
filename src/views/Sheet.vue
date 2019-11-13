@@ -36,15 +36,15 @@ export default {
     ...mapGetters(['constructExportUrl']),
     keyedDiffs () {
       return this.diffs.reduce((accum, item) => {
-        accum[item._id] = item;
+        accum[item._path] = item;
         return accum;
       }, {});
     },
     keyedRecords () {
       return this.records.reduce((accum, item) => {
-        const { _id, ...value } = item
-        accum[_id] = {
-          _id,
+        const { _path, ...value } = item
+        accum[_path] = {
+          _path,
           status: null,
           value,
         };

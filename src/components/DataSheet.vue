@@ -7,7 +7,7 @@
       transition-group(name="row" tag="tbody")
         DataSheetRow(
           v-for="record in records"
-          :key="record._id"
+          :key="record._path"
           v-show="showUnchanged || record.status"
           :record="record"
           :columns="columns"
