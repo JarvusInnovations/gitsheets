@@ -123,7 +123,7 @@ describe('GitSheets lib', () => {
       await Promise.all(blobs.map(verifyBlob));
 
       async function verifyBlob ({ hash, file }) {
-        const sampleDataItem = sampleData.initial.find((item) => item.id === file);
+        const sampleDataItem = sampleData.initial.find((item) => item.id === file.substr(0, file.length - 5));
         expect(sampleDataItem).toBeDefined();
 
         const contents = await gitSheets.git.catFile('blob', hash);
@@ -240,8 +240,8 @@ describe('GitSheets lib', () => {
       const exportStream = await gitSheets.export('master');
       const rows = await getStream.array(exportStream);
       rows.forEach((row) => {
-        expect(row).toHaveProperty('_id');
-        expect(row._id).toBe(`${row.last_name}/${row.first_name}`);
+        expect(row).toHaveProperty('_path');
+        expect(row._path).toBe(`${row.last_name}/${row.first_name}`);
       });
     });
 

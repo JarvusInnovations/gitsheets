@@ -2,7 +2,7 @@
   "name": "gitsheets",
   "version": "0.2.2",
   "description": "A toolkit for using a git repository to store low-volume, high-touch, human-scale data",
-  "main": "lib/index.js",
+  "main": "lib/GitSheets.js",
   "scripts": {
     "test": "jest"
   },
@@ -21,7 +21,7 @@
     "csv-parser": "^2.3.0",
     "fast-csv": "^3.4.0",
     "fast-json-patch": "^2.2.1",
-    "hologit": "^0.21.3",
+    "hologit": "^0.26.2",
     "get-stream": "^5.1.0",
     "http-assert": "^1.4.1",
     "koa": "^2.7.0",

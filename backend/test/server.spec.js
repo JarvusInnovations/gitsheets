@@ -71,7 +71,7 @@ describe('Server', () => {
 
       const response = await request(server.callback())
         .get('/config/master')
-      
+
       expect(response.body.config.path).toBe('{{last_name}}/{{first_name}}')
     })
   })
@@ -138,7 +138,7 @@ describe('Server', () => {
 
       expect(Array.isArray(response.body)).toBe(true)
       expect(response.body.length).toBe(getCsvRowCount(sampleData))
-      expect(response.body[0]).toHaveProperty('_id')
+      expect(response.body[0]).toHaveProperty('_path')
     })
 
     test('requesting invalid ref throws error', async () => {
@@ -179,7 +179,7 @@ describe('Server', () => {
       const response = await request(server.callback())
         .get('/compare/master..proposal')
         .expect(200)
-      
+
       expect(Array.isArray(response.body)).toBe(true)
       expect(response.body.length).toBe(SAMPLE_DATA_CHANGES_COUNT)
     })
