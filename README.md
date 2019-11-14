@@ -26,7 +26,7 @@ npm run build
 
 ```
 git init tests
-cd tests && git commit -m 'init' --allow-empty'
+cd tests && git commit -m 'init' --allow-empty
 cd ../backend && GIT_DIR=../tests/.git npm start
 npm run test
 ```
