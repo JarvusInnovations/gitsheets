@@ -265,6 +265,39 @@ module.exports = class GitSheets {
     await this.git.branch({D: true}, dstRef); // force delete in case srcRef is not checked out
   }
 
+  async createTransaction (parentRef) {
+    const treeObject = await this._createTreeFromRef(parentRef);
+    const gitSheets = this;
+
+    // TODO: Use a class or something, rather than generating this code each transaction
+    return {
+      upsert: function upsert (path, data) {
+        const contents = gitSheets._serialize(data);
+        // TODO: Wrap errors
+        return treeObject.writeChild(`${path}.toml`, contents);
+      },
+      async save (saveToBranch = parentRef) {
+        // TODO: Wrap errors
+        const treeHash = await treeObject.write();
+
+        if (saveToBranch && saveToBranch === parentRef) { // TODO: check if branch exists instead
+          await gitSheets._saveTreeToExistingBranch({
+            treeHash,
+            branch: saveToBranch,
+            msg: 'import to existing branch',
+          });
+        } else if (saveToBranch) {
+          await gitSheets._saveTreeToNewBranch({
+            treeHash,
+            parentRef,
+            branch: saveToBranch,
+            msg: 'import to new branch',
+          });
+        }
+      },
+    };
+  }
+
   _isDataBlob ([key, blob]) {
     return !key.startsWith('.gitsheets/') && key.endsWith('.toml') && blob instanceof BlobObject;
   }

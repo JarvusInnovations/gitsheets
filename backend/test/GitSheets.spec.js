@@ -357,6 +357,32 @@ describe('GitSheets lib', () => {
         .toThrow(MergeError);
     });
   });
+
+  describe.only('Transaction', () => {
+    it('upserts on top of branch', async () => {
+      const txn = await gitSheets.createTransaction('master');
+      await txn.upsert('1', sampleData.initial[0]);
+      await txn.upsert('2', sampleData.initial[1]);
+      await txn.save();
+
+      const response = await gitSheets.git.lsTree('master');
+      const tree = parseTree(response);
+
+      const blobs = tree.filter((item) => item.type === 'blob');
+      expect(blobs.length).toBe(2);
+
+      await Promise.all(blobs.map(verifyBlob));
+
+      async function verifyBlob ({ hash, file }) {
+        const sampleDataItem = sampleData.initial.find((item) => item.id === file.substr(0, file.length - 5));
+        expect(sampleDataItem).toBeDefined();
+
+        const contents = await gitSheets.git.catFile('blob', hash);
+        const data = gitSheets._deserialize(contents);
+        expect(data).toEqual(sampleDataItem);
+      }
+    })
+  })
 });
 
 function parseTree (treeOutput) {
