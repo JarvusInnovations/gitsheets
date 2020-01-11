@@ -266,12 +266,14 @@ module.exports = class GitSheets {
   }
 
   async createTransaction (parentRef) {
+    const pathTemplate = await this.getConfigItem(parentRef, 'path');
     const treeObject = await this._createTreeFromRef(parentRef);
     const gitSheets = this;
 
     // TODO: Use a class or something, rather than generating this code each transaction
     return {
-      upsert: function upsert (path, data) {
+      upsert: function upsert (data) {
+        const path = gitSheets._renderTemplate(pathTemplate, data);
         const contents = gitSheets._serialize(data);
         // TODO: Wrap errors
         return treeObject.writeChild(`${path}.toml`, contents);

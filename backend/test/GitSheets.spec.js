@@ -360,9 +360,11 @@ describe('GitSheets lib', () => {
 
   describe.only('Transaction', () => {
     it('upserts on top of branch', async () => {
+      await gitSheets.setConfigItem('master', 'path', '{{id}}');
+
       const txn = await gitSheets.createTransaction('master');
-      await txn.upsert('1', sampleData.initial[0]);
-      await txn.upsert('2', sampleData.initial[1]);
+      await txn.upsert(sampleData.initial[0]);
+      await txn.upsert(sampleData.initial[1]);
       await txn.save();
 
       const response = await gitSheets.git.lsTree('master');
