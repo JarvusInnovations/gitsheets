@@ -71,7 +71,6 @@ class Sheet extends Configurable
         const recordPath = path.join(sheetRoot, renderRecordPath(recordPathTemplate, record));
         const toml = stringifyRecord(record);
 
-        console.log('writeChild(%o)', recordPath);
         return this.outputTree.writeChild(`${recordPath}.toml`, toml);
       })
 
