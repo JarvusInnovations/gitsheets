@@ -4,15 +4,15 @@ const { Repo: HoloRepo, BlobObject } = require('hologit/lib');
 
 class Repository extends HoloRepo
 {
-  async getSheets (root = '/', outputTree = null) {
+  async getSheets (root = '/', dataTree = null) {
     const workspace = await this.getWorkspace();
 
     root = path.join('.', root);
 
-    if (typeof outputTree == 'string') {
-      outputTree = await workspace.root.getSubtree(path.join(root, outputTree), true);
-    } else if (!outputTree) {
-      outputTree = await workspace.root.getSubtree(root);
+    if (typeof dataTree == 'string') {
+      dataTree = await workspace.root.getSubtree(path.join(root, dataTree), true);
+    } else if (!dataTree) {
+      dataTree = await workspace.root.getSubtree(root);
     }
 
     const sheetsPath = path.join(root, '.gitsheets');
@@ -41,7 +41,7 @@ class Repository extends HoloRepo
 
       sheets[name] = new Sheet({
         workspace,
-        outputTree,
+        dataTree,
         name,
         configPath: path.join(sheetsPath, childName)
       });

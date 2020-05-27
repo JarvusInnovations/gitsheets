@@ -3,9 +3,7 @@ const sortKeys = require('sort-keys');
 const TOML = require('@iarna/toml');
 const Configurable = require('hologit/lib/Configurable');
 
-const Literal = require('./path/Literal.js');
-const Field = require('./path/Field.js');
-const Expression = require('./path/Expression.js');
+const PathTemplate = require('./path/Template.js');
 
 
 const WRITE_QUEUES = new Map();
@@ -22,7 +20,7 @@ class Sheet extends Configurable
     }
   }
 
-  constructor ({ workspace, name, outputTree = null, configPath = null }) {
+  constructor ({ workspace, name, dataTree = null, configPath = null }) {
     if (!workspace) {
       throw new Error('workspace required');
     }
@@ -35,7 +33,7 @@ class Sheet extends Configurable
 
     this.name = name;
     this.configPath = configPath || `.gitsheets/${name}.toml`;
-    this.outputTree = outputTree || workspace.root;
+    this.dataTree = dataTree || workspace.root;
 
     Object.freeze(this);
   }
@@ -71,7 +69,7 @@ class Sheet extends Configurable
         const recordPath = path.join(sheetRoot, renderRecordPath(recordPathTemplate, record));
         const toml = stringifyRecord(record);
 
-        return this.outputTree.writeChild(`${recordPath}.toml`, toml);
+        return this.dataTree.writeChild(`${recordPath}.toml`, toml);
       })
 
 
