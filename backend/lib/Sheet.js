@@ -65,8 +65,9 @@ class Sheet extends Configurable
     }
 
     const writePromise = this.getCachedConfig()
-      .then(({ root: sheetRoot, path: recordPathTemplate }) => {
-        const recordPath = path.join(sheetRoot, renderRecordPath(recordPathTemplate, record));
+      .then(({ root: sheetRoot, path: pathTemplateString }) => {
+        const pathTemplate = PathTemplate.fromString(pathTemplateString);
+        const recordPath = path.join(sheetRoot, pathTemplate.render(record));
         const toml = stringifyRecord(record);
 
         return this.dataTree.writeChild(`${recordPath}.toml`, toml);
@@ -95,108 +96,6 @@ module.exports = Sheet;
 
 
 // private library
-const FIELD_EXPRESSION_RE = /^[a-zA-Z0-9_\-]+$/;
-const PATH_TEMPLATE_CACHE = new Map();
-const PATH_COMPONENT_TEMPLATE = {
-  kind: Literal,
-  prefix: '',
-  name: '',
-  suffix: '',
-};
-
-
 function stringifyRecord(record) {
   return TOML.stringify(sortKeys(record, { deep: true }));
-}
-
-function renderRecordPath(recordPathTemplate, record) {
-  if (typeof recordPathTemplate == 'string') {
-    recordPathTemplate = getParsedRecordPathTemplate(recordPathTemplate);
-  }
-
-  return recordPathTemplate
-    .map(pathComponent => pathComponent.render(record))
-    .join('/');
-}
-
-function getParsedRecordPathTemplate(recordPathTemplate) {
-  let parsedRecordPathTemplate = PATH_TEMPLATE_CACHE.get(recordPathTemplate);
-
-  if (parsedRecordPathTemplate) {
-    return parsedRecordPathTemplate;
-  }
-
-  parsedRecordPathTemplate = parseRecordPathTemplate(recordPathTemplate);
-  PATH_TEMPLATE_CACHE.set(recordPathTemplate, parsedRecordPathTemplate);
-
-  return parsedRecordPathTemplate;
-}
-
-function parseRecordPathTemplate(recordPathTemplate) {
-  recordPathTemplate = path.join('.', recordPathTemplate, '.');
-  const stringLength = recordPathTemplate.length;
-
-
-  let i = 0, cur = { ...PATH_COMPONENT_TEMPLATE };
-
-
-  const parsed = [];
-  const finishCurrentComponent = () => {
-    if (cur.name) {
-      parsed.push(new cur.kind(cur));
-    }
-    cur = { ...PATH_COMPONENT_TEMPLATE };
-  };
-
-
-  while (i < stringLength) {
-    const nextChar = recordPathTemplate[i];
-
-    // read an expression from ${{ to }}
-    if (nextChar == '$' && recordPathTemplate.substr(i, 3) == '${{') {
-      cur.kind = Expression;
-      i += 3;
-
-      if (cur.name) {
-        cur.prefix = cur.name;
-        cur.name = '';
-      }
-
-      while (recordPathTemplate.substr(i, 2) != '}}') {
-        cur.name += recordPathTemplate[i];
-        i++;
-
-        if (i == stringLength) {
-          throw new Error(`expression ${cur.name} not closed with }}`);
-        }
-      }
-
-      // finish reading name expression
-      cur.name = cur.name.trim();
-
-      // reduce to Field kind if name is a bare field name
-      if (FIELD_EXPRESSION_RE.test(cur.name)) {
-        cur.kind = Field;
-      }
-
-      // skip }} and continue scan from the top
-      i += 2;
-      continue;
-    }
-
-    // process next character
-    if (nextChar == '/') {
-      finishCurrentComponent();
-    } else if (cur.kind === Expression) {
-      cur.suffix += nextChar;
-    } else {
-      cur.name += nextChar;
-    }
-
-    i++;
-  }
-
-  finishCurrentComponent();
-
-  return parsed;
 }

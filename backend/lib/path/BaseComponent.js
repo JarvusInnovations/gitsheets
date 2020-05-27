@@ -1,4 +1,4 @@
-class Base
+class BaseComponent
 {
   constructor ({ name, prefix = null, suffix = null }) {
     this.name = name;
@@ -15,4 +15,4 @@ class Base
 }
 }
 
-module.exports = Base;
+module.exports = BaseComponent;
