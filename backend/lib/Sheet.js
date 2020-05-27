@@ -56,6 +56,36 @@ class Sheet extends Configurable
     return config;
   }
 
+  /**
+   *
+   * @param {Object|Function} query
+   */
+  async* query (query) { // TODO: convert to generator *query
+    const {
+      root: sheetRoot,
+      path: pathTemplateString,
+    } = await this.getCachedConfig();
+
+    if (typeof query == 'function') {
+      throw new Error('function queries are not yet supported');
+    }
+
+    const pathTemplate = PathTemplate.fromString(pathTemplateString);
+    const sheetDataTree = await this.dataTree.getSubtree(sheetRoot);
+
+    BLOBS: for await (const blob of pathTemplate.queryTree(sheetDataTree, query)) {
+      const record = await blob.read().then(TOML.parse);
+
+      for (const key in query) {
+        if (record[key] !== query[key]) {
+          continue BLOBS;
+        }
+      }
+
+      yield record;
+    }
+  }
+
   async upsert (record) {
     let writeQueue = WRITE_QUEUES.get(this);
 
