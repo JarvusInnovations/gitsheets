@@ -22,7 +22,7 @@
     "fast-csv": "^3.4.0",
     "fast-json-patch": "^2.2.1",
     "get-stream": "^5.1.0",
-    "hologit": "^0.29.3",
+    "hologit": "^0.29.4",
     "http-assert": "^1.4.1",
     "koa": "^2.7.0",
     "koa-bodyparser": "^4.2.1",
