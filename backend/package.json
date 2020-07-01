@@ -6,6 +6,9 @@
   "scripts": {
     "test": "jest"
   },
+  "bin": {
+    "git-sheets": "./bin/cli.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/JarvusInnovations/gitsheets.git"
@@ -28,6 +31,7 @@
     "koa-bodyparser": "^4.2.1",
     "koa-router": "^7.4.0",
     "maxstache": "^1.0.7",
+    "mz": "^2.7.0",
     "sort-keys": "^4.0.0",
     "streaming-json-stringify": "^3.1.0",
     "to-readable-stream": "^2.1.0",
