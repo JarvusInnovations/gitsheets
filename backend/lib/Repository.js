@@ -4,8 +4,8 @@ const { Repo: HoloRepo, BlobObject } = require('hologit/lib');
 
 class Repository extends HoloRepo
 {
-  async openSheet (name, { root = '/', dataTree = null }) {
-    const { workspace, sheetsPath, sheetsTree } = await _loadConfig(this, root, dataTree);
+  async openSheet (name, { root = '/', dataTree: dataTreeInput = null }) {
+    const { workspace, sheetsPath, dataTree } = await _loadConfig(this, root, dataTreeInput);
 
     return new Sheet({
       workspace,
@@ -15,8 +15,8 @@ class Repository extends HoloRepo
     });
   }
 
-  async openSheets ({ root = '/', dataTree = null }) {
-    const { workspace, sheetsPath, sheetsTree } = await _loadConfig(this, root, dataTree);
+  async openSheets ({ root = '/', dataTree: dataTreeInput = null }) {
+    const { workspace, sheetsPath, sheetsTree, dataTree } = await _loadConfig(this, root, dataTreeInput);
 
     const children = await sheetsTree.getChildren();
     const childNameRe = /^([^\/]+)\.toml$/;
@@ -83,5 +83,6 @@ async function _loadConfig(repo, root, dataTree) {
     workspace,
     sheetsPath,
     sheetsTree,
+    dataTree,
   };
 }
