@@ -44,7 +44,7 @@ class Repository extends HoloRepo
         workspace,
         dataTree,
         name,
-        configPath: path.join(sheetsPath, childName)
+        configPath: path.join(sheetsPath, childName),
       });
     }
 

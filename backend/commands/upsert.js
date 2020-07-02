@@ -14,7 +14,7 @@ exports.builder = {
   },
   prefix: {
     describe: 'Path to prefix after root to all sheet paths',
-  }
+  },
 };
 
 exports.handler = async function init({ sheet: sheetName, root, prefix = null, file = null } = {}) {
