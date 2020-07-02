@@ -4,19 +4,20 @@ const { Repo: HoloRepo, BlobObject } = require('hologit/lib');
 
 class Repository extends HoloRepo
 {
-  async getSheets (root = '/', dataTree = null) {
-    const workspace = await this.getWorkspace();
+  async openSheet (name, { root = '/', dataTree = null }) {
+    const { workspace, sheetsPath, sheetsTree } = await _loadConfig(this, root, dataTree);
 
-    root = path.join('.', root);
+    return new Sheet({
+      workspace,
+      dataTree,
+      name,
+      configPath: path.join(sheetsPath, `${name}.toml`),
+    });
+  }
 
-    if (typeof dataTree == 'string') {
-      dataTree = await workspace.root.getSubtree(path.join(root, dataTree), true);
-    } else if (!dataTree) {
-      dataTree = await workspace.root.getSubtree(root);
-    }
+  async openSheets ({ root = '/', dataTree = null }) {
+    const { workspace, sheetsPath, sheetsTree } = await _loadConfig(this, root, dataTree);
 
-    const sheetsPath = path.join(root, '.gitsheets');
-    const sheetsTree = await workspace.root.getSubtree(sheetsPath);
     const children = await sheetsTree.getChildren();
     const childNameRe = /^([^\/]+)\.toml$/;
 
@@ -51,8 +52,32 @@ class Repository extends HoloRepo
   }
 
   async finishWriting () {
+    // TODO: using this instead of awaiting each upsert isn't safe currently as TreeObject.writeChild isn't safe to parallelize due to async subtree building
     return Sheet.finishWriting(this);
   }
 }
 
 module.exports = Repository;
+
+
+// private library
+async function _loadConfig(repo, root, dataTree) {
+  const workspace = await repo.getWorkspace();
+
+  root = path.join('.', root);
+
+  if (typeof dataTree == 'string') {
+    dataTree = await workspace.root.getSubtree(path.join(root, dataTree), true);
+  } else if (!dataTree) {
+    dataTree = await workspace.root.getSubtree(root);
+  }
+
+  const sheetsPath = path.join(root, '.gitsheets');
+  const sheetsTree = await workspace.root.getSubtree(sheetsPath);
+
+  return {
+    workspace,
+    sheetsPath,
+    sheetsTree,
+  };
+}

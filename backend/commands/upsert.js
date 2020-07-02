@@ -30,8 +30,7 @@ exports.handler = async function init({ sheet: sheetName, root, prefix = null, f
 
 
   // get sheets
-  const sheets = await repo.getSheets(root, prefix);
-  const sheet = sheets[sheetName];
+  const sheet = await repo.openSheet(sheetName, { root, dataTree: prefix });
 
   if (!sheet) {
     throw new Error(`sheet '${sheetName}' not found under ${root}/.gitsheets/`);
