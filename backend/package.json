@@ -7,7 +7,7 @@
     "test": "jest"
   },
   "bin": {
-    "git-sheets": "./bin/cli.js"
+    "git-sheet": "./bin/cli.js"
   },
   "repository": {
     "type": "git",
