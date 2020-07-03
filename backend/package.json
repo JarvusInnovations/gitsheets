@@ -1,6 +1,6 @@
 {
   "name": "gitsheets",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "A toolkit for using a git repository to store low-volume, high-touch, human-scale data",
   "main": "lib/GitSheets.js",
   "scripts": {
