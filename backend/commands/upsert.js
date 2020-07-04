@@ -9,20 +9,34 @@ exports.builder = {
     default: '-',
   },
   root: {
-    describe: 'Root path to .gitsheets in repository',
-    default: '/',
+    describe: 'Root path to .gitsheets in repository, defaults to /',
   },
   prefix: {
     describe: 'Path to prefix after root to all sheet paths',
   },
 };
 
-exports.handler = async function init({ sheet: sheetName, root, prefix = null, file = null } = {}) {
+exports.handler = async function init({
+  sheet: sheetName,
+  file = null,
+  root = null,
+  prefix = null,
+  ...argv
+}) {
   const logger = require('../lib/logger.js');
   const Repository = require('../lib/Repository.js')
   const path = require('path');
   const fs = require('mz/fs');
 
+  const { GITSHEETS_ROOT, GITSHEETS_PREFIX } = process.env;
+
+  if (!root) {
+    root = GITSHEETS_ROOT || '/';
+  }
+
+  if (!prefix) {
+    prefix = GITSHEETS_PREFIX || null;
+  }
 
   // get repo interface
   const repo = await Repository.getFromEnvironment({ working: true });
