@@ -16,11 +16,14 @@ exports.builder = {
   },
   format: {
     describe: 'Format to parse input data in (defaults to file extension or json)',
-    choices: ['json', 'toml']
+    choices: ['json', 'toml'],
   },
   encoding: {
     describe: 'Encoding to read input with',
-    default: 'utf-8'
+    default: 'utf-8',
+  },
+  'attachments.<attachment-path>': {
+    describe: 'One or more files to attach in the format <extension>:<source-path>',
   }
 };
 
@@ -31,6 +34,7 @@ exports.handler = async function init({
   prefix = null,
   format = null,
   encoding,
+  attachments = null,
   ...argv
 }) {
   const logger = require('../lib/logger.js');
@@ -95,6 +99,36 @@ exports.handler = async function init({
   for (const inputRecord of Array.isArray(inputData) ? inputData : [inputData]) {
     const outputBlob = await sheet.upsert(inputRecord);
     console.log(outputBlob.hash);
+
+    if (attachments) {
+      for (const attachmentPath in attachments) {
+        let attachment = attachments[attachmentPath];
+        const splitIndex = attachment.indexOf(':');
+
+        // determine extension
+        let extension;
+        if (splitIndex >= 0) {
+          extension = attachment.substr(0, splitIndex);
+          if (extension) {
+            extension = `.${extension}`;
+          }
+          attachment = attachment.substr(splitIndex + 1);
+        } else {
+          extension = path.extname(attachment);
+        }
+
+        // prepare blob
+        let blob;
+        try {
+          blob = await repo.writeBlobFromFile(attachment);
+        } catch (err) {
+          throw new Error(`Could not read ${attachment}: ${err}`);
+        }
+
+        // write attachment
+        await sheet.setAttachment(inputRecord, `${attachmentPath}${extension}`, blob);
+      }
+    }
   }
 
 

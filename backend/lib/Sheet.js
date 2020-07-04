@@ -64,7 +64,7 @@ class Sheet extends Configurable
    *
    * @param {Object|Function} query
    */
-  async* query (query) { // TODO: convert to generator *query
+  async* query (query) {
     const {
       root: sheetRoot,
       path: pathTemplateString,
@@ -142,6 +142,29 @@ class Sheet extends Configurable
     }
 
     return this.dataTree.getChild(path.join(sheetRoot, record, attachment));
+  }
+
+  async setAttachments (record, attachments) {
+    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+
+    if (typeof record !== 'string') {
+      const pathTemplate = PathTemplate.fromString(pathTemplateString);
+      record = pathTemplate.render(record);
+    }
+
+    return Promise.all(Object.keys(attachments).map(
+      attachment =>
+        this.dataTree.writeChild(
+          path.join(sheetRoot, record, attachment),
+          attachments[attachment]
+        )
+    ));
+  }
+
+  async setAttachment (record, attachment, blob) {
+    const attachments = {};
+    attachments[attachment] = blob;
+    return this.setAttachments(record, attachments);
   }
 
   async finishWriting() {
