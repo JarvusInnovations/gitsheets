@@ -4,8 +4,35 @@ const { Repo: HoloRepo, BlobObject } = require('hologit/lib');
 
 class Repository extends HoloRepo
 {
+  async resolveDataTree (root, dataTree) {
+    const workspace = await this.getWorkspace();
+
+    root = path.join('.', root);
+
+    if (typeof dataTree == 'string') {
+      dataTree = await workspace.root.getSubtree(path.join(root, dataTree), true);
+    } else if (!dataTree) {
+      dataTree = await workspace.root.getSubtree(root);
+    }
+
+    const sheetsPath = path.join(root, '.gitsheets');
+    const sheetsTree = await workspace.root.getSubtree(sheetsPath);
+
+    if (!sheetsTree) {
+      throw new Error(`could not open sheets tree at ${sheetsPath}`);
+    }
+
+    return {
+      workspace,
+      root,
+      sheetsPath,
+      sheetsTree,
+      dataTree,
+    };
+  }
+
   async openSheet (name, { root = '/', dataTree: dataTreeInput = null }) {
-    const { workspace, sheetsPath, dataTree } = await _loadConfig(this, root, dataTreeInput);
+    const { workspace, sheetsPath, dataTree } = await this.resolveDataTree(root, dataTreeInput);
 
     return new Sheet({
       workspace,
@@ -16,7 +43,7 @@ class Repository extends HoloRepo
   }
 
   async openSheets ({ root = '/', dataTree: dataTreeInput = null }) {
-    const { workspace, sheetsPath, sheetsTree, dataTree } = await _loadConfig(this, root, dataTreeInput);
+    const { workspace, sheetsPath, sheetsTree, dataTree } = await this.resolveDataTree(root, dataTreeInput);
 
     const children = await sheetsTree.getChildren();
     const childNameRe = /^([^\/]+)\.toml$/;
@@ -58,31 +85,3 @@ class Repository extends HoloRepo
 }
 
 module.exports = Repository;
-
-
-// private library
-async function _loadConfig(repo, root, dataTree) {
-  const workspace = await repo.getWorkspace();
-
-  root = path.join('.', root);
-
-  if (typeof dataTree == 'string') {
-    dataTree = await workspace.root.getSubtree(path.join(root, dataTree), true);
-  } else if (!dataTree) {
-    dataTree = await workspace.root.getSubtree(root);
-  }
-
-  const sheetsPath = path.join(root, '.gitsheets');
-  const sheetsTree = await workspace.root.getSubtree(sheetsPath);
-
-  if (!sheetsTree) {
-    throw new Error(`could not open sheets tree at ${sheetsPath}`);
-  }
-
-  return {
-    workspace,
-    sheetsPath,
-    sheetsTree,
-    dataTree,
-  };
-}
