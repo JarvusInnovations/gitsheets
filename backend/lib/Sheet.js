@@ -125,6 +125,17 @@ class Sheet extends Configurable
     return writePromise;
   }
 
+  async delete (record) {
+    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+
+    if (typeof record !== 'string') {
+      const pathTemplate = PathTemplate.fromString(pathTemplateString);
+      record = pathTemplate.render(record);
+    }
+
+    return this.dataTree.deleteChild(`${path.join(sheetRoot, record)}.toml`);
+  }
+
   async getAttachments (record) {
     const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
 
