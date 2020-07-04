@@ -5,7 +5,7 @@ exports.builder = {
     describe: 'Name of sheet to upsert into',
   },
   file: {
-    describe: 'File to read JSON/TOML record from, or - for JSON from STDIN',
+    describe: 'File to read JSON/TOML record from, or - for JSON from STDIN, or inline JSON',
     default: '-',
   },
   root: {
@@ -80,7 +80,14 @@ exports.handler = async function init({
 
 
   // read incoming record
-  const inputString = await fs.readFile(file, encoding);
+  const isInlineJson =
+    (file[0] == '{' && file[file.length - 1] == '}')
+    || file[0] == '[' && file[file.length - 1] == ']';
+
+  const inputString = isInlineJson
+    ? file
+    : await fs.readFile(file, encoding);
+
   const inputData = (format == 'toml' ? TOML : JSON).parse(inputString);
 
 
