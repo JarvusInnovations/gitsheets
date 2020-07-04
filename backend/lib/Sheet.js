@@ -49,6 +49,10 @@ class Sheet extends Configurable
   async readConfig () {
     const config = await super.readConfig();
 
+    if (!config) {
+      return null;
+    }
+
     if (!config.path) {
       throw new Error('path missing');
     }
