@@ -101,10 +101,13 @@ class Sheet extends Configurable
     const writePromise = this.getCachedConfig()
       .then(({ root: sheetRoot, path: pathTemplateString }) => {
         const pathTemplate = PathTemplate.fromString(pathTemplateString);
-        const recordPath = path.join(sheetRoot, pathTemplate.render(record));
-        const toml = stringifyRecord(record);
+        const recordPath = pathTemplate.render(record);
+        if (!recordPath) {
+          throw new Error('could not generate any path for record');
+        }
 
-        return this.dataTree.writeChild(`${recordPath}.toml`, toml);
+        const toml = stringifyRecord(record);
+        return this.dataTree.writeChild(`${path.join(sheetRoot, recordPath)}.toml`, toml);
       })
 
 
