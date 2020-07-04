@@ -4,7 +4,7 @@ const FieldComponent = require('./FieldComponent.js');
 const ExpressionComponent = require('./ExpressionComponent.js');
 // const Query = require('./Query.js');
 
-const FIELD_EXPRESSION_RE = /^[a-zA-Z0-9_\-]+$/;
+const FIELD_EXPRESSION_RE = /^[a-zA-Z0-9_\-]+(\/\*\*)?$/;
 const INSTANCE_CACHE = new Map();
 const PATH_COMPONENT_TEMPLATE = {
   kind: LiteralComponent,
@@ -50,7 +50,7 @@ class Template
     return recordPath.join('/');
   }
 
-  async* queryTree (tree, query, depth = 0) { // TODO: convert to generator
+  async* queryTree (tree, query, depth = 0) {
     const numComponents = this.#components.length;
 
     if (!tree) {
@@ -60,7 +60,8 @@ class Template
 
     for (let i = depth, currentTree = tree; i < numComponents; i++) {
       const isLast = i +1 == numComponents;
-      const nextName = this.#components[i].render(query);
+      const cur = this.#components[i];
+      const nextName = cur.render(query);
 
       if (isLast) {
         if (nextName) {
@@ -74,18 +75,29 @@ class Template
           return;
         } else {
           // each record in current tree is a result
-          const children = await currentTree.getChildren();
-          for (const childName in children) {
-            if (!childName.endsWith('.toml')) {
+          const children = cur.recursive
+            ? await currentTree.getBlobMap()
+            : await currentTree.getChildren();
+
+          let attachmentsPrefix;
+
+          for (const childPath in children) {
+            if (!childPath.endsWith('.toml')) {
               continue;
             }
 
-            const child = children[childName];
+            if (attachmentsPrefix && childPath.indexOf(attachmentsPrefix) === 0) {
+              // this file is an attachment under the previous record
+              continue;
+            }
+
+            const child = children[childPath];
 
             if (!child.isBlob) {
               continue;
             }
 
+            attachmentsPrefix = `${childPath.substr(0, childPath.length - 5)}/`;
             yield child;
           }
 
@@ -170,6 +182,11 @@ function parseRecordPathTemplate(templateString) {
       // reduce to Field kind if name is a bare field name
       if (FIELD_EXPRESSION_RE.test(cur.name)) {
         cur.kind = FieldComponent;
+
+        if (cur.name.endsWith('/**')) {
+          cur.recursive = true;
+          cur.name = cur.name.substr(0, cur.name.length - 3);
+        }
       }
 
       // skip }} and continue scan from the top

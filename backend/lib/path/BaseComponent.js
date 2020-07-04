@@ -10,9 +10,7 @@ class BaseComponent
     if (suffix) {
       this.suffix = suffix;
     }
-
-    Object.freeze(this);
-}
+  }
 }
 
 module.exports = BaseComponent;
