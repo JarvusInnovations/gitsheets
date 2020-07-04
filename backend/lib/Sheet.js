@@ -111,6 +111,32 @@ class Sheet extends Configurable
     return writePromise;
   }
 
+  async getAttachments (record) {
+    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+
+    if (typeof record !== 'string') {
+      const pathTemplate = PathTemplate.fromString(pathTemplateString);
+      record = pathTemplate.render(record);
+    }
+
+    const attachmentsTree = await this.dataTree.getChild(path.join(sheetRoot, record));
+
+    return attachmentsTree
+      ? attachmentsTree.getBlobMap()
+      : null;
+  }
+
+  async getAttachment (record, attachment) {
+    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+
+    if (typeof record !== 'string') {
+      const pathTemplate = PathTemplate.fromString(pathTemplateString);
+      record = pathTemplate.render(record);
+    }
+
+    return this.dataTree.getChild(path.join(sheetRoot, record, attachment));
+  }
+
   async finishWriting() {
     const writeQueue = WRITE_QUEUES.get(this);
 
