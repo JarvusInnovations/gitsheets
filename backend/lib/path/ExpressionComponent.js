@@ -5,7 +5,7 @@ class ExpressionComponent extends require('./BaseComponent.js') {
   }
 
   render (record) {
-    throw new Exception('ExpressionComponent.render not yet implemented');
+    throw new Error('ExpressionComponent.render not yet implemented');
   }
 }
 
