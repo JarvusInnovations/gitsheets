@@ -93,7 +93,7 @@ class Template
 
             const child = children[childPath];
 
-            if (!child.isBlob) {
+            if (!child || !child.isBlob) {
               continue;
             }
 
