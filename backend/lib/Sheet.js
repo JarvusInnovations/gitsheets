@@ -81,7 +81,14 @@ class Sheet extends Configurable
       const record = await blob.read().then(TOML.parse);
 
       for (const key in query) {
-        if (record[key] !== query[key]) {
+        const queryValue = query[key]
+        const recordValue = record[key]
+
+        if (typeof queryValue === 'function') {
+          if (!queryValue(recordValue, record)) {
+            continue BLOBS;
+          }
+        } else if (record[key] !== queryValue) {
           continue BLOBS;
         }
       }
