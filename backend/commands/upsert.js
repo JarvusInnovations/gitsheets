@@ -5,15 +5,23 @@ exports.builder = {
     describe: 'Name of sheet to upsert into',
   },
   file: {
-    describe: 'File to read JSON record from, or - for STDIN',
+    describe: 'File to read JSON/TOML record from, or - for JSON from STDIN',
     default: '-',
   },
   root: {
-    describe: 'Root path to .gitsheets in repository, defaults to /',
+    describe: 'Root path to .gitsheets in repository (defaults to GITSHEETS_ROOT or /)',
   },
   prefix: {
-    describe: 'Path to prefix after root to all sheet paths',
+    describe: 'Path to prefix after root to all sheet paths (defaults to GITSHEETS_PREFIX or none)',
   },
+  format: {
+    describe: 'Format to parse input data in (defaults to file extension or json)',
+    choices: ['json', 'toml']
+  },
+  encoding: {
+    describe: 'Encoding to read input with',
+    default: 'utf-8'
+  }
 };
 
 exports.handler = async function init({
@@ -21,14 +29,22 @@ exports.handler = async function init({
   file = null,
   root = null,
   prefix = null,
+  format = null,
+  encoding,
   ...argv
 }) {
   const logger = require('../lib/logger.js');
   const Repository = require('../lib/Repository.js')
   const path = require('path');
   const fs = require('mz/fs');
+  const TOML = require('@iarna/toml');
 
   const { GITSHEETS_ROOT, GITSHEETS_PREFIX } = process.env;
+
+  // apply dynamic defaults
+  if (!file || file == '-') {
+    file = 0; // STDIN
+  }
 
   if (!root) {
     root = GITSHEETS_ROOT || '/';
@@ -36,6 +52,16 @@ exports.handler = async function init({
 
   if (!prefix) {
     prefix = GITSHEETS_PREFIX || null;
+  }
+
+  if (!format) {
+    if (file && file.endsWith('.json')) {
+      format = 'json';
+    } else if (file && file.endsWith('.toml')) {
+      format = 'toml'
+    } else {
+      format = 'json';
+    }
   }
 
   // get repo interface
@@ -54,8 +80,8 @@ exports.handler = async function init({
 
 
   // read incoming record
-  const inputString = await fs.readFile(file && file != '-' ? file : 0, 'utf-8');
-  const inputData = JSON.parse(inputString);
+  const inputString = await fs.readFile(file, encoding);
+  const inputData = (format == 'toml' ? TOML : JSON).parse(inputString);
 
 
   // upsert record(s) into sheet
