@@ -55,19 +55,17 @@ exports.handler = async function init({
 
   // read incoming record
   const inputString = await fs.readFile(file && file != '-' ? file : 0, 'utf-8');
-  const inputRecord = JSON.parse(inputString);
+  const inputData = JSON.parse(inputString);
 
 
-  // upsert record into sheet
-  const outputBlob = await sheet.upsert(inputRecord);
+  // upsert record(s) into sheet
+  for (const inputRecord of Array.isArray(inputData) ? inputData : [inputData]) {
+    const outputBlob = await sheet.upsert(inputRecord);
+    console.log(outputBlob.hash);
+  }
 
 
   // write changes to workspace
   const workspace = await repo.getWorkspace();
   await workspace.writeWorkingChanges();
-
-
-  // return upserted record
-  console.log(outputBlob.hash);
-  return outputBlob.hash;
 };
