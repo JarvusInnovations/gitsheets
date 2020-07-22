@@ -26,6 +26,14 @@ exports.builder = {
   'filter.<field>': {
     describe: 'Filter results by one or more field values',
   },
+  fields: {
+    describe: 'List of fields to order/limit output columns with',
+    type: 'array'
+  },
+  'fields.<from>': {
+    describe: 'Fields to remap',
+    type: 'array'
+  }
 };
 
 exports.handler = async function query({
@@ -79,6 +87,12 @@ exports.handler = async function query({
   }
 
 
+  // apply field shaping
+  if (fields) {
+    result = mapResult(result, fields);
+  }
+
+
   // output results
   switch (format) {
     case 'json': return outputJson(result);
@@ -98,6 +112,24 @@ async function* limitResult(result, limit) {
     if (count >= limit) {
       break;
     }
+  }
+}
+
+async function* mapResult(result, fields) {
+  for await (const record of result) {
+    const output = {};
+
+    for (const field of fields) {
+      if (typeof field == 'object') {
+        for (const from in field) {
+          output[field[from]] = record[from];
+        }
+      } else {
+        output[field] = record[field];
+      }
+    }
+
+    yield output;
   }
 }
 
