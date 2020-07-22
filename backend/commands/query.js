@@ -19,17 +19,22 @@ exports.builder = {
     describe: 'Encoding to write output with',
     default: 'utf-8',
   },
+  limit: {
+    describe: 'Truncate results to given count',
+    type: 'number'
+  },
   'filter.<field>': {
     describe: 'Filter results by one or more field values',
-  }
+  },
 };
 
 exports.handler = async function query({
   sheet: sheetName,
   root = null,
   prefix = null,
-  format = 'json',
+  format,
   encoding,
+  limit = null,
   filter = null,
   ...argv
 }) {
@@ -65,7 +70,13 @@ exports.handler = async function query({
 
 
   // query records
-  const result = sheet.query(filter);
+  let result = sheet.query(filter);
+
+
+  // apply limit
+  if (limit) {
+    result = limitResult(result, limit);
+  }
 
 
   // output results
@@ -76,6 +87,19 @@ exports.handler = async function query({
     default: throw new Error(`Unsupported output format: ${format}`);
   }
 };
+
+async function* limitResult(result, limit) {
+  let count = 0;
+
+  for await (const record of result) {
+    count++;
+    yield record;
+
+    if (count >= limit) {
+      break;
+    }
+  }
+}
 
 async function outputJson(result) {
   let firstRecord = true;
