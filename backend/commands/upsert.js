@@ -16,7 +16,7 @@ exports.builder = {
   },
   format: {
     describe: 'Format to parse input data in (defaults to file extension or json)',
-    choices: ['json', 'toml'],
+    choices: ['json', 'toml'], // TODO: add csv
   },
   encoding: {
     describe: 'Encoding to read input with',
@@ -27,7 +27,7 @@ exports.builder = {
   }
 };
 
-exports.handler = async function init({
+exports.handler = async function upsert({
   sheet: sheetName,
   file = null,
   root = null,
@@ -73,7 +73,7 @@ exports.handler = async function init({
   logger.debug('instantiated repository:', repo);
 
 
-  // get sheets
+  // get sheet
   const sheet = await repo.openSheet(sheetName, { root, dataTree: prefix });
 
   if (!sheet) {
