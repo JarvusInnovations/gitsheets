@@ -30,13 +30,13 @@ exports.builder = {
 
 exports.handler = async function query({
   sheet: sheetName,
-  root = null,
-  prefix = null,
+  root,
+  prefix,
   format,
   // encoding,
-  limit = null,
-  filter = null,
-  ...argv
+  limit,
+  filter,
+  fields,
 }) {
   const logger = require('../lib/logger.js');
   const Repository = require('../lib/Repository.js')
