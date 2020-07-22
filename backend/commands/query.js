@@ -15,10 +15,10 @@ exports.builder = {
     choices: ['json', 'csv', 'toml'],
     default: 'json',
   },
-  encoding: {
-    describe: 'Encoding to write output with',
-    default: 'utf-8',
-  },
+  // encoding: {
+  //   describe: 'Encoding to write output with',
+  //   default: 'utf-8',
+  // },
   limit: {
     describe: 'Truncate results to given count',
     type: 'number'
@@ -33,7 +33,7 @@ exports.handler = async function query({
   root = null,
   prefix = null,
   format,
-  encoding,
+  // encoding,
   limit = null,
   filter = null,
   ...argv
