@@ -97,6 +97,10 @@ class Sheet extends Configurable
     }
   }
 
+  async queryFirst (query) {
+    return await this.query(query).next();
+  }
+
   async upsert (record) {
     let writeQueue = WRITE_QUEUES.get(this);
 
