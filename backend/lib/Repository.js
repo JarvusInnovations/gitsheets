@@ -31,7 +31,7 @@ class Repository extends HoloRepo
     };
   }
 
-  async openSheet (name, { root = '/', dataTree: dataTreeInput = null }) {
+  async openSheet (name, { root = '/', dataTree: dataTreeInput = null } = {}) {
     const { workspace, sheetsPath, dataTree } = await this.resolveDataTree(root, dataTreeInput);
 
     return new Sheet({
@@ -42,7 +42,7 @@ class Repository extends HoloRepo
     });
   }
 
-  async openSheets ({ root = '/', dataTree: dataTreeInput = null }) {
+  async openSheets ({ root = '/', dataTree: dataTreeInput = null } = {}) {
     const { workspace, sheetsPath, sheetsTree, dataTree } = await this.resolveDataTree(root, dataTreeInput);
 
     const children = await sheetsTree.getChildren();
