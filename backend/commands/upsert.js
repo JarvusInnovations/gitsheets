@@ -1,3 +1,12 @@
+const fs = require('fs');
+const TOML = require('@iarna/toml');
+const { parse: csvParse } = require('fast-csv');
+
+const inputFormats = {
+  json: readJsonFile,
+  toml: readTomlFile,
+};
+
 exports.command = 'upsert <sheet> [file]';
 exports.desc = 'Upsert a record into a sheet';
 exports.builder = {
@@ -16,7 +25,7 @@ exports.builder = {
   },
   format: {
     describe: 'Format to parse input data in (defaults to file extension or json)',
-    choices: ['json', 'toml'], // TODO: add csv
+    choices: Object.keys(inputFormats),
   },
   encoding: {
     describe: 'Encoding to read input with',
@@ -40,14 +49,12 @@ exports.handler = async function upsert({
   const logger = require('../lib/logger.js');
   const Repository = require('../lib/Repository.js')
   const path = require('path');
-  const fs = require('mz/fs');
-  const TOML = require('@iarna/toml');
 
   const { GITSHEETS_ROOT, GITSHEETS_PREFIX } = process.env;
 
   // apply dynamic defaults
   if (!file || file == '-') {
-    file = 0; // STDIN
+    file = false;
   }
 
   if (!root) {
@@ -63,6 +70,8 @@ exports.handler = async function upsert({
       format = 'json';
     } else if (file && file.endsWith('.toml')) {
       format = 'toml'
+    } else if (file && file.endsWith('.csv')) {
+      format = 'csv'
     } else {
       format = 'json';
     }
@@ -88,15 +97,14 @@ exports.handler = async function upsert({
     (file[0] == '{' && file[file.length - 1] == '}')
     || file[0] == '[' && file[file.length - 1] == ']';
 
-  const inputString = isInlineJson
-    ? file
-    : await fs.readFile(file, encoding);
+  const inputRecords = isInlineJson
+    ? readJsonString(file, { encoding })
+    : inputFormats[format](file, { encoding });
 
-  const inputData = (format == 'toml' ? TOML : JSON).parse(inputString);
 
 
   // upsert record(s) into sheet
-  for (const inputRecord of Array.isArray(inputData) ? inputData : [inputData]) {
+  for await (const inputRecord of inputRecords) {
     const outputBlob = await sheet.upsert(inputRecord);
     console.log(outputBlob.hash);
 
@@ -136,3 +144,39 @@ exports.handler = async function upsert({
   const workspace = await repo.getWorkspace();
   await workspace.writeWorkingChanges();
 };
+
+async function* readJsonString(string, { encoding }) {
+  const data = JSON.parse(string);
+
+  for (const record of Array.isArray(data) ? data : [data]) {
+    yield record;
+  }
+}
+
+async function* readJsonFile(file, { encoding }) {
+  const stream = file ? fs.createReadStream(file) : process.stdin;
+
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+
+  const data = JSON.parse(Buffer.concat(chunks).toString(encoding));
+
+  for (const record of Array.isArray(data) ? data : [data]) {
+    yield record;
+  }
+}
+
+async function* readTomlFile(file, { encoding }) {
+  const stream = file ? fs.createReadStream(file) : process.stdin;
+
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+
+  const data = TOML.parse(Buffer.concat(chunks).toString(encoding));
+
+  yield data;
+}
