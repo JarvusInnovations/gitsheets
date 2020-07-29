@@ -5,6 +5,7 @@ const { parse: csvParse } = require('fast-csv');
 const inputFormats = {
   json: readJsonFile,
   toml: readTomlFile,
+  csv: readCsvFile,
 };
 
 exports.command = 'upsert <sheet> [file]';
@@ -179,4 +180,40 @@ async function* readTomlFile(file, { encoding }) {
   const data = TOML.parse(Buffer.concat(chunks).toString(encoding));
 
   yield data;
+}
+
+async function* readCsvFile(file, { encoding }) {
+  const stream = file ? fs.createReadStream(file) : process.stdin;
+
+  const csvParseStream = csvParse({ headers: true });
+
+  stream.pipe(csvParseStream);
+  for await (const raw of csvParseStream) {
+    const record = {};
+
+    for (const key in raw) {
+      const value = raw[key];
+
+      if (value === '') {
+        continue;
+      }
+
+      const subKeys = key.split('.');
+
+      let target = record;
+      while (subKeys.length > 1) {
+        const subKey = subKeys.shift();
+
+        if (subKey in target) {
+          target = target[subKey]
+        } else {
+          target = target[subKey] = {};
+        }
+      }
+
+      target[subKeys[0]] = value;
+    }
+
+    yield record
+  }
 }
