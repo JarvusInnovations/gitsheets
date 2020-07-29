@@ -8,7 +8,8 @@ class ExpressionComponent extends require('./BaseComponent.js') {
   }
 
   render (record) {
-    return this.script.runInNewContext(record);
+    const value = this.script.runInNewContext(record);
+    return typeof value === 'undefined' ? undefined : String(value);
   }
 }
 

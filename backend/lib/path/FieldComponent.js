@@ -7,7 +7,7 @@ class FieldComponent extends require('./BaseComponent.js') {
 
   render (record) {
     const value = record ? record[this.name] : undefined;
-    return typeof value === 'function' ? undefined : value;
+    return typeof value === 'function' || typeof value === 'undefined' ? undefined : String(value);
   }
 }
 
