@@ -1,11 +1,14 @@
+const vm = require('vm');
+
 class ExpressionComponent extends require('./BaseComponent.js') {
   constructor () {
     super(...arguments);
+    this.script = new vm.Script(this.name);
     Object.freeze(this);
   }
 
   render (record) {
-    throw new Error('ExpressionComponent.render not yet implemented');
+    return this.script.runInNewContext(record);
   }
 }
 
