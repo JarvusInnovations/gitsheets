@@ -20,7 +20,7 @@ exports.builder = {
   },
   encoding: {
     describe: 'Encoding to read input with',
-    default: 'utf-8',
+    default: 'utf8',
   },
   'attachments.<attachment-path>': {
     describe: 'One or more files to attach in the format <extension>:<source-path>',

@@ -17,7 +17,7 @@ exports.builder = {
   },
   // encoding: {
   //   describe: 'Encoding to write output with',
-  //   default: 'utf-8',
+  //   default: 'utf8',
   // },
   limit: {
     describe: 'Truncate results to given count',
