@@ -279,6 +279,13 @@
     <ul class="md-nav__list" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    Overview
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#natural-keys" class="md-nav__link">
     Natural keys
   </a>
@@ -466,6 +473,13 @@
     <ul class="md-nav__list" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    Overview
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#natural-keys" class="md-nav__link">
     Natural keys
   </a>
@@ -521,11 +535,13 @@
                 
                 
                 <h1 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link"> ¶</a></h1>
-<p>To prepare a repository for use with Gitsheets, all you need is a way to map a named sheet to a tree of normalized <a href="https://toml.io/"><code>TOML</code></a> files store one record per file.</p>
+<p>Gitsheets is the toolkit for distributed recordkeeping that lives inside Git.</p>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link"> ¶</a></h2>
+<p>To prepare a repository for use with Gitsheets, all you need is a way to map a named sheet to a tree of normalized <a href="https://toml.io/"><code>TOML</code></a> files (containing one record per file).</p>
 <h2 id="natural-keys">Natural keys<a class="headerlink" href="#natural-keys" title="Permanent link"> ¶</a></h2>
 <p>Gitsheets works best with records that have <a href="https://en.wikipedia.org/wiki/Natural_key">natural keys</a>, and doesn&rsquo;t provide any mechanism out-of-the-box for assigning keys randomly/sequentially. If your records don&rsquo;t yet contain any unique identifier, assign your own somehow before loading them into a git sheet.</p>
 <h2 id="declare-a-sheet">Declare a sheet<a class="headerlink" href="#declare-a-sheet" title="Permanent link"> ¶</a></h2>
-<p>To declare a sheet named <code>todos</code>, create a file in your git repository at <code>.gitsheets/todos.toml</code>:</p>
+<p>To declare a sheet named <code>todos</code> for example, create a file in your git repository at <code>.gitsheets/todos.toml</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
 <span class="n">root</span> <span class="o">=</span> <span class="s">&quot;data/todos&quot;</span>
 <span class="n">path</span> <span class="o">=</span> <span class="s">&quot;user-${{ userId }}/${{ id }}&quot;</span>
