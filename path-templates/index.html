@@ -10,18 +10,18 @@
       
       
       
-      <link rel="shortcut icon" href="assets/images/favicon.png">
+      <link rel="shortcut icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.1.2, mkdocs-material-5.5.0">
     
     
       
-        <title>Project Documentation</title>
+        <title>Path templates - Project Documentation</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.b5d04df8.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.b5d04df8.min.css">
       
-        <link rel="stylesheet" href="assets/stylesheets/palette.9ab2c1f8.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.9ab2c1f8.min.css">
       
       
         
@@ -60,7 +60,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#getting-started" class="md-skip">
+        <a href="#path-templates" class="md-skip">
           Skip to content
         </a>
       
@@ -71,7 +71,7 @@
     
       <header class="md-header" data-md-component="header">
   <nav class="md-header-nav md-grid" aria-label="Header">
-    <a href="." title="Project Documentation" class="md-header-nav__button md-logo" aria-label="Project Documentation">
+    <a href=".." title="Project Documentation" class="md-header-nav__button md-logo" aria-label="Project Documentation">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 003-3 3 3 0 00-3-3 3 3 0 00-3 3 3 3 0 003 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54z"/></svg>
@@ -88,7 +88,7 @@
           </span>
           <span class="md-header-nav__topic md-ellipsis">
             
-              Getting Started
+              Path templates
             
           </span>
         </div>
@@ -157,7 +157,7 @@
         
   <li class="md-tabs__item">
     
-      <a href="." class="md-tabs__link md-tabs__link--active">
+      <a href=".." class="md-tabs__link md-tabs__link--active">
         Getting Started
       </a>
     
@@ -173,7 +173,7 @@
   
     <li class="md-tabs__item">
       
-        <a href="cli/" class="md-tabs__link">
+        <a href="../cli/" class="md-tabs__link">
           Command Line Interface
         </a>
       
@@ -186,7 +186,7 @@
   
     <li class="md-tabs__item">
       
-        <a href="nodejs/" class="md-tabs__link">
+        <a href="../nodejs/" class="md-tabs__link">
           NodeJS Module
         </a>
       
@@ -210,7 +210,7 @@
                   <div class="md-sidebar__inner">
                     <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="Project Documentation" class="md-nav__button md-logo" aria-label="Project Documentation">
+    <a href=".." title="Project Documentation" class="md-nav__button md-logo" aria-label="Project Documentation">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 003-3 3 3 0 00-3-3 3 3 0 00-3 3 3 3 0 003 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54z"/></svg>
@@ -238,6 +238,18 @@
       
       
 
+
+  <li class="md-nav__item">
+    <a href=".." title="Getting Started" class="md-nav__link">
+      Getting Started
+    </a>
+  </li>
+
+    
+      
+      
+      
+
   
 
 
@@ -249,14 +261,14 @@
     
     
       <label class="md-nav__link md-nav__link--active" for="__toc">
-        Getting Started
+        Path templates
         <span class="md-nav__icon md-icon">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 9h14V7H3v2m0 4h14v-2H3v2m0 4h14v-2H3v2m16 0h2v-2h-2v2m0-10v2h2V7h-2m0 6h2v-2h-2v2z"/></svg>
         </span>
       </label>
     
-    <a href="." title="Getting Started" class="md-nav__link md-nav__link--active">
-      Getting Started
+    <a href="./" title="Path templates" class="md-nav__link md-nav__link--active">
+      Path templates
     </a>
     
       
@@ -275,36 +287,43 @@
     <ul class="md-nav__list" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#natural-keys" class="md-nav__link">
-    Natural keys
+  <a href="#single-field-unique-key" class="md-nav__link">
+    Single-field unique key
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#declare-a-sheet" class="md-nav__link">
-    Declare a sheet
+  <a href="#multi-field-unique-key" class="md-nav__link">
+    Multi-field unique key
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#upsert-records" class="md-nav__link">
-    Upsert records
+  <a href="#sharding-paths" class="md-nav__link">
+    Sharding paths
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#record-format" class="md-nav__link">
-    Record format
+  <a href="#dynamicly-sharding-paths" class="md-nav__link">
+    Dynamicly sharding paths
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#querying-records" class="md-nav__link">
-    Querying records
+  <a href="#annotated-paths" class="md-nav__link">
+    Annotated paths
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nested-path-fields" class="md-nav__link">
+    Nested path fields
   </a>
   
 </li>
@@ -322,19 +341,7 @@
 
 
   <li class="md-nav__item">
-    <a href="path-templates/" title="Path templates" class="md-nav__link">
-      Path templates
-    </a>
-  </li>
-
-    
-      
-      
-      
-
-
-  <li class="md-nav__item">
-    <a href="advanced-layouts/" title="Advanced repository layouts" class="md-nav__link">
+    <a href="../advanced-layouts/" title="Advanced repository layouts" class="md-nav__link">
       Advanced repository layouts
     </a>
   </li>
@@ -371,7 +378,7 @@
 
 
   <li class="md-nav__item">
-    <a href="cli/" title="Getting started" class="md-nav__link">
+    <a href="../cli/" title="Getting started" class="md-nav__link">
       Getting started
     </a>
   </li>
@@ -413,7 +420,7 @@
 
 
   <li class="md-nav__item">
-    <a href="nodejs/" title="Getting started" class="md-nav__link">
+    <a href="../nodejs/" title="Getting started" class="md-nav__link">
       Getting started
     </a>
   </li>
@@ -430,7 +437,7 @@
 
 
   <li class="md-nav__item">
-    <a href="quick-demo/" title="Quick demo" class="md-nav__link">
+    <a href="../quick-demo/" title="Quick demo" class="md-nav__link">
       Quick demo
     </a>
   </li>
@@ -462,36 +469,43 @@
     <ul class="md-nav__list" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#natural-keys" class="md-nav__link">
-    Natural keys
+  <a href="#single-field-unique-key" class="md-nav__link">
+    Single-field unique key
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#declare-a-sheet" class="md-nav__link">
-    Declare a sheet
+  <a href="#multi-field-unique-key" class="md-nav__link">
+    Multi-field unique key
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#upsert-records" class="md-nav__link">
-    Upsert records
+  <a href="#sharding-paths" class="md-nav__link">
+    Sharding paths
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#record-format" class="md-nav__link">
-    Record format
+  <a href="#dynamicly-sharding-paths" class="md-nav__link">
+    Dynamicly sharding paths
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#querying-records" class="md-nav__link">
-    Querying records
+  <a href="#annotated-paths" class="md-nav__link">
+    Annotated paths
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nested-path-fields" class="md-nav__link">
+    Nested path fields
   </a>
   
 </li>
@@ -508,7 +522,7 @@
             <article class="md-content__inner md-typeset">
               
                 
-                  <a href="https://github.com/JarvusInnovations/gitsheets/edit/master/docs/README.md" title="Edit this page" class="md-content__button md-icon">
+                  <a href="https://github.com/JarvusInnovations/gitsheets/edit/master/docs/path-templates.md" title="Edit this page" class="md-content__button md-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20.71 7.04c.39-.39.39-1.04 0-1.41l-2.34-2.34c-.37-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.93l-3.75-3.75L3 17.25z"/></svg>
                   </a>
                 
@@ -516,56 +530,143 @@
                   
                 
                 
-                <h1 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link"> ¶</a></h1>
-<p>To prepare a repository for use with Gitsheets, all you need is a way to map a named sheet to a tree of normalized <a href="https://toml.io/"><code>TOML</code></a> files store one record per file.</p>
-<h2 id="natural-keys">Natural keys<a class="headerlink" href="#natural-keys" title="Permanent link"> ¶</a></h2>
-<p>Gitsheets works best with records that have <a href="https://en.wikipedia.org/wiki/Natural_key">natural keys</a>, and doesn&rsquo;t provide any mechanism out-of-the-box for assigning keys randomly/sequentially. If your records don&rsquo;t yet contain any unique identifier, assign your own somehow before loading them into a git sheet.</p>
-<h2 id="declare-a-sheet">Declare a sheet<a class="headerlink" href="#declare-a-sheet" title="Permanent link"> ¶</a></h2>
-<p>To declare a sheet named <code>todos</code>, create a file in your git repository at <code>.gitsheets/todos.toml</code>:</p>
+                <h1 id="path-templates">Path templates<a class="headerlink" href="#path-templates" title="Permanent link"> ¶</a></h1>
+<p>Path templates are the key to how Gitsheets works. They define how each sheet maps records into a tree of files.</p>
+<p>In addition to teaching Gitsheets how to store records, path templates also inform how they are queried. Gitsheets attempts to load as little of the tree as possible while executing a query by rendering the path from left to right against the query. This means that essentially, your path template is also your indexing and sharding strategy. This has little practical performance implication for sets of records in the 10s and 100s, but can become significant beyond that.</p>
+<h2 id="single-field-unique-key">Single-field unique key<a class="headerlink" href="#single-field-unique-key" title="Permanent link"> ¶</a></h2>
+<p>The simplest case is one where each record already has a single unique text field.</p>
+<div class="tabbed-set" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><label for="__tabbed_1_1">.gitsheets/users.toml</label><div class="tabbed-content">
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
-<span class="n">root</span> <span class="o">=</span> <span class="s">&quot;data/todos&quot;</span>
-<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;user-${{ userId }}/${{ id }}&quot;</span>
+<span class="n">root</span> <span class="o">=</span> <span class="s">&quot;users&quot;</span>
+<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;${{ username }}&quot;</span>
 </code></pre></div>
 
-<p>This configuration declares two essential things about the <code>todos</code> sheet:</p>
-<ul>
-<li><strong><code>gitsheet.root</code></strong> declares the root path within the repository containing all records for this sheet<ul>
-<li>all <code>.toml</code> files under this path are considered to declare records</li>
-<li>the path may contain any number of <code>/</code>s to nest the sheet&rsquo;s root</li>
-</ul>
-</li>
-<li><strong><code>gitsheet.path</code></strong> declares a template for finding the path to a given record<ul>
-<li><code>${{ expression }}</code> path components can use arbitrary javascript</li>
-</ul>
-</li>
-</ul>
-<p>The <code>todos</code> sheet can now be upserted and queried by any Gitsheets interface.</p>
-<h2 id="upsert-records">Upsert records<a class="headerlink" href="#upsert-records" title="Permanent link"> ¶</a></h2>
-<ul>
-<li><a href="./cli/">Using the <code>git sheet</code> command line interface</a></li>
-<li><a href="./nodejs/">Using the <code>gitsheets</code> NodeJS module</a></li>
-<li><em>Coming soon: Using the Gitsheets UI</em></li>
-</ul>
-<h2 id="record-format">Record format<a class="headerlink" href="#record-format" title="Permanent link"> ¶</a></h2>
-<p>Records are stored one-per file in TOML format with keys sorted alphabetically:</p>
-<div class="highlight"><pre><span></span><code><span class="n">completed</span> <span class="o">=</span> <span class="kc">false</span>
-<span class="n">id</span> <span class="o">=</span> <span class="mi">181</span>
-<span class="n">title</span> <span class="o">=</span> <span class="s">&quot;ut cupiditate sequi aliquam fuga maiores&quot;</span>
-<span class="n">userId</span> <span class="o">=</span> <span class="mi">10</span>
+</div>
+<input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><label for="__tabbed_1_2">users/GrandmaCOBOL.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="n">first_name</span> <span class="o">=</span> <span class="s">&quot;Grace&quot;</span>
+<span class="n">last_name</span> <span class="o">=</span> <span class="s">&quot;Hopper&quot;</span>
+<span class="n">username</span> <span class="o">=</span> <span class="s">&quot;GrandmaCOBOL&quot;</span>
 </code></pre></div>
 
-<p>The goals of this serialization are to:</p>
-<ul>
-<li>Consistently render records to a normal form, such that identical record content will produce the same content hash</li>
-<li>Be decently readable in text and diff form</li>
-<li>Be easy to hand-edit</li>
-<li>Store basic data types consistently</li>
-<li>Generate minimal diff noise</li>
-</ul>
-<h2 id="querying-records">Querying records<a class="headerlink" href="#querying-records" title="Permanent link"> ¶</a></h2>
-<ul>
-<li>Path templates are indexes</li>
-</ul>
+</div>
+<input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><label for="__tabbed_1_3">Try it</label><div class="tabbed-content">
+<p>Declare the <code>users</code> sheet:</p>
+<div class="highlight"><pre><span></span><code>mkdir -p .gitsheets/
+<span class="nb">echo</span> <span class="s1">&#39;[gitsheet]</span>
+<span class="s1">root = &quot;users&quot;</span>
+<span class="s1">path = &quot;${{ username }}&quot;&#39;</span> &gt; .gitsheets/users.toml
+</code></pre></div>
+
+<p>Upsert a user:</p>
+<div class="highlight"><pre><span></span><code>git sheet upsert users <span class="s1">&#39;{</span>
+<span class="s1">    &quot;username&quot;: &quot;GrandmaCOBOL&quot;,</span>
+<span class="s1">    &quot;first_name&quot;: &quot;Grace&quot;,</span>
+<span class="s1">    &quot;last_name&quot;: &quot;Hopper&quot;</span>
+<span class="s1">}&#39;</span>
+</code></pre></div>
+
+<p>Query a user:</p>
+<div class="highlight"><pre><span></span><code>git sheet query users --filter.username<span class="o">=</span>GrandmaCOBOL
+</code></pre></div>
+
+</div>
+</div>
+<h2 id="multi-field-unique-key">Multi-field unique key<a class="headerlink" href="#multi-field-unique-key" title="Permanent link"> ¶</a></h2>
+<p>If one field is not enough to create a unique path, a composite key can be configured by combining multiple path components:</p>
+<div class="tabbed-set" data-tabs="2:4"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><label for="__tabbed_2_1">.gitsheets/domain-users.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
+<span class="n">root</span> <span class="o">=</span> <span class="s">&quot;domain-users&quot;</span>
+<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;${{ domain }}/${{ username }}&quot;</span>
+</code></pre></div>
+
+</div>
+<input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><label for="__tabbed_2_2">domain-users/af.mil/GrandmaCOBOL.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="n">domain</span> <span class="o">=</span> <span class="s">&quot;af.mil&quot;</span>
+<span class="n">first_name</span> <span class="o">=</span> <span class="s">&quot;Grace&quot;</span>
+<span class="n">last_name</span> <span class="o">=</span> <span class="s">&quot;Hopper&quot;</span>
+<span class="n">username</span> <span class="o">=</span> <span class="s">&quot;GrandmaCOBOL&quot;</span>
+</code></pre></div>
+
+</div>
+<input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><label for="__tabbed_2_3">domain-users/yale.edu/GrandmaCOBOL.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="n">domain</span> <span class="o">=</span> <span class="s">&quot;yale.edu&quot;</span>
+<span class="n">first_name</span> <span class="o">=</span> <span class="s">&quot;Grace&quot;</span>
+<span class="n">last_name</span> <span class="o">=</span> <span class="s">&quot;Hopper&quot;</span>
+<span class="n">username</span> <span class="o">=</span> <span class="s">&quot;GrandmaCOBOL&quot;</span>
+</code></pre></div>
+
+</div>
+<input id="__tabbed_2_4" name="__tabbed_2" type="radio" /><label for="__tabbed_2_4">Try it</label><div class="tabbed-content">
+<p>Declare the <code>domain-users</code> sheet:</p>
+<div class="highlight"><pre><span></span><code>mkdir -p .gitsheets/
+<span class="nb">echo</span> <span class="s1">&#39;[gitsheet]</span>
+<span class="s1">root = &quot;domain-users&quot;</span>
+<span class="s1">path = &quot;${{ domain }}/${{ username }}&quot;&#39;</span> &gt; .gitsheets/domain-users.toml
+</code></pre></div>
+
+<p>Upsert multiple users:</p>
+<div class="highlight"><pre><span></span><code>git sheet upsert domain-users <span class="s1">&#39;[</span>
+<span class="s1">    {</span>
+<span class="s1">        &quot;username&quot;: &quot;GrandmaCOBOL&quot;,</span>
+<span class="s1">        &quot;domain&quot;: &quot;yale.edu&quot;,</span>
+<span class="s1">        &quot;first_name&quot;: &quot;Grace&quot;,</span>
+<span class="s1">        &quot;last_name&quot;: &quot;Hopper&quot;</span>
+<span class="s1">    },</span>
+<span class="s1">    {</span>
+<span class="s1">        &quot;username&quot;: &quot;GrandmaCOBOL&quot;,</span>
+<span class="s1">        &quot;domain&quot;: &quot;af.mil&quot;,</span>
+<span class="s1">        &quot;first_name&quot;: &quot;Grace&quot;,</span>
+<span class="s1">        &quot;last_name&quot;: &quot;Hopper&quot;</span>
+<span class="s1">    }</span>
+<span class="s1">]&#39;</span>
+</code></pre></div>
+
+<p>Query multiple users:</p>
+<div class="highlight"><pre><span></span><code>git sheet query users --filter.username<span class="o">=</span>GrandmaCOBOL
+</code></pre></div>
+
+<p>Query unique user by domain:</p>
+<div class="highlight"><pre><span></span><code>git sheet query users --filter.username<span class="o">=</span>GrandmaCOBOL --filter.domain<span class="o">=</span>af.mil
+</code></pre></div>
+
+</div>
+</div>
+<h2 id="sharding-paths">Sharding paths<a class="headerlink" href="#sharding-paths" title="Permanent link"> ¶</a></h2>
+<div class="tabbed-set" data-tabs="3:1"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><label for="__tabbed_3_1">.gitsheets/students.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
+<span class="n">root</span> <span class="o">=</span> <span class="s">&quot;students&quot;</span>
+<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;${{ graduation_year }}/${{ student_id }}&quot;</span>
+</code></pre></div>
+
+</div>
+</div>
+<h2 id="dynamicly-sharding-paths">Dynamicly sharding paths<a class="headerlink" href="#dynamicly-sharding-paths" title="Permanent link"> ¶</a></h2>
+<div class="tabbed-set" data-tabs="4:1"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><label for="__tabbed_4_1">.gitsheets/blog-posts.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
+<span class="n">root</span> <span class="o">=</span> <span class="s">&quot;blog-posts&quot;</span>
+<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;${{ published_at.getYear() }}/${{ published_at.getMonth() }}/${{ published_at.getDate() }}/${{ slug }}&quot;</span>
+</code></pre></div>
+
+</div>
+</div>
+<h2 id="annotated-paths">Annotated paths<a class="headerlink" href="#annotated-paths" title="Permanent link"> ¶</a></h2>
+<div class="tabbed-set" data-tabs="5:1"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio" /><label for="__tabbed_5_1">.gitsheets/todos.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
+<span class="n">root</span> <span class="o">=</span> <span class="s">&quot;todos&quot;</span>
+<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;by-user/user-${{ userId }}/${{ id }}&quot;</span>
+</code></pre></div>
+
+</div>
+</div>
+<h2 id="nested-path-fields">Nested path fields<a class="headerlink" href="#nested-path-fields" title="Permanent link"> ¶</a></h2>
+<div class="tabbed-set" data-tabs="6:1"><input checked="checked" id="__tabbed_6_1" name="__tabbed_6" type="radio" /><label for="__tabbed_6_1">.gitsheets/content.toml</label><div class="tabbed-content">
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
+<span class="n">root</span> <span class="o">=</span> <span class="s">&quot;content&quot;</span>
+<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;${{ path/** }}&quot;</span>
+</code></pre></div>
+
+</div>
+</div>
                 
               
               
@@ -584,14 +685,28 @@
     <div class="md-footer-nav">
       <nav class="md-footer-nav__inner md-grid" aria-label="Footer">
         
+          <a href=".." title="Getting Started" class="md-footer-nav__link md-footer-nav__link--prev" rel="prev">
+            <div class="md-footer-nav__button md-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12z"/></svg>
+            </div>
+            <div class="md-footer-nav__title">
+              <div class="md-ellipsis">
+                <span class="md-footer-nav__direction">
+                  Previous
+                </span>
+                Getting Started
+              </div>
+            </div>
+          </a>
         
-          <a href="path-templates/" title="Path templates" class="md-footer-nav__link md-footer-nav__link--next" rel="next">
+        
+          <a href="../advanced-layouts/" title="Advanced repository layouts" class="md-footer-nav__link md-footer-nav__link--next" rel="next">
             <div class="md-footer-nav__title">
               <div class="md-ellipsis">
                 <span class="md-footer-nav__direction">
                   Next
                 </span>
-                Path templates
+                Advanced repository layouts
               </div>
             </div>
             <div class="md-footer-nav__button md-icon">
@@ -618,15 +733,15 @@
       
     </div>
     
-      <script src="assets/javascripts/vendor.92ffa368.min.js"></script>
-      <script src="assets/javascripts/bundle.5123e3d4.min.js"></script><script id="__lang" type="application/json">{"clipboard.copy": "Copy to clipboard", "clipboard.copied": "Copied to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.result.placeholder": "Type to start searching", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents"}</script>
+      <script src="../assets/javascripts/vendor.92ffa368.min.js"></script>
+      <script src="../assets/javascripts/bundle.5123e3d4.min.js"></script><script id="__lang" type="application/json">{"clipboard.copy": "Copy to clipboard", "clipboard.copied": "Copied to clipboard", "search.config.lang": "en", "search.config.pipeline": "trimmer, stopWordFilter", "search.config.separator": "[\\s\\-]+", "search.result.placeholder": "Type to start searching", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents"}</script>
       
       <script>
         app = initialize({
-          base: ".",
+          base: "..",
           features: ["tabs"],
           search: Object.assign({
-            worker: "assets/javascripts/worker/search.a68abb33.min.js"
+            worker: "../assets/javascripts/worker/search.a68abb33.min.js"
           }, typeof search !== "undefined" && search)
         })
       </script>
