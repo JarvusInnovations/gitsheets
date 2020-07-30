@@ -308,8 +308,8 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dynamicly-sharding-paths" class="md-nav__link">
-    Dynamicly sharding paths
+  <a href="#dynamically-sharding-paths" class="md-nav__link">
+    Dynamically sharding paths
   </a>
   
 </li>
@@ -490,8 +490,8 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dynamicly-sharding-paths" class="md-nav__link">
-    Dynamicly sharding paths
+  <a href="#dynamically-sharding-paths" class="md-nav__link">
+    Dynamically sharding paths
   </a>
   
 </li>
@@ -632,15 +632,17 @@
 </div>
 </div>
 <h2 id="sharding-paths">Sharding paths<a class="headerlink" href="#sharding-paths" title="Permanent link"> ¶</a></h2>
+<p>Path components need not contribute to the path&rsquo;s uniqueness, the can also be used just to organize records either for easier human browsing or to spread the records over multiple subtrees for improved query performance. Smaller trees can be loaded and searched faster, and any fields you&rsquo;re likely to often filter queries with can be acted on without loading and parsing the record if they&rsquo;re part of the path:</p>
 <div class="tabbed-set" data-tabs="3:1"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><label for="__tabbed_3_1">.gitsheets/students.toml</label><div class="tabbed-content">
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
 <span class="n">root</span> <span class="o">=</span> <span class="s">&quot;students&quot;</span>
-<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;${{ graduation_year }}/${{ student_id }}&quot;</span>
+<span class="n">path</span> <span class="o">=</span> <span class="s">&quot;${{ graduation_year }}/${{ status }}/${{ student_id }}&quot;</span>
 </code></pre></div>
 
 </div>
 </div>
-<h2 id="dynamicly-sharding-paths">Dynamicly sharding paths<a class="headerlink" href="#dynamicly-sharding-paths" title="Permanent link"> ¶</a></h2>
+<h2 id="dynamically-sharding-paths">Dynamically sharding paths<a class="headerlink" href="#dynamically-sharding-paths" title="Permanent link"> ¶</a></h2>
+<p>Because TOML has an explicit date type, and arbitrary JavaScript expressions can be used in path templates, you can do something like this to organize records by date:</p>
 <div class="tabbed-set" data-tabs="4:1"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><label for="__tabbed_4_1">.gitsheets/blog-posts.toml</label><div class="tabbed-content">
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
 <span class="n">root</span> <span class="o">=</span> <span class="s">&quot;blog-posts&quot;</span>
@@ -650,6 +652,7 @@
 </div>
 </div>
 <h2 id="annotated-paths">Annotated paths<a class="headerlink" href="#annotated-paths" title="Permanent link"> ¶</a></h2>
+<p>Prefixes, suffixes, and static path components can be used to add clarity for human readers:</p>
 <div class="tabbed-set" data-tabs="5:1"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio" /><label for="__tabbed_5_1">.gitsheets/todos.toml</label><div class="tabbed-content">
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
 <span class="n">root</span> <span class="o">=</span> <span class="s">&quot;todos&quot;</span>
@@ -659,6 +662,7 @@
 </div>
 </div>
 <h2 id="nested-path-fields">Nested path fields<a class="headerlink" href="#nested-path-fields" title="Permanent link"> ¶</a></h2>
+<p>If a field may contain <code>/</code> characters internally, they can be used to build paths:</p>
 <div class="tabbed-set" data-tabs="6:1"><input checked="checked" id="__tabbed_6_1" name="__tabbed_6" type="radio" /><label for="__tabbed_6_1">.gitsheets/content.toml</label><div class="tabbed-content">
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
 <span class="n">root</span> <span class="o">=</span> <span class="s">&quot;content&quot;</span>
