@@ -1,6 +1,10 @@
 # Getting Started
 
-To prepare a repository for use with Gitsheets, all you need is a way to map a named sheet to a tree of normalized [`TOML`](https://toml.io/) files store one record per file.
+Gitsheets is the toolkit for distributed recordkeeping that lives inside Git.
+
+## Overview
+
+To prepare a repository for use with Gitsheets, all you need is a way to map a named sheet to a tree of normalized [`TOML`](https://toml.io/) files (containing one record per file).
 
 ## Natural keys
 
@@ -8,7 +12,7 @@ Gitsheets works best with records that have [natural keys](https://en.wikipedia.
 
 ## Declare a sheet
 
-To declare a sheet named `todos`, create a file in your git repository at `.gitsheets/todos.toml`:
+To declare a sheet named `todos` for example, create a file in your git repository at `.gitsheets/todos.toml`:
 
 ```toml
 [gitsheet]
