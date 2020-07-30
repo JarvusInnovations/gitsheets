@@ -125,15 +125,19 @@ If one field is not enough to create a unique path, a composite key can be confi
 
 ## Sharding paths
 
+Path components need not contribute to the path's uniqueness, the can also be used just to organize records either for easier human browsing or to spread the records over multiple subtrees for improved query performance. Smaller trees can be loaded and searched faster, and any fields you're likely to often filter queries with can be acted on without loading and parsing the record if they're part of the path:
+
 === ".gitsheets/students.toml"
 
     ```toml
     [gitsheet]
     root = "students"
-    path = "${{ graduation_year }}/${{ student_id }}"
+    path = "${{ graduation_year }}/${{ status }}/${{ student_id }}"
     ```
 
-## Dynamicly sharding paths
+## Dynamically sharding paths
+
+Because TOML has an explicit date type, and arbitrary JavaScript expressions can be used in path templates, you can do something like this to organize records by date:
 
 === ".gitsheets/blog-posts.toml"
 
@@ -145,6 +149,8 @@ If one field is not enough to create a unique path, a composite key can be confi
 
 ## Annotated paths
 
+Prefixes, suffixes, and static path components can be used to add clarity for human readers:
+
 === ".gitsheets/todos.toml"
 
     ```toml
@@ -154,6 +160,8 @@ If one field is not enough to create a unique path, a composite key can be confi
     ```
 
 ## Nested path fields
+
+If a field may contain `/` characters internally, they can be used to build paths:
 
 === ".gitsheets/content.toml"
 
