@@ -5,7 +5,7 @@ class LiteralComponent extends require('./BaseComponent.js') {
   }
 
   render (record) {
-    return String(this.name);
+    return this.formatValue(this.name);
   }
 }
 

@@ -11,6 +11,14 @@ class BaseComponent
       this.suffix = suffix;
     }
   }
+
+  formatValue (value) {
+    if (typeof value === 'function' || typeof value === 'undefined') {
+      return undefined;
+    }
+
+    return `${this.prefix||''}${value}${this.suffix||''}`;
+  }
 }
 
 module.exports = BaseComponent;
