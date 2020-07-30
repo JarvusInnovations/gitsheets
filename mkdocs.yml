@@ -1,4 +1,5 @@
 site_name: Project Documentation
+repo_url: https://github.com/JarvusInnovations/gitsheets
 edit_uri: edit/master/docs
 
 theme:
