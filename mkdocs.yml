@@ -1,4 +1,7 @@
-site_name: Project Documentation
+site_name: Gitsheets Documentation
+site_description: Gitsheets is the toolkit for distributed recordkeeping that lives inside Git
+site_author: Jarvus Innovations
+copyright: 2020 Jarvus Innovations
 repo_url: https://github.com/JarvusInnovations/gitsheets
 edit_uri: edit/master/docs
 
