@@ -123,6 +123,11 @@ class Sheet extends Configurable
     return record;
   }
 
+  async clear () {
+    const { root } = await this.getCachedConfig();
+    return this.dataTree.writeChild(root, this.dataTree.repo.createTree());
+  }
+
   async upsert (record) {
     const {
       root: sheetRoot,
