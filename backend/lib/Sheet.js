@@ -101,25 +101,53 @@ class Sheet extends Configurable
     return await this.query(query).next();
   }
 
-  async upsert (record) {
-    let writeQueue = WRITE_QUEUES.get(this);
+  async normalizeRecord (record) {
+    const { fields = {} } = await this.getCachedConfig();
 
+    // apply declared fields
+    for (const field in fields) {
+      const {
+        default: defaultValue = null,
+        enum: enumValues = null,
+      } = fields[field];
+
+      if (!(field in record)) {
+        record[field] = defaultValue;
+      }
+
+      if (enumValues && enumValues.indexOf(record[field])) {
+        throw new Error(`field ${field} contains invalid enum value: ${record[field]}`);
+      }
+    }
+
+    return record;
+  }
+
+  async upsert (record) {
+    const {
+      root: sheetRoot,
+      path: pathTemplateString,
+    } = await this.getCachedConfig();
+
+    const pathTemplate = PathTemplate.fromString(pathTemplateString);
+
+    // get write queue
+    let writeQueue = WRITE_QUEUES.get(this);
     if (!writeQueue) {
       writeQueue = new Set();
       WRITE_QUEUES.set(this, writeQueue);
     }
 
-    const writePromise = this.getCachedConfig()
-      .then(({ root: sheetRoot, path: pathTemplateString }) => {
-        const pathTemplate = PathTemplate.fromString(pathTemplateString);
-        const recordPath = pathTemplate.render(record);
-        if (!recordPath) {
-          throw new Error('could not generate any path for record');
-        }
+    // build write promise
+    const writePromise = this.normalizeRecord(record).then(normalRecord => {
+      const recordPath = pathTemplate.render(normalRecord);
+      if (!recordPath) {
+        throw new Error('could not generate any path for record');
+      }
 
-        const toml = stringifyRecord(record);
-        return this.dataTree.writeChild(`${path.join(sheetRoot, recordPath)}.toml`, toml);
-      })
+      const toml = stringifyRecord(normalRecord);
+      return this.dataTree.writeChild(`${path.join(sheetRoot, recordPath)}.toml`, toml);
+    });
 
 
     writeQueue.add(writePromise);
