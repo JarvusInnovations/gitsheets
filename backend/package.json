@@ -20,7 +20,7 @@
   },
   "homepage": "https://github.com/JarvusInnovations/gitsheets#readme",
   "dependencies": {
-    "@iarna/toml": "^2.2.3",
+    "@iarna/toml": "^2.2.5",
     "csv-parser": "^2.3.0",
     "fast-csv": "^3.4.0",
     "fast-json-patch": "^2.2.1",
