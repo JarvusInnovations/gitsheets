@@ -1,4 +1,5 @@
 const path = require('path');
+const v8 = require('v8');
 const sortKeys = require('sort-keys');
 const TOML = require('@iarna/toml');
 const Configurable = require('hologit/lib/Configurable');
@@ -20,6 +21,8 @@ class Sheet extends Configurable
     }
   }
 
+  #recordCache;
+
   constructor ({ workspace, name, dataTree = null, configPath = null }) {
     if (!workspace) {
       throw new Error('workspace required');
@@ -34,6 +37,8 @@ class Sheet extends Configurable
     this.name = name;
     this.configPath = configPath || `.gitsheets/${name}.toml`;
     this.dataTree = dataTree || workspace.root;
+
+    this.#recordCache = new Map();
 
     Object.freeze(this);
   }
@@ -60,6 +65,19 @@ class Sheet extends Configurable
     return config;
   }
 
+  async readRecord (blob) {
+    const cache = this.#recordCache.get(blob.hash);
+
+    if (cache) {
+      return v8.deserialize(cache);
+    }
+
+    const record = await blob.read().then(TOML.parse);
+    this.#recordCache.set(blob.hash, v8.serialize(record));
+
+    return record;
+  }
+
   /**
    *
    * @param {Object|Function} query
@@ -78,7 +96,7 @@ class Sheet extends Configurable
     const sheetDataTree = await this.dataTree.getSubtree(sheetRoot);
 
     BLOBS: for await (const blob of pathTemplate.queryTree(sheetDataTree, query)) {
-      const record = await blob.read().then(TOML.parse);
+      const record = await this.readRecord(blob);
 
       if (!queryMatches(query, record)) {
         continue BLOBS;
