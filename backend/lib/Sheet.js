@@ -80,17 +80,8 @@ class Sheet extends Configurable
     BLOBS: for await (const blob of pathTemplate.queryTree(sheetDataTree, query)) {
       const record = await blob.read().then(TOML.parse);
 
-      for (const key in query) {
-        const queryValue = query[key]
-        const recordValue = record[key]
-
-        if (typeof queryValue === 'function') {
-          if (!queryValue(recordValue, record)) {
-            continue BLOBS;
-          }
-        } else if (record[key] !== queryValue) {
-          continue BLOBS;
-        }
+      if (!queryMatches(query, record)) {
+        continue BLOBS;
       }
 
       yield record;
@@ -244,4 +235,34 @@ module.exports = Sheet;
 // private library
 function stringifyRecord(record) {
   return TOML.stringify(sortKeys(record, { deep: true }));
+}
+
+function queryMatches(query, record) {
+  KEYS: for (const key in query) {
+    const queryValue = query[key]
+    const recordValue = record[key]
+
+    switch (typeof queryValue) {
+    case 'function':
+      if (!queryValue(recordValue, record)) {
+        return false;
+      }
+
+      continue KEYS;
+    case 'object':
+      if (!queryMatches(queryValue, recordValue)) {
+        return false;
+      }
+
+      continue KEYS;
+    default:
+      if (record[key] !== queryValue) {
+        return false;
+      }
+
+      continue KEYS;
+    }
+  }
+
+  return true;
 }
