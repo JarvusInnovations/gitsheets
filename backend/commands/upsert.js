@@ -106,8 +106,8 @@ exports.handler = async function upsert({
 
   // upsert record(s) into sheet
   for await (const inputRecord of inputRecords) {
-    const outputBlob = await sheet.upsert(inputRecord);
-    console.log(outputBlob.hash);
+    const { blob: outputBlob, path: outputPath } = await sheet.upsert(inputRecord);
+    console.log(`${outputBlob.hash}\t${outputPath}`);
 
     if (attachments) {
       for (const attachmentPath in attachments) {

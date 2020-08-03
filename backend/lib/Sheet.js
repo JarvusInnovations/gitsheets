@@ -143,23 +143,28 @@ class Sheet extends Configurable
       WRITE_QUEUES.set(this, writeQueue);
     }
 
-    // build write promise
-    const writePromise = this.normalizeRecord(record).then(normalRecord => {
-      const recordPath = pathTemplate.render(normalRecord);
-      if (!recordPath) {
-        throw new Error('could not generate any path for record');
-      }
+    // apply normalization before building path
+    const normalRecord = await this.normalizeRecord(record);
 
-      const toml = stringifyRecord(normalRecord);
-      return this.dataTree.writeChild(`${path.join(sheetRoot, recordPath)}.toml`, toml);
-    });
+    // build record path
+    const recordPath = pathTemplate.render(normalRecord);
+    if (!recordPath) {
+      throw new Error('could not generate any path for record');
+    }
 
+    // write record
+    const toml = stringifyRecord(normalRecord);
+    const writePromise = this.dataTree.writeChild(`${path.join(sheetRoot, recordPath)}.toml`, toml);
 
     writeQueue.add(writePromise);
-    await writePromise;
+    const blob = await writePromise;
     writeQueue.delete(writePromise);
 
-    return writePromise;
+    // return compound data object
+    return {
+      blob,
+      path: recordPath,
+    };
   }
 
   async delete (record) {
