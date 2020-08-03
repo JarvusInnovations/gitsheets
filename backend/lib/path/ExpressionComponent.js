@@ -1,4 +1,5 @@
 const vm = require('vm');
+const notDefinedErrorRe = / is not defined$/;
 
 class ExpressionComponent extends require('./BaseComponent.js') {
   constructor () {
@@ -8,7 +9,17 @@ class ExpressionComponent extends require('./BaseComponent.js') {
   }
 
   render (record) {
-    return this.formatValue(this.script.runInNewContext(record));
+    try {
+      return this.formatValue(this.script.runInNewContext(record));
+    } catch (err) {
+      if (notDefinedErrorRe.test(err.message)) {
+        // treat expressions failing due to undefined factors as un-renderable
+        return undefined;
+      }
+
+      // any other error should be fatal
+      throw err;
+    }
   }
 }
 
