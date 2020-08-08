@@ -110,6 +110,16 @@ class Sheet extends Configurable
     return (await this.query(query).next()).value;
   }
 
+  async queryAll (query) {
+    const records = [];
+
+    for await (const record of this.query(query)) {
+      records.push(record);
+    }
+
+    return records;
+  }
+
   async normalizeRecord (record) {
     const { fields = {} } = await this.getCachedConfig();
 
