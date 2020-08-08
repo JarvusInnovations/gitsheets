@@ -1,5 +1,6 @@
 const path = require('path');
 const v8 = require('v8');
+const vm = require('vm');
 const sortKeys = require('sort-keys');
 const TOML = require('@iarna/toml');
 const Configurable = require('hologit/lib/Configurable');
@@ -128,6 +129,7 @@ class Sheet extends Configurable
       const {
         default: defaultValue = null,
         enum: enumValues = null,
+        sort = null,
       } = fields[field];
 
       if (!(field in record)) {
@@ -136,6 +138,13 @@ class Sheet extends Configurable
 
       if (enumValues && enumValues.indexOf(record[field])) {
         throw new Error(`field ${field} contains invalid enum value: ${record[field]}`);
+      }
+
+      if (sort) {
+        const array = record[field];
+        if (array && Array.isArray(array)) {
+          array.sort(getSorter(sort));
+        }
       }
     }
 
@@ -293,4 +302,25 @@ function queryMatches(query, record) {
   }
 
   return true;
+}
+
+const SORTER_CACHE = new Map();
+function getSorter (config) {
+
+  // handle string expressions
+  if (typeof config === 'string') {
+    let sorter = SORTER_CACHE.get(config);
+    if (sorter) {
+      return sorter;
+    }
+
+    sorter = vm.runInNewContext(`(a, b) => { ${config} }`);
+    SORTER_CACHE.set(config, sorter);
+    return sorter;
+  }
+
+  // TODO: handle array
+  // TODO: handle map
+
+  throw new Error('sort must be an expression in a string');
 }
