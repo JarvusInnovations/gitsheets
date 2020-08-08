@@ -10,6 +10,8 @@ const PathTemplate = require('./path/Template.js');
 
 const WRITE_QUEUES = new Map();
 
+const SORT_CLOSURE = Symbol('sort#closure');
+
 
 // primary export
 class Sheet extends Configurable
@@ -54,13 +56,40 @@ class Sheet extends Configurable
 
   async readConfig () {
     const config = await super.readConfig();
+    const { fields } = config;
 
     if (!config) {
       return null;
     }
 
     if (!config.path) {
-      throw new Error('path missing');
+      throw new Error('gitsheet.path must be declared');
+    }
+
+    if (fields) {
+      if (typeof fields != 'object') {
+        throw new Error('gitsheet.fields must be a table');
+      }
+
+      for (const field in fields) {
+        const { sort } = fields[field];
+        if (typeof sort == 'object') {
+          if (Array.isArray(sort)) {
+            for (const sortField of sort) {
+              if (typeof sortField != 'string') {
+                throw new Error(`gitsheet.fields.${field}.sort[] must be string field names`);
+              }
+            }
+          } else {
+            for (const sortField in sort) {
+              const sortDir = sort[sortField];
+              if (sortDir != 'ASC' && sortDir != 'DESC') {
+                throw new Error(`gitsheet.fields.${field}.sort.${sortField} must be ASC or DESC`);
+              }
+            }
+          }
+        }
+      }
     }
 
     return config;
@@ -130,6 +159,7 @@ class Sheet extends Configurable
         default: defaultValue = null,
         enum: enumValues = null,
         sort = null,
+        [SORT_CLOSURE]: cachedSorter,
       } = fields[field];
 
       if (!(field in record)) {
@@ -143,7 +173,7 @@ class Sheet extends Configurable
       if (sort) {
         const array = record[field];
         if (array && Array.isArray(array)) {
-          array.sort(getSorter(sort));
+          array.sort(cachedSorter || (fields[field][SORT_CLOSURE] = buildSorter(sort)));
         }
       }
     }
@@ -304,23 +334,32 @@ function queryMatches(query, record) {
   return true;
 }
 
-const SORTER_CACHE = new Map();
-function getSorter (config) {
-
-  // handle string expressions
-  if (typeof config === 'string') {
-    let sorter = SORTER_CACHE.get(config);
-    if (sorter) {
-      return sorter;
+function buildSorter (config) {
+  switch (typeof config) {
+  case 'object':
+    if (Array.isArray(config)) {
+      const configMap = {};
+      for (const field of config) {
+        configMap[field] = 'ASC';
+      }
+      config = configMap;
     }
 
-    sorter = vm.runInNewContext(`(a, b) => { ${config} }`);
-    SORTER_CACHE.set(config, sorter);
+    const expression = [];
+    for (const field in config) {
+      const direction = config[field] == 'ASC' ? 1 : -1;
+      expression.push(
+        `if (a.${field} < b.${field}) return ${-1 * direction}`,
+        `if (a.${field} > b.${field}) return ${1 * direction}`,
+      );
+    }
+    expression.push('return 0');
+    config = expression.join(';\n');
+    // fall through now that config is a string
+  case 'string':
+    sorter = vm.runInNewContext(`(a, b) => {\n${config}\n}`);
     return sorter;
+  default:
+    throw new Error('sort must be an expression in a string, a field:direction table, or field array');
   }
-
-  // TODO: handle array
-  // TODO: handle map
-
-  throw new Error('sort must be an expression in a string');
 }

@@ -25,4 +25,16 @@ sort = '''
 
 ## Sorting by configuration
 
-*Coming soon*
+In this simple case, the same sort can be achieved via a table-based configuration:
+
+```toml
+[gitsheet.fields.relationships]
+sort = { kind = 'ASC', label = 'ASC' }
+```
+
+Or via an array-based configuration:
+
+```toml
+[gitsheet.fields.relationships]
+sort = [ 'kind', 'label' ]
+```
