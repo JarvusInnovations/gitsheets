@@ -107,7 +107,7 @@ class Sheet extends Configurable
   }
 
   async queryFirst (query) {
-    return await this.query(query).next();
+    return (await this.query(query).next()).value;
   }
 
   async normalizeRecord (record) {
