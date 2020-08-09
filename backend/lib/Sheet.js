@@ -301,24 +301,28 @@ class Sheet extends Configurable
     return Promise.all(writeQueue);
   }
 
-  async* diffSince (sinceCommitHash) {
+  async* diffFrom (srcCommitHash) {
     const repo = this.getRepo();
     const {
       root: sheetRoot,
     } = await this.getCachedConfig();
 
-    const sinceTreeHash = await repo.resolveRef(`${sinceCommitHash}:${sheetRoot}`);
-    if (!sinceTreeHash) {
-      throw new Error(`unable to resolve since tree ${sinceCommitHash}:${sheetRoot}`);
+    const srcTreeHash = await repo.resolveRef(`${srcCommitHash}:${sheetRoot}`);
+    if (!srcTreeHash) {
+      throw new Error(`unable to resolve src tree ${srcCommitHash}:${sheetRoot}`);
     }
 
-    const untilTree = await this.dataTree.getChild(sheetRoot);
-    const untilTreeHash = await untilTree.write();
+    const dstTree = await this.dataTree.getChild(sheetRoot);
+    const dstTreeHash = await dstTree.write();
 
-    for await (const change of diffTrees(repo, sinceTreeHash, untilTreeHash)) {
-      // TODO: parse with https://www.npmjs.com/package/fast-json-patch
-      yield change;
-    }
+    let result = diffTrees(repo, srcTreeHash, dstTreeHash);
+
+    // for await (const change of ) {
+    //   // TODO: parse with https://www.npmjs.com/package/fast-json-patch
+    //   yield change;
+    // }
+
+    yield* result;
   }
 }
 
@@ -390,13 +394,13 @@ function buildSorter (config) {
   }
 }
 
-async function* diffTrees (repo, since, until) {
+async function* diffTrees (repo, src, dst) {
   const git = await repo.getGit();
 
   const diff = await git.diffTree(
     { $spawn: true, z: true, r: true },
-    since,
-    until,
+    src,
+    dst,
     '**/*.toml',
   );
 
@@ -447,7 +451,7 @@ async function* diffTrees (repo, since, until) {
 function parseDiffLine (statusLine, path) {
   const [
     srcMode, dstMode,
-    srcBlobHash, dstBlobHash,
+    srcHash, dstHash,
     status,
   ] = statusLine.substr(1).split(' ');
 
@@ -456,6 +460,6 @@ function parseDiffLine (statusLine, path) {
     status: DIFF_STATUS_MAP[status[0]],
     statusCount: parseInt(status.substr(1), 10) || null,
     srcMode, dstMode,
-    srcBlobHash, dstBlobHash,
+    srcHash, dstHash,
   };
 }
