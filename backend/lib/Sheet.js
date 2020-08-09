@@ -11,6 +11,12 @@ const PathTemplate = require('./path/Template.js');
 const WRITE_QUEUES = new Map();
 
 const SORT_CLOSURE = Symbol('sort#closure');
+const DIFF_STATUS_MAP = {
+  A: 'added',
+  D: 'deleted',
+  M: 'modified',
+  R: 'renamed',
+};
 
 
 // primary export
@@ -294,6 +300,26 @@ class Sheet extends Configurable
 
     return Promise.all(writeQueue);
   }
+
+  async* diffSince (sinceCommitHash) {
+    const repo = this.getRepo();
+    const {
+      root: sheetRoot,
+    } = await this.getCachedConfig();
+
+    const sinceTreeHash = await repo.resolveRef(`${sinceCommitHash}:${sheetRoot}`);
+    if (!sinceTreeHash) {
+      throw new Error(`unable to resolve since tree ${sinceCommitHash}:${sheetRoot}`);
+    }
+
+    const untilTree = await this.dataTree.getChild(sheetRoot);
+    const untilTreeHash = await untilTree.write();
+
+    for await (const change of diffTrees(repo, sinceTreeHash, untilTreeHash)) {
+      // TODO: parse with https://www.npmjs.com/package/fast-json-patch
+      yield change;
+    }
+  }
 }
 
 module.exports = Sheet;
@@ -362,4 +388,74 @@ function buildSorter (config) {
   default:
     throw new Error('sort must be an expression in a string, a field:direction table, or field array');
   }
+}
+
+async function* diffTrees (repo, since, until) {
+  const git = await repo.getGit();
+
+  const diff = await git.diffTree(
+    { $spawn: true, z: true, r: true },
+    since,
+    until,
+    '**/*.toml',
+  );
+
+  // read error
+  let error = '';
+  for await (const chunk of diff.stderr) {
+    error += chunk;
+  }
+
+  if (error) {
+    throw new Error(error);
+  }
+
+  // read output
+  let output = '';
+  let status;
+  for await (const chunk of diff.stdout) {
+    output += chunk;
+
+    let nullIndex;
+    while ((nullIndex = output.indexOf('\0')) >= 0) {
+      const value = output.slice(0, nullIndex);
+
+      if (status) {
+        yield parseDiffLine(status, value);
+        status = null;
+      } else {
+        status = value;
+      }
+
+      output = output.slice(nullIndex + 1);
+    }
+  }
+
+  if (output.length > 0 && status) {
+    yield parseDiffLine(status, output);
+  }
+
+  const exitCode = await new Promise( (resolve, reject) => {
+    diff.on('close', resolve);
+  });
+
+  if (exitCode != 0) {
+    throw new Error(`git-diff-tree exited with code ${exitCode}`);
+  }
+}
+
+function parseDiffLine (statusLine, path) {
+  const [
+    srcMode, dstMode,
+    srcBlobHash, dstBlobHash,
+    status,
+  ] = statusLine.substr(1).split(' ');
+
+  return {
+    path: path.substr(0, path.length - 5),
+    status: DIFF_STATUS_MAP[status[0]],
+    statusCount: parseInt(status.substr(1), 10) || null,
+    srcMode, dstMode,
+    srcBlobHash, dstBlobHash,
+  };
 }
