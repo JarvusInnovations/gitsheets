@@ -397,7 +397,7 @@ function buildSorter (config) {
 async function* diffTrees (repo, src, dst) {
   const git = await repo.getGit();
 
-  const diff = await git.diffTree(
+  const diffProcess = await git.diffTree(
     { $spawn: true, z: true, r: true },
     src,
     dst,
@@ -406,7 +406,7 @@ async function* diffTrees (repo, src, dst) {
 
   // read error
   let error = '';
-  for await (const chunk of diff.stderr) {
+  for await (const chunk of diffProcess.stderr) {
     error += chunk;
   }
 
@@ -417,7 +417,7 @@ async function* diffTrees (repo, src, dst) {
   // read output
   let output = '';
   let status;
-  for await (const chunk of diff.stdout) {
+  for await (const chunk of diffProcess.stdout) {
     output += chunk;
 
     let nullIndex;
@@ -440,7 +440,7 @@ async function* diffTrees (repo, src, dst) {
   }
 
   const exitCode = await new Promise( (resolve, reject) => {
-    diff.on('close', resolve);
+    diffProcess.on('close', resolve);
   });
 
   if (exitCode != 0) {
