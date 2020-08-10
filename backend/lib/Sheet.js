@@ -11,6 +11,8 @@ const PathTemplate = require('./path/Template.js');
 
 const WRITE_QUEUES = new Map();
 
+const RECORD_SHEET_KEY = Symbol.for('gitsheets-sheet');
+const RECORD_PATH_KEY = Symbol.for('gitsheets-path');
 const SORT_CLOSURE_KEY = Symbol('sort#closure');
 const DIFF_STATUS_MAP = {
   A: 'added',
@@ -138,6 +140,9 @@ class Sheet extends Configurable
       if (!queryMatches(query, record)) {
         continue BLOBS;
       }
+
+      record[RECORD_SHEET_KEY] = this.name;
+      record[RECORD_PATH_KEY] = pathTemplate.render(record);
 
       yield record;
     }
