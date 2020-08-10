@@ -3,6 +3,7 @@ const v8 = require('v8');
 const vm = require('vm');
 const sortKeys = require('sort-keys');
 const TOML = require('@iarna/toml');
+const rfc6902 = require('rfc6902');
 const Configurable = require('hologit/lib/Configurable');
 
 const PathTemplate = require('./path/Template.js');
@@ -301,7 +302,7 @@ class Sheet extends Configurable
     return Promise.all(writeQueue);
   }
 
-  async* diffFrom (srcCommitHash) {
+  async* diffFrom (srcCommitHash, { blobs = false, records = false, patches = false }) {
     const repo = this.getRepo();
     const {
       root: sheetRoot,
@@ -315,14 +316,56 @@ class Sheet extends Configurable
     const dstTree = await this.dataTree.getChild(sheetRoot);
     const dstTreeHash = await dstTree.write();
 
-    let result = diffTrees(repo, srcTreeHash, dstTreeHash);
+    let diff = diffTrees(repo, srcTreeHash, dstTreeHash);
 
-    // for await (const change of ) {
-    //   // TODO: parse with https://www.npmjs.com/package/fast-json-patch
-    //   yield change;
-    // }
+    if (blobs || records || patches) {
+      diff = this.loadDiffBlobs(diff);
+    }
 
-    yield* result;
+    if (records || patches) {
+      diff = this.loadDiffRecords(diff);
+    }
+
+    if (patches) {
+      diff = this.loadDiffPatches(diff);
+    }
+
+    yield* diff;
+  }
+
+  async* loadDiffBlobs (diff) {
+    const repo = this.getRepo();
+
+    for await (const change of diff) {
+      change.srcBlob = change.srcMode == '000000'
+        ? null
+        : repo.createBlob({ mode: change.srcMode, hash: change.srcHash });
+
+      change.dstBlob = change.dstMode == '000000'
+        ? null
+        : repo.createBlob({ mode: change.dstMode, hash: change.dstHash });
+
+      yield change;
+    }
+  }
+
+
+  async* loadDiffRecords (diff) {
+    for await (const change of diff) {
+      [ change.src, change.dst ] = await Promise.all([
+        change.srcBlob ? this.readRecord(change.srcBlob) : null,
+        change.dstBlob ? this.readRecord(change.dstBlob) : null,
+      ]);
+
+      yield change;
+    }
+  }
+
+  async* loadDiffPatches (diff) {
+    for await (const change of diff) {
+      change.patch = rfc6902.createPatch(change.src, change.dst, rfc6902DiffAny);
+      yield change;
+    }
   }
 }
 
@@ -462,4 +505,10 @@ function parseDiffLine (statusLine, path) {
     srcMode, dstMode,
     srcHash, dstHash,
   };
+}
+
+function rfc6902DiffAny (input, output, ptr) {
+  if (input instanceof Date && output instanceof Date && input.valueOf() != output.valueOf()) {
+    return [{op: 'replace', path: ptr.toString(), value: output}]
+  }
 }
