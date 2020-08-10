@@ -157,6 +157,11 @@ class Sheet extends Configurable
     return records;
   }
 
+  async pathForRecord (record) {
+    const { path: pathTemplateString } = await this.getCachedConfig();
+    return PathTemplate.fromString(pathTemplateString).render(record);
+  }
+
   async normalizeRecord (record) {
     const { fields = {} } = await this.getCachedConfig();
 
@@ -233,22 +238,20 @@ class Sheet extends Configurable
   }
 
   async delete (record) {
-    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+    const { root: sheetRoot } = await this.getCachedConfig()
 
     if (typeof record !== 'string') {
-      const pathTemplate = PathTemplate.fromString(pathTemplateString);
-      record = pathTemplate.render(record);
+      record = await this.pathForRecord(record);
     }
 
     return this.dataTree.deleteChild(`${path.join(sheetRoot, record)}.toml`);
   }
 
   async getAttachments (record) {
-    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+    const { root: sheetRoot } = await this.getCachedConfig()
 
     if (typeof record !== 'string') {
-      const pathTemplate = PathTemplate.fromString(pathTemplateString);
-      record = pathTemplate.render(record);
+      record = await this.pathForRecord(record);
     }
 
     const attachmentsTree = await this.dataTree.getChild(path.join(sheetRoot, record));
@@ -259,22 +262,20 @@ class Sheet extends Configurable
   }
 
   async getAttachment (record, attachment) {
-    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+    const { root: sheetRoot } = await this.getCachedConfig()
 
     if (typeof record !== 'string') {
-      const pathTemplate = PathTemplate.fromString(pathTemplateString);
-      record = pathTemplate.render(record);
+      record = await this.pathForRecord(record);
     }
 
     return this.dataTree.getChild(path.join(sheetRoot, record, attachment));
   }
 
   async setAttachments (record, attachments) {
-    const { root: sheetRoot, path: pathTemplateString } = await this.getCachedConfig()
+    const { root: sheetRoot } = await this.getCachedConfig()
 
     if (typeof record !== 'string') {
-      const pathTemplate = PathTemplate.fromString(pathTemplateString);
-      record = pathTemplate.render(record);
+      record = await this.pathForRecord(record);
     }
 
     return Promise.all(Object.keys(attachments).map(
