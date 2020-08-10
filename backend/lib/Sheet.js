@@ -11,7 +11,7 @@ const PathTemplate = require('./path/Template.js');
 
 const WRITE_QUEUES = new Map();
 
-const SORT_CLOSURE = Symbol('sort#closure');
+const SORT_CLOSURE_KEY = Symbol('sort#closure');
 const DIFF_STATUS_MAP = {
   A: 'added',
   D: 'deleted',
@@ -166,7 +166,7 @@ class Sheet extends Configurable
         default: defaultValue = null,
         enum: enumValues = null,
         sort = null,
-        [SORT_CLOSURE]: cachedSorter,
+        [SORT_CLOSURE_KEY]: cachedSorter,
       } = fields[field];
 
       if (!(field in record)) {
@@ -180,7 +180,7 @@ class Sheet extends Configurable
       if (sort) {
         const array = record[field];
         if (array && Array.isArray(array)) {
-          array.sort(cachedSorter || (fields[field][SORT_CLOSURE] = buildSorter(sort)));
+          array.sort(cachedSorter || (fields[field][SORT_CLOSURE_KEY] = buildSorter(sort)));
         }
       }
     }
