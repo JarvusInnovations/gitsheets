@@ -379,8 +379,8 @@ function buildSorter (config) {
     for (const field in config) {
       const direction = config[field] == 'ASC' ? 1 : -1;
       expression.push(
-        `if (a.${field} < b.${field}) return ${-1 * direction}`,
-        `if (a.${field} > b.${field}) return ${1 * direction}`,
+        `if ((a.${field}) < (b.${field})) return ${-1 * direction}`,
+        `if ((a.${field}) > (b.${field})) return ${1 * direction}`,
       );
     }
     expression.push('return 0');
