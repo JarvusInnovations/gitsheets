@@ -227,6 +227,12 @@ class Sheet extends Configurable
       throw new Error('could not generate any path for record');
     }
 
+    // delete previous record
+    const recordExistingPath = record[RECORD_PATH_KEY];
+    if (recordExistingPath && recordExistingPath != recordPath) {
+      await this.delete(recordExistingPath);
+    }
+
     // write record
     const toml = stringifyRecord(normalRecord);
     const writePromise = this.dataTree.writeChild(`${path.join(sheetRoot, recordPath)}.toml`, toml);
