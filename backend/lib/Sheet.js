@@ -476,6 +476,10 @@ async function* diffTrees (repo, src, dst) {
 
       output = output.slice(nullIndex + 1);
     }
+
+    // an explicit return seems to be necessary here
+    // to prevent the generator from staying un-done
+    return null;
   }
 
   if (output.length > 0 && status) {
