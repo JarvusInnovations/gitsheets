@@ -104,15 +104,23 @@ class Sheet extends Configurable
     return config;
   }
 
-  async readRecord (blob) {
+  async readRecord (blob, path = null) {
     const cache = this.#recordCache.get(blob.hash);
 
-    if (cache) {
-      return v8.deserialize(cache);
+    const record = cache
+      ? v8.deserialize(cache)
+      : await blob.read().then(TOML.parse);
+
+    // annotate with gitsheets keys
+    record[RECORD_SHEET_KEY] = this.name;
+    if (path) {
+      record[RECORD_PATH_KEY] = path;
     }
 
-    const record = await blob.read().then(TOML.parse);
-    this.#recordCache.set(blob.hash, v8.serialize(record));
+    // fill cache
+    if (!cache) {
+      this.#recordCache.set(blob.hash, v8.serialize(record));
+    }
 
     return record;
   }
@@ -141,7 +149,6 @@ class Sheet extends Configurable
         continue BLOBS;
       }
 
-      record[RECORD_SHEET_KEY] = this.name;
       record[RECORD_PATH_KEY] = pathTemplate.render(record);
 
       yield record;
@@ -366,7 +373,7 @@ class Sheet extends Configurable
     for await (const change of diff) {
       [ change.src, change.dst ] = await Promise.all([
         change.srcBlob ? this.readRecord(change.srcBlob) : null,
-        change.dstBlob ? this.readRecord(change.dstBlob) : null,
+        change.dstBlob ? this.readRecord(change.dstBlob, change.path) : null,
       ]);
 
       yield change;
