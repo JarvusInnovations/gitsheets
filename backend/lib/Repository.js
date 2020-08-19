@@ -4,6 +4,10 @@ const { Repo: HoloRepo, BlobObject } = require('hologit/lib');
 
 class Repository extends HoloRepo
 {
+  constructor(options = {}) {
+    super(options);
+  }
+
   async resolveDataTree (root, dataTree) {
     const workspace = await this.getWorkspace();
 
