@@ -180,26 +180,82 @@ class Sheet extends Configurable
     // apply declared fields
     for (const field in fields) {
       const {
-        default: defaultValue = null,
-        enum: enumValues = null,
-        sort = null,
+        type = null, // JSON Schema compatible
+        enum: enumValues = null, // JSON Schema compatible
+        default: defaultValue = null, // non-standard
+        sort = null, // non-standard
+        trueValues = null, // non-standard
+        falseValues = null, // non-standard
         [SORT_CLOSURE_KEY]: cachedSorter,
       } = fields[field];
 
-      if (!(field in record)) {
-        record[field] = defaultValue;
+      // read or default value
+      let value;
+      if (field in record) {
+        value = record[field];
+      } else {
+        value = defaultValue;
       }
 
-      if (enumValues && enumValues.indexOf(record[field])) {
-        throw new Error(`field ${field} contains invalid enum value: ${record[field]}`);
+      // null values need no further processing
+      if (value === null || value === undefined || value === '') {
+        record[field] = null
+        continue;
       }
 
+      // coerce numbers/strings/booleans to desired type
+      const valueType = typeof value;
+      switch (type) {
+      case 'number':
+        if (valueType != 'number') {
+          if (valueType == 'string') {
+            value = Number(value);
+          } else {
+            throw new Error(`field ${field} contains value of type ${typeof value} that cannot be converted to a number`);
+          }
+        }
+        break;
+      case 'string':
+        if (valueType != 'string') {
+          if (valueType == 'number') {
+            value = String(value);
+          } else {
+            throw new Error(`field ${field} contains value of type ${typeof value} that cannot be converted to a string`);
+          }
+        }
+        break;
+      case 'boolean':
+        if (valueType != 'boolean') {
+          if (trueValues || falseValues) {
+            if (trueValues && trueValues.indexOf(value) != -1) {
+              value = true;
+            } else if (falseValues && falseValues.indexOf(value) != -1) {
+              value = false;
+            } else {
+              value = null;
+            }
+          } else {
+            value = Boolean(value);
+          }
+        }
+        break;
+      }
+
+      // validate enum values
+      if (enumValues && enumValues.indexOf(value) == -1) {
+        throw new Error(`field ${field} contains invalid enum value: ${value}`);
+      }
+
+      // sort array
       if (sort) {
-        const array = record[field];
-        if (array && Array.isArray(array)) {
-          array.sort(cachedSorter || (fields[field][SORT_CLOSURE_KEY] = buildSorter(sort)));
+        if (Array.isArray(value)) {
+          value.sort(cachedSorter || (fields[field][SORT_CLOSURE_KEY] = buildSorter(sort)));
+        } else {
+          throw new Error(`field ${field} defines sort but contains non-array value: ${value}`);
         }
       }
+
+      record[field] = value;
     }
 
     return record;
