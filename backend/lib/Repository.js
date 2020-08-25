@@ -20,11 +20,7 @@ class Repository extends HoloRepo
     }
 
     const sheetsPath = path.join(root, '.gitsheets');
-    const sheetsTree = await workspace.root.getSubtree(sheetsPath);
-
-    if (!sheetsTree) {
-      throw new Error(`could not open sheets tree at ${sheetsPath}`);
-    }
+    const sheetsTree = await workspace.root.getSubtree(sheetsPath, true);
 
     return {
       workspace,
