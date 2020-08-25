@@ -31,7 +31,7 @@ class Repository extends HoloRepo
     };
   }
 
-  async openSheet (name, { root = '/', dataTree: dataTreeInput = null } = {}) {
+  async openSheet (name, { root = '/', dataTree: dataTreeInput = null, config = null } = {}) {
     const { workspace, sheetsPath, dataTree } = await this.resolveDataTree(root, dataTreeInput);
 
     return new Sheet({
@@ -39,6 +39,7 @@ class Repository extends HoloRepo
       dataTree,
       name,
       configPath: path.join(sheetsPath, `${name}.toml`),
+      phantom: config,
     });
   }
 
