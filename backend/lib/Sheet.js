@@ -524,13 +524,7 @@ async function* diffTrees (repo, src, dst) {
 
   // read error
   let error = '';
-  for await (const chunk of diffProcess.stderr) {
-    error += chunk;
-  }
-
-  if (error) {
-    throw new Error(error);
-  }
+  diffProcess.stderr.on('data', chunk => error += chunk);
 
   // read output
   let output = '';
@@ -551,10 +545,6 @@ async function* diffTrees (repo, src, dst) {
 
       output = output.slice(nullIndex + 1);
     }
-
-    // an explicit return seems to be necessary here
-    // to prevent the generator from staying un-done
-    return null;
   }
 
   if (output.length > 0 && status) {
@@ -565,8 +555,8 @@ async function* diffTrees (repo, src, dst) {
     diffProcess.on('close', resolve);
   });
 
-  if (exitCode != 0) {
-    throw new Error(`git-diff-tree exited with code ${exitCode}`);
+  if (exitCode != 0 || error) {
+    throw new Error(`git-diff-tree exited with code ${exitCode}: ${error}`);
   }
 }
 
