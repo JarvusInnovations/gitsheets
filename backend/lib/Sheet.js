@@ -5,8 +5,11 @@ const sortKeys = require('sort-keys');
 const TOML = require('@iarna/toml');
 const rfc6902 = require('rfc6902');
 const Configurable = require('hologit/lib/Configurable');
+const TreeObject = require('hologit/lib/TreeObject');
 
 const PathTemplate = require('./path/Template.js');
+
+const EMPTY_TREE_HASH = TreeObject.getEmptyTreeHash();
 
 
 const WRITE_QUEUES = new Map();
@@ -377,14 +380,17 @@ class Sheet extends Configurable
     return Promise.all(writeQueue);
   }
 
-  async* diffFrom (srcCommitHash, { blobs = false, records = false, patches = false }) {
+  async* diffFrom (srcCommitHash = null, { blobs = false, records = false, patches = false } = {}) {
     const repo = this.getRepo();
     const {
       root: sheetRoot,
     } = await this.getCachedConfig();
 
-    const srcTreeHash = await repo.resolveRef(`${srcCommitHash}:${sheetRoot}`);
-    if (!srcTreeHash) {
+    const srcTreeHash = srcCommitHash
+      ? await repo.resolveRef(`${srcCommitHash}:${sheetRoot}`)
+      : EMPTY_TREE_HASH;
+
+    if (srcCommitHash && !srcTreeHash) {
       throw new Error(`unable to resolve src tree ${srcCommitHash}:${sheetRoot}`);
     }
 
