@@ -528,6 +528,8 @@ async function* diffTrees (repo, src, dst) {
     '**/*.toml',
   );
 
+  const exitCodePromise = new Promise(resolve => diffProcess.on('close', resolve));
+
   // read error
   let error = '';
   diffProcess.stderr.on('data', chunk => error += chunk);
@@ -557,9 +559,7 @@ async function* diffTrees (repo, src, dst) {
     yield parseDiffLine(status, output);
   }
 
-  const exitCode = await new Promise( (resolve, reject) => {
-    diffProcess.on('close', resolve);
-  });
+  const exitCode = await exitCodePromise;
 
   if (exitCode != 0 || error) {
     throw new Error(`git-diff-tree exited with code ${exitCode}: ${error}`);
