@@ -19,10 +19,16 @@ exports.builder = {
     default: '-',
   },
   root: {
+    type: 'string',
     describe: 'Root path to .gitsheets in repository (defaults to GITSHEETS_ROOT or /)',
+    default: process.env.GITSHEETS_ROOT || '/',
+    defaultDescription: 'GITSHEETS_ROOT || "/"',
   },
   prefix: {
+    type: 'string',
     describe: 'Path to prefix after root to all sheet paths (defaults to GITSHEETS_PREFIX or none)',
+    default: process.env.GITSHEETS_PREFIX,
+    defaultDescription: 'GITSHEETS_PREFIX',
   },
   format: {
     describe: 'Format to parse input data in (defaults to file extension or json)',
@@ -51,19 +57,9 @@ exports.handler = async function upsert({
   const Repository = require('../lib/Repository.js')
   const path = require('path');
 
-  const { GITSHEETS_ROOT, GITSHEETS_PREFIX } = process.env;
-
   // apply dynamic defaults
   if (!file || file == '-') {
     file = false;
-  }
-
-  if (!root) {
-    root = GITSHEETS_ROOT || '/';
-  }
-
-  if (!prefix) {
-    prefix = GITSHEETS_PREFIX || null;
   }
 
   if (!format) {
