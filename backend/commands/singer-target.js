@@ -27,6 +27,11 @@ exports.builder = {
     default: process.env.GITSHEETS_PREFIX,
     defaultDescription: 'GITSHEETS_PREFIX',
   },
+  'delete-missing': {
+    type: 'boolean',
+    describe: 'Delete all existing records in the sheet that are not present in the new set',
+    default: false,
+  },
 };
 
 exports.handler = async function singerTarget({
@@ -35,6 +40,7 @@ exports.handler = async function singerTarget({
   commitTo,
   root,
   prefix,
+  deleteMissing,
 }) {
   const logger = require('../lib/logger.js');
   const Repository = require('../lib/Repository.js');
@@ -81,6 +87,7 @@ exports.handler = async function singerTarget({
 
 
   // upsert record(s) into sheets
+  const clearedSheets = new Set();
   const writtenStreams = new Set();
   for await (const { type, stream, ...message} of readMessages()) {
     const sheet = sheets[stream];
@@ -120,6 +127,12 @@ exports.handler = async function singerTarget({
 
     // handle record message
     if (type == 'RECORD') {
+      if (deleteMissing && !clearedSheets.has(sheet)) {
+        console.log(`clearing sheet ${sheet.name}`);
+        await sheet.clear();
+        clearedSheets.add(sheet);
+      }
+
       const { blob: outputBlob, path: outputPath } = await sheet.upsert(message.record);
       console.log(`${outputBlob.hash}\t${outputPath}`);
       writtenStreams.add(stream);
