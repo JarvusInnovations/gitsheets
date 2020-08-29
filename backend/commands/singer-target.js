@@ -156,7 +156,7 @@ exports.handler = async function singerTarget({
     if (treeHash != await git.getTreeHash(parentCommitHash)) {
       const commitHash = await git.commitTree(treeHash, {
         p: parentCommitHash,
-        m: `⭆ load data from Singer tap\n\nWritten streams: ${Array.from(writtenStreams).join(', ')}`,
+        m: `⭆ load ${writtenStreams.size} ${writtenStreams.size==1?'stream':'streams'} from Singer tap\n\nWritten streams: ${Array.from(writtenStreams).join(', ')}`,
       });
       await git.updateRef(commitTo, commitHash);
       console.log(`committed new tree to "${commitTo}": ${parentCommitHash}->${commitHash}`);
