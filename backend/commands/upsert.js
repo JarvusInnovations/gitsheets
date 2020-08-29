@@ -40,7 +40,12 @@ exports.builder = {
   },
   'attachments.<attachment-path>': {
     describe: 'One or more files to attach in the format <extension>:<source-path>',
-  }
+  },
+  'delete-missing': {
+    describe: 'Enable to remove all existing records in the sheet that are not present in the new set',
+    type: 'boolean',
+    default: false,
+  },
 };
 
 exports.handler = async function upsert({
@@ -51,6 +56,7 @@ exports.handler = async function upsert({
   format = null,
   encoding,
   attachments = null,
+  deleteMissing,
   ...argv
 }) {
   const logger = require('../lib/logger.js');
@@ -87,6 +93,12 @@ exports.handler = async function upsert({
   }
 
   logger.debug('loaded sheet:', sheet);
+
+
+  // clear sheet
+  if (deleteMissing) {
+    await sheet.clear();
+  }
 
 
   // read incoming record
