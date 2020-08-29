@@ -28,6 +28,10 @@ const DIFF_STATUS_MAP = {
 // primary export
 class Sheet extends Configurable
 {
+  static stringifyRecord (record) {
+    return TOML.stringify(sortKeys(record, { deep: true }));
+  }
+
   static async finishWriting (repo) {
     for (const [sheet, writeQueue] of WRITE_QUEUES) {
       if (sheet.workspace.getRepo() === repo) {
@@ -300,7 +304,7 @@ class Sheet extends Configurable
     }
 
     // write record
-    const toml = stringifyRecord(normalRecord);
+    const toml = this.constructor.stringifyRecord(normalRecord);
     const writePromise = this.dataTree.writeChild(`${path.join(sheetRoot, recordPath)}.toml`, toml);
 
     writeQueue.add(writePromise);
@@ -454,10 +458,6 @@ module.exports = Sheet;
 
 
 // private library
-function stringifyRecord(record) {
-  return TOML.stringify(sortKeys(record, { deep: true }));
-}
-
 function queryMatches(query, record) {
   KEYS: for (const key in query) {
     const queryValue = query[key]
