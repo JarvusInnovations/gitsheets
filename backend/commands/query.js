@@ -15,6 +15,11 @@ exports.builder = {
     choices: ['json', 'csv', 'toml'],
     default: 'json',
   },
+  headers: {
+    describe: 'Whether to show headers in output formats that have headers (i.e. csv)',
+    type: 'boolean',
+    default: true,
+  },
   // encoding: {
   //   describe: 'Encoding to write output with',
   //   default: 'utf8',
@@ -41,6 +46,7 @@ exports.handler = async function query({
   root,
   prefix,
   format,
+  headers,
   // encoding,
   limit,
   filter,
@@ -96,7 +102,7 @@ exports.handler = async function query({
   // output results
   switch (format) {
     case 'json': return outputJson(result);
-    case 'csv': return outputCsv(result);
+    case 'csv': return outputCsv(result, { headers });
     case 'toml': return outputToml(result);
     default: throw new Error(`Unsupported output format: ${format}`);
   }
@@ -150,10 +156,10 @@ async function outputJson(result) {
   console.log(']');
 }
 
-async function outputCsv(result) {
+async function outputCsv(result, { headers = true } = {}) {
   const { Readable } = require('stream');
   const { format: csvFormat } = require('fast-csv');
-  const csvStream = csvFormat({ headers: true, includeEndRowDelimiter: true });
+  const csvStream = csvFormat({ headers, includeEndRowDelimiter: true });
 
   csvStream.pipe(process.stdout).on('end', () => process.exit());
 
