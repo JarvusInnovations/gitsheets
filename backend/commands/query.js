@@ -12,7 +12,7 @@ exports.builder = {
   },
   format: {
     describe: 'Format to serialize output data in (defaults to json)',
-    choices: ['json', 'csv', 'toml'],
+    choices: ['json', 'csv', 'tsv', 'toml'],
     default: 'json',
   },
   headers: {
@@ -103,6 +103,7 @@ exports.handler = async function query({
   switch (format) {
     case 'json': return outputJson(result);
     case 'csv': return outputCsv(result, { headers });
+    case 'tsv': return outputCsv(result, { headers, delimiter: '\t' });
     case 'toml': return outputToml(result);
     default: throw new Error(`Unsupported output format: ${format}`);
   }
@@ -156,10 +157,10 @@ async function outputJson(result) {
   console.log(']');
 }
 
-async function outputCsv(result, { headers = true } = {}) {
+async function outputCsv(result, { headers = true, delimiter = ',' } = {}) {
   const { Readable } = require('stream');
   const { format: csvFormat } = require('fast-csv');
-  const csvStream = csvFormat({ headers, includeEndRowDelimiter: true });
+  const csvStream = csvFormat({ headers, delimiter, includeEndRowDelimiter: true });
 
   csvStream.pipe(process.stdout).on('end', () => process.exit());
 
