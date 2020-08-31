@@ -1,6 +1,10 @@
-exports.command = 'singer-target';
+exports.command = 'singer-target [jsonl-file]';
 exports.desc = 'Load one or more streams from a Singer tap';
 exports.builder = {
+  'jsonl-file': {
+    type: 'string',
+    description: 'Read from a jsonl file instead of STDIN',
+  },
   working: {
     type: 'boolean',
     default: true,
@@ -35,6 +39,7 @@ exports.builder = {
 };
 
 exports.handler = async function singerTarget({
+  jsonlFile,
   working,
   ref,
   commitTo,
@@ -89,7 +94,7 @@ exports.handler = async function singerTarget({
   // upsert record(s) into sheets
   const clearedSheets = new Set();
   const writtenStreams = new Set();
-  for await (const { type, stream, ...message} of readMessages()) {
+  for await (const { type, stream, ...message} of readMessages({ jsonlFile })) {
     const sheet = sheets[stream];
 
     console.log(`${type}\t${stream}`, message);
@@ -171,10 +176,14 @@ exports.handler = async function singerTarget({
 
 
 // library
-async function* readMessages () {
+async function* readMessages ({ jsonlFile = null } = {}) {
+  const inputStream = jsonlFile
+    ? require('fs').createReadStream(jsonlFile)
+    : process.stdin;
+
   // read input
   let output = '';
-  for await (const chunk of process.stdin) {
+  for await (const chunk of inputStream) {
     output += chunk;
 
     let eolIndex;
