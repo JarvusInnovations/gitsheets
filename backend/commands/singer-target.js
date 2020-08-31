@@ -19,6 +19,11 @@ exports.builder = {
     type: 'string',
     description: 'Git ref to commit containing gitsheets to update',
   },
+  'source-label': {
+    type: 'string',
+    description: 'A label describing the source for the data to tag the commit with',
+    default: 'singer-target',
+  },
   root: {
     type: 'string',
     describe: 'Root path to .gitsheets in repository (defaults to GITSHEETS_ROOT or /)',
@@ -43,6 +48,7 @@ exports.handler = async function singerTarget({
   working,
   ref,
   commitTo,
+  sourceLabel,
   root,
   prefix,
   deleteMissing,
@@ -159,9 +165,15 @@ exports.handler = async function singerTarget({
     const treeHash = await workspace.root.write();
 
     if (treeHash != await git.getTreeHash(parentCommitHash)) {
+      let commitTrailers = [
+        `Extracted-from: ${sourceLabel}`,
+        ...Array.from(writtenStreams).map(sheetName => `Extracted-sheet: ${sheetName}`),
+      ];
+
+      // TODO: write trailers data on streams/tap/source that loader can anchor to per-sheet
       const commitHash = await git.commitTree(treeHash, {
         p: parentCommitHash,
-        m: `⭆ load ${writtenStreams.size} ${writtenStreams.size==1?'stream':'streams'} from Singer tap\n\nWritten streams: ${Array.from(writtenStreams).join(', ')}`,
+        m: `⭆ extract ${writtenStreams.size} ${writtenStreams.size==1?'stream':'streams'} from ${sourceLabel}\n\n${commitTrailers.join('\n')}`,
       });
       await git.updateRef(commitTo, commitHash);
       console.log(`committed new tree to "${commitTo}": ${parentCommitHash}->${commitHash}`);
