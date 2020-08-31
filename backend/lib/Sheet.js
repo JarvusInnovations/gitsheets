@@ -525,6 +525,7 @@ async function* diffTrees (repo, src, dst) {
     { $spawn: true, z: true, r: true },
     src,
     dst,
+    '--',
     '**/*.toml',
   );
 
