@@ -526,7 +526,7 @@ async function* diffTrees (repo, src, dst) {
     src,
     dst,
     '--',
-    '**/*.toml',
+    '*.toml',
   );
 
   const exitCodePromise = new Promise(resolve => diffProcess.on('close', resolve));
