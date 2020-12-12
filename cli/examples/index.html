@@ -485,15 +485,15 @@
                 <h1 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link"> ¶</a></h1>
 <h2 id="add-id-based-on-file-name">Add id based on file name<a class="headerlink" href="#add-id-based-on-file-name" title="Permanent link"> ¶</a></h2>
 <p>In this example, shell scripting is used to go through a set of incomplete initial records and populate their ID from their filename:</p>
-<div class="highlight"><pre><span></span><code>    find issues skills statuses technologies -name <span class="s1">&#39;*.toml&#39;</span> <span class="p">|</span> <span class="k">while</span> <span class="nb">read</span> record_path<span class="p">;</span> <span class="k">do</span>
-        <span class="nv">record_id</span><span class="o">=</span><span class="k">$(</span>basename <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2">&quot;</span> .toml<span class="k">)</span>
-        <span class="nv">record_sheet</span><span class="o">=</span><span class="k">$(</span>dirname <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="k">)</span>
-        <span class="nb">echo</span> <span class="s2">&quot;Initializing id=</span><span class="si">${</span><span class="nv">record_id</span><span class="si">}</span><span class="s2"> for </span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2"> in </span><span class="si">${</span><span class="nv">record_sheet</span><span class="si">}</span><span class="s2">&quot;</span>
+<div class="highlight"><pre><span></span><code>find issues skills statuses technologies -name <span class="s1">&#39;*.toml&#39;</span> <span class="p">|</span> <span class="k">while</span> <span class="nb">read</span> record_path<span class="p">;</span> <span class="k">do</span>
+    <span class="nv">record_id</span><span class="o">=</span><span class="k">$(</span>basename <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2">&quot;</span> .toml<span class="k">)</span>
+    <span class="nv">record_sheet</span><span class="o">=</span><span class="k">$(</span>dirname <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="k">)</span>
+    <span class="nb">echo</span> <span class="s2">&quot;Initializing id=</span><span class="si">${</span><span class="nv">record_id</span><span class="si">}</span><span class="s2"> for </span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2"> in </span><span class="si">${</span><span class="nv">record_sheet</span><span class="si">}</span><span class="s2">&quot;</span>
 
-        git sheet <span class="nb">read</span> <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2">&quot;</span> <span class="se">\</span>
-            <span class="p">|</span> jq <span class="s2">&quot;.id = \&quot;</span><span class="si">${</span><span class="nv">record_id</span><span class="si">}</span><span class="s2">\&quot;&quot;</span> <span class="se">\</span>
-            <span class="p">|</span> git sheet upsert <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_sheet</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="k">done</span>
+    git sheet <span class="nb">read</span> <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_path</span><span class="si">}</span><span class="s2">&quot;</span> <span class="se">\</span>
+        <span class="p">|</span> jq <span class="s2">&quot;.id = \&quot;</span><span class="si">${</span><span class="nv">record_id</span><span class="si">}</span><span class="s2">\&quot;&quot;</span> <span class="se">\</span>
+        <span class="p">|</span> git sheet upsert <span class="s2">&quot;</span><span class="si">${</span><span class="nv">record_sheet</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="k">done</span>
 </code></pre></div>
                 
               
