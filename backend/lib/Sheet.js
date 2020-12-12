@@ -494,6 +494,12 @@ function queryMatches(query, record) {
 
 function buildSorter (config) {
   switch (typeof config) {
+  case 'boolean':
+    return vm.runInNewContext(`(a, b) => a.localeCompare(b, undefined, {
+        sensitivity: 'base',
+        ignorePunctuation: true,
+        numeric: true
+    })`);
   case 'object':
     if (Array.isArray(config)) {
       const configMap = {};
@@ -515,8 +521,7 @@ function buildSorter (config) {
     config = expression.join(';\n');
     // fall through now that config is a string
   case 'string':
-    sorter = vm.runInNewContext(`(a, b) => {\n${config}\n}`);
-    return sorter;
+    return vm.runInNewContext(`(a, b) => {\n${config}\n}`);
   default:
     throw new Error('sort must be an expression in a string, a field:direction table, or field array');
   }
