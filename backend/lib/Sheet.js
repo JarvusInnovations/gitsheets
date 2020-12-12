@@ -82,6 +82,10 @@ class Sheet extends Configurable
       throw new Error('gitsheet.path must be declared');
     }
 
+    if (!config.root) {
+      config.root = '.';
+    }
+
     if (fields) {
       if (typeof fields != 'object') {
         throw new Error('gitsheet.fields must be a table');
