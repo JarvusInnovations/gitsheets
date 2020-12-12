@@ -8,7 +8,7 @@ edit_uri: edit/master/docs
 theme:
   name: material
   features:
-    - tabs
+    - navigation.tabs
   palette:
     primary: "orange"
     accent: "deep purple"
@@ -43,3 +43,4 @@ markdown_extensions:
       permalink: " ¶"
   - smarty
   - fontawesome_markdown
+  - mdx_truly_sane_lists
