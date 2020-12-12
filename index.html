@@ -155,6 +155,62 @@
       
       
         
+          
+
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-tabs__inner md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  <li class="md-tabs__item">
+    
+    
+      
+    
+    <a href="." class="md-tabs__link md-tabs__link--active">
+      Getting Started
+    </a>
+  </li>
+
+      
+        
+      
+        
+      
+        
+      
+        
+  
+  
+    <li class="md-tabs__item">
+      
+      
+      <a href="cli/" class="md-tabs__link">
+        Command Line Interface
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+    <li class="md-tabs__item">
+      
+      
+      <a href="nodejs/" class="md-tabs__link">
+        NodeJS Module
+      </a>
+    </li>
+  
+
+      
+        
+      
+    </ul>
+  </div>
+</nav>
+        
       
       <main class="md-main" data-md-component="main">
         <div class="md-main__inner md-grid">
@@ -506,15 +562,11 @@
 </code></pre></div>
 <p>This configuration declares two essential things about the <code>todos</code> sheet:</p>
 <ul>
-<li><strong><code>gitsheet.root</code></strong> declares the root path within the repository containing all records for this sheet<ul>
-<li>all <code>.toml</code> files under this path are considered to declare records</li>
-<li>the path may contain any number of <code>/</code>s to nest the sheet&rsquo;s root</li>
-</ul>
-</li>
-<li><strong><code>gitsheet.path</code></strong> declares a template for finding the path to a given record<ul>
-<li><code>${{ expression }}</code> path components can use arbitrary javascript</li>
-</ul>
-</li>
+<li><strong><code>gitsheet.root</code></strong> declares the root path within the repository containing all records for this sheet
+    - all <code>.toml</code> files under this path are considered to declare records
+    - the path may contain any number of <code>/</code>s to nest the sheet&rsquo;s root</li>
+<li><strong><code>gitsheet.path</code></strong> declares a template for finding the path to a given record
+    - <code>${{ expression }}</code> path components can use arbitrary javascript</li>
 </ul>
 <p>The <code>todos</code> sheet can now be upserted and queried by any Gitsheets interface.</p>
 <h2 id="upsert-records">Upsert records<a class="headerlink" href="#upsert-records" title="Permanent link"> ¶</a></h2>
@@ -604,7 +656,7 @@
       <script>
         app = initialize({
           base: ".",
-          features: ['tabs'],
+          features: ['navigation.tabs'],
           search: Object.assign({
             worker: "assets/javascripts/worker/search.4ac00218.min.js"
           }, typeof search !== "undefined" && search)
