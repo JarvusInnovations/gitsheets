@@ -1,7 +1,7 @@
 # Getting started
 
 ```bash
-npm install -g gitsheets-cli
+npm install -g gitsheets
 ```
 
 Or with Chef Habitat:
