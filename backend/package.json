@@ -22,7 +22,7 @@
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "csv-parser": "^2.3.5",
-    "fast-csv": "^3.7.0",
+    "fast-csv": "^4.3.6",
     "fast-json-patch": "^2.2.1",
     "get-stream": "^5.2.0",
     "hologit": "^0.34.3",
@@ -43,7 +43,7 @@
     "common-tags": "^1.8.0",
     "del": "^5.1.0",
     "into-stream": "^5.1.1",
-    "jest": "^24.9.0",
+    "jest": "^26.6.3",
     "make-dir": "^3.1.0",
     "supertest": "^4.0.2"
   }
