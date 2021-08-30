@@ -277,6 +277,15 @@ class Sheet extends Configurable
     return this.dataTree.writeChild(root, this.dataTree.repo.createTree());
   }
 
+  async clone () {
+    return new Sheet({
+      workspace: this.workspace,
+      name: this.name,
+      dataTree: await this.dataTree.clone(),
+      configPath: this.configPath,
+    });
+  }
+
   async upsert (record) {
     const {
       root: sheetRoot,

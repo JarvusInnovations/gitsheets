@@ -1,0 +1,31 @@
+name: Publish npm package
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+
+    - uses: actions/checkout@v2
+
+    - name: Place tag in environment
+      run: |
+        echo "SOURCE_TAG=${GITHUB_REF:10}" >> $GITHUB_ENV
+
+    - name: Setting package.json version
+      run: npm version --no-git-tag-version "${SOURCE_TAG#v}"
+
+    - uses: actions/setup-node@v1
+      with:
+        node-version: '14.x'
+        registry-url: 'https://registry.npmjs.org'
+
+    - run: cd backend && npm install
+
+    - run: cd backend && npm publish
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

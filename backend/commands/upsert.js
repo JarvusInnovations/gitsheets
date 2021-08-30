@@ -1,6 +1,7 @@
 const fs = require('fs');
 const TOML = require('@iarna/toml');
 const { parse: csvParse } = require('fast-csv');
+const deepmerge = require('deepmerge');
 
 const inputFormats = {
   json: readJsonFile,
@@ -46,6 +47,11 @@ exports.builder = {
     type: 'boolean',
     default: false,
   },
+  'patch-existing': {
+    describe: 'For existing records, patch in provided values so that additional properties not included in the input are preserved',
+    type: 'boolean',
+    default: false,
+  },
 };
 
 exports.handler = async function upsert({
@@ -57,6 +63,7 @@ exports.handler = async function upsert({
   encoding,
   attachments = null,
   deleteMissing,
+  patchExisting,
   ...argv
 }) {
   const logger = require('../lib/logger.js');
@@ -96,7 +103,13 @@ exports.handler = async function upsert({
 
 
   // clear sheet
+  let inputSheet = sheet;
+
   if (deleteMissing) {
+    // re-open input sheet
+    inputSheet = await sheet.clone();
+
+    // clear target sheet
     await sheet.clear();
   }
 
@@ -113,8 +126,28 @@ exports.handler = async function upsert({
 
 
   // upsert record(s) into sheet
-  for await (const inputRecord of inputRecords) {
-    const { blob: outputBlob, path: outputPath } = await sheet.upsert(inputRecord);
+  for await (let inputRecord of inputRecords) {
+
+    if (patchExisting) {
+      // TODO: move more of this logic inside Sheet class
+
+      // fetch existing record from inputSheet
+      const inputRecordPath = await inputSheet.pathForRecord(await inputSheet.normalizeRecord(inputRecord));
+
+      if (inputRecordPath) {
+        const { root: inputSheetRoot } = await inputSheet.getCachedConfig();
+
+        // existing record find, merge
+        const existingBlob = await inputSheet.dataTree.getChild(`${path.join(inputSheetRoot, inputRecordPath)}.toml`);
+
+        if (existingBlob) {
+          const existingRecord = await inputSheet.readRecord(existingBlob);
+          inputRecord = deepmerge(inputRecord, existingRecord);
+        }
+      }
+    }
+
+    const { blob: outputBlob, path: outputPath } = await sheet.upsert(inputRecord, { patchExisting });
     console.log(`${outputBlob.hash}\t${outputPath}`);
 
     if (attachments) {
