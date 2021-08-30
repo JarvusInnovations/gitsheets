@@ -12,17 +12,17 @@ jobs:
 
     - uses: actions/checkout@v2
 
+    - uses: actions/setup-node@v1
+      with:
+        node-version: '14.x'
+        registry-url: 'https://registry.npmjs.org'
+
     - name: Place tag in environment
       run: |
         echo "SOURCE_TAG=${GITHUB_REF:10}" >> $GITHUB_ENV
 
     - name: Setting package.json version
-      run: npm version --no-git-tag-version "${SOURCE_TAG#v}"
-
-    - uses: actions/setup-node@v1
-      with:
-        node-version: '14.x'
-        registry-url: 'https://registry.npmjs.org'
+      run: cd backend && npm version --no-git-tag-version "${SOURCE_TAG#v}"
 
     - run: cd backend && npm install
 
