@@ -27,7 +27,6 @@ exports.handler = async function edit({ recordPath, encoding, format, headers })
   const { spawn } = require('child_process');
   const TOML = require('@iarna/toml');
   const Repository = require('../lib/Repository.js');
-  const Sheet = require('../lib/Sheet.js')
   const repo = await Repository.getFromEnvironment({ working: true });
   const git = await repo.getGit();
 
@@ -64,6 +63,6 @@ async function outputCsv(record, { headers = true, delimiter = ',' } = {}) {
 }
 
 async function outputToml(record) {
-  const TOML = require('@iarna/toml');
-  console.log(`${TOML.stringify(record)}`);
+  const Sheet = require('../lib/Sheet.js')
+  console.log(`${Sheet.stringifyRecord(record)}`);
 }
