@@ -28,7 +28,15 @@ exports.handler = async function edit({ recordPath, resumePath, encoding }) {
   const git = await repo.getGit();
 
   // open record
-  const recordToml = fs.readFileSync(resumePath || recordPath, encoding);
+  let recordToml = fs.readFileSync(resumePath || recordPath, encoding);
+
+  // try to parse and format
+  try {
+    const record = TOML.parse(recordToml);
+    recordToml = Sheet.stringifyRecord(record);
+  } catch (err) {
+    console.warn(`Failed to parse opened record:\n${err}`);
+  }
 
   // get temp path
   const { name: tempFilePath } = tmp.fileSync({
@@ -65,7 +73,7 @@ exports.handler = async function edit({ recordPath, resumePath, encoding }) {
   try {
     editedRecord = TOML.parse(editedToml);
   } catch (err) {
-    console.error(`Failed to parse record:\n${err}`);
+    console.error(`Failed to parse edited record:\n${err}`);
     console.error(`To resume editing, run: git sheet edit ${recordPath} ${tempFilePath}`);
     process.exit(1);
   }
