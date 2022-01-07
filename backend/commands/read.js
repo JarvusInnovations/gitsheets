@@ -3,7 +3,7 @@ exports.desc = 'Read a record, converting to desired format';
 exports.builder = {
   'record-path': {
     type: 'string',
-    describe: 'The path to a record file to edit',
+    describe: 'The path to a record file to read',
     demandOption: true,
   },
   encoding: {
