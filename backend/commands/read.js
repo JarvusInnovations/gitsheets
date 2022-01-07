@@ -24,11 +24,7 @@ exports.builder = {
 
 exports.handler = async function edit({ recordPath, encoding, format, headers }) {
   const fs = require('fs');
-  const { spawn } = require('child_process');
   const TOML = require('@iarna/toml');
-  const Repository = require('../lib/Repository.js');
-  const repo = await Repository.getFromEnvironment({ working: true });
-  const git = await repo.getGit();
 
   // open record
   const recordToml = fs.readFileSync(recordPath, encoding);
