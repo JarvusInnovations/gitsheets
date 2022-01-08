@@ -2,18 +2,22 @@
 
 
 // setup logger
-const logger = require('winston')
-module.exports = { logger }
+const logger = require('winston');
+const loggerConsole = new logger.transports.Console({
+  level: process.env.DEBUG ? 'debug' : 'info',
+  format: logger.format.combine(
+    logger.format.colorize(),
+    logger.format.prettyPrint(),
+    logger.format.splat(),
+    logger.format.simple(),
+  ),
 
-if (process.env.DEBUG) {
-  logger.level = 'debug'
-}
+  // all logger output to STDERR
+  stderrLevels: Object.keys(require('winston/lib/winston/config').cli.levels),
+});
+logger.add(loggerConsole);
 
-
-// all logger output to STDERR
-for (const level in logger.levels) {
-  logger.default.transports.console.stderrLevels[level] = true;
-}
+module.exports = { logger };
 
 
 // route command line
@@ -25,15 +29,33 @@ require('yargs')
     default: false,
     global: true,
   })
+  .option('q', {
+    alias: 'quiet',
+    type: 'boolean',
+    default: false,
+    global: true,
+  })
   .check(function (argv) {
     if (argv.debug) {
-      logger.level = 'debug'
+      loggerConsole.level = 'debug';
     } else if (argv.quiet) {
-      logger.level = 'error'
+      loggerConsole.level = 'error';
     }
 
     return true;
   })
-  .commandDir('../commands')
+  .commandDir('../commands', { exclude: /\.test\.js$/ })
   .demandCommand()
-  .argv
+  .showHelpOnFail(false, 'Specify --help for available options')
+  .fail((msg, err) => {
+    logger.error(msg || err.message);
+
+    if (err) {
+      logger.debug(err.stack);
+    }
+
+    process.exit(1);
+  })
+  .strict()
+  .help()
+  .argv;

@@ -19,6 +19,8 @@ exports.builder = {
 exports.handler = async function edit({ recordPath, resumePath, encoding }) {
   const fs = require('fs');
   const { spawn } = require('child_process');
+  const path = require('path');
+  const tmp = require('tmp');
   const TOML = require('@iarna/toml');
   const Repository = require('../lib/Repository.js');
   const Sheet = require('../lib/Sheet.js')
@@ -26,17 +28,21 @@ exports.handler = async function edit({ recordPath, resumePath, encoding }) {
   const git = await repo.getGit();
 
   // open record
-  const recordToml = fs.readFileSync(resumePath || recordPath, encoding);
+  let recordToml = fs.readFileSync(resumePath || recordPath, encoding);
+
+  // try to parse and format
+  try {
+    const record = TOML.parse(recordToml);
+    recordToml = Sheet.stringifyRecord(record);
+  } catch (err) {
+    console.warn(`Failed to parse opened record:\n${err}`);
+  }
 
   // get temp path
-  const tempFilePath = await new Promise((resolve, reject) => {
-    const mktemp = spawn('mktemp', ['-t', 'gitsheet.XXXXXX.toml']);
-
-    let stdout = '', stderr = '';
-    mktemp.stdout.on('data', chunk => stdout += chunk);
-    mktemp.stderr.on('data', chunk => stderr += chunk);
-
-    mktemp.on('close', code => code === 0 ? resolve(stdout.trim()) : reject(stderr.trim()));
+  const { name: tempFilePath } = tmp.fileSync({
+    prefix: path.basename(recordPath, '.toml'),
+    postfix: '.toml',
+    discardDescriptor: true,
   });
 
   // populate temp path
@@ -67,7 +73,7 @@ exports.handler = async function edit({ recordPath, resumePath, encoding }) {
   try {
     editedRecord = TOML.parse(editedToml);
   } catch (err) {
-    console.error(`Failed to parse record:\n${err}`);
+    console.error(`Failed to parse edited record:\n${err}`);
     console.error(`To resume editing, run: git sheet edit ${recordPath} ${tempFilePath}`);
     process.exit(1);
   }

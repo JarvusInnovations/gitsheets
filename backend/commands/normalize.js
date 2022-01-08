@@ -54,9 +54,23 @@ exports.handler = async function query({
     }
 
     // loop through all records and re-upsert
-    for await (const record of sheet.query()) {
-      logger.info(`rewriting ${sheetName}/${record[Symbol.for('gitsheets-path')]}`);
-      await sheet.upsert(record);
+    try {
+      for await (const record of sheet.query()) {
+        const originalPath = record[Symbol.for('gitsheets-path')];
+        logger.info(`rewriting ${path.join(root, prefix, sheetName, originalPath)}.toml`);
+        const { path: normalizedPath } = await sheet.upsert(record);
+
+        if (normalizedPath !== originalPath) {
+          logger.warn(`^- moved to ${path.join(root, prefix, sheetName, normalizedPath)}.toml`);
+        }
+      }
+    } catch (err) {
+      if (err.constructor.name == 'TomlError') {
+        logger.error(`failed to parse ${path.join(root, prefix, err.file)}\n${err.message}`);
+        process.exit(1);
+      }
+
+      throw err;
     }
   }
 

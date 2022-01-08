@@ -118,9 +118,20 @@ class Sheet extends Configurable
   async readRecord (blob, path = null) {
     const cache = this.#recordCache.get(blob.hash);
 
-    const record = cache
-      ? v8.deserialize(cache)
-      : await blob.read().then(TOML.parse);
+    let record;
+
+    if (cache) {
+      record = v8.deserialize(cache);
+    } else {
+      const toml = await blob.read();
+
+      try {
+        record = TOML.parse(toml);
+      } catch (err) {
+        err.file = path;
+        throw err;
+      }
+    }
 
     // annotate with gitsheets keys
     record[RECORD_SHEET_KEY] = this.name;
@@ -153,14 +164,14 @@ class Sheet extends Configurable
     const pathTemplate = PathTemplate.fromString(pathTemplateString);
     const sheetDataTree = await this.dataTree.getSubtree(sheetRoot);
 
-    BLOBS: for await (const blob of pathTemplate.queryTree(sheetDataTree, query)) {
-      const record = await this.readRecord(blob);
+    BLOBS: for await (const { blob, path: blobPath } of pathTemplate.queryTree(sheetDataTree, query)) {
+      const record = await this.readRecord(blob, blobPath);
 
       if (!queryMatches(query, record)) {
         continue BLOBS;
       }
 
-      record[RECORD_PATH_KEY] = pathTemplate.render(record);
+      record[RECORD_PATH_KEY] = blobPath || pathTemplate.render(record);
 
       yield record;
     }
