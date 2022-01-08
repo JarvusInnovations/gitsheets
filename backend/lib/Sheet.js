@@ -153,14 +153,14 @@ class Sheet extends Configurable
     const pathTemplate = PathTemplate.fromString(pathTemplateString);
     const sheetDataTree = await this.dataTree.getSubtree(sheetRoot);
 
-    BLOBS: for await (const blob of pathTemplate.queryTree(sheetDataTree, query)) {
-      const record = await this.readRecord(blob);
+    BLOBS: for await (const { blob, path: blobPath } of pathTemplate.queryTree(sheetDataTree, query)) {
+      const record = await this.readRecord(blob, blobPath);
 
       if (!queryMatches(query, record)) {
         continue BLOBS;
       }
 
-      record[RECORD_PATH_KEY] = pathTemplate.render(record);
+      record[RECORD_PATH_KEY] = blobPath || pathTemplate.render(record);
 
       yield record;
     }

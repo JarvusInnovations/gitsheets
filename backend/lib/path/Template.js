@@ -50,7 +50,7 @@ class Template
     return recordPath.join('/');
   }
 
-  async* queryTree (tree, query, depth = 0) {
+  async* queryTree (tree, query, pathPrefix = '', depth = 0) {
     const numComponents = this.#components.length;
 
     if (!tree) {
@@ -68,7 +68,7 @@ class Template
           const child = await currentTree.getChild(`${nextName}.toml`);
 
           if (child) {
-            yield child;
+            yield { path: path.join(pathPrefix, nextName), blob: child };
           }
 
           // absolute match on a leaf, we're done with this query
@@ -97,8 +97,9 @@ class Template
               continue;
             }
 
-            attachmentsPrefix = `${childPath.substr(0, childPath.length - 5)}/`;
-            yield child;
+            const childName = childPath.substr(0, childPath.length - 5);
+            attachmentsPrefix = `${childName}/`;
+            yield { path: path.join(pathPrefix, childName), blob: child };
           }
 
           return;
@@ -117,14 +118,14 @@ class Template
       } else {
         // each tree in current tree could contain matching records
         const children = await currentTree.getChildren();
-        for (const childName in children) {
-          const child = children[childName];
+        for (const childPath in children) {
+          const child = children[childPath];
 
           if (!child.isTree) {
             continue;
           }
 
-          yield* this.queryTree(child, query, i+1);
+          yield* this.queryTree(child, query, path.join(pathPrefix, childPath), i+1);
         }
 
         return;
