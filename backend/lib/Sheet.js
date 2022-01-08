@@ -118,9 +118,20 @@ class Sheet extends Configurable
   async readRecord (blob, path = null) {
     const cache = this.#recordCache.get(blob.hash);
 
-    const record = cache
-      ? v8.deserialize(cache)
-      : await blob.read().then(TOML.parse);
+    let record;
+
+    if (cache) {
+      record = v8.deserialize(cache);
+    } else {
+      const toml = await blob.read();
+
+      try {
+        record = TOML.parse(toml);
+      } catch (err) {
+        err.file = path;
+        throw err;
+      }
+    }
 
     // annotate with gitsheets keys
     record[RECORD_SHEET_KEY] = this.name;
