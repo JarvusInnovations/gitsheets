@@ -101,9 +101,18 @@ exports.handler = async function singerTarget({
   const clearedSheets = new Set();
   const writtenStreams = new Set();
   for await (const { type, stream, ...message} of readMessages({ jsonlFile })) {
-    const sheet = sheets[stream];
-
     console.log(`${type}\t${stream}`, message);
+
+
+    // ignore state for now
+    if (type == 'STATE') {
+      console.warn('ignoring STATE message');
+      continue;
+    }
+
+
+    // get sheet
+    const sheet = sheets[stream];
 
 
     // create schema if needed
@@ -125,13 +134,6 @@ exports.handler = async function singerTarget({
       }
     } else if (type == 'SCHEMA') {
       console.warn('ignoring SCHEMA for already-defined sheet');
-      continue;
-    }
-
-
-    // ignore state for now
-    if (type == 'STATE') {
-      console.warn('ignoring STATE message');
       continue;
     }
 
