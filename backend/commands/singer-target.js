@@ -104,9 +104,9 @@ exports.handler = async function singerTarget({
     console.log(`${type}\t${stream}`, message);
 
 
-    // ignore state for now
-    if (type == 'STATE') {
-      console.warn('ignoring STATE message');
+    // ignore unhandled message types for now
+    if (type == 'STATE' || type == 'ACTIVATE_VERSION') {
+      console.warn(`ignoring ${type} message`);
       continue;
     }
 
