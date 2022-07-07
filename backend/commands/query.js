@@ -28,15 +28,23 @@ exports.builder = {
     describe: 'Truncate results to given count',
     type: 'number'
   },
-  'filter.<field>': {
+  'filter': {
+    group: 'Filtering',
     describe: 'Filter results by one or more field values',
+    type: 'array'
+  },
+  'filter.<field>[=<value>]': {
+    group: 'Filtering',
+    describe: 'Field to filter by'
   },
   fields: {
+    group: 'Field selection',
     describe: 'List of fields to order/limit output columns with',
     type: 'array'
   },
-  'fields.<from>': {
-    describe: 'Fields to remap',
+  'fields.<from>=<to>': {
+    group: 'Field selection',
+    describe: 'Field to remap',
     type: 'array'
   }
 };
@@ -125,11 +133,25 @@ async function* limitResult(result, limit) {
 }
 
 async function* mapResult(result, fields) {
+  if (!Array.isArray(fields)) {
+    const fieldsObject = fields;
+    fields = [];
+    for (const fromKey in fieldsObject) {
+      const fieldMap = {};
+      fieldMap[fromKey] = fieldsObject[fromKey];
+      fields.push(fieldMap);
+    }
+  }
+
   for await (const record of result) {
     const output = {};
 
     for (const field of fields) {
-      if (typeof field == 'object') {
+      if (Array.isArray(field)) {
+        for (const fieldValue of field) {
+          output[fieldValue] = record[fieldValue];
+        }
+      } else if (typeof field == 'object') {
         for (const from in field) {
           output[field[from]] = record[from];
         }
