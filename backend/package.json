@@ -39,7 +39,7 @@
     "tmp": "^0.2.1",
     "to-readable-stream": "^2.1.0",
     "winston": "^3.3.3",
-    "yargs": "^13.3.2"
+    "yargs": "^17.5.1"
   },
   "devDependencies": {
     "common-tags": "^1.8.0",
