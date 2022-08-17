@@ -142,7 +142,7 @@ exports.handler = async function upsert({
 
         if (existingBlob) {
           const existingRecord = await inputSheet.readRecord(existingBlob);
-          inputRecord = deepmerge(inputRecord, existingRecord);
+          inputRecord = deepmerge(existingRecord, inputRecord);
         }
       }
     }
