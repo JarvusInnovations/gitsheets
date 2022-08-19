@@ -112,6 +112,7 @@ class Template
 
         if (nextTree) {
           currentTree = nextTree;
+          pathPrefix = path.join(pathPrefix, nextName);
         } else {
           return;
         }
