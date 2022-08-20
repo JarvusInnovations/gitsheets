@@ -1,5 +1,5 @@
 const path = require('path');
-const v8 = require('v8');
+// const v8 = require('v8');
 const vm = require('vm');
 const sortKeys = require('sort-keys');
 const TOML = require('@iarna/toml');
@@ -40,7 +40,7 @@ class Sheet extends Configurable
     }
   }
 
-  #recordCache;
+  // #recordCache;
 
   constructor ({ workspace, name, dataTree = null, configPath = null }) {
     if (!workspace) {
@@ -57,7 +57,7 @@ class Sheet extends Configurable
     this.configPath = configPath || `.gitsheets/${name}.toml`;
     this.dataTree = dataTree || workspace.root;
 
-    this.#recordCache = new Map();
+    // this.#recordCache = new Map();
 
     Object.freeze(this);
   }
@@ -116,22 +116,28 @@ class Sheet extends Configurable
   }
 
   async readRecord (blob, path = null) {
-    const cache = this.#recordCache.get(blob.hash);
+    /**
+     * caching is disabled for now, because v8.serialize doesn't
+     * preserve the custom Date classes that iarna/toml uses to
+     * preserve extended date types
+     */
+
+    // const cache = this.#recordCache.get(blob.hash);
 
     let record;
 
-    if (cache) {
-      record = v8.deserialize(cache);
-    } else {
-      const toml = await blob.read();
+    // if (cache) {
+    //   record = v8.deserialize(cache);
+    // } else {
+    const toml = await blob.read();
 
-      try {
-        record = TOML.parse(toml);
-      } catch (err) {
-        err.file = path;
-        throw err;
-      }
+    try {
+      record = TOML.parse(toml);
+    } catch (err) {
+      err.file = path;
+      throw err;
     }
+    // }
 
     // annotate with gitsheets keys
     record[RECORD_SHEET_KEY] = this.name;
@@ -140,9 +146,9 @@ class Sheet extends Configurable
     }
 
     // fill cache
-    if (!cache) {
-      this.#recordCache.set(blob.hash, v8.serialize(record));
-    }
+    // if (!cache) {
+    //   this.#recordCache.set(blob.hash, toml);
+    // }
 
     return record;
   }
