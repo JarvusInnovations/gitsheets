@@ -33,7 +33,7 @@
     "koa-router": "^7.4.0",
     "maxstache": "^1.0.7",
     "mz": "^2.7.0",
-    "rfc6902": "^4.0.1",
+    "rfc6902": "^5.0.0",
     "sort-keys": "^4.2.0",
     "streaming-json-stringify": "^3.1.0",
     "tmp": "^0.2.1",
