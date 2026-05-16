@@ -8,6 +8,11 @@ import { Repo as HologitRepo } from 'hologit';
 import type { TreeObject, Workspace } from 'hologit';
 
 import { ConfigError, RefError, TransactionError } from './errors.js';
+import {
+  PushDaemon,
+  resolveBackoff,
+  type PushDaemonOptions,
+} from './push-daemon.js';
 import { Sheet } from './sheet.js';
 import {
   Mutex,
@@ -39,7 +44,9 @@ export interface OpenSheetOptions {
 export class Repository {
   readonly #hologitRepo: HologitRepo;
   readonly #mutex = new Mutex();
+  readonly #postCommitHooks: Array<(commitHash: string) => void> = [];
   #strictMode = false;
+  #pushDaemon: PushDaemon | null = null;
 
   constructor(hologitRepo: HologitRepo) {
     this.#hologitRepo = hologitRepo;
@@ -193,10 +200,61 @@ export class Repository {
         tx.discard();
         throw err;
       }
-      return await tx.finalize(value);
+      const result = await tx.finalize(value);
+      if (result.commitHash !== null) {
+        for (const hook of this.#postCommitHooks) {
+          try {
+            hook(result.commitHash);
+          } catch {
+            // Hooks must not break transactions.
+          }
+        }
+      }
+      return result;
     } finally {
       release();
     }
+  }
+
+  /**
+   * Start an async push daemon for this repo. Only one daemon may be active
+   * at a time; throws TransactionError(push_daemon_running) on contention.
+   * See specs/behaviors/push-sync.md.
+   */
+  async startPushDaemon(opts: PushDaemonOptions): Promise<PushDaemon> {
+    if (this.#pushDaemon) {
+      throw new TransactionError(
+        'commit_failed',
+        'a push daemon is already running for this Repository — stop it first',
+      );
+    }
+    let branch = opts.branch;
+    if (!branch) {
+      const headRef = await this.#headBranchRef();
+      if (!headRef) {
+        throw new RefError(
+          'ref_not_found',
+          'cannot start push daemon — HEAD is detached or the repo is fresh',
+        );
+      }
+      branch = headRef.replace(/^refs\/heads\//, '');
+    }
+    const daemon = new PushDaemon({
+      gitDir: this.gitDir,
+      remote: opts.remote,
+      branch,
+      backoff: resolveBackoff(opts.backoff),
+      maxRetries: opts.maxRetries ?? Number.POSITIVE_INFINITY,
+    });
+    this.#pushDaemon = daemon;
+    const hook = (commitHash: string): void => daemon.notifyCommit(commitHash);
+    this.#postCommitHooks.push(hook);
+    daemon.once('stopped', () => {
+      const idx = this.#postCommitHooks.indexOf(hook);
+      if (idx >= 0) this.#postCommitHooks.splice(idx, 1);
+      this.#pushDaemon = null;
+    });
+    return daemon;
   }
 
   // --- Private helpers ---

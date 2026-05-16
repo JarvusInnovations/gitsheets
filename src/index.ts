@@ -28,6 +28,13 @@ export type {
   ValidatorMap,
 } from './store.js';
 
+export { PushDaemon } from './push-daemon.js';
+export type {
+  PushDaemonOptions,
+  PushDaemonStatus,
+  BackoffConfig,
+} from './push-daemon.js';
+
 export { Transaction } from './transaction.js';
 export type {
   Author,
