@@ -11,6 +11,7 @@ import {
   PathTemplateError,
   TransactionError,
 } from './errors.js';
+import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
 import { stringifyRecord, parseToml, parseConfigToml } from './toml.js';
@@ -413,6 +414,29 @@ export class Sheet {
       async (innerTx) => innerTx.sheet(this.#name).upsert(validated),
       (r) => `${this.#name} upsert ${r.path}`,
     );
+  }
+
+  /**
+   * RFC 7396 JSON Merge Patch. Reads the matching record, merges `partial`,
+   * validates, and upserts the result. Returns the same shape as upsert.
+   * Throws NotFoundError if the query matches no record.
+   */
+  async patch(query: RecordLike, partial: RecordLike): Promise<UpsertResult> {
+    const existing = await this.queryFirst(query);
+    if (!existing) {
+      throw new NotFoundError(
+        'record_not_found',
+        `${this.#name}: no record matched ${JSON.stringify(query)}`,
+      );
+    }
+    const merged = mergePatch(stripSymbols(existing), partial) as RecordLike;
+    // Carry the record's path annotation forward so upsert's rename
+    // detection deletes the old file if the new path differs.
+    const existingPath = (existing as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    if (typeof existingPath === 'string') {
+      (merged as Record<symbol, unknown>)[RECORD_PATH_KEY] = existingPath;
+    }
+    return this.upsert(merged);
   }
 
   async delete(target: RecordLike | string): Promise<void> {
