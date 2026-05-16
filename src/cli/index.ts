@@ -1,6 +1,8 @@
 // CLI entry. See specs/api/cli.md.
 
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, join } from 'node:path';
 import process from 'node:process';
 
 import yargs from 'yargs';
@@ -47,6 +49,7 @@ interface UpsertArgs extends GlobalArgs {
   format?: string;
   encoding?: string;
   deleteMissing?: boolean;
+  attachment?: Record<string, string>;
 }
 
 interface QueryArgs extends GlobalArgs {
@@ -184,6 +187,47 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   const records = parseRecords(text, format);
   if (records.length === 0) return;
 
+  const attachmentMap = argv.attachment ?? {};
+  const attachmentNames = Object.keys(attachmentMap);
+  if (attachmentNames.length > 0 && records.length !== 1) {
+    throw new Error(
+      `--attachment requires a single-record input (got ${records.length} records)`,
+    );
+  }
+
+  // Resolve attachment source paths up front so a missing file fails before
+  // the transaction opens. We hand them to hologit's writeBlobFromFile so
+  // binary content is hashed correctly (git hash-object -w). For `-` (stdin),
+  // we buffer it to a tmp file first since stdin may already be consumed by
+  // the record input.
+  const attachmentSources: Record<string, string> = {}; // name → absolute path
+  const tmpDirs: string[] = []; // cleanup at end
+  let stdinConsumed = argv.input === '-' || argv.input === undefined;
+  const inputDir = argv.input && argv.input !== '-' ? dirname(argv.input) : process.cwd();
+  for (const name of attachmentNames) {
+    const source = attachmentMap[name]!;
+    if (source === '-') {
+      if (stdinConsumed) {
+        throw new Error(
+          `--attachment ${name}=-: stdin is already consumed; only one '-' source per command`,
+        );
+      }
+      stdinConsumed = true;
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer));
+      }
+      const dir = await mkdtemp(join(tmpdir(), 'gitsheets-attach-'));
+      tmpDirs.push(dir);
+      const tmpPath = join(dir, 'data');
+      await writeFile(tmpPath, Buffer.concat(chunks));
+      attachmentSources[name] = tmpPath;
+    } else {
+      const resolved = isAbsolute(source) ? source : join(inputDir, source);
+      attachmentSources[name] = resolved;
+    }
+  }
+
   const messageDefault = argv.deleteMissing
     ? `${argv.sheet} full-replace (${records.length})`
     : `${argv.sheet} upsert (${records.length})`;
@@ -206,10 +250,26 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   await repo.transact(txOpts, async (tx) => {
     const target = tx.sheet(argv.sheet, txSheetOpts);
     const upsertedPaths = new Set<string>();
+    let lastResult: UpsertResult | undefined;
     for (const record of records) {
       const result: UpsertResult = await target.upsert(record);
       upsertedPaths.add(result.path);
       process.stdout.write(`${result.blob.hash} ${result.path}\n`);
+      lastResult = result;
+    }
+    // Attach files alongside the (single) record. Already guarded above to
+    // run only when records.length === 1. Each source goes through
+    // hologit's writeBlobFromFile (git hash-object -w <path>) so binary
+    // content is hashed verbatim.
+    if (attachmentNames.length > 0 && lastResult) {
+      const blobMap: Record<string, import('hologit').BlobObject> = {};
+      for (const [name, sourcePath] of Object.entries(attachmentSources)) {
+        blobMap[name] = await repo.hologitRepo.writeBlobFromFile(sourcePath);
+      }
+      await target.setAttachments(lastResult.path, blobMap);
+      for (const name of attachmentNames) {
+        process.stdout.write(`+ ${lastResult.path}/${name}\n`);
+      }
     }
     if (argv.deleteMissing) {
       // Anything in the existing set that's not in the upserted set must die.
@@ -221,6 +281,11 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
       }
     }
   });
+
+  // Clean up tmp dirs used to materialize stdin-sourced attachments.
+  for (const dir of tmpDirs) {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function runQuery(argv: QueryArgs): Promise<void> {
@@ -377,6 +442,24 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             default: false,
             describe:
               'DESTRUCTIVE: delete every record not present in the input set, in the same transaction',
+          })
+          .option('attachment', {
+            type: 'string',
+            array: true,
+            describe:
+              "Attach a file alongside the record: --attachment <name>=<source>. <source> is a file path (relative to the input file's dir, else cwd) or '-' for stdin. Repeatable. Requires a single-record input.",
+            coerce: (raw: string[] | string): Record<string, string> => {
+              const items = Array.isArray(raw) ? raw : [raw];
+              const out: Record<string, string> = {};
+              for (const item of items) {
+                const eq = item.indexOf('=');
+                if (eq === -1) {
+                  throw new Error(`--attachment expects <name>=<source>, got ${item}`);
+                }
+                out[item.slice(0, eq)] = item.slice(eq + 1);
+              }
+              return out;
+            },
           }),
       runUpsert,
     )

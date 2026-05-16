@@ -40,7 +40,7 @@ Flags:
 - `--format <json|toml|csv>` — input format (default: inferred from extension, fallback `json`); see [`deferred.md`](../deferred.md) — JSON only in v1.0
 - `--encoding <enc>` — default `utf8`; see [`deferred.md`](../deferred.md) — utf-8 only in v1.0
 - `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted; see [`deferred.md`](../deferred.md)
-- `--attachments.<path>=<spec>` — attach a file alongside the record; see [`deferred.md`](../deferred.md)
+- `--attachment <name>=<source>` (repeatable) — attach a file alongside the (single) upserted record. `<source>` is a file path (relative to the input file's directory, or cwd for stdin input) or `-` for stdin. Requires a single-record input set.
 - `--message <msg>`, `--author-name`, `--author-email`, `--trailer Key=Value` (repeatable) — transaction metadata
 
 For patching existing records in v1.0, use the library API `Sheet.patch(query, partial)`

@@ -62,11 +62,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** A library-managed cache around parsed records, surviving across requests in a long-running consumer.
 - **Why deferred:** Once #138 (blob-hash record cache fix) lands, the existing per-sheet-instance cache covers most needs. A richer multi-instance cache can come if a consumer shows it's needed.
 
-### CLI `gitsheets upsert --attachments` — [#147](https://github.com/JarvusInnovations/gitsheets/issues/147)
-
-- **What:** `--attachments.<name>=<source-path>` flags to attach files alongside the record in the same transaction.
-- **Why deferred:** Library substrate exists (`Sheet.setAttachment`); CLI wiring is purely arg-parsing.
-
 ### CLI `--working` global flag — [#165](https://github.com/JarvusInnovations/gitsheets/issues/165)
 
 - **What:** Read/write the working tree's state rather than HEAD.
