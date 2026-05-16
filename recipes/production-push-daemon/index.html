@@ -954,10 +954,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#multi-remote-replication-deferred" class="md-nav__link">
+  <a href="#multi-remote-replication-still-external" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Multi-remote replication (deferred)
+        Multi-remote replication (still external)
       
     </span>
   </a>
@@ -1200,10 +1200,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#multi-remote-replication-deferred" class="md-nav__link">
+  <a href="#multi-remote-replication-still-external" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Multi-remote replication (deferred)
+        Multi-remote replication (still external)
       
     </span>
   </a>
@@ -1293,12 +1293,16 @@
 <span class="w">  </span><span class="nx">log</span><span class="p">.</span><span class="nx">info</span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">durationMs</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;pushed&#39;</span><span class="p">);</span>
 <span class="p">});</span>
 
-<span class="nx">daemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;retry&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="nx">log</span><span class="p">.</span><span class="nx">info</span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push retry scheduled&#39;</span><span class="p">);</span>
+<span class="nx">daemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;retry&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">log</span><span class="p">.</span><span class="nx">info</span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push retry scheduled&#39;</span><span class="p">);</span>
 <span class="p">});</span>
 
-<span class="nx">daemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;error&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="nx">log</span><span class="p">.</span><span class="nx">warn</span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="o">:</span><span class="w"> </span><span class="kt">String</span><span class="p">(</span><span class="nx">err</span><span class="p">),</span><span class="w"> </span><span class="nx">attempt</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push failed&#39;</span><span class="p">);</span>
+<span class="nx">daemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;error&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// `reason: &#39;non-fast-forward&#39;` means the remote has work this daemon</span>
+<span class="w">  </span><span class="c1">// doesn&#39;t — page someone. The daemon will *not* retry it; pushing the same</span>
+<span class="w">  </span><span class="c1">// commit again would just re-fail. Future commits still trigger fresh</span>
+<span class="w">  </span><span class="c1">// attempts (each producing its own classified error).</span>
+<span class="w">  </span><span class="nx">log</span><span class="p">.</span><span class="nx">warn</span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="o">:</span><span class="w"> </span><span class="kt">String</span><span class="p">(</span><span class="nx">err</span><span class="p">),</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push failed&#39;</span><span class="p">);</span>
 <span class="p">});</span>
 
 <span class="nx">daemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;stopped&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
@@ -1310,7 +1314,7 @@
 <span class="c1">// {</span>
 <span class="c1">//   running: boolean,</span>
 <span class="c1">//   lastPushAt: ISO 8601 | null,</span>
-<span class="c1">//   lastError: { message, at, attempt } | null,</span>
+<span class="c1">//   lastError: { message, at, attempt, reason: &#39;non-fast-forward&#39; | &#39;unknown&#39; } | null,</span>
 <span class="c1">//   pendingCommits: number,</span>
 <span class="c1">//   currentBackoffMs: number | null,</span>
 <span class="c1">//   currentAttempt: number | null,</span>
@@ -1377,16 +1381,32 @@
 <li>Stops accepting new commits to the queue</li>
 <li>Waits for the in-flight push to complete or fail</li>
 <li>Drains the retry queue up to <code>timeoutMs</code> (default 30s)</li>
-<li>After the timeout, abandons remaining queued commits (they stay in the local repo and are picked up on the next daemon start, once #157 lands)</li>
+<li>After the timeout, abandons remaining queued commits — they stay in the local repo and are picked up on the next daemon start via the startup-backlog check</li>
 <li>Resolves once the daemon is fully idle</li>
 </ol>
 <p>For Kubernetes / Docker, set <code>terminationGracePeriodSeconds</code> to at least <code>timeoutMs</code> + a safety margin so the orchestrator doesn&rsquo;t SIGKILL mid-drain.</p>
 <h2 id="non-fast-forward-rejections">Non-fast-forward rejections<a class="headerlink" href="#non-fast-forward-rejections" title="Permanent link"> ¶</a></h2>
-<p>Currently the daemon retries every failure including non-fast-forward rejections. That&rsquo;s the v1.0 simplification — production-grade detection (stop retrying, escalate to a human) is tracked at <a href="https://github.com/JarvusInnovations/gitsheets/issues/156">#156</a>. For now, if your remote rejects a push as non-fast-forward, the daemon spins on it until you intervene. Watch the <code>error</code> event stream and surface persistent failures.</p>
-<p>The right intervention when this happens: stop your consumer, investigate the remote (something else committed to your branch), reconcile, restart.</p>
-<h2 id="multi-remote-replication-deferred">Multi-remote replication (deferred)<a class="headerlink" href="#multi-remote-replication-deferred" title="Permanent link"> ¶</a></h2>
-<p>A <code>Repository</code> can host one push daemon at a time, and post-commit notifications fire only on the <code>Repository</code> instance that ran the <code>transact</code> — so a second <code>Repository</code> opened against the same <code>gitDir</code> wouldn&rsquo;t see those commits and wouldn&rsquo;t push them. In-process multi-remote replication isn&rsquo;t a working pattern in v1.0.</p>
-<p>This becomes workable once <a href="https://github.com/JarvusInnovations/gitsheets/issues/157">#157 (push daemon startup-diff)</a> lands and a daemon catches up from the ref state rather than from in-process notifications. Until then, the right replication path is external — e.g., a <code>git push backup</code> triggered by an external scheduler or by a server-side hook on the primary remote.</p>
+<p>When the remote contains work the daemon doesn&rsquo;t (a fast-forward isn&rsquo;t possible), the push fails and the daemon classifies it as terminal:</p>
+<ul>
+<li>Exactly one <code>error</code> event fires with <code>reason: 'non-fast-forward'</code>.</li>
+<li><strong>No <code>retry</code> event follows.</strong> The daemon never force-pushes; pushing the same commit again would just re-fail.</li>
+<li><code>daemon.status().lastError.reason</code> carries <code>'non-fast-forward'</code> so health checks / alerting can branch on it.</li>
+<li>Subsequent <code>repo.transact</code> commits still trigger fresh push attempts. Each will also fail with <code>non-fast-forward</code> (and emit its own event) until the remote state is reconciled.</li>
+</ul>
+<p>The right intervention: stop the consumer, investigate the remote (something else committed to your branch), reconcile (rebase or merge), restart.</p>
+<div class="highlight"><pre><span></span><code><span class="nx">daemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;error&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">reason</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">reason</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">&#39;non-fast-forward&#39;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// page on-call; do not auto-restart</span>
+<span class="w">    </span><span class="nx">alerts</span><span class="p">.</span><span class="nx">send</span><span class="p">({</span><span class="w"> </span><span class="nx">severity</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;critical&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;push rejected — remote diverged&#39;</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">warn</span><span class="p">({</span><span class="w"> </span><span class="nx">err</span><span class="o">:</span><span class="w"> </span><span class="kt">String</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;transient push failure&#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">});</span>
+</code></pre></div>
+<h2 id="multi-remote-replication-still-external">Multi-remote replication (still external)<a class="headerlink" href="#multi-remote-replication-still-external" title="Permanent link"> ¶</a></h2>
+<p>A <code>Repository</code> can host one push daemon at a time, and post-commit notifications fire only on the <code>Repository</code> instance that ran the <code>transact</code> — so a second <code>Repository</code> opened against the same <code>gitDir</code> wouldn&rsquo;t see live commits via the in-process hook. The startup-backlog check runs <em>once</em> per daemon (at start), so a long-lived second daemon won&rsquo;t catch up on commits made after it started.</p>
+<p>In-process multi-remote replication isn&rsquo;t the right pattern. For a backup remote, drive it externally: an external scheduler triggering <code>git push backup main</code>, or a server-side hook on the primary that mirrors to the backup.</p>
+<p>What the startup-backlog <em>does</em> unlock: if your process restarts (intentional deploy, crash, OOM kill) with commits ahead of the remote, the new daemon pushes them on startup without needing an explicit <code>repo.transact</code> to nudge it.</p>
 <h2 id="a-complete-production-setup">A complete production setup<a class="headerlink" href="#a-complete-production-setup" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1">// src/store.ts</span>
 <span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">openStore</span><span class="p">,</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="nx">PushDaemon</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
@@ -1409,8 +1429,11 @@
 <span class="w">    </span><span class="nx">maxRetries</span><span class="o">:</span><span class="w"> </span><span class="kt">Infinity</span><span class="p">,</span>
 <span class="w">  </span><span class="p">});</span>
 <span class="w">  </span><span class="nx">pushDaemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;push&#39;</span><span class="p">,</span><span class="w">  </span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">durationMs</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">log</span><span class="p">.</span><span class="nx">info</span><span class="p">({</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">durationMs</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;pushed&#39;</span><span class="p">));</span>
-<span class="w">  </span><span class="nx">pushDaemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;error&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="w"> </span><span class="p">})</span><span class="w">       </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">log</span><span class="p">.</span><span class="nx">warn</span><span class="p">({</span><span class="w"> </span><span class="nx">err</span><span class="o">:</span><span class="w"> </span><span class="kt">String</span><span class="p">(</span><span class="nx">err</span><span class="p">),</span><span class="w"> </span><span class="nx">attempt</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push failed&#39;</span><span class="p">));</span>
-<span class="w">  </span><span class="nx">pushDaemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;retry&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">log</span><span class="p">.</span><span class="nx">info</span><span class="p">({</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push retry&#39;</span><span class="p">));</span>
+<span class="w">  </span><span class="nx">pushDaemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;error&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">warn</span><span class="p">({</span><span class="w"> </span><span class="nx">err</span><span class="o">:</span><span class="w"> </span><span class="kt">String</span><span class="p">(</span><span class="nx">err</span><span class="p">),</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push failed&#39;</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">reason</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">&#39;non-fast-forward&#39;</span><span class="p">)</span><span class="w"> </span><span class="nx">alerts</span><span class="p">.</span><span class="nx">page</span><span class="p">({</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;gitsheets remote diverged&#39;</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="p">});</span>
+<span class="w">  </span><span class="nx">pushDaemon</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">&#39;retry&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">log</span><span class="p">.</span><span class="nx">info</span><span class="p">({</span><span class="w"> </span><span class="nx">attempt</span><span class="p">,</span><span class="w"> </span><span class="nx">nextDelayMs</span><span class="p">,</span><span class="w"> </span><span class="nx">reason</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push retry&#39;</span><span class="p">));</span>
 <span class="w">  </span><span class="nx">log</span><span class="p">.</span><span class="nx">info</span><span class="p">({</span><span class="w"> </span><span class="nx">remote</span><span class="o">:</span><span class="w"> </span><span class="kt">process.env.PUSH_REMOTE</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="s1">&#39;push daemon started&#39;</span><span class="p">);</span>
 <span class="p">}</span>
 
