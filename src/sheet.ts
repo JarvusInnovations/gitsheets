@@ -7,6 +7,7 @@ import type { BlobObject, TreeObject, Workspace } from 'hologit';
 
 import {
   ConfigError,
+  IndexError,
   NotFoundError,
   PathTemplateError,
   TransactionError,
@@ -236,6 +237,26 @@ async function readBlobTomlCached(blob: BlobObject): Promise<string> {
   return text;
 }
 
+// --- Indexing ---
+
+export type IndexKeyFn = (record: RecordLike) => string | undefined | null;
+
+export interface DefineIndexOptions {
+  readonly unique?: boolean;
+  readonly eager?: boolean;
+}
+
+interface IndexState {
+  readonly name: string;
+  readonly unique: boolean;
+  readonly eager: boolean;
+  readonly keyFn: IndexKeyFn;
+  built: boolean;
+  treeHashAtBuild: string | null;
+  uniqueMap: Map<string, RecordLike>;
+  multiMap: Map<string, RecordLike[]>;
+}
+
 // --- Sheet class ---
 
 export interface SheetConstructorOptions {
@@ -257,6 +278,7 @@ export class Sheet {
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
   readonly #validator: StandardSchemaV1 | undefined;
+  readonly #indexes = new Map<string, IndexState>();
 
   constructor(opts: SheetConstructorOptions) {
     this.#repo = opts.repo;
@@ -456,6 +478,70 @@ export class Sheet {
     });
   }
 
+  // --- Indexing (specs/behaviors/indexing.md) ---
+
+  /**
+   * Declare a secondary in-memory index on this Sheet.
+   *
+   * Overloads:
+   *   defineIndex(name, keyFn)
+   *   defineIndex(name, opts, keyFn)
+   *
+   * keyFn returns a string key; returning undefined / null excludes the
+   * record from the index entirely.
+   */
+  defineIndex(name: string, keyFn: IndexKeyFn): void;
+  defineIndex(name: string, opts: DefineIndexOptions, keyFn: IndexKeyFn): void;
+  defineIndex(
+    name: string,
+    optsOrFn: DefineIndexOptions | IndexKeyFn,
+    maybeFn?: IndexKeyFn,
+  ): void {
+    let opts: DefineIndexOptions;
+    let keyFn: IndexKeyFn;
+    if (typeof optsOrFn === 'function') {
+      opts = {};
+      keyFn = optsOrFn;
+    } else {
+      opts = optsOrFn;
+      if (typeof maybeFn !== 'function') {
+        throw new TypeError(`defineIndex(${name}, opts, keyFn): keyFn must be a function`);
+      }
+      keyFn = maybeFn;
+    }
+    const state: IndexState = {
+      name,
+      unique: opts.unique ?? false,
+      eager: opts.eager ?? false,
+      keyFn,
+      built: false,
+      treeHashAtBuild: null,
+      uniqueMap: new Map(),
+      multiMap: new Map(),
+    };
+    this.#indexes.set(name, state);
+    if (state.eager) {
+      // Fire-and-forget; first findByIndex awaits the rebuild path if anything failed.
+      void this.#ensureIndexBuilt(state).catch(() => {
+        // Errors surface on the next access via the standard build path.
+      });
+    }
+  }
+
+  /**
+   * Look up records by an index. Unique indexes return `record | undefined`;
+   * non-unique indexes return `RecordLike[]`.
+   */
+  async findByIndex(name: string, key: string): Promise<RecordLike | RecordLike[] | undefined> {
+    const state = this.#indexes.get(name);
+    if (!state) {
+      throw new IndexError('index_not_defined', `index "${name}" is not defined on sheet "${this.#name}"`);
+    }
+    await this.#ensureIndexBuilt(state);
+    if (state.unique) return state.uniqueMap.get(key);
+    return state.multiMap.get(key) ?? [];
+  }
+
   async getAttachment(record: RecordLike | string, name: string): Promise<BlobObject | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
@@ -586,6 +672,7 @@ export class Sheet {
       toml,
     );
     tx.markMutated();
+    this.#invalidateIndexes();
     return { blob, path: recordPath };
   }
 
@@ -600,12 +687,60 @@ export class Sheet {
     }
     await this.#dataTree.deleteChild(fullPath);
     tx.markMutated();
+    this.#invalidateIndexes();
   }
 
   async #getSheetRoot(rootPath: string): Promise<TreeObject | null> {
     if (rootPath === '.' || rootPath === '') return this.#dataTree;
     const sub = await this.#dataTree.getSubtree(rootPath);
     return sub;
+  }
+
+  #invalidateIndexes(): void {
+    for (const state of this.#indexes.values()) {
+      state.built = false;
+    }
+  }
+
+  async #ensureIndexBuilt(state: IndexState): Promise<void> {
+    let currentHash: string | null = null;
+    try {
+      currentHash = await this.#dataTree.getHash();
+    } catch {
+      currentHash = null;
+    }
+    if (state.built && state.treeHashAtBuild === currentHash) return;
+
+    state.uniqueMap.clear();
+    state.multiMap.clear();
+    for await (const record of this.query()) {
+      const rawKey = state.keyFn(record);
+      if (rawKey === undefined || rawKey === null) continue;
+      const key = String(rawKey);
+      if (state.unique) {
+        const existing = state.uniqueMap.get(key);
+        if (existing) {
+          const a = (existing as Record<symbol, unknown>)[RECORD_PATH_KEY];
+          const b = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+          const paths = [a, b].filter((p): p is string => typeof p === 'string');
+          throw new IndexError(
+            'index_unique_conflict',
+            `index "${state.name}" on sheet "${this.#name}": key ${JSON.stringify(key)} appears in multiple records`,
+            paths.length > 0 ? { conflictingPaths: paths } : undefined,
+          );
+        }
+        state.uniqueMap.set(key, record);
+      } else {
+        let arr = state.multiMap.get(key);
+        if (!arr) {
+          arr = [];
+          state.multiMap.set(key, arr);
+        }
+        arr.push(record);
+      }
+    }
+    state.treeHashAtBuild = currentHash;
+    state.built = true;
   }
 
   async #readRecordFromBlob(blob: BlobObject, path: string): Promise<RecordLike> {

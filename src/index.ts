@@ -13,7 +13,11 @@ export type {
   SortRule,
   UpsertResult,
   SheetConstructorOptions,
+  IndexKeyFn,
+  DefineIndexOptions,
 } from './sheet.js';
+
+export { mergePatch } from './patch.js';
 
 export { Transaction } from './transaction.js';
 export type {
