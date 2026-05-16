@@ -1,172 +1,62 @@
 # Path templates
 
-Path templates are the key to how Gitsheets works. They define how each sheet maps records into a tree of files.
+Every sheet declares a path template that determines where each record's
+TOML file lives in the data tree.
 
-In addition to teaching Gitsheets how to store records, path templates also inform how they are queried. Gitsheets attempts to load as little of the tree as possible while executing a query by rendering the path from left to right against the query. This means that essentially, your path template is also your indexing and sharding strategy. This has little practical performance implication for sets of records in the 10s and 100s, but can become significant beyond that.
+For the full spec see
+[`specs/behaviors/path-templates.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md).
 
-## Single-field unique key
+## Syntax
 
-The simplest case is one where each record already has a single unique text field.
+| Form | Example | Meaning |
+| --- | --- | --- |
+| Literal | `users/by-domain/` | Static path text |
+| Field reference | `${{ slug }}` | The value of `record.slug` |
+| Expression | `${{ slug.toLowerCase() }}` | Arbitrary JS expression with record fields in scope |
+| Recursive | `${{ path/** }}` | Field's value may contain `/` — for nested-path fields |
+| Prefix/suffix | `user-${{ id }}.draft` | Literal text attached to an expression |
+| Multi-variable | `${{ year }}/${{ status }}--${{ id }}` | Multiple expressions in one segment |
 
-=== ".gitsheets/users.toml"
+## Examples
 
-    ```toml
-    [gitsheet]
-    root = "users"
-    path = "${{ username }}"
-    ```
+```toml
+# Simple unique-field key
+path = "${{ slug }}"
 
-=== "users/GrandmaCOBOL.toml"
+# Composite key (two-level directory)
+path = "${{ domain }}/${{ username }}"
 
-    ```toml
-    first_name = "Grace"
-    last_name = "Hopper"
-    username = "GrandmaCOBOL"
-    ```
+# Sharded by date
+path = "${{ publishedAt.getFullYear() }}/${{ publishedAt.getMonth() }}/${{ slug }}"
 
-=== "Try it"
+# Nested path field
+path = "${{ contentPath/** }}"
+```
 
-    Declare the `users` sheet:
+## How queries use the template
 
-    ```bash
-    mkdir -p .gitsheets/
-    echo '[gitsheet]
-    root = "users"
-    path = "${{ username }}"' > .gitsheets/users.toml
-    ```
+When a query specifies fields the template uses, gitsheets prunes the tree
+walk to only matching subtrees instead of reading every record.
 
-    Upsert a user:
+```typescript
+// Walks only the `af.mil/` subtree
+const found = await users.queryAll({ domain: 'af.mil' });
+```
 
-    ```bash
-    git sheet upsert users '{
-        "username": "GrandmaCOBOL",
-        "first_name": "Grace",
-        "last_name": "Hopper"
-    }'
-    ```
+A query that doesn't supply path-template fields walks every record — still
+O(records), but more I/O than the pruned form. Equality predicates on
+path-template fields are the fast path; function-valued filters (e.g.,
+`{ slug: (v) => v.startsWith('jane') }`) are opaque to pruning.
 
-    Query a user:
+## Invalid characters
 
-    ```bash
-    git sheet query users --filter.username=GrandmaCOBOL
-    ```
+The rendered path is rejected if it contains Windows-disallowed characters
+(`< > : " | ? *` or control codes) — those throw
+`PathTemplateError(path_invalid_chars)`. A non-recursive component
+producing a value with `/` is also rejected for the same reason.
 
-## Multi-field unique key
+If you want slugification, do it in the template:
 
-If one field is not enough to create a unique path, a composite key can be configured by combining multiple path components:
-
-=== ".gitsheets/domain-users.toml"
-
-    ```toml
-    [gitsheet]
-    root = "domain-users"
-    path = "${{ domain }}/${{ username }}"
-    ```
-
-=== "domain-users/af.mil/GrandmaCOBOL.toml"
-
-    ```toml
-    domain = "af.mil"
-    first_name = "Grace"
-    last_name = "Hopper"
-    username = "GrandmaCOBOL"
-    ```
-
-=== "domain-users/yale.edu/GrandmaCOBOL.toml"
-
-    ```toml
-    domain = "yale.edu"
-    first_name = "Grace"
-    last_name = "Hopper"
-    username = "GrandmaCOBOL"
-    ```
-
-=== "Try it"
-
-    Declare the `domain-users` sheet:
-
-    ```bash
-    mkdir -p .gitsheets/
-    echo '[gitsheet]
-    root = "domain-users"
-    path = "${{ domain }}/${{ username }}"' > .gitsheets/domain-users.toml
-    ```
-
-    Upsert multiple users:
-
-    ```bash
-    git sheet upsert domain-users '[
-        {
-            "username": "GrandmaCOBOL",
-            "domain": "yale.edu",
-            "first_name": "Grace",
-            "last_name": "Hopper"
-        },
-        {
-            "username": "GrandmaCOBOL",
-            "domain": "af.mil",
-            "first_name": "Grace",
-            "last_name": "Hopper"
-        }
-    ]'
-    ```
-
-    Query multiple users:
-
-    ```bash
-    git sheet query users --filter.username=GrandmaCOBOL
-    ```
-
-    Query unique user by domain:
-
-    ```bash
-    git sheet query users --filter.username=GrandmaCOBOL --filter.domain=af.mil
-    ```
-
-## Sharding paths
-
-Path components need not contribute to the path's uniqueness, the can also be used just to organize records either for easier human browsing or to spread the records over multiple subtrees for improved query performance. Smaller trees can be loaded and searched faster, and any fields you're likely to often filter queries with can be acted on without loading and parsing the record if they're part of the path:
-
-=== ".gitsheets/students.toml"
-
-    ```toml
-    [gitsheet]
-    root = "students"
-    path = "${{ graduation_year }}/${{ status }}/${{ student_id }}"
-    ```
-
-## Dynamically sharding paths
-
-Because TOML has an explicit date type, and arbitrary JavaScript expressions can be used in path templates, you can do something like this to organize records by date:
-
-=== ".gitsheets/blog-posts.toml"
-
-    ```toml
-    [gitsheet]
-    root = "blog-posts"
-    path = "${{ published_at.getYear() }}/${{ published_at.getMonth() }}/${{ published_at.getDate() }}/${{ slug }}"
-    ```
-
-## Annotated paths
-
-Prefixes, suffixes, and static path components can be used to add clarity for human readers:
-
-=== ".gitsheets/todos.toml"
-
-    ```toml
-    [gitsheet]
-    root = "todos"
-    path = "by-user/user-${{ userId }}/${{ id }}"
-    ```
-
-## Nested path fields
-
-If a field may contain `/` characters internally, they can be used to build paths:
-
-=== ".gitsheets/content.toml"
-
-    ```toml
-    [gitsheet]
-    root = "content"
-    path = "${{ path/** }}"
-    ```
+```toml
+path = "${{ name.toLowerCase().replace(/[^a-z0-9]+/g, '-') }}"
+```

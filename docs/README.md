@@ -1,60 +1,43 @@
-# Getting Started
+# gitsheets
 
-Gitsheets is the toolkit for distributed recordkeeping that lives inside Git.
+A git-backed document store for low-volume, high-touch, human-scale data.
 
-## Overview
+Records are TOML files in a git repo, organized by a per-sheet path template. Every mutation is a commit — the commit log is the audit log. Schemas live alongside the data; validation runs on every write. Branches give you propose-review workflows for free.
 
-To prepare a repository for use with Gitsheets, all you need is a way to map a named sheet to a tree of normalized [`TOML`](https://toml.io/) files (containing one record per file).
-
-## Natural keys
-
-Gitsheets works best with records that have [natural keys](https://en.wikipedia.org/wiki/Natural_key), and doesn't provide any mechanism out-of-the-box for assigning keys randomly/sequentially. If your records don't yet contain any unique identifier, assign your own somehow before loading them into a git sheet.
-
-## Declare a sheet
-
-To declare a sheet named `todos` for example, create a file in your git repository at `.gitsheets/todos.toml`:
-
-```toml
-[gitsheet]
-root = "data/todos"
-path = "user-${{ userId }}/${{ id }}"
+```bash
+npm install gitsheets
 ```
 
-This configuration declares two essential things about the `todos` sheet:
+Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and `git-sheet`.
 
-- **`gitsheet.root`** declares the root path within the repository containing all records for this sheet
-    - all `.toml` files under this path are considered to declare records
-    - the path may contain any number of `/`s to nest the sheet's root
-- **`gitsheet.path`** declares a template for finding the path to a given record
-    - `${{ expression }}` path components can use arbitrary javascript
+## Get started
 
-The `todos` sheet can now be upserted and queried by any Gitsheets interface.
+- **[Quick start](quick-start.md)** — `npm install gitsheets`, declare a sheet, write a record, read it back. ≤ 5 minutes.
+- **[Concepts](concepts.md)** — Repository, Sheet, Path Template, Transaction, Store, Index, Push Daemon. The vocabulary every consumer needs.
 
-## Upsert records
+## Reference
 
-- [Using the `git sheet` command line interface](./cli/)
-- [Using the `gitsheets` NodeJS module](./nodejs/)
-- *Coming soon: Using the Gitsheets UI*
+- **[CLI reference](cli.md)** — `git sheet <command>`, global flags, exit codes.
+- **[API reference](api.md)** — public exports + pointers into the per-symbol spec.
+- **[Path templates](path-templates.md)** — syntax, recursive fields, query pruning, invalid-char handling.
+- **[Validation](validation.md)** — JSON Schema in `.gitsheets/<sheet>.toml`, optional Standard Schema layering.
 
-## Record format
+## Recipes
 
-Records are stored one-per file in TOML format with keys sorted alphabetically:
+- **[Typed sheet with Zod](recipes/typed-sheet-with-zod.md)** — Standard Schema validator threading, type-safe upsert/query.
+- **[Request-bound transactions in Fastify](recipes/request-bound-transactions.md)** — one commit per HTTP request, with structured trailers.
+- **[Secondary indices](recipes/secondary-indices.md)** — in-memory `findByEmail` / `findByForeignKey` patterns.
+- **[Production push daemon](recipes/production-push-daemon.md)** — backoff config, auth strategies, monitoring.
+- **[Migrating a `[gitsheet.fields]` config](recipes/migrating-config.md)** — pre-v1.0 → v1.0 schema migration.
 
-```toml
-completed = false
-id = 181
-title = "ut cupiditate sequi aliquam fuga maiores"
-userId = 10
-```
+## Migrating from pre-v1.0
 
-The goals of this serialization are to:
+If you're updating from a pre-v1.0 internal install, the [migration guide](migration-guide.md) covers the breaking changes (legacy `GitSheets` class removed, HTTP server removed, ESM-only, validation reshape).
 
-- Consistently render records to a normal form, such that identical record content will produce the same content hash
-- Be decently readable in text and diff form
-- Be easy to hand-edit
-- Store basic data types consistently
-- Generate minimal diff noise
+## Where the contracts live
 
-## Querying records
+[`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs) is the source of truth. The docs you're reading are the consumer-facing tour; the specs are the authoritative API + behavior contract. When in doubt, the spec wins.
 
-- Path templates are indexes
+## License
+
+Apache-2.0. See [LICENSE](https://github.com/JarvusInnovations/gitsheets/blob/develop/LICENSE).

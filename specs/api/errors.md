@@ -44,7 +44,7 @@ try {
 ## Code table
 
 | Class | Code | `status` | Meaning |
-|---|---|---:|---|
+| --- | --- | ---: | --- |
 | `ConfigError` | `config_missing` | 500 | `.gitsheets/<name>.toml` not found |
 | `ConfigError` | `config_invalid` | 500 | Sheet config TOML malformed or schema unparseable |
 | `ValidationError` | `validation_failed` | 422 | Record failed JSON Schema or Standard Schema validation |
@@ -52,6 +52,8 @@ try {
 | `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode |
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero |
+| `TransactionError` | `push_daemon_running` | 409 | `repo.startPushDaemon` while one is already active |
+| `TransactionError` | `transaction_closed` | 409 | `tx.sheet(...)` after the transaction has been finalized or discarded |
 | `IndexError` | `index_unique_conflict` | 409 | Unique index would be violated |
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
@@ -83,7 +85,7 @@ The pre-v1.0 `errors.js` defined a few classes but consumer code (and even `back
 ## Migrating from pre-v1.0 names
 
 | Pre-v1.0 | v1.0 |
-|---|---|
+| --- | --- |
 | `SerializationError` | `ValidationError` (`validation_failed`) for record-validation cases; `ConfigError` (`config_invalid`) for sheet-config parse cases |
 | `ConfigError` | `ConfigError` (with stable `code`) |
 | `InvalidRefError` | `RefError` (`ref_not_found`) |

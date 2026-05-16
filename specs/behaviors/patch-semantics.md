@@ -98,7 +98,7 @@ In practice, "replace this whole subtree" is `upsert`, not `patch`. If a consume
 ## Vs. `upsert`
 
 | | `upsert(newRecord)` | `patch(query, partial)` |
-|---|---|---|
+| --- | --- | --- |
 | Read existing first | No (write only) | Yes (`queryFirst(query)`) |
 | Required input | full record | partial — only changed fields |
 | Missing-record behavior | Creates a new one | `NotFoundError` |
@@ -112,7 +112,7 @@ Use `upsert` when you have the whole record. Use `patch` when you have just the 
 The pre-v1.0 `commands/upsert.js` `--patch-existing` flag used the `deepmerge` package, which has different rules:
 
 | Operation | deepmerge | RFC 7396 |
-|---|---|---|
+| --- | --- | --- |
 | Arrays | **Concat** by default (configurable) | **Replace** |
 | `null` values | Treat as a value (set to `null`) | **Delete** the key |
 | Nested objects | Merge recursively | Merge recursively (same) |
@@ -131,7 +131,7 @@ await sheet.upsert(merged);
 
 ## Implementation note
 
-The library uses the [`json-merge-patch`](https://www.npmjs.com/package/json-merge-patch) package (or equivalent) for the merge operation. The `deepmerge` package is removed from `package.json` during the [#128 purge](https://github.com/JarvusInnovations/gitsheets/issues/128).
+The library uses an inline RFC 7396 implementation in `src/patch.ts` — about 40 lines, no external dependency. Inline-ness is deliberate: @iarna/toml's custom Date subclasses and other class instances need to flow through the merge as opaque values rather than being recursively merged, and an off-the-shelf merge package's `isPlainObject` heuristic isn't tailored to that. The `deepmerge` package is removed from `package.json` during the [#128 purge](https://github.com/JarvusInnovations/gitsheets/issues/128).
 
 ## Conformance
 

@@ -11,7 +11,7 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 ## Stack
 
 | Layer | Choice | Why |
-|-------|--------|-----|
+| ------- | -------- | ----- |
 | Language | **TypeScript** (strict) | Discoverability for consumers; type-flow from `.gitsheets/<sheet>.toml` JSON Schema through to typed `Store.<sheet>.upsert(...)` |
 | Module format | **ESM-only** | Modern Node + Bun + edge runtimes all handle ESM. Dual CJS/ESM build deferred until a concrete consumer needs it. |
 | Runtime | **Node.js ≥ 20**, **Bun ≥ 1** | Both have native ESM, both can host the CLI. No Deno target in v1.0. |

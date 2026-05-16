@@ -16,7 +16,7 @@ A **transaction** scopes a set of mutations to one commit. The mutations stage i
 One open transaction per `Repository` at a time, serialized by an in-process mutex.
 
 | Scenario | Behavior |
-|---|---|
+| --- | --- |
 | Two concurrent `repo.transact` calls | Second waits on the mutex; runs after the first commits or releases. |
 | Concurrent `repo.transact` *and* a permissive-mode `Sheet.upsert` outside a transaction | The permissive `upsert` opens its own transaction, contends for the same mutex. |
 | Same-process concurrent reads | Reads don't take the mutex. They see the *committed* state (pre-transaction tree). |
@@ -145,14 +145,19 @@ This catches concurrent commits from outside the API instance — direct git com
 
 ## Permissive mode (default)
 
-`Sheet.upsert(record)` called outside any explicit `repo.transact`:
+A standalone `Sheet` mutation called outside any explicit `repo.transact` opens an auto-transaction, stages the write, and commits with an auto-generated message.
 
-1. Opens a transaction with auto-generated `message`: `"<sheet> upsert <renderedPath>"`
-2. Renders the record via the template, stages the write
-3. Commits with the auto-generated message and git-config author
-4. Returns the `{ blob, path }` shape that `upsert` documents
+Auto-message format by method:
 
-Equivalent for `delete` (`"<sheet> delete <path>"`) and `patch` (`"<sheet> patch <path>"`).
+| Method | Auto-message |
+| --- | --- |
+| `Sheet.upsert(record)` | `<sheet> upsert` |
+| `Sheet.delete(target)` | `<sheet> delete <path>` |
+| `Sheet.patch(query, partial)` | `<sheet> patch <path>` |
+| `Sheet.clear()` | `<sheet> clear` |
+| `Sheet.setAttachment(s)(...)` | `<sheet> attachments` |
+
+The exact rendered path is included where it's available *before* the transaction opens (`delete` and `patch` both resolve the target path first). For `upsert` the rendered path is only known *after* validation + normalization + template rendering inside the staged tree, so the auto-message omits it — the rendered path is recoverable from the commit's tree diff. Consumers who want the path in the subject line should pass an explicit `repo.transact({ message })`.
 
 This makes simple scripts ergonomic. For production request-bound flows, consumers should call `repo.transact` explicitly to control author/message/trailers — see [architecture.md](../architecture.md) recommendations.
 

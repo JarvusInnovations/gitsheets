@@ -11,7 +11,7 @@ The CLI is a thin wrapper around the JS API. Every command resolves to an operat
 These apply to every command unless noted otherwise:
 
 | Flag | Default | Source |
-|---|---|---|
+| --- | --- | --- |
 | `--git-dir <path>` | discovered | `GIT_DIR` env var |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` env var |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` env var |
@@ -21,7 +21,7 @@ These apply to every command unless noted otherwise:
 
 `--ref` selects which commit/branch to read from or transact against. `--commit-to` overrides which branch a write-transaction advances. `--working` reads/writes the working tree state (not a committed tree).
 
-These options unify what [#106](https://github.com/JarvusInnovations/gitsheets/issues/106) asked for. Every mutating command implicitly uses `repo.transact` and accepts `--message`, `--author-name`, `--author-email`, `--trailer.<Key>=<value>`.
+These options unify what [#106](https://github.com/JarvusInnovations/gitsheets/issues/106) asked for. Every mutating command implicitly uses `repo.transact` and accepts `--message`, `--author-name`, `--author-email`, and one or more `--trailer Key=Value` flags (repeatable).
 
 ## Commands
 
@@ -37,12 +37,15 @@ git sheet upsert users '{"slug":"jane","email":"jane@x.org"}'
 
 Flags:
 
-- `--format <json|toml|csv>` — input format (default: inferred from extension, fallback `json`)
-- `--encoding <enc>` — default `utf8`
-- `--patch` — apply RFC 7396 patch semantics to existing records (replaces pre-v1.0 `--patch-existing` deepmerge behavior; see [behaviors/patch-semantics.md](../behaviors/patch-semantics.md))
-- `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted
-- `--attachments.<path>=<spec>` — attach a file alongside the record (format `[ext]:<source-path>`)
-- `--message <msg>`, `--author-name`, `--author-email`, `--trailer.<Key>=<value>` — transaction metadata
+- `--format <json|toml|csv>` — input format (default: inferred from extension, fallback `json`); see [`deferred.md`](../deferred.md) — JSON only in v1.0
+- `--encoding <enc>` — default `utf8`; see [`deferred.md`](../deferred.md) — utf-8 only in v1.0
+- `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted; see [`deferred.md`](../deferred.md)
+- `--attachments.<path>=<spec>` — attach a file alongside the record; see [`deferred.md`](../deferred.md)
+- `--message <msg>`, `--author-name`, `--author-email`, `--trailer Key=Value` (repeatable) — transaction metadata
+
+For patching existing records in v1.0, use the library API `Sheet.patch(query, partial)`
+([`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md)). A CLI `--patch` flag
+is deferred — see [`deferred.md`](../deferred.md).
 
 Output (per record, to stdout):
 
@@ -56,16 +59,15 @@ Read records.
 
 ```bash
 git sheet query users
-git sheet query users --filter.email=jane@x.org
+git sheet query users --filter email=jane@x.org
 git sheet query users --filter status=active --filter project_id=p1
 git sheet query users --format=csv --headers
 ```
 
 Flags:
 
-- `--filter.<field>=<value>` — equality filter
+- `--filter field=value` (repeatable) — equality filter
 - `--fields <name>...` — output column subset / reorder
-- `--fields.<from>=<to>` — output column rename
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` (default: `json`)
 - `--headers` (CSV/TSV only; default: true)
@@ -129,7 +131,7 @@ Scaffold `.gitsheets/<sheet>.toml`. See [#139](https://github.com/JarvusInnovati
 ## Exit codes
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | 0 | Success |
 | 1 | Generic error (unhandled exception) |
 | 2 | Argument-parsing error |

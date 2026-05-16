@@ -13,7 +13,7 @@ import { openRepo } from 'gitsheets';
 
 const repo = await openRepo({
   gitDir?: string,           // path to a .git directory; default: discovered from cwd
-  workingTree?: boolean,     // default false; true to also resolve working-tree state
+  workTree?: string | null,  // optional working-tree path; default: null (bare-style operation)
 });
 ```
 
@@ -29,8 +29,7 @@ Returns a `Sheet` handle bound to this repository's current state.
 
 ```typescript
 const users = await repo.openSheet('users', {
-  root?: string,             // default: '/'
-  prefix?: string,           // optional sub-prefix under root; default: none
+  root?: string,              // default: '.'
   validator?: StandardSchema, // optional Standard Schema validator
 });
 ```
@@ -42,8 +41,10 @@ Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolve
 Returns `{ [sheetName]: Sheet }` covering every sheet declared in `.gitsheets/`.
 
 ```typescript
-const sheets = await repo.openSheets({ root?: string, prefix?: string });
+const sheets = await repo.openSheets({ root?: string });
 ```
+
+`openSheets` returns un-validated sheets keyed by name. To attach per-sheet validators, use [`openStore`](store.md) instead — `openSheets` does not accept a `validators` map.
 
 Used by `openStore` (see [api/store.md](store.md)).
 
@@ -82,7 +83,7 @@ Default mode is permissive (mutations outside a transaction auto-open one).
 Returns a `PushDaemon` handle. Configures async background push-to-remote with retry/backoff. See [behaviors/push-sync.md](../behaviors/push-sync.md).
 
 ```typescript
-const daemon = repo.startPushDaemon({
+const daemon = await repo.startPushDaemon({
   remote: 'origin',
   branch?: string,           // default: HEAD's branch
   backoff?: 'exponential' | { base: number, cap: number, multiplier: number },
@@ -118,12 +119,12 @@ interface TransactionResult<T> {
 }
 ```
 
-`commitHash` and `treeHash` are populated even if the handler made no mutations (an empty tree-equivalent commit is still produced when explicitly transacted) — but in permissive mode, a no-op handler does *not* commit.
+When the handler stages no mutations, the transaction does **not** commit — `commitHash`, `treeHash`, and `ref` are `null`, and the parent ref is unchanged. This applies to both `repo.transact` and permissive-mode auto-transactions. See [behaviors/transactions.md](../behaviors/transactions.md#commit-on-success-only).
 
 ## Errors
 
 | Class | Code | When |
-|---|---|---|
+| --- | --- | --- |
 | `RefError` | `ref_not_found` | `parent` ref doesn't exist |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |

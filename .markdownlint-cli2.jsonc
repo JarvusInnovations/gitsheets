@@ -1,0 +1,14 @@
+{
+  // markdownlint-cli2 config — see https://github.com/DavidAnson/markdownlint-cli2
+  "config": {
+    // Default is 80; this project's prose uses long lines intentionally
+    // so git diffs stay paragraph-granular.
+    "MD013": false
+  },
+  "ignores": [
+    "node_modules/**",
+    "dist/**",
+    // Agent / command prompt files are not user docs.
+    ".claude/**"
+  ]
+}

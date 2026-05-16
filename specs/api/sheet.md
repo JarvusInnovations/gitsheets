@@ -156,6 +156,8 @@ The iterator API (`for await (const { name, mimeType, blob } of sheet.attachment
 
 ### `sheet.diffFrom(srcCommitHash?, opts?)`
 
+> **Deferred — not in the v1.0 surface.** Tracked at [#152](https://github.com/JarvusInnovations/gitsheets/issues/152); see [`deferred.md`](../deferred.md).
+
 Async iterator of changes between `srcCommitHash` and the current tree, scoped to this sheet's root.
 
 ```typescript

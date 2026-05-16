@@ -45,7 +45,7 @@ The daemon does *not* attempt to merge or rebase. The local commit history is th
 Default: exponential, base 1 second, multiplier 2, cap 1 hour.
 
 | Attempt | Delay |
-|---|---|
+| --- | --- |
 | 1 | 1s |
 | 2 | 2s |
 | 3 | 4s |
