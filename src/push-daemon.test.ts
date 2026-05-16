@@ -137,16 +137,24 @@ describe('PushDaemon (integration with a local bare-repo remote)', () => {
     const retries: unknown[] = [];
     daemon.on('retry', (data) => retries.push(data));
 
+    // Wait for the push-attempt error (attempt >= 1). The startup-backlog
+    // fetch may race in another error event with attempt: 0; filter for the
+    // real push attempt.
+    const pushError = new Promise<void>((resolve) => {
+      daemon.on('error', (data) => {
+        if ((data as { attempt: number }).attempt >= 1) resolve();
+      });
+    });
+
     await repo.transact({ message: 'doomed local commit' }, async (tx) =>
       tx.sheet('users').upsert({ slug: 'jane' }),
     );
 
-    // Wait long enough that, if retry were happening, we'd see multiple events.
-    await new Promise((r) => setTimeout(r, 200));
+    await pushError;
+    // Give any spurious retry a chance to fire (it shouldn't, that's the
+    // whole point of this test — but if it did, we want to catch it).
+    await new Promise((r) => setTimeout(r, 100));
 
-    // The push attempt itself fires one error. The startup-backlog fetch may
-    // also race in another error event (depends on timing) — filter to the
-    // push-attempt one (attempt >= 1).
     const pushErrors = errors.filter((e) => e.attempt >= 1);
     expect(pushErrors.length).toBe(1);
     expect(pushErrors[0]!.reason).toBe('non-fast-forward');
@@ -223,10 +231,15 @@ describe('PushDaemon (integration with a local bare-repo remote)', () => {
     });
 
     const errors: unknown[] = [];
-    daemon.on('error', (d) => errors.push(d));
+    const firstError = new Promise<void>((resolve) => {
+      daemon.on('error', (d) => {
+        errors.push(d);
+        resolve();
+      });
+    });
 
     // Wait for the deferred startup-backlog check to run + report.
-    await new Promise((r) => setTimeout(r, 200));
+    await firstError;
 
     expect(daemon.status().running).toBe(true);
     expect(errors.length).toBeGreaterThanOrEqual(1);
