@@ -111,6 +111,22 @@ Flags:
 
 - `--format <json|toml|csv|tsv>` — output format. Default: pretty-printed JSON.
 
+### `gitsheets edit <sheet> <path>`
+
+Open a record in `$EDITOR` for interactive editing. On save:
+
+1. The CLI re-reads the tmpfile, parses it as TOML.
+2. If the file is byte-identical to what was written out, no commit is made (idempotent — no empty commits).
+3. Otherwise the parsed record is upserted in a transaction; validation, normalization, and path rendering all run.
+
+Editor resolution: `$VISUAL` → `$EDITOR` → `vi`. The editor is spawned through a shell, so `EDITOR="code --wait"` and similar wrapped commands work. Exit-code 0 from the editor means "save"; anything else aborts without commit.
+
+```bash
+gitsheets edit users jane
+```
+
+Validation failures abort with a clear message rather than re-opening the editor — re-edit the input via `gitsheets read users <path> --format=toml` plus `upsert` if you need a second pass.
+
 ### `gitsheets normalize <sheet>`
 
 Re-write every record in the sheet through canonical normalization in one
@@ -146,13 +162,3 @@ gitsheets: ValidationError: record failed JSON Schema validation
   code:   validation_failed
   issue:  email: must match format "email" (json-schema)
 ```
-
-## Deferred commands
-
-These are documented in [`specs/api/cli.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/cli.md)
-but not shipped in the v1.0 substrate; they land in follow-up PRs:
-
-- `gitsheets edit <sheet> <path>` — open in `$EDITOR`
-- `gitsheets infer <sheet>` — generate a starter JSON Schema from records
-- `gitsheets migrate-config <sheet>` — convert legacy `[gitsheet.fields]`
-- `gitsheets init <sheet>` — scaffold a new sheet config (#139)

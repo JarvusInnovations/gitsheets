@@ -72,6 +72,11 @@ interface NormalizeArgs extends GlobalArgs {
   sheet: string;
 }
 
+interface EditArgs extends GlobalArgs {
+  sheet: string;
+  path: string;
+}
+
 // Exit codes per specs/api/cli.md
 function exitCodeForError(err: unknown): number {
   if (err instanceof ValidationError) return 22;
@@ -408,6 +413,77 @@ async function runRead(argv: ReadArgs): Promise<void> {
   process.stdout.write(stringifyRecord_text(found, format));
 }
 
+async function runEdit(argv: EditArgs): Promise<void> {
+  const { repo, sheet } = await loadRepoAndSheet(argv);
+  const target = argv.path.endsWith('.toml') ? argv.path.slice(0, -5) : argv.path;
+
+  // Resolve the record by walking query() and matching the rendered path.
+  let found: RecordLike | undefined;
+  for await (const record of sheet.query()) {
+    const pathSym = (record as Record<symbol, unknown>)[Symbol.for('gitsheets-path')];
+    if (pathSym === target) {
+      found = record;
+      break;
+    }
+  }
+  if (!found) {
+    throw new NotFoundError('record_not_found', `${argv.sheet}: no record at ${target}`);
+  }
+
+  // Drop symbols before serializing; they're not part of the record's data.
+  const cleaned: RecordLike = { ...found };
+  delete (cleaned as Record<symbol, unknown>)[Symbol.for('gitsheets-path')];
+  delete (cleaned as Record<symbol, unknown>)[Symbol.for('gitsheets-sheet')];
+  const { stringifyRecord } = await import('../toml.js');
+  const originalToml = stringifyRecord(cleaned);
+
+  const tmpDir = await mkdtemp(join(tmpdir(), 'gitsheets-edit-'));
+  const tmpFile = join(tmpDir, `${argv.sheet}-${target.replace(/\//g, '-')}.toml`);
+  try {
+    await writeFile(tmpFile, originalToml, 'utf8');
+
+    const editor = process.env['VISUAL'] || process.env['EDITOR'] || 'vi';
+    const shell = process.platform === 'win32' ? 'cmd' : 'sh';
+    const shellArgs = process.platform === 'win32'
+      ? ['/c', `${editor} "${tmpFile}"`]
+      : ['-c', `${editor} "${tmpFile}"`];
+
+    // Spawn with inherited stdio so the editor takes the terminal.
+    const { spawn } = await import('node:child_process');
+    const exit = await new Promise<number | null>((resolve, reject) => {
+      const child = spawn(shell, shellArgs, { stdio: 'inherit' });
+      child.on('error', reject);
+      child.on('exit', (code) => resolve(code));
+    });
+    if (exit !== 0) {
+      throw new Error(`editor exited with code ${exit ?? 'null'} — aborting`);
+    }
+
+    const editedToml = await readFile(tmpFile, 'utf8');
+    if (editedToml === originalToml) {
+      // No-op; don't commit. Matches the "no commit on no change" idiom.
+      process.stderr.write('gitsheets: no changes — nothing to commit\n');
+      return;
+    }
+
+    const { parseToml } = await import('../toml.js');
+    const edited = parseToml(editedToml);
+
+    const txOpts = buildTxOpts(argv, `${argv.sheet} edit ${target}`);
+    const txSheetOpts: { prefix?: string } = argv.prefix ? { prefix: argv.prefix } : {};
+    await repo.transact(txOpts, async (tx) => {
+      const sheetTx = tx.sheet(argv.sheet, txSheetOpts);
+      // Carry the original path annotation so upsert detects renames if the
+      // user changed a path-template field.
+      (edited as Record<symbol, unknown>)[Symbol.for('gitsheets-path')] = target;
+      const result: UpsertResult = await sheetTx.upsert(edited);
+      process.stdout.write(`${result.blob.hash} ${result.path}\n`);
+    });
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
 async function runNormalize(argv: NormalizeArgs): Promise<void> {
   const { repo, sheet } = await loadRepoAndSheet(argv);
   const records: RecordLike[] = [];
@@ -565,6 +641,15 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             describe: 'Output format (default: pretty json)',
           }),
       runRead,
+    )
+    .command<EditArgs>(
+      'edit <sheet> <path>',
+      "Open a record in $EDITOR (TOML form); on save, validate and upsert in a transaction",
+      (y) =>
+        y
+          .positional('sheet', { type: 'string', demandOption: true })
+          .positional('path', { type: 'string', demandOption: true }),
+      runEdit,
     )
     .command<NormalizeArgs>(
       'normalize <sheet>',
