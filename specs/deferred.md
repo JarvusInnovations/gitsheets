@@ -107,6 +107,16 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** Cancel a streaming query via AbortSignal.
 - **Why deferred:** Async generators naturally support `break`; the AbortSignal pattern is sugar for upstream HTTP integrations. Documented in `api/conventions.md`; not implemented in the v1.0 surface.
 
+### PushDaemon: detect non-fast-forward rejection and stop retrying — [#156](https://github.com/JarvusInnovations/gitsheets/issues/156)
+
+- **What:** Inspect git stderr; on a non-fast-forward push rejection, emit a single `error` event with a structured reason and stop retrying that batch (the spec at `behaviors/push-sync.md` requires this, but the v1.0 implementation retries every failure).
+- **Why deferred:** The substrate ships with the simpler retry-all semantics; differentiating error classes is a meaningful behavior change that wants its own review.
+
+### PushDaemon: startup diff to push pre-existing local commits — [#157](https://github.com/JarvusInnovations/gitsheets/issues/157)
+
+- **What:** On `startPushDaemon`, diff `<remote>/<branch>..<branch>` and queue any commits ahead of the remote, so a restarted daemon catches up. Spec at `behaviors/push-sync.md` requires this.
+- **Why deferred:** Substrate v1.0 only queues commits surfaced via `notifyCommit` after the daemon starts. The startup-diff path needs `git fetch` orchestration + careful error handling for an unreachable remote.
+
 ### Deep-generic type inference on `Store` — [#155](https://github.com/JarvusInnovations/gitsheets/issues/155)
 
 - **What:** `store.users.upsert(...)` typed as `Sheet<z.infer<typeof UserSchema>>` so the consumer's record type flows through reads and writes. Same for `tx.users` inside `store.transact`.
