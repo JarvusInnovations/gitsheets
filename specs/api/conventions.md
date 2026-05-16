@@ -32,7 +32,7 @@ above. Notable ones: `TransactionResult`, `TransactionOptions`, `Author`,
 `QueryFilter`, `QueryOptions`, `DiffStatus`, `DiffOptions`, `DiffChange`,
 `AttachmentBlobHandle`, `AttachmentEntry`,
 `OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
-`PushDaemonOptions`, `PushDaemonStatus`, `BackoffConfig`, `JSONSchema`,
+`PushDaemonOptions`, `PushDaemonStatus`, `PushFailureReason`, `BackoffConfig`, `JSONSchema`,
 `StandardSchemaV1`, `ValidationIssue`, `RecordLike`.
 
 No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely.

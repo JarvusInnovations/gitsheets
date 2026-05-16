@@ -187,7 +187,7 @@ for await (const change of sheet.diffFrom('HEAD~1', { records: true, patches: tr
 - `opts.records?: boolean` — parse src/dst TOML into records.
 - `opts.patches?: boolean` — produce an RFC 6902 JSON Patch (`Operation[]`) from src to dst. Add and delete entries get a single-op patch (`add` / `remove` on the root); modify entries get the full op sequence.
 
-Scope: `*.toml` records only. Attachment-blob diffs (binary blobs under the record dir) are deferred to a follow-up.
+Scope: `*.toml` records only. Attachment-blob diffs (binary blobs under the record dir) are out of scope for v1.1 — consumers diff attachment blob hashes directly using the hashes the iterator surfaces.
 
 Throws `RefError` (`ref_not_found`) when `srcCommitHash` doesn't resolve.
 

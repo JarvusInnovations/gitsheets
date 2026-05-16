@@ -44,6 +44,7 @@ export { PushDaemon } from './push-daemon.js';
 export type {
   PushDaemonOptions,
   PushDaemonStatus,
+  PushFailureReason,
   BackoffConfig,
 } from './push-daemon.js';
 

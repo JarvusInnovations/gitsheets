@@ -159,4 +159,4 @@ The library does not invoke git LFS automatically. Consumers wanting LFS configu
 - [api/sheet.md](../api/sheet.md)
 - [behaviors/path-templates.md](path-templates.md)
 - [behaviors/transactions.md](transactions.md)
-- [GitHub #140](https://github.com/JarvusInnovations/gitsheets/issues/140) — iterator API (deferred)
+- [GitHub #140](https://github.com/JarvusInnovations/gitsheets/issues/140) — iterator API (shipped v1.1)

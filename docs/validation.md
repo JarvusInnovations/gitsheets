@@ -149,7 +149,7 @@ interface ValidationIssue {
 | `enum: [...]` | `[gitsheet.schema.properties.<name>].enum` |
 | `default: <value>` | `[gitsheet.schema.properties.<name>].default` |
 | `sort: ...` | `[gitsheet.fields.<name>.sort]` (unchanged — different concept) |
-| `trueValues` / `falseValues` | Moves to a CSV-ingest helper (deferred) |
+| `trueValues` / `falseValues` | Out of scope for the validation layer — `gitsheets migrate-config` emits a warning; CSV-input boolean coercion stays a consumer concern |
 
 See the [migrating-config recipe](recipes/migrating-config.md) for a worked example.
 

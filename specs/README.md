@@ -90,9 +90,9 @@ Run `/audit-spec-drift` (the Claude Code command at `.claude/commands/audit-spec
 
 ## Versioning relative to specs
 
-These specs describe **v1.0** of gitsheets. Items intentionally deferred to later releases (e.g., the [holo-tree migration in v1.1](https://github.com/JarvusInnovations/gitsheets/issues/127), watch mode, attachments iterator) live in [`deferred.md`](deferred.md).
+These specs describe the **current shipped surface** of gitsheets. v1.0 sets the API contract; v1.1 adds the full CLI flag/command surface plus library additions (`diffFrom`, attachment iterator + deletes, query AbortSignal, push-daemon hardening). Items intentionally deferred to later releases (e.g., [holo-tree migration](https://github.com/JarvusInnovations/gitsheets/issues/127), watch mode, content-typed records) live in [`deferred.md`](deferred.md).
 
-When v1.1 begins, deferred items get promoted into the active specs; the spec authoring rules above apply.
+When work begins on a deferred item, the entry is promoted out of `deferred.md` into the active specs in the same PR that closes the issue; the spec authoring rules above apply.
 
 ## Authoring guidance
 
