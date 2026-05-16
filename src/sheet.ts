@@ -109,6 +109,16 @@ function buildSorter(rule: SortRule): (a: unknown, b: unknown) => number {
   ) => number;
 }
 
+/**
+ * Throw the signal's reason. In modern Node `AbortController.abort(reason)`
+ * sets `signal.reason` to whatever was passed (defaulting to a DOMException
+ * with name 'AbortError'). The fallback is defensive — should never fire on
+ * the Node versions gitsheets supports.
+ */
+function throwAborted(signal: AbortSignal): never {
+  throw (signal.reason ?? new DOMException('Aborted', 'AbortError')) as Error;
+}
+
 function queryMatches(filter: RecordLike, record: RecordLike): boolean {
   for (const [key, qval] of Object.entries(filter)) {
     const rval = record[key];
@@ -250,6 +260,22 @@ export type QueryFilter<T extends RecordLike = RecordLike> = {
   [K in keyof T]?: T[K] | ((value: T[K], record: T) => unknown);
 };
 
+/**
+ * Options for `Sheet.query` / `queryFirst` / `queryAll`.
+ *
+ * @see specs/api/conventions.md#cancellation
+ */
+export interface QueryOptions {
+  /**
+   * Optional AbortSignal to cancel a running query. The query checks the
+   * signal before iteration starts and again before each yield. When the
+   * signal aborts, the next iteration throws `signal.reason` (a DOMException
+   * with name 'AbortError' by default, or whatever value the consumer passed
+   * to `controller.abort(reason)`).
+   */
+  readonly signal?: AbortSignal;
+}
+
 // --- Indexing ---
 
 export type IndexKeyFn<T extends RecordLike = RecordLike> = (
@@ -328,10 +354,14 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /** Async iterator over records matching the filter. */
-  async *query(filter: QueryFilter<T> = {}): AsyncGenerator<T> {
+  async *query(filter: QueryFilter<T> = {}, opts: QueryOptions = {}): AsyncGenerator<T> {
     if (typeof filter === 'function') {
       throw new TypeError('Sheet.query() does not accept a function — pass a filter object');
     }
+
+    const { signal } = opts;
+    // Aborted-before-call: throw immediately, no I/O.
+    if (signal?.aborted) throwAborted(signal);
 
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
@@ -344,6 +374,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
       sheetRoot as unknown as Parameters<typeof template.queryTree>[0],
       filter as RecordLike,
     )) {
+      if (signal?.aborted) throwAborted(signal);
       const record = (await this.#readRecordFromBlob(
         blob as unknown as BlobObject,
         blobPath,
@@ -353,16 +384,19 @@ export class Sheet<T extends RecordLike = RecordLike> {
     }
   }
 
-  async queryFirst(filter: QueryFilter<T> = {}): Promise<T | undefined> {
-    for await (const record of this.query(filter)) {
+  async queryFirst(
+    filter: QueryFilter<T> = {},
+    opts: QueryOptions = {},
+  ): Promise<T | undefined> {
+    for await (const record of this.query(filter, opts)) {
       return record;
     }
     return undefined;
   }
 
-  async queryAll(filter: QueryFilter<T> = {}): Promise<T[]> {
+  async queryAll(filter: QueryFilter<T> = {}, opts: QueryOptions = {}): Promise<T[]> {
     const results: T[] = [];
-    for await (const record of this.query(filter)) {
+    for await (const record of this.query(filter, opts)) {
       results.push(record);
     }
     return results;

@@ -20,6 +20,7 @@ export type {
   IndexKeyFn,
   DefineIndexOptions,
   QueryFilter,
+  QueryOptions,
 } from './sheet.js';
 
 export { mergePatch } from './patch.js';
