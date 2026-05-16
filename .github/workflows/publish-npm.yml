@@ -19,8 +19,11 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
-      - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@latest
+      - name: Install npm via corepack (bypasses broken bundled npm in current Node 22 toolcache)
+        run: |
+          corepack enable
+          corepack install --global npm@latest
+          npm --version
 
       - name: Set package.json version from tag
         run: |
