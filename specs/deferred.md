@@ -62,11 +62,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** A library-managed cache around parsed records, surviving across requests in a long-running consumer.
 - **Why deferred:** Once #138 (blob-hash record cache fix) lands, the existing per-sheet-instance cache covers most needs. A richer multi-instance cache can come if a consumer shows it's needed.
 
-### CLI `gitsheets upsert --delete-missing` — [#146](https://github.com/JarvusInnovations/gitsheets/issues/146)
-
-- **What:** Full-replace upsert mode — records in the sheet but not in the input are deleted in the same transaction.
-- **Why deferred:** Destructive convenience flag; v1.0 ships additive-only to keep the surface narrow.
-
 ### CLI `gitsheets upsert --attachments` — [#147](https://github.com/JarvusInnovations/gitsheets/issues/147)
 
 - **What:** `--attachments.<name>=<source-path>` flags to attach files alongside the record in the same transaction.

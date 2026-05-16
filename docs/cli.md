@@ -47,6 +47,7 @@ Flags:
 
 - `--format <json|toml|csv>` — input format. Default: inferred from extension (`*.toml` → TOML, `*.csv` → CSV), otherwise JSON.
 - `--encoding <enc>` — encoding for file/stdin input. Default `utf8`. Accepts any Node `BufferEncoding`.
+- `--delete-missing` — **DESTRUCTIVE**: full-replace mode. After upserting every input record, deletes any record in the sheet whose path isn't in the input set, in the same transaction. If validation fails on any input record, the whole transaction rolls back and the tree is unchanged.
 
 TOML input supports three layouts: a `[[records]]` array of tables (recommended for multi-record files), a top-level table where every value is itself a table (each value becomes one record), or a single-record document.
 

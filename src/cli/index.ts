@@ -46,6 +46,7 @@ interface UpsertArgs extends GlobalArgs {
   input?: string;
   format?: string;
   encoding?: string;
+  deleteMissing?: boolean;
 }
 
 interface QueryArgs extends GlobalArgs {
@@ -183,14 +184,41 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   const records = parseRecords(text, format);
   if (records.length === 0) return;
 
-  const txOpts = buildTxOpts(argv, `${argv.sheet} upsert (${records.length})`);
+  const messageDefault = argv.deleteMissing
+    ? `${argv.sheet} full-replace (${records.length})`
+    : `${argv.sheet} upsert (${records.length})`;
+  const txOpts = buildTxOpts(argv, messageDefault);
 
   const txSheetOpts: { prefix?: string } = argv.prefix ? { prefix: argv.prefix } : {};
+
+  // For --delete-missing, capture the existing record paths BEFORE the
+  // transaction opens, so we can compute the "missing" set after all upserts.
+  // Reading from the same Sheet handle the loadRepoAndSheet returned gives us
+  // a HEAD snapshot, not the in-flight tx state — exactly what we want.
+  const existingPaths = new Set<string>();
+  if (argv.deleteMissing) {
+    for await (const r of sheet.query()) {
+      const p = (r as Record<symbol, unknown>)[Symbol.for('gitsheets-path')];
+      if (typeof p === 'string') existingPaths.add(p);
+    }
+  }
+
   await repo.transact(txOpts, async (tx) => {
     const target = tx.sheet(argv.sheet, txSheetOpts);
+    const upsertedPaths = new Set<string>();
     for (const record of records) {
       const result: UpsertResult = await target.upsert(record);
+      upsertedPaths.add(result.path);
       process.stdout.write(`${result.blob.hash} ${result.path}\n`);
+    }
+    if (argv.deleteMissing) {
+      // Anything in the existing set that's not in the upserted set must die.
+      for (const p of existingPaths) {
+        if (!upsertedPaths.has(p)) {
+          await target.delete(p);
+          process.stdout.write(`- ${p}\n`);
+        }
+      }
     }
   });
 }
@@ -343,6 +371,12 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           .option('encoding', {
             type: 'string',
             describe: 'Encoding for file/stdin input (default: utf8)',
+          })
+          .option('delete-missing', {
+            type: 'boolean',
+            default: false,
+            describe:
+              'DESTRUCTIVE: delete every record not present in the input set, in the same transaction',
           }),
       runUpsert,
     )
