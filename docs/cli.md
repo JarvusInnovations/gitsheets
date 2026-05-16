@@ -36,14 +36,21 @@ Insert or update one or more records.
 gitsheets upsert users users.json
 gitsheets upsert users - < records.jsonl
 gitsheets upsert users '{"slug":"jane","email":"jane@x.org"}'
+gitsheets upsert users users.csv --format=csv
+gitsheets upsert users users.toml --format=toml
 ```
 
 `input` is inline JSON (single record `{...}` or array `[{...}, ...]`),
 a file path, or `-` for stdin.
 
-(In v1.0 `upsert` accepts no extra flags beyond the global tx flags.
-A `--patch` flag for RFC 7396 merge semantics is deferred to [#149](https://github.com/JarvusInnovations/gitsheets/issues/149);
-use the library `Sheet.patch(query, partial)` for now.)
+Flags:
+
+- `--format <json|toml|csv>` — input format. Default: inferred from extension (`*.toml` → TOML, `*.csv` → CSV), otherwise JSON.
+- `--encoding <enc>` — encoding for file/stdin input. Default `utf8`. Accepts any Node `BufferEncoding`.
+
+TOML input supports three layouts: a `[[records]]` array of tables (recommended for multi-record files), a top-level table where every value is itself a table (each value becomes one record), or a single-record document.
+
+CSV input uses the first row as a header. Cell values stay as strings — type coercion belongs in the consumer schema, not in CSV parsing.
 
 Output (per record):
 
@@ -53,20 +60,26 @@ Output (per record):
 
 ### `gitsheets query <sheet>`
 
-Read records. Output is newline-delimited JSON.
+Read records. Output is newline-delimited JSON by default.
 
 ```bash
 gitsheets query users
 gitsheets query users --filter email=jane@x.org
 gitsheets query users --filter status=active --filter project_id=p1
 gitsheets query users --fields slug email --limit 100
+gitsheets query users --format=csv --fields slug email
+gitsheets query users --format=toml > users.toml
 ```
 
 Flags:
 
 - `--filter <field>=<value>` (repeatable) — equality filter
-- `--fields <name>...` — output column subset
+- `--fields <name>...` — output column subset (order preserved)
 - `--limit <n>`
+- `--format <json|csv|tsv|toml>` — output format. Default `json` (newline-delimited).
+- `--headers` / `--no-headers` — emit a header row for CSV/TSV. Default `true`.
+
+TOML output emits a `[[records]]` array of tables, round-trippable through `upsert --format=toml`.
 
 ### `gitsheets read <sheet> <path>`
 
@@ -74,9 +87,12 @@ Read a single record by its rendered path.
 
 ```bash
 gitsheets read users jane
+gitsheets read users jane --format=toml
 ```
 
-Output: pretty-printed JSON.
+Flags:
+
+- `--format <json|toml|csv|tsv>` — output format. Default: pretty-printed JSON.
 
 ### `gitsheets normalize <sheet>`
 

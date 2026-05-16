@@ -1,6 +1,4 @@
 // CLI entry. See specs/api/cli.md.
-// v1.0 substrate ships: upsert, query, read, normalize.
-// infer / migrate-config / edit are tracked as follow-ups against #130, #139.
 
 import { readFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -20,6 +18,16 @@ import {
 import { openRepo } from '../repository.js';
 import type { Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
+import {
+  csvHeader,
+  inferInputFormat,
+  parseRecords,
+  stringifyRecord_text,
+  validateInputFormat,
+  validateOutputFormat,
+  type InputFormat,
+  type OutputFormat,
+} from './formats.js';
 
 interface GlobalArgs {
   gitDir?: string;
@@ -36,6 +44,8 @@ interface GlobalArgs {
 interface UpsertArgs extends GlobalArgs {
   sheet: string;
   input?: string;
+  format?: string;
+  encoding?: string;
 }
 
 interface QueryArgs extends GlobalArgs {
@@ -43,11 +53,14 @@ interface QueryArgs extends GlobalArgs {
   filter?: Record<string, string>;
   fields?: string[];
   limit?: number;
+  format?: string;
+  headers?: boolean;
 }
 
 interface ReadArgs extends GlobalArgs {
   sheet: string;
   path: string;
+  format?: string;
 }
 
 interface NormalizeArgs extends GlobalArgs {
@@ -88,37 +101,38 @@ function reportError(err: unknown): void {
   out.write(`gitsheets: ${String(err)}\n`);
 }
 
-async function readInput(input: string | undefined): Promise<string> {
+async function readInput(input: string | undefined, encoding: BufferEncoding): Promise<string> {
   if (input === undefined || input === '-') {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer));
     }
-    return Buffer.concat(chunks).toString('utf8');
+    return Buffer.concat(chunks).toString(encoding);
   }
   // Treat anything starting with `{` or `[` as inline JSON, otherwise a path.
   const trimmed = input.trimStart();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) return input;
-  return readFile(input, 'utf8');
+  return readFile(input, encoding);
 }
 
-function parseJsonRecords(text: string): RecordLike[] {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-  // JSON array → many records; JSON object → single record; one-record-per-line JSONL → many.
-  if (trimmed.startsWith('[')) {
-    const arr = JSON.parse(trimmed);
-    if (!Array.isArray(arr)) throw new Error('expected JSON array of records');
-    return arr as RecordLike[];
+const VALID_ENCODINGS: ReadonlySet<BufferEncoding> = new Set([
+  'utf8',
+  'utf-8',
+  'utf16le',
+  'utf-16le',
+  'ascii',
+  'latin1',
+  'binary',
+  'base64',
+  'hex',
+]);
+
+function resolveEncoding(raw: string | undefined): BufferEncoding {
+  const enc = (raw ?? 'utf8').toLowerCase() as BufferEncoding;
+  if (!VALID_ENCODINGS.has(enc)) {
+    throw new Error(`--encoding "${raw}" is not a recognized encoding`);
   }
-  if (trimmed.startsWith('{')) {
-    return [JSON.parse(trimmed) as RecordLike];
-  }
-  // JSONL fallback
-  return trimmed
-    .split('\n')
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as RecordLike);
+  return enc;
 }
 
 async function loadRepoAndSheet(
@@ -162,8 +176,11 @@ function buildTxOpts(argv: GlobalArgs, defaultMessage: string): {
 async function runUpsert(argv: UpsertArgs): Promise<void> {
   const { repo, sheet } = await loadRepoAndSheet(argv);
   void sheet; // loadRepoAndSheet validates the config exists
-  const text = await readInput(argv.input);
-  const records = parseJsonRecords(text);
+  const encoding = resolveEncoding(argv.encoding);
+  const explicitFormat = validateInputFormat(argv.format);
+  const format: InputFormat = explicitFormat ?? inferInputFormat(argv.input);
+  const text = await readInput(argv.input, encoding);
+  const records = parseRecords(text, format);
   if (records.length === 0) return;
 
   const txOpts = buildTxOpts(argv, `${argv.sheet} upsert (${records.length})`);
@@ -181,20 +198,48 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
 async function runQuery(argv: QueryArgs): Promise<void> {
   const { sheet } = await loadRepoAndSheet(argv);
   const filter = (argv.filter as RecordLike | undefined) ?? {};
+  const format: OutputFormat = validateOutputFormat(argv.format) ?? 'json';
+  const headers = argv.headers ?? true;
+  const fields = argv.fields;
+
   let yielded = 0;
+  let headerWritten = false;
+  const allRecords: RecordLike[] = []; // only used for TOML output
+
   for await (const record of sheet.query(filter)) {
-    const out = argv.fields
-      ? Object.fromEntries(argv.fields.map((f) => [f, (record as Record<string, unknown>)[f]]))
-      : record;
-    // Strip well-known symbols before serializing
-    process.stdout.write(`${JSON.stringify(out)}\n`);
+    if (format === 'csv' || format === 'tsv') {
+      if (!headerWritten) {
+        // Header columns come from --fields, otherwise from the first record.
+        const cols = fields ?? Object.keys(record).filter((k) => !k.startsWith('__'));
+        if (headers) process.stdout.write(csvHeader(cols, format));
+        headerWritten = true;
+      }
+      process.stdout.write(stringifyRecord_text(record, format, fields));
+    } else if (format === 'toml') {
+      // TOML needs all records to assemble [[records]] — buffer.
+      allRecords.push(record);
+    } else {
+      // json (default) — stream NDJSON
+      process.stdout.write(stringifyRecord_text(record, 'json', fields));
+    }
+
     yielded++;
     if (argv.limit !== undefined && yielded >= argv.limit) break;
+  }
+
+  if (format === 'toml') {
+    // Emit a single TOML document with a [[records]] array. The wrapper keeps
+    // the output round-trippable through `parseRecords(text, 'toml')`.
+    for (const r of allRecords) {
+      process.stdout.write('[[records]]\n');
+      process.stdout.write(stringifyRecord_text(r, 'toml', fields));
+    }
   }
 }
 
 async function runRead(argv: ReadArgs): Promise<void> {
   const { sheet } = await loadRepoAndSheet(argv);
+  const format: OutputFormat = validateOutputFormat(argv.format) ?? 'json';
   // The path is treated as the record's full slug-rendered key plus optional
   // .toml extension. For the simple `${{ slug }}` case this is just the slug.
   const target = argv.path.endsWith('.toml') ? argv.path.slice(0, -5) : argv.path;
@@ -211,7 +256,15 @@ async function runRead(argv: ReadArgs): Promise<void> {
   if (!found) {
     throw new NotFoundError('record_not_found', `${argv.sheet}: no record at ${target}`);
   }
-  process.stdout.write(`${JSON.stringify(found, null, 2)}\n`);
+  if (format === 'json') {
+    // Pretty-print for human reads — JSON.stringify(_, null, 2) matches v1.0 behavior
+    const cleaned = { ...found };
+    delete (cleaned as Record<symbol, unknown>)[Symbol.for('gitsheets-path')];
+    delete (cleaned as Record<symbol, unknown>)[Symbol.for('gitsheets-sheet')];
+    process.stdout.write(`${JSON.stringify(cleaned, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(stringifyRecord_text(found, format));
 }
 
 async function runNormalize(argv: NormalizeArgs): Promise<void> {
@@ -281,12 +334,21 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           .positional('input', {
             type: 'string',
             describe: "Inline JSON, a file path, or '-' for stdin",
+          })
+          .option('format', {
+            type: 'string',
+            choices: ['json', 'toml', 'csv'] as const,
+            describe: 'Input format; default: inferred from extension, falls back to json',
+          })
+          .option('encoding', {
+            type: 'string',
+            describe: 'Encoding for file/stdin input (default: utf8)',
           }),
       runUpsert,
     )
     .command<QueryArgs>(
       'query <sheet>',
-      'Read records as newline-delimited JSON',
+      'Read records (output: JSON by default; --format=csv|tsv|toml supported)',
       (y) =>
         y
           .positional('sheet', { type: 'string', demandOption: true })
@@ -306,7 +368,17 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             },
           })
           .option('fields', { type: 'string', array: true })
-          .option('limit', { type: 'number' }),
+          .option('limit', { type: 'number' })
+          .option('format', {
+            type: 'string',
+            choices: ['json', 'toml', 'csv', 'tsv'] as const,
+            describe: 'Output format (default: json)',
+          })
+          .option('headers', {
+            type: 'boolean',
+            default: true,
+            describe: 'Emit a header row for CSV/TSV output (default: true)',
+          }),
       runQuery,
     )
     .command<ReadArgs>(
@@ -315,7 +387,12 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       (y) =>
         y
           .positional('sheet', { type: 'string', demandOption: true })
-          .positional('path', { type: 'string', demandOption: true }),
+          .positional('path', { type: 'string', demandOption: true })
+          .option('format', {
+            type: 'string',
+            choices: ['json', 'toml', 'csv', 'tsv'] as const,
+            describe: 'Output format (default: pretty json)',
+          }),
       runRead,
     )
     .command<NormalizeArgs>(

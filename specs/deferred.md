@@ -62,11 +62,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** A library-managed cache around parsed records, surviving across requests in a long-running consumer.
 - **Why deferred:** Once #138 (blob-hash record cache fix) lands, the existing per-sheet-instance cache covers most needs. A richer multi-instance cache can come if a consumer shows it's needed.
 
-### CLI `--format` and `--encoding` for upsert/query — [#145](https://github.com/JarvusInnovations/gitsheets/issues/145)
-
-- **What:** `upsert` accepts `--format json|toml|csv` and `--encoding <enc>`; `query` accepts `--format json|csv|tsv|toml` plus `--headers`.
-- **Why deferred:** v1.0 substrate CLI ships JSON-in / newline-JSON-out — enough to exercise the surface and prove integration. CSV/TOML in/out support is a separable CLI PR.
-
 ### CLI `gitsheets upsert --delete-missing` — [#146](https://github.com/JarvusInnovations/gitsheets/issues/146)
 
 - **What:** Full-replace upsert mode — records in the sheet but not in the input are deleted in the same transaction.
