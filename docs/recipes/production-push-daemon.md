@@ -51,12 +51,16 @@ daemon.on('push', ({ commit, durationMs }) => {
   log.info({ commit, durationMs }, 'pushed');
 });
 
-daemon.on('retry', ({ commit, attempt, nextDelayMs }) => {
-  log.info({ commit, attempt, nextDelayMs }, 'push retry scheduled');
+daemon.on('retry', ({ commit, attempt, nextDelayMs, reason }) => {
+  log.info({ commit, attempt, nextDelayMs, reason }, 'push retry scheduled');
 });
 
-daemon.on('error', ({ commit, err, attempt }) => {
-  log.warn({ commit, err: String(err), attempt }, 'push failed');
+daemon.on('error', ({ commit, err, attempt, reason }) => {
+  // `reason: 'non-fast-forward'` means the remote has work this daemon
+  // doesn't — page someone. The daemon will *not* retry it; pushing the same
+  // commit again would just re-fail. Future commits still trigger fresh
+  // attempts (each producing its own classified error).
+  log.warn({ commit, err: String(err), attempt, reason }, 'push failed');
 });
 
 daemon.on('stopped', () => {
@@ -71,7 +75,7 @@ const status = daemon.status();
 // {
 //   running: boolean,
 //   lastPushAt: ISO 8601 | null,
-//   lastError: { message, at, attempt } | null,
+//   lastError: { message, at, attempt, reason: 'non-fast-forward' | 'unknown' } | null,
 //   pendingCommits: number,
 //   currentBackoffMs: number | null,
 //   currentAttempt: number | null,
@@ -161,22 +165,40 @@ process.on('SIGINT', shutdown);
 1. Stops accepting new commits to the queue
 2. Waits for the in-flight push to complete or fail
 3. Drains the retry queue up to `timeoutMs` (default 30s)
-4. After the timeout, abandons remaining queued commits (they stay in the local repo and are picked up on the next daemon start, once #157 lands)
+4. After the timeout, abandons remaining queued commits — they stay in the local repo and are picked up on the next daemon start via the startup-backlog check
 5. Resolves once the daemon is fully idle
 
 For Kubernetes / Docker, set `terminationGracePeriodSeconds` to at least `timeoutMs` + a safety margin so the orchestrator doesn't SIGKILL mid-drain.
 
 ## Non-fast-forward rejections
 
-Currently the daemon retries every failure including non-fast-forward rejections. That's the v1.0 simplification — production-grade detection (stop retrying, escalate to a human) is tracked at [#156](https://github.com/JarvusInnovations/gitsheets/issues/156). For now, if your remote rejects a push as non-fast-forward, the daemon spins on it until you intervene. Watch the `error` event stream and surface persistent failures.
+When the remote contains work the daemon doesn't (a fast-forward isn't possible), the push fails and the daemon classifies it as terminal:
 
-The right intervention when this happens: stop your consumer, investigate the remote (something else committed to your branch), reconcile, restart.
+- Exactly one `error` event fires with `reason: 'non-fast-forward'`.
+- **No `retry` event follows.** The daemon never force-pushes; pushing the same commit again would just re-fail.
+- `daemon.status().lastError.reason` carries `'non-fast-forward'` so health checks / alerting can branch on it.
+- Subsequent `repo.transact` commits still trigger fresh push attempts. Each will also fail with `non-fast-forward` (and emit its own event) until the remote state is reconciled.
 
-## Multi-remote replication (deferred)
+The right intervention: stop the consumer, investigate the remote (something else committed to your branch), reconcile (rebase or merge), restart.
 
-A `Repository` can host one push daemon at a time, and post-commit notifications fire only on the `Repository` instance that ran the `transact` — so a second `Repository` opened against the same `gitDir` wouldn't see those commits and wouldn't push them. In-process multi-remote replication isn't a working pattern in v1.0.
+```typescript
+daemon.on('error', ({ reason, err }) => {
+  if (reason === 'non-fast-forward') {
+    // page on-call; do not auto-restart
+    alerts.send({ severity: 'critical', message: 'push rejected — remote diverged' });
+  } else {
+    log.warn({ err: String(err) }, 'transient push failure');
+  }
+});
+```
 
-This becomes workable once [#157 (push daemon startup-diff)](https://github.com/JarvusInnovations/gitsheets/issues/157) lands and a daemon catches up from the ref state rather than from in-process notifications. Until then, the right replication path is external — e.g., a `git push backup` triggered by an external scheduler or by a server-side hook on the primary remote.
+## Multi-remote replication (still external)
+
+A `Repository` can host one push daemon at a time, and post-commit notifications fire only on the `Repository` instance that ran the `transact` — so a second `Repository` opened against the same `gitDir` wouldn't see live commits via the in-process hook. The startup-backlog check runs *once* per daemon (at start), so a long-lived second daemon won't catch up on commits made after it started.
+
+In-process multi-remote replication isn't the right pattern. For a backup remote, drive it externally: an external scheduler triggering `git push backup main`, or a server-side hook on the primary that mirrors to the backup.
+
+What the startup-backlog *does* unlock: if your process restarts (intentional deploy, crash, OOM kill) with commits ahead of the remote, the new daemon pushes them on startup without needing an explicit `repo.transact` to nudge it.
 
 ## A complete production setup
 
@@ -202,8 +224,11 @@ if (process.env.PUSH_REMOTE) {
     maxRetries: Infinity,
   });
   pushDaemon.on('push',  ({ commit, durationMs }) => log.info({ commit, durationMs }, 'pushed'));
-  pushDaemon.on('error', ({ err, attempt })       => log.warn({ err: String(err), attempt }, 'push failed'));
-  pushDaemon.on('retry', ({ attempt, nextDelayMs }) => log.info({ attempt, nextDelayMs }, 'push retry'));
+  pushDaemon.on('error', ({ err, attempt, reason }) => {
+    log.warn({ err: String(err), attempt, reason }, 'push failed');
+    if (reason === 'non-fast-forward') alerts.page({ message: 'gitsheets remote diverged' });
+  });
+  pushDaemon.on('retry', ({ attempt, nextDelayMs, reason }) => log.info({ attempt, nextDelayMs, reason }, 'push retry'));
   log.info({ remote: process.env.PUSH_REMOTE }, 'push daemon started');
 }
 
