@@ -1,0 +1,1873 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A git-backed document store for low-volume, high-touch, human-scale data">
+      
+      
+        <meta name="author" content="Jarvus Innovations">
+      
+      
+      
+        <link rel="prev" href="../cli/">
+      
+      
+        <link rel="next" href="../recipes/typed-sheet-with-zod/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>API reference - gitsheets</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="orange" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="gitsheets" class="md-header__button md-logo" aria-label="gitsheets" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            gitsheets
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/JarvusInnovations/gitsheets" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quick-start/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../concepts/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Concepts
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../path-templates/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../recipes/typed-sheet-with-zod/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Recipes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration-guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migration guide
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="gitsheets" class="md-nav__button md-logo" aria-label="gitsheets" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    gitsheets
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/JarvusInnovations/gitsheets" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../path-templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Path templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#factories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Factories
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Factories">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openrepoopts-promiserepository" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        openRepo(opts?) → Promise&lt;Repository&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openstorerepo-opts-promisestorev" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        openStore(repo, opts?) → Promise&lt;Store&lt;V&gt;&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sheet
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sheet">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#attachments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attachments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transaction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transactionresult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TransactionResult
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Store
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pushdaemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PushDaemon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-template" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Template
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#utility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Utility
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Utility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mergepatchtarget-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mergePatch(target, patch)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validaterecord-record-schema-validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        validateRecord({ record, schema, validator? })
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stability
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Recipes
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/typed-sheet-with-zod/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Typed sheet with Zod
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/request-bound-transactions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Request-bound transactions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/secondary-indices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Secondary indices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/production-push-daemon/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production push daemon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/migrating-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating a fields config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#module-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#factories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Factories
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Factories">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openrepoopts-promiserepository" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        openRepo(opts?) → Promise&lt;Repository&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openstorerepo-opts-promisestorev" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        openStore(repo, opts?) → Promise&lt;Store&lt;V&gt;&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sheet
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sheet">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#attachments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attachments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transaction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transactionresult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TransactionResult
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Store
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pushdaemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PushDaemon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-template" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Template
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#utility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Utility
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Utility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mergepatchtarget-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mergePatch(target, patch)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validaterecord-record-schema-validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        validateRecord({ record, schema, validator? })
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stability
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/JarvusInnovations/gitsheets/edit/develop/docs/api.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="api-reference">API reference<a class="headerlink" href="#api-reference" title="Permanent link"> ¶</a></h1>
+<p>The authoritative API contract lives in <a href="https://github.com/JarvusInnovations/gitsheets/tree/develop/specs"><code>specs/</code></a>. This page lists the public surface with one-line descriptions and pointers into the per-symbol spec for the details. For end-to-end usage walkthroughs, see the <a href="../#recipes">recipes</a>.</p>
+<h2 id="module-surface">Module surface<a class="headerlink" href="#module-surface" title="Permanent link"> ¶</a></h2>
+<p>All public symbols are imported from the package root:</p>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// factories</span>
+<span class="w">  </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">openStore</span><span class="p">,</span>
+
+<span class="w">  </span><span class="c1">// primary classes</span>
+<span class="w">  </span><span class="nx">Repository</span><span class="p">,</span><span class="w"> </span><span class="nx">Sheet</span><span class="p">,</span><span class="w"> </span><span class="nx">Transaction</span><span class="p">,</span><span class="w"> </span><span class="nx">PushDaemon</span><span class="p">,</span><span class="w"> </span><span class="nx">Template</span><span class="p">,</span>
+
+<span class="w">  </span><span class="c1">// error classes</span>
+<span class="w">  </span><span class="nx">GitsheetsError</span><span class="p">,</span><span class="w"> </span><span class="nx">ConfigError</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidationError</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionError</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">IndexError</span><span class="p">,</span><span class="w"> </span><span class="nx">RefError</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateError</span><span class="p">,</span><span class="w"> </span><span class="nx">NotFoundError</span><span class="p">,</span>
+
+<span class="w">  </span><span class="c1">// utilities</span>
+<span class="w">  </span><span class="nx">mergePatch</span><span class="p">,</span><span class="w"> </span><span class="nx">validateRecord</span><span class="p">,</span>
+
+<span class="w">  </span><span class="c1">// record annotation symbols</span>
+<span class="w">  </span><span class="nx">RECORD_SHEET_KEY</span><span class="p">,</span><span class="w"> </span><span class="nx">RECORD_PATH_KEY</span><span class="p">,</span>
+<span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
+</code></pre></div>
+<p>Type-only exports (selected highlights):</p>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">OpenRepoOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetsOptions</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">TransactionOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionResult</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionHandler</span><span class="p">,</span><span class="w"> </span><span class="nx">Author</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">SheetConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SheetFieldConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SortRule</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertResult</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">SheetConstructorOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">IndexKeyFn</span><span class="p">,</span><span class="w"> </span><span class="nx">DefineIndexOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryFilter</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">OpenStoreOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">Store</span><span class="p">,</span><span class="w"> </span><span class="nx">StoreTx</span><span class="p">,</span><span class="w"> </span><span class="nx">StoreTransactFn</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidatorMap</span><span class="p">,</span><span class="w"> </span><span class="nx">InferRecord</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">PushDaemonOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">PushDaemonStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">BackoffConfig</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">JSONSchema</span><span class="p">,</span><span class="w"> </span><span class="nx">StandardSchemaV1</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidationIssue</span><span class="p">,</span><span class="w"> </span><span class="nx">StandardSchemaResult</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">RecordLike</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateBlob</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateTree</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateQueryResult</span><span class="p">,</span>
+<span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
+</code></pre></div>
+<p>No deep imports (<code>gitsheets/lib/Sheet</code>) — the implementation can rearrange <code>src/</code> freely without notice. The package-root surface is the only stable API.</p>
+<h2 id="factories">Factories<a class="headerlink" href="#factories" title="Permanent link"> ¶</a></h2>
+<h3 id="openrepoopts-promiserepository"><code>openRepo(opts?)</code> → <code>Promise&lt;Repository&gt;</code><a class="headerlink" href="#openrepoopts-promiserepository" title="Permanent link"> ¶</a></h3>
+<p>Open a <code>Repository</code> against a git directory. Discovers from cwd upward when <code>gitDir</code> is omitted. Fresh-but-initialized repositories (no commits yet) are supported.</p>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">();</span><span class="w">                         </span><span class="c1">// discovered</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">gitDir</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;/.git&#39;</span><span class="w"> </span><span class="p">});</span><span class="w">      </span><span class="c1">// explicit</span>
+</code></pre></div>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md"><code>specs/api/repository.md</code></a></p>
+<h3 id="openstorerepo-opts-promisestorev"><code>openStore(repo, opts?)</code> → <code>Promise&lt;Store&lt;V&gt;&gt;</code><a class="headerlink" href="#openstorerepo-opts-promisestorev" title="Permanent link"> ¶</a></h3>
+<p>Typed wrapper over <code>Repository.openSheets()</code> that binds per-sheet Standard Schema validators. <code>store.&lt;sheet&gt;</code> is <code>Sheet&lt;InferRecord&lt;V[sheet]&gt;&gt;</code> for every sheet in <code>opts.validators</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">store</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openStore</span><span class="p">(</span><span class="nx">repo</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">validators</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">users</span><span class="o">:</span><span class="w"> </span><span class="kt">UserSchema</span><span class="p">,</span><span class="w"> </span><span class="nx">projects</span><span class="o">:</span><span class="w"> </span><span class="kt">ProjectSchema</span><span class="w"> </span><span class="p">},</span>
+<span class="p">});</span>
+</code></pre></div>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/store.md"><code>specs/api/store.md</code></a> · <a href="../recipes/typed-sheet-with-zod/">recipe</a></p>
+<h2 id="repository">Repository<a class="headerlink" href="#repository" title="Permanent link"> ¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>repo.openSheet&lt;T&gt;(name, opts?)</code></td>
+<td>Sheet handle, optionally with a Standard Schema validator</td>
+</tr>
+<tr>
+<td><code>repo.openSheets(opts?)</code></td>
+<td>All sheets keyed by name</td>
+</tr>
+<tr>
+<td><code>repo.transact(opts, handler)</code></td>
+<td>Run a handler in a single-commit transaction</td>
+</tr>
+<tr>
+<td><code>repo.requireExplicitTransactions()</code></td>
+<td>Switch to strict mode (one-way)</td>
+</tr>
+<tr>
+<td><code>repo.startPushDaemon(opts)</code></td>
+<td>Start async push to a configured remote</td>
+</tr>
+<tr>
+<td><code>repo.resolveRef(ref)</code></td>
+<td>Resolve a ref or commit hash; returns <code>string \| null</code></td>
+</tr>
+</tbody>
+</table>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md"><code>specs/api/repository.md</code></a></p>
+<h2 id="sheet">Sheet<a class="headerlink" href="#sheet" title="Permanent link"> ¶</a></h2>
+<p><code>Sheet&lt;T extends RecordLike = RecordLike&gt;</code> — generic on the record type. With a validator (via <code>openSheet({ validator })</code> or <code>openStore</code>), <code>T</code> flows through every method signature.</p>
+<h3 id="reading">Reading<a class="headerlink" href="#reading" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sheet.query(filter?)</code></td>
+<td><code>AsyncGenerator&lt;T&gt;</code> — iterator</td>
+</tr>
+<tr>
+<td><code>sheet.queryFirst(filter?)</code></td>
+<td><code>Promise&lt;T \| undefined&gt;</code></td>
+</tr>
+<tr>
+<td><code>sheet.queryAll(filter?)</code></td>
+<td><code>Promise&lt;T[]&gt;</code></td>
+</tr>
+<tr>
+<td><code>sheet.pathForRecord(record)</code></td>
+<td><code>Promise&lt;string&gt;</code> — rendered path, no write</td>
+</tr>
+<tr>
+<td><code>sheet.normalizeRecord(record)</code></td>
+<td><code>Promise&lt;T&gt;</code> — canonical form, no write</td>
+</tr>
+</tbody>
+</table>
+<h3 id="writing">Writing<a class="headerlink" href="#writing" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sheet.upsert(record)</code></td>
+<td>Insert or replace; returns <code>{ blob, path }</code></td>
+</tr>
+<tr>
+<td><code>sheet.delete(recordOrPath)</code></td>
+<td>Remove a record + cascade attachments</td>
+</tr>
+<tr>
+<td><code>sheet.patch(query, partial)</code></td>
+<td>RFC 7396 merge patch over an existing record</td>
+</tr>
+<tr>
+<td><code>sheet.clear()</code></td>
+<td>Remove every record from the sheet&rsquo;s tree</td>
+</tr>
+<tr>
+<td><code>sheet.clone()</code></td>
+<td>Clone the Sheet for staging tentative state</td>
+</tr>
+</tbody>
+</table>
+<p>All write methods route through a transaction — permissive mode auto-opens one; strict mode requires <code>repo.transact</code>.</p>
+<h3 id="attachments">Attachments<a class="headerlink" href="#attachments" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sheet.getAttachment(record, name)</code></td>
+<td>One attachment&rsquo;s BlobObject or null</td>
+</tr>
+<tr>
+<td><code>sheet.getAttachments(record)</code></td>
+<td>Map of name → BlobObject</td>
+</tr>
+<tr>
+<td><code>sheet.setAttachment(record, name, blob)</code></td>
+<td>Add or replace</td>
+</tr>
+<tr>
+<td><code>sheet.setAttachments(record, map)</code></td>
+<td>Bulk variant</td>
+</tr>
+</tbody>
+</table>
+<h3 id="indexing">Indexing<a class="headerlink" href="#indexing" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sheet.defineIndex(name, keyFn)</code></td>
+<td>Lazy index (build on first lookup)</td>
+</tr>
+<tr>
+<td><code>sheet.defineIndex(name, { unique, eager }, keyFn)</code></td>
+<td>With opts; <code>eager: true</code> returns <code>Promise&lt;void&gt;</code></td>
+</tr>
+<tr>
+<td><code>sheet.findByIndex(name, key)</code></td>
+<td><code>Promise&lt;T \| T[] \| undefined&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/sheet.md"><code>specs/api/sheet.md</code></a> · <a href="../recipes/secondary-indices/">indexing recipe</a></p>
+<h2 id="transaction">Transaction<a class="headerlink" href="#transaction" title="Permanent link"> ¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tx.sheet&lt;T&gt;(name, opts?)</code></td>
+<td>Sheet bound to the tx&rsquo;s tree</td>
+</tr>
+<tr>
+<td><code>tx.parentCommitHash</code></td>
+<td>Commit hash the tx parents on (may be <code>null</code> for fresh repos)</td>
+</tr>
+<tr>
+<td><code>tx.parentRef</code> / <code>tx.branchRef</code></td>
+<td>Refs being read from / advanced</td>
+</tr>
+</tbody>
+</table>
+<p>Consumers don&rsquo;t construct <code>Transaction</code> directly — it comes from <code>repo.transact</code>&rsquo;s handler. <code>tx.sheet(name)</code> may be called any number of times; writes are atomic within the handler.</p>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/transaction.md"><code>specs/api/transaction.md</code></a> · <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/transactions.md"><code>specs/behaviors/transactions.md</code></a> · <a href="../recipes/request-bound-transactions/">request-bound recipe</a></p>
+<h2 id="transactionresult">TransactionResult<a class="headerlink" href="#transactionresult" title="Permanent link"> ¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kd">interface</span><span class="w"> </span><span class="nx">TransactionResult</span><span class="o">&lt;</span><span class="nx">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">value</span><span class="o">:</span><span class="w"> </span><span class="kt">T</span><span class="p">;</span><span class="w">                  </span><span class="c1">// handler return value</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">commitHash</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="kc">null</span><span class="p">;</span><span class="w"> </span><span class="c1">// null when no mutations occurred</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">treeHash</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="kc">null</span><span class="p">;</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">ref</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="kc">null</span><span class="p">;</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">parentCommitHash</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="kc">null</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<h2 id="store">Store<a class="headerlink" href="#store" title="Permanent link"> ¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kr">type</span><span class="w"> </span><span class="nx">Store</span><span class="o">&lt;</span><span class="nx">V</span><span class="w"> </span><span class="k">extends</span><span class="w"> </span><span class="nx">ValidatorMap</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="p">[</span><span class="nx">K</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="nx">keyof</span><span class="w"> </span><span class="nx">V</span><span class="p">]</span><span class="o">:</span><span class="w"> </span><span class="nx">Sheet</span><span class="o">&lt;</span><span class="nx">InferRecord</span><span class="o">&lt;</span><span class="nx">V</span><span class="p">[</span><span class="nx">K</span><span class="p">]</span><span class="o">&gt;&gt;</span><span class="p">;</span>
+<span class="p">}</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">transact</span><span class="o">:</span><span class="w"> </span><span class="kt">StoreTransactFn</span><span class="o">&lt;</span><span class="nx">V</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+<p><code>store.&lt;sheet&gt;</code> for each sheet declared in <code>validators</code>. <code>store.transact(opts, async tx =&gt; ...)</code> mirrors <code>repo.transact</code> with <code>tx.&lt;sheet&gt;</code> aliases that thread validators through.</p>
+<p>Sheets not in <code>validators</code> are accessible via <code>repo.openSheet(name)</code> for one-off un-typed access.</p>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/store.md"><code>specs/api/store.md</code></a></p>
+<h2 id="pushdaemon">PushDaemon<a class="headerlink" href="#pushdaemon" title="Permanent link"> ¶</a></h2>
+<p>Returned from <code>repo.startPushDaemon(opts)</code>. EventEmitter with:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Payload</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>push</code></td>
+<td><code>{ commit, durationMs }</code></td>
+</tr>
+<tr>
+<td><code>retry</code></td>
+<td><code>{ commit, attempt, nextDelayMs }</code></td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>{ commit, err, attempt }</code></td>
+</tr>
+<tr>
+<td><code>stopped</code></td>
+<td>(none)</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daemon.status()</code></td>
+<td>Snapshot: running, lastPushAt, lastError, pendingCommits, currentBackoffMs, currentAttempt</td>
+</tr>
+<tr>
+<td><code>daemon.stop({ timeoutMs })</code></td>
+<td>Drain in-flight retries (graceful)</td>
+</tr>
+</tbody>
+</table>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/push-sync.md"><code>specs/behaviors/push-sync.md</code></a> · <a href="../recipes/production-push-daemon/">production recipe</a></p>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link"> ¶</a></h2>
+<p>All gitsheets exceptions extend <code>GitsheetsError</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kd">class</span><span class="w"> </span><span class="nx">GitsheetsError</span><span class="w"> </span><span class="k">extends</span><span class="w"> </span><span class="ne">Error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">code</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">     </span><span class="c1">// stable identifier</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="kt">number</span><span class="p">;</span><span class="w">   </span><span class="c1">// HTTP-style hint</span>
+<span class="w">  </span><span class="kd">override</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="nx">cause?</span><span class="o">:</span><span class="w"> </span><span class="kt">unknown</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Subclasses:</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Common codes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ConfigError</code></td>
+<td><code>config_missing</code>, <code>config_invalid</code></td>
+</tr>
+<tr>
+<td><code>ValidationError</code></td>
+<td><code>validation_failed</code> (carries <code>issues: ValidationIssue[]</code>)</td>
+</tr>
+<tr>
+<td><code>TransactionError</code></td>
+<td><code>transaction_in_progress</code>, <code>transaction_required</code>, <code>parent_moved</code>, <code>commit_failed</code>, <code>push_daemon_running</code>, <code>transaction_closed</code></td>
+</tr>
+<tr>
+<td><code>IndexError</code></td>
+<td><code>index_unique_conflict</code>, <code>index_not_defined</code> (carries <code>conflictingPaths</code>)</td>
+</tr>
+<tr>
+<td><code>RefError</code></td>
+<td><code>ref_not_found</code>, <code>not_an_ancestor</code></td>
+</tr>
+<tr>
+<td><code>PathTemplateError</code></td>
+<td><code>path_render_failed</code>, <code>path_invalid_chars</code></td>
+</tr>
+<tr>
+<td><code>NotFoundError</code></td>
+<td><code>record_not_found</code></td>
+</tr>
+</tbody>
+</table>
+<p>Consumers switch on <code>instanceof</code> or <code>err.code</code> — never on <code>err.message</code>.</p>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/errors.md"><code>specs/api/errors.md</code></a> — full code table</p>
+<h2 id="path-template">Path Template<a class="headerlink" href="#path-template" title="Permanent link"> ¶</a></h2>
+<p><code>Template.fromString(s)</code> — parse + cache. Most consumers don&rsquo;t construct <code>Template</code> directly; it&rsquo;s exposed for advanced use cases (path template diagnostics, custom queryTree integrations).</p>
+<p>→ <a href="../path-templates/">path templates doc</a> · <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md"><code>specs/behaviors/path-templates.md</code></a></p>
+<h2 id="utility">Utility<a class="headerlink" href="#utility" title="Permanent link"> ¶</a></h2>
+<h3 id="mergepatchtarget-patch"><code>mergePatch(target, patch)</code><a class="headerlink" href="#mergepatchtarget-patch" title="Permanent link"> ¶</a></h3>
+<p>RFC 7396 JSON Merge Patch as a pure function. Useful when you want the patch semantic without going through <code>Sheet.patch</code>. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/patch-semantics.md"><code>specs/behaviors/patch-semantics.md</code></a>.</p>
+<h3 id="validaterecord-record-schema-validator"><code>validateRecord({ record, schema, validator? })</code><a class="headerlink" href="#validaterecord-record-schema-validator" title="Permanent link"> ¶</a></h3>
+<p>Run the same validation pipeline <code>Sheet.upsert</code> uses without going through a Sheet. Useful for pre-flight (UI form submission, CSV ingest, audit passes against legacy records). Returns the possibly-transformed record on success, throws <code>ValidationError</code> on failure. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md"><code>specs/behaviors/validation.md</code></a>.</p>
+<h2 id="conventions">Conventions<a class="headerlink" href="#conventions" title="Permanent link"> ¶</a></h2>
+<p>Read <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/conventions.md"><code>specs/api/conventions.md</code></a> for the cross-cutting rules: TypeScript posture, async patterns, options-object pattern, default refs/paths.</p>
+<h2 id="stability">Stability<a class="headerlink" href="#stability" title="Permanent link"> ¶</a></h2>
+<p>Everything documented in <a href="https://github.com/JarvusInnovations/gitsheets/tree/develop/specs"><code>specs/</code></a> (and re-exported from <code>gitsheets</code>) is stable from v1.0 forward. Internal modules under <code>dist/</code> that aren&rsquo;t re-exported are implementation details and may change in minor releases.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache-2.0 — Jarvus Innovations
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
