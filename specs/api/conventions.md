@@ -1,0 +1,97 @@
+# API: Conventions
+
+Cross-cutting rules every API spec under this directory inherits.
+
+## Module surface
+
+All public symbols are imported from the package root:
+
+```typescript
+import {
+  openRepo, openStore,
+  Repository, Sheet, Transaction,
+  GitsheetsError, ConfigError, ValidationError, TransactionError,
+  IndexError, RefError, PathTemplateError, NotFoundError,
+} from 'gitsheets';
+```
+
+No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely.
+
+## TypeScript posture
+
+- `strict: true` in shipped types.
+- Public functions have explicit return types — no `Promise<any>`.
+- Generics flow from sheet configs through to consumer call sites (`Sheet<T>`, `Store<Schemas>`).
+
+## Async patterns
+
+- Read-many results: `async function*` iterators. Consumers `for await` them.
+- Read-one: `Promise<T | undefined>`.
+- Writes: `Promise<{ blob, path }>` (single-record) or `Promise<TransactionResult>` (transaction commit).
+
+## Options-object pattern
+
+Functions with more than two parameters take an options object:
+
+```typescript
+// good
+await sheet.defineIndex('byEmail', { unique: true, eager: false }, fn);
+
+// not the convention
+await sheet.defineIndex('byEmail', true, false, fn);
+```
+
+Optional fields have documented defaults. Missing `undefined` is treated as "use default."
+
+## Errors
+
+Every error thrown by gitsheets extends `GitsheetsError` and carries a stable `code` string. Consumers should switch on `instanceof` or on `err.code` — never on `err.message`. See [api/errors.md](errors.md).
+
+## Cancellation
+
+Long-running iterations (`Sheet.query`) honor `AbortSignal` when one is passed in via the options. Without a signal, they run to completion.
+
+```typescript
+const controller = new AbortController();
+for await (const record of sheet.query({}, { signal: controller.signal })) {
+  // ...
+  if (someCondition) controller.abort();
+}
+```
+
+`AbortError` is thrown after the next yield point. (Defer if implementation cost is high for v1.0; documented here as the convention for any iterator that adds cancellation later.)
+
+## Async iteration over trees
+
+The library exposes async iterators throughout. They are **single-pass** — re-iterating requires calling the producing method again. Internal caching may make re-iteration fast, but the iterators are not stateless.
+
+## Naming
+
+- **Methods that don't commit:** `upsert`, `delete`, `patch`, `setAttachment` — they stage tree writes. Commits happen on transaction boundary.
+- **Methods that do commit (implicit transaction):** none by name. Permissive mode commits at the end of any standalone mutation, but the *method* doesn't carry "commit" in its name.
+- **Methods that always commit explicitly:** `Repository.transact` and `Store.transact`.
+
+## Versioning
+
+The public API is the API surface speced under `specs/api/`. Anything not speced there is implementation detail and may change without notice. Breaking changes to speced surface require a major version bump.
+
+## Default branches and refs
+
+When a ref isn't specified:
+
+- Read operations default to the repository's `HEAD`.
+- Write operations (transactions) default `parent` to `HEAD`.
+- The CLI honors `GITSHEETS_REF` for an override.
+
+## Default paths
+
+When a root isn't specified:
+
+- `Repository.openSheet(name)` defaults `root` to `/` (repo root) — `.gitsheets/<name>.toml` is read from there.
+- The CLI honors `GITSHEETS_ROOT` and `GITSHEETS_PREFIX` for overrides (matching the pre-v1.0 behavior).
+
+## I/O
+
+- All file paths inside the data repo are POSIX-style (`/` separators) regardless of host OS.
+- TOML reads use `@iarna/toml` to preserve Date types.
+- TOML writes serialize sorted keys (deep) for byte-stable normalization.
