@@ -137,6 +137,34 @@ or after a manual edit that didn't preserve canonical key order.
 gitsheets normalize users
 ```
 
+### `gitsheets infer <sheet>`
+
+Scan every record in the sheet and write a conservative starter `[gitsheet.schema]` block into `.gitsheets/<sheet>.toml`. The committed schema captures observed types per field, plus `minimum`/`maximum` hints for numeric fields and `items.type` for arrays. Fields present in every record are listed under `required`.
+
+```bash
+gitsheets infer users
+```
+
+Existing `root`, `path`, and any non-schema `fields.<name>.sort` rules are preserved. The result is a starting point — review and tighten (add `pattern`, `format`, etc.) before relying on it.
+
+### `gitsheets migrate-config <sheet>`
+
+Convert a pre-v1.0 `[gitsheet.fields]` config to a v1.0 `[gitsheet.schema]` config in one transaction.
+
+```bash
+gitsheets migrate-config orders
+```
+
+Migration table (matches [`specs/behaviors/validation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md#migration-of-pre-v10-gitsheetfields-config)):
+
+| Pre-v1.0 field | v1.0 placement |
+| --- | --- |
+| `type: 'number' \| 'string' \| 'boolean'` | `[gitsheet.schema.properties.<name>].type` |
+| `enum: [...]` | `[gitsheet.schema.properties.<name>].enum` |
+| `default: <value>` | `[gitsheet.schema.properties.<name>].default` |
+| `sort: ...` | `[gitsheet.fields.<name>.sort]` (unchanged) |
+| `trueValues: [...]`, `falseValues: [...]` | Warning to stderr — move to CSV-ingest helper |
+
 ## Exit codes
 
 | Code | Meaning |

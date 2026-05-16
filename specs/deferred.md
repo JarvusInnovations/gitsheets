@@ -67,11 +67,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** Read/write the working tree's state rather than HEAD.
 - **Why deferred:** Substantive library work — `Repository` needs a parallel read/write path against on-disk files (no commit). Split out of #148 during v1.1; `--prefix` shipped, `--working` tracked separately.
 
-### CLI `gitsheets infer` + `migrate-config` — [#151](https://github.com/JarvusInnovations/gitsheets/issues/151)
-
-- **What:** `infer` generates a starter `[gitsheet.schema]` from existing records; `migrate-config` converts pre-v1.0 `[gitsheet.fields]` configs.
-- **Why deferred:** Validation-config tooling that supplements #130's library work. Library APIs exist; CLI surface follows.
-
 ## Dropped (no plan)
 
 ### `backend/server.js` HTTP server

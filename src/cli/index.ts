@@ -20,6 +20,7 @@ import {
 import { openRepo } from '../repository.js';
 import type { Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
+import { parseToml, stringifyRecord } from '../toml.js';
 import {
   csvHeader,
   inferInputFormat,
@@ -75,6 +76,14 @@ interface NormalizeArgs extends GlobalArgs {
 interface EditArgs extends GlobalArgs {
   sheet: string;
   path: string;
+}
+
+interface InferArgs extends GlobalArgs {
+  sheet: string;
+}
+
+interface MigrateConfigArgs extends GlobalArgs {
+  sheet: string;
 }
 
 // Exit codes per specs/api/cli.md
@@ -413,6 +422,188 @@ async function runRead(argv: ReadArgs): Promise<void> {
   process.stdout.write(stringifyRecord_text(found, format));
 }
 
+/**
+ * Read the raw TOML bytes of a sheet config at HEAD (or whichever ref the
+ * caller's `--ref` points to). Returns the file's text content.
+ *
+ * Uses `git cat-file blob` rather than the parsed Sheet config so the same
+ * helper supports both v1.0-shaped and pre-v1.0 (`[gitsheet.fields]`) configs
+ * — `migrate-config` operates on the latter.
+ */
+async function readSheetConfigText(
+  gitDir: string,
+  ref: string,
+  configPath: string,
+): Promise<string> {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const ex = promisify(execFile);
+  const { stdout } = await ex('git', ['cat-file', 'blob', `${ref}:${configPath}`], {
+    cwd: gitDir,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return stdout;
+}
+
+/** Update one of a record-like field's observed type info during inference. */
+function observeField(
+  acc: Record<string, { types: Set<string>; min?: number; max?: number; items?: Set<string> }>,
+  key: string,
+  value: unknown,
+): void {
+  if (!acc[key]) acc[key] = { types: new Set() };
+  const slot = acc[key];
+  if (value === null) {
+    slot.types.add('null');
+  } else if (Array.isArray(value)) {
+    slot.types.add('array');
+    if (!slot.items) slot.items = new Set();
+    for (const el of value) slot.items.add(jsonTypeOf(el));
+  } else if (value instanceof Date) {
+    slot.types.add('string'); // TOML datetimes stringify as ISO-8601 in JSON Schema
+  } else if (typeof value === 'object') {
+    slot.types.add('object');
+  } else if (typeof value === 'number') {
+    slot.types.add(Number.isInteger(value) ? 'integer' : 'number');
+    if (slot.min === undefined || value < slot.min) slot.min = value;
+    if (slot.max === undefined || value > slot.max) slot.max = value;
+  } else if (typeof value === 'boolean') {
+    slot.types.add('boolean');
+  } else if (typeof value === 'string') {
+    slot.types.add('string');
+  }
+}
+
+function jsonTypeOf(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  if (value instanceof Date) return 'string';
+  if (typeof value === 'object') return 'object';
+  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number';
+  return typeof value;
+}
+
+async function runInfer(argv: InferArgs): Promise<void> {
+  const { repo, sheet } = await loadRepoAndSheet(argv);
+  const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
+
+  const observed: Record<
+    string,
+    { types: Set<string>; min?: number; max?: number; items?: Set<string> }
+  > = {};
+  const presence: Map<string, number> = new Map();
+  let recordCount = 0;
+  for await (const record of sheet.query()) {
+    recordCount++;
+    for (const [k, v] of Object.entries(record)) {
+      presence.set(k, (presence.get(k) ?? 0) + 1);
+      observeField(observed, k, v);
+    }
+  }
+
+  if (recordCount === 0) {
+    process.stderr.write('gitsheets: no records to infer from\n');
+    return;
+  }
+
+  const properties: Record<string, RecordLike> = {};
+  for (const [field, info] of Object.entries(observed)) {
+    const types = [...info.types].sort();
+    const prop: RecordLike = {};
+    prop['type'] = types.length === 1 ? types[0]! : types;
+    if (info.items && info.items.size > 0) {
+      const itemTypes = [...info.items].sort();
+      prop['items'] = { type: itemTypes.length === 1 ? itemTypes[0]! : itemTypes };
+    }
+    if (info.min !== undefined) prop['minimum'] = info.min;
+    if (info.max !== undefined) prop['maximum'] = info.max;
+    properties[field] = prop;
+  }
+  const required = [...presence.entries()]
+    .filter(([, count]) => count === recordCount)
+    .map(([n]) => n)
+    .sort();
+
+  // Read existing config and merge schema into it (preserving root / path / fields).
+  const ref = argv.ref ?? 'HEAD';
+  const configText = await readSheetConfigText(repo.gitDir, ref, configPath);
+  const parsed = parseToml(configText) as RecordLike;
+  const gitsheet = (parsed['gitsheet'] ?? {}) as RecordLike;
+  const newSchema: RecordLike = { type: 'object', properties };
+  if (required.length > 0) newSchema['required'] = required;
+  gitsheet['schema'] = newSchema;
+  parsed['gitsheet'] = gitsheet;
+
+  const newText = stringifyRecord(parsed);
+  const txOpts = buildTxOpts(argv, `${argv.sheet} infer schema (${Object.keys(properties).length} fields)`);
+  await repo.transact(txOpts, async (tx) => {
+    await tx.tree.writeChild(configPath, newText);
+    tx.markMutated();
+  });
+  process.stdout.write(
+    `inferred schema for .gitsheets/${argv.sheet}.toml — ${Object.keys(properties).length} properties, ${required.length} required\n`,
+  );
+}
+
+async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
+  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
+
+  const ref = argv.ref ?? 'HEAD';
+  const configText = await readSheetConfigText(repo.gitDir, ref, configPath);
+  const parsed = parseToml(configText) as RecordLike;
+  const gitsheet = (parsed['gitsheet'] ?? {}) as RecordLike;
+  const fields = gitsheet['fields'] as Record<string, RecordLike> | undefined;
+
+  if (!fields || typeof fields !== 'object') {
+    process.stderr.write('gitsheets: no [gitsheet.fields] block to migrate\n');
+    return;
+  }
+
+  const properties: Record<string, RecordLike> = {};
+  const remainingFields: Record<string, RecordLike> = {};
+  let warnings = 0;
+  for (const [name, cfg] of Object.entries(fields)) {
+    if (typeof cfg !== 'object' || cfg === null) continue;
+    const schemaProp: RecordLike = {};
+    const remainingField: RecordLike = {};
+    if (cfg['type'] !== undefined) schemaProp['type'] = cfg['type'];
+    if (cfg['enum'] !== undefined) schemaProp['enum'] = cfg['enum'];
+    if (cfg['default'] !== undefined) schemaProp['default'] = cfg['default'];
+    if (cfg['sort'] !== undefined) remainingField['sort'] = cfg['sort'];
+    if (cfg['trueValues'] !== undefined || cfg['falseValues'] !== undefined) {
+      process.stderr.write(
+        `gitsheets: warning — ${name}.trueValues/falseValues moved out of validation (use a CSV-ingest helper)\n`,
+      );
+      warnings++;
+    }
+    if (Object.keys(schemaProp).length > 0) properties[name] = schemaProp;
+    if (Object.keys(remainingField).length > 0) remainingFields[name] = remainingField;
+  }
+
+  // Rebuild gitsheet block: drop the old fields, keep root/path, add schema.
+  const newGitsheet: RecordLike = {};
+  for (const [k, v] of Object.entries(gitsheet)) {
+    if (k === 'fields' || k === 'schema') continue;
+    newGitsheet[k] = v;
+  }
+  if (Object.keys(remainingFields).length > 0) newGitsheet['fields'] = remainingFields;
+  if (Object.keys(properties).length > 0) {
+    newGitsheet['schema'] = { type: 'object', properties };
+  }
+  parsed['gitsheet'] = newGitsheet;
+
+  const newText = stringifyRecord(parsed);
+  const txOpts = buildTxOpts(argv, `${argv.sheet} migrate-config`);
+  await repo.transact(txOpts, async (tx) => {
+    await tx.tree.writeChild(configPath, newText);
+    tx.markMutated();
+  });
+  process.stdout.write(
+    `migrated .gitsheets/${argv.sheet}.toml — ${Object.keys(properties).length} property migrations${warnings ? `, ${warnings} warning(s)` : ''}\n`,
+  );
+}
+
 async function runEdit(argv: EditArgs): Promise<void> {
   const { repo, sheet } = await loadRepoAndSheet(argv);
   const target = argv.path.endsWith('.toml') ? argv.path.slice(0, -5) : argv.path;
@@ -434,7 +625,6 @@ async function runEdit(argv: EditArgs): Promise<void> {
   const cleaned: RecordLike = { ...found };
   delete (cleaned as Record<symbol, unknown>)[Symbol.for('gitsheets-path')];
   delete (cleaned as Record<symbol, unknown>)[Symbol.for('gitsheets-sheet')];
-  const { stringifyRecord } = await import('../toml.js');
   const originalToml = stringifyRecord(cleaned);
 
   const tmpDir = await mkdtemp(join(tmpdir(), 'gitsheets-edit-'));
@@ -466,7 +656,6 @@ async function runEdit(argv: EditArgs): Promise<void> {
       return;
     }
 
-    const { parseToml } = await import('../toml.js');
     const edited = parseToml(editedToml);
 
     const txOpts = buildTxOpts(argv, `${argv.sheet} edit ${target}`);
@@ -656,6 +845,18 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       'Re-write every record through the canonical-normalization pipeline',
       (y) => y.positional('sheet', { type: 'string', demandOption: true }),
       runNormalize,
+    )
+    .command<InferArgs>(
+      'infer <sheet>',
+      "Scan every record and write a starter [gitsheet.schema] block",
+      (y) => y.positional('sheet', { type: 'string', demandOption: true }),
+      runInfer,
+    )
+    .command<MigrateConfigArgs>(
+      'migrate-config <sheet>',
+      "Convert a pre-v1.0 [gitsheet.fields] config to a v1.0 [gitsheet.schema] config",
+      (y) => y.positional('sheet', { type: 'string', demandOption: true }),
+      runMigrateConfig,
     )
     .fail((msg, err) => {
       if (err) {
