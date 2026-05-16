@@ -53,6 +53,7 @@ try {
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero |
 | `TransactionError` | `push_daemon_running` | 409 | `repo.startPushDaemon` while one is already active |
+| `TransactionError` | `transaction_closed` | 409 | `tx.sheet(...)` after the transaction has been finalized or discarded |
 | `IndexError` | `index_unique_conflict` | 409 | Unique index would be violated |
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |

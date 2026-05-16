@@ -4,7 +4,11 @@
 export * from './errors.js';
 
 export { Repository, openRepo } from './repository.js';
-export type { OpenRepoOptions, OpenSheetOptions } from './repository.js';
+export type {
+  OpenRepoOptions,
+  OpenSheetOptions,
+  OpenSheetsOptions,
+} from './repository.js';
 
 export { Sheet, RECORD_PATH_KEY, RECORD_SHEET_KEY } from './sheet.js';
 export type {

@@ -41,6 +41,12 @@ export interface OpenSheetOptions {
   readonly validator?: StandardSchemaV1;
 }
 
+/** Options for {@link Repository.openSheets}. No `validator` — use {@link openStore} for that. */
+export interface OpenSheetsOptions {
+  /** Sub-directory under the data tree to scope every sheet to; default '.'. */
+  readonly root?: string;
+}
+
 export class Repository {
   readonly #hologitRepo: HologitRepo;
   readonly #mutex = new Mutex();
@@ -71,6 +77,12 @@ export class Repository {
     return new Repository(repo);
   }
 
+  /**
+   * @internal — Direct access to the underlying hologit substrate is reserved
+   * for the library. Consumers should use the public Repository surface; the
+   * substrate is an implementation detail and will swap to Rust holo-tree in
+   * v1.1 with no public-API change ([#127]).
+   */
   get hologitRepo(): HologitRepo {
     return this.#hologitRepo;
   }
@@ -79,6 +91,7 @@ export class Repository {
     return this.#hologitRepo.gitDir;
   }
 
+  /** @internal — used by Sheet to enforce strict mode. Library cross-class signal, not a consumer API. */
   isStrictMode(): boolean {
     return this.#strictMode;
   }
@@ -120,7 +133,7 @@ export class Repository {
   }
 
   /** Discover every sheet declared in `<root>/.gitsheets/*.toml`. */
-  async openSheets(opts: OpenSheetOptions = {}): Promise<Record<string, Sheet>> {
+  async openSheets(opts: OpenSheetsOptions = {}): Promise<Record<string, Sheet>> {
     const root = opts.root ?? '.';
     const workspace = await this.#getWorkspace();
     const sheetsDir = await workspace.root.getSubtree(joinTreePath(root, '.gitsheets'));

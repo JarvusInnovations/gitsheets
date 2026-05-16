@@ -76,6 +76,7 @@ The single-TOML-file approach is the default. Use the escape hatch sparingly.
 - JSON Schema validation runs through **`ajv`** (or equivalent). The library configures `ajv` once per sheet with the sheet's schema compiled.
 - All formats from `ajv-formats` are available: `email`, `date-time`, `uri`, `uuid`, etc.
 - `strict: true` mode is enabled — unknown JSON Schema keywords produce a `ConfigError` (`config_invalid`) at sheet-open time rather than silently being ignored.
+- `$data` references (the non-default ajv extension that lets a schema reference another field's runtime value) are **disabled** in v1.0. A `[gitsheet.schema]` block containing `$data` will fail to compile with `ConfigError(config_invalid)`. This is a deliberate hardening choice; if a consumer surfaces a real need, it can be re-enabled in a follow-up.
 
 ## Standard Schema layer
 
@@ -108,7 +109,7 @@ The Standard Schema layer is optional. Without it, only JSON Schema runs.
 4. Canonical normalization (see [behaviors/normalization.md](normalization.md)).
 5. Path render + write.
 
-`ValidationError.issues` combines both layers' issue arrays. Each issue's `source` field identifies which layer it came from.
+Each `ValidationIssue` carries a `source` field identifying which layer raised it (`'json-schema'` or `'standard-schema'`). Validation short-circuits: if JSON Schema fails, the Standard Schema layer never runs, so a thrown `ValidationError`'s `issues` array contains issues from the failing layer only. Use the `source` field to distinguish them in consumer code.
 
 ## Migration of pre-v1.0 `[gitsheet.fields]` config
 

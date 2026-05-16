@@ -189,7 +189,10 @@ export class Transaction {
    */
   sheet(name: string, opts?: { validator?: StandardSchemaV1 }): Sheet {
     if (this.#closed) {
-      throw new TransactionError('transaction_in_progress', 'transaction is already closed');
+      throw new TransactionError(
+        'transaction_closed',
+        'transaction is already closed — obtain a fresh Transaction via repo.transact',
+      );
     }
     return this.#sheetFactory(name, this.#workspace, this.#workspace.root, opts?.validator);
   }

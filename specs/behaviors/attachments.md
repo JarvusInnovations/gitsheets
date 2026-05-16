@@ -74,7 +74,9 @@ if (blob) {
 }
 ```
 
-### `sheet.deleteAttachment(record, name)` _(new in v1.0)_
+### `sheet.deleteAttachment(record, name)`
+
+> **Deferred — not in the v1.0 surface.** Tracked at [#153](https://github.com/JarvusInnovations/gitsheets/issues/153); see [`deferred.md`](../deferred.md). v1.0 ships the cascade behavior on `Sheet.delete(record)` (the attachment directory is removed with the record), but no per-file delete method.
 
 Remove a single attachment.
 
@@ -82,9 +84,9 @@ Remove a single attachment.
 await sheet.deleteAttachment(record, 'avatar.jpg');
 ```
 
-The pre-v1.0 API didn't expose a delete; consumers had to manipulate the tree directly. v1.0 adds this for symmetry.
+### `sheet.deleteAttachments(record)`
 
-### `sheet.deleteAttachments(record)` _(new in v1.0)_
+> **Deferred — not in the v1.0 surface.** Tracked at [#153](https://github.com/JarvusInnovations/gitsheets/issues/153); see [`deferred.md`](../deferred.md).
 
 Remove all attachments for a record.
 

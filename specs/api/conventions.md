@@ -8,12 +8,30 @@ All public symbols are imported from the package root:
 
 ```typescript
 import {
+  // factories
   openRepo, openStore,
-  Repository, Sheet, Transaction,
+
+  // primary classes
+  Repository, Sheet, Transaction, PushDaemon, Template,
+
+  // error classes
   GitsheetsError, ConfigError, ValidationError, TransactionError,
   IndexError, RefError, PathTemplateError, NotFoundError,
+
+  // utilities
+  mergePatch,
+
+  // record annotation symbols (`record[RECORD_PATH_KEY]`, etc.)
+  RECORD_SHEET_KEY, RECORD_PATH_KEY,
 } from 'gitsheets';
 ```
+
+Type-only exports (interfaces, type aliases) flow alongside the value exports
+above. Notable ones: `TransactionResult`, `TransactionOptions`, `Author`,
+`SheetConfig`, `UpsertResult`, `IndexKeyFn`, `DefineIndexOptions`,
+`OpenStoreOptions`, `Store`, `StoreTx`, `PushDaemonOptions`,
+`PushDaemonStatus`, `BackoffConfig`, `JSONSchema`, `StandardSchemaV1`,
+`ValidationIssue`, `RecordLike`.
 
 No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely.
 

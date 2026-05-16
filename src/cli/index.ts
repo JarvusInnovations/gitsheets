@@ -236,7 +236,8 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
     .demandCommand(1, 'Specify a command')
     .option('git-dir', {
       type: 'string',
-      describe: 'Path to a .git directory; default: discovered from cwd',
+      describe: 'Path to a .git directory; default: $GIT_DIR or discovered from cwd',
+      default: process.env['GIT_DIR'],
     })
     .option('root', { type: 'string', describe: 'Sub-directory under the data tree; default "/"' })
     .option('ref', { type: 'string', describe: "Parent ref/commit; default HEAD's branch" })

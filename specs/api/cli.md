@@ -21,7 +21,7 @@ These apply to every command unless noted otherwise:
 
 `--ref` selects which commit/branch to read from or transact against. `--commit-to` overrides which branch a write-transaction advances. `--working` reads/writes the working tree state (not a committed tree).
 
-These options unify what [#106](https://github.com/JarvusInnovations/gitsheets/issues/106) asked for. Every mutating command implicitly uses `repo.transact` and accepts `--message`, `--author-name`, `--author-email`, `--trailer.<Key>=<value>`.
+These options unify what [#106](https://github.com/JarvusInnovations/gitsheets/issues/106) asked for. Every mutating command implicitly uses `repo.transact` and accepts `--message`, `--author-name`, `--author-email`, and one or more `--trailer Key=Value` flags (repeatable).
 
 ## Commands
 
@@ -41,7 +41,7 @@ Flags:
 - `--encoding <enc>` — default `utf8`; see [`deferred.md`](../deferred.md) — utf-8 only in v1.0
 - `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted; see [`deferred.md`](../deferred.md)
 - `--attachments.<path>=<spec>` — attach a file alongside the record; see [`deferred.md`](../deferred.md)
-- `--message <msg>`, `--author-name`, `--author-email`, `--trailer.<Key>=<value>` — transaction metadata
+- `--message <msg>`, `--author-name`, `--author-email`, `--trailer Key=Value` (repeatable) — transaction metadata
 
 For patching existing records in v1.0, use the library API `Sheet.patch(query, partial)`
 ([`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md)). A CLI `--patch` flag
@@ -59,16 +59,15 @@ Read records.
 
 ```bash
 git sheet query users
-git sheet query users --filter.email=jane@x.org
+git sheet query users --filter email=jane@x.org
 git sheet query users --filter status=active --filter project_id=p1
 git sheet query users --format=csv --headers
 ```
 
 Flags:
 
-- `--filter.<field>=<value>` — equality filter
+- `--filter field=value` (repeatable) — equality filter
 - `--fields <name>...` — output column subset / reorder
-- `--fields.<from>=<to>` — output column rename
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` (default: `json`)
 - `--headers` (CSV/TSV only; default: true)
