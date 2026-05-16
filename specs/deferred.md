@@ -77,10 +77,10 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** `--attachments.<name>=<source-path>` flags to attach files alongside the record in the same transaction.
 - **Why deferred:** Library substrate exists (`Sheet.setAttachment`); CLI wiring is purely arg-parsing.
 
-### CLI `--prefix` and `--working` global flags — [#148](https://github.com/JarvusInnovations/gitsheets/issues/148)
+### CLI `--working` global flag — [#165](https://github.com/JarvusInnovations/gitsheets/issues/165)
 
-- **What:** `--prefix` (sub-prefix under the data root) and `--working` (read/write the working tree rather than HEAD).
-- **Why deferred:** Both need library plumbing too — `--prefix` would thread through `Repository.openSheet`, and `--working` would need `Repository` to resolve the working tree's state.
+- **What:** Read/write the working tree's state rather than HEAD.
+- **Why deferred:** Substantive library work — `Repository` needs a parallel read/write path against on-disk files (no commit). Split out of #148 during v1.1; `--prefix` shipped, `--working` tracked separately.
 
 ### CLI `gitsheets upsert --patch` — [#149](https://github.com/JarvusInnovations/gitsheets/issues/149)
 

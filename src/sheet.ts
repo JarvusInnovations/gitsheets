@@ -458,6 +458,12 @@ export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
   readonly transaction?: Transaction;
   /** Consumer-supplied Standard Schema validator; runs after JSON Schema. */
   readonly validator?: StandardSchemaV1<unknown, T>;
+  /**
+   * Optional sub-prefix under the sheet's `config.root`. Records read/written
+   * by this Sheet live at `<config.root>/<prefix>/<rendered-path>.toml`. See
+   * specs/api/cli.md and #148.
+   */
+  readonly prefix?: string;
 }
 
 export class Sheet<T extends RecordLike = RecordLike> {
@@ -468,6 +474,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
+  readonly #prefix: string;
   readonly #indexes = new Map<string, IndexState<T>>();
 
   constructor(opts: SheetConstructorOptions<T>) {
@@ -478,6 +485,23 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#configPath = opts.configPath;
     this.#transaction = opts.transaction;
     this.#validator = opts.validator;
+    this.#prefix = (opts.prefix ?? '').replace(/^\/+|\/+$/g, '');
+  }
+
+  /**
+   * The effective tree path where this sheet's records live, formed by
+   * joining `config.root` and the optional `prefix`. Normalized; never has
+   * leading/trailing slashes.
+   */
+  #effectiveRoot(config: SheetConfig): string {
+    const root = config.root.replace(/^\/+|\/+$/g, '');
+    if (!this.#prefix) return root;
+    return joinTreePath(root, this.#prefix);
+  }
+
+  /** Options to forward when delegating into a `tx.sheet(name, opts)` call. */
+  #txDelegateOpts(): { prefix?: string } {
+    return this.#prefix ? { prefix: this.#prefix } : {};
   }
 
   get name(): string {
@@ -514,7 +538,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
-    const sheetRoot = await this.#getSheetRoot(config.root);
+    const sheetRoot = await this.#getSheetRoot(this.#effectiveRoot(config));
     if (!sheetRoot) return;
 
     // hologit's TreeObject/BlobObject are structurally compatible with the
@@ -573,9 +597,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const dstTreeHash = await this.#dataTree.getHash();
 
     const args = ['diff-tree', '-z', '-r', '-M', '--no-commit-id', srcRef, dstTreeHash];
-    const cleanRoot = config.root.replace(/^\/+|\/+$/g, '');
-    if (cleanRoot && cleanRoot !== '.') {
-      args.push('--', cleanRoot);
+    const effectiveRoot = this.#effectiveRoot(config);
+    if (effectiveRoot && effectiveRoot !== '.') {
+      args.push('--', effectiveRoot);
     }
 
     let stdout: string;
@@ -603,7 +627,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
       // When root is '.', sheet config blobs would otherwise appear as changes
       // — they're metadata, not records.
 
-      const recordPath = stripRecordPath(entry.canonicalPath, config.root);
+      const recordPath = stripRecordPath(entry.canonicalPath, this.#effectiveRoot(config));
 
       const change: Record<string, unknown> = {
         path: recordPath,
@@ -676,12 +700,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async clear(): Promise<void> {
     if (this.#transaction === undefined) {
       await this.#repo.transact({ message: `${this.#name} clear` }, async (tx) => {
-        await tx.sheet(this.#name).clear();
+        await tx.sheet(this.#name, this.#txDelegateOpts()).clear();
       });
       return;
     }
     const config = await this.readConfig();
-    const sheetTree = await this.#dataTree.getSubtree(config.root, true);
+    const sheetTree = await this.#dataTree.getSubtree(this.#effectiveRoot(config), true);
     if (sheetTree) {
       const children = await sheetTree.getChildren();
       const names: string[] = [];
@@ -735,10 +759,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      return tx.sheet<T>(this.#name).upsert(validated);
+      return tx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated);
     }
     return this.#autoTransact(
-      async (innerTx) => innerTx.sheet<T>(this.#name).upsert(validated),
+      async (innerTx) => innerTx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated),
       (r) => `${this.#name} upsert ${r.path}`,
     );
   }
@@ -774,12 +798,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#checkStrictMode();
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      await tx.sheet(this.#name).delete(target);
+      await tx.sheet(this.#name, this.#txDelegateOpts()).delete(target);
       return;
     }
     const path = typeof target === 'string' ? target : await this.pathForRecord(target);
     await this.#repo.transact({ message: `${this.#name} delete ${path}` }, async (innerTx) => {
-      await innerTx.sheet(this.#name).delete(target);
+      await innerTx.sheet(this.#name, this.#txDelegateOpts()).delete(target);
     });
   }
 
@@ -861,7 +885,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async getAttachment(record: T | string, name: string): Promise<BlobObject | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const node = await this.#dataTree.getChild(joinTreePath(config.root, recordPath, name));
+    const node = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath, name));
     return node && isBlob(node) ? node : null;
   }
 
@@ -870,7 +894,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   ): Promise<Record<string, BlobObject> | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const dir = await this.#dataTree.getChild(joinTreePath(config.root, recordPath));
+    const dir = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath));
     if (!dir || !isTree(dir)) return null;
     return dir.getBlobMap();
   }
@@ -891,13 +915,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
       if (tx !== undefined) {
-        await tx.sheet(this.#name).setAttachments(record, attachments);
+        await tx.sheet(this.#name, this.#txDelegateOpts()).setAttachments(record, attachments);
         return;
       }
       await this.#repo.transact(
         { message: `${this.#name} attachments` },
         async (innerTx) => {
-          await innerTx.sheet(this.#name).setAttachments(record, attachments);
+          await innerTx.sheet(this.#name, this.#txDelegateOpts()).setAttachments(record, attachments);
         },
       );
       return;
@@ -905,7 +929,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
     for (const [aName, content] of Object.entries(attachments)) {
-      await this.#dataTree.writeChild(joinTreePath(config.root, recordPath, aName), content);
+      await this.#dataTree.writeChild(joinTreePath(this.#effectiveRoot(config), recordPath, aName), content);
     }
     this.#transaction.markMutated();
   }
@@ -920,20 +944,20 @@ export class Sheet<T extends RecordLike = RecordLike> {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
       if (tx !== undefined) {
-        await tx.sheet(this.#name).deleteAttachment(record, name);
+        await tx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachment(record, name);
         return;
       }
       await this.#repo.transact(
         { message: `${this.#name} deleteAttachment ${name}` },
         async (innerTx) => {
-          await innerTx.sheet(this.#name).deleteAttachment(record, name);
+          await innerTx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachment(record, name);
         },
       );
       return;
     }
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const fullPath = joinTreePath(config.root, recordPath, name);
+    const fullPath = joinTreePath(this.#effectiveRoot(config), recordPath, name);
     const existing = await this.#dataTree.getChild(fullPath);
     if (!existing || !isBlob(existing)) {
       throw new NotFoundError(
@@ -955,20 +979,20 @@ export class Sheet<T extends RecordLike = RecordLike> {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
       if (tx !== undefined) {
-        await tx.sheet(this.#name).deleteAttachments(record);
+        await tx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachments(record);
         return;
       }
       await this.#repo.transact(
         { message: `${this.#name} deleteAttachments` },
         async (innerTx) => {
-          await innerTx.sheet(this.#name).deleteAttachments(record);
+          await innerTx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachments(record);
         },
       );
       return;
     }
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const fullPath = joinTreePath(config.root, recordPath);
+    const fullPath = joinTreePath(this.#effectiveRoot(config), recordPath);
     const existing = await this.#dataTree.getChild(fullPath);
     if (!existing || !isTree(existing)) {
       // No attachment dir — true no-op, don't even mark the tx mutated.
@@ -1064,7 +1088,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     // Rename: if the source record was loaded from a different path, delete the old one.
     if (typeof existing === 'string' && existing !== recordPath) {
       try {
-        await this.#dataTree.deleteChild(joinTreePath(config.root, `${existing}.toml`));
+        await this.#dataTree.deleteChild(joinTreePath(this.#effectiveRoot(config), `${existing}.toml`));
       } catch {
         // Old path may not exist — ignore.
       }
@@ -1072,7 +1096,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const toml = stringifyRecord(stripSymbols(normalized as RecordLike));
     const blob = await this.#dataTree.writeChild(
-      joinTreePath(config.root, `${recordPath}.toml`),
+      joinTreePath(this.#effectiveRoot(config), `${recordPath}.toml`),
       toml,
     );
     tx.markMutated();
@@ -1084,7 +1108,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const config = await this.readConfig();
     const recordPath =
       typeof target === 'string' ? target : await this.pathForRecord(target);
-    const fullPath = joinTreePath(config.root, `${recordPath}.toml`);
+    const fullPath = joinTreePath(this.#effectiveRoot(config), `${recordPath}.toml`);
     const existing = await this.#dataTree.getChild(fullPath);
     if (!existing) {
       throw new NotFoundError('record_not_found', `${this.#name}: no record at ${recordPath}`);
@@ -1094,7 +1118,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     // Per specs/behaviors/attachments.md the attachment dir is deleted in
     // the same operation.
     try {
-      await this.#dataTree.deleteChild(joinTreePath(config.root, recordPath));
+      await this.#dataTree.deleteChild(joinTreePath(this.#effectiveRoot(config), recordPath));
     } catch {
       // No attachment dir — that's fine.
     }

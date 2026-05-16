@@ -12,11 +12,19 @@ operation on a `Repository` (or `Sheet`/`Transaction`).
 | --- | --- | --- |
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
+| `--prefix <path>` | none | `GITSHEETS_PREFIX` |
 | `--ref <ref>` | `HEAD` | `GITSHEETS_REF` |
 | `--commit-to <ref>` | derived from `--ref` | — |
 | `--message <msg>` | auto-generated | — |
 | `--author-name <name>`, `--author-email <email>` | git config | — |
 | `--trailer <Key>=<value>` (repeatable) | none | — |
+
+`--prefix` scopes records to a sub-tree under each sheet's configured root —
+useful for multi-tenant deployments where one git repo holds many tenants
+under `<root>/<tenant>/...`. With `--prefix tenant-a`, a sheet whose config
+declares `root = 'users'` reads/writes records at `users/tenant-a/<path>.toml`.
+The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the
+record data tree is scoped.
 
 ## Commands
 

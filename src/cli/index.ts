@@ -24,6 +24,7 @@ import type { RecordLike } from '../path-template/index.js';
 interface GlobalArgs {
   gitDir?: string;
   root?: string;
+  prefix?: string;
   ref?: string;
   commitTo?: string;
   message?: string;
@@ -124,7 +125,10 @@ async function loadRepoAndSheet(
   argv: GlobalArgs & { sheet: string },
 ): Promise<{ repo: Awaited<ReturnType<typeof openRepo>>; sheet: Sheet }> {
   const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
-  const sheet = await repo.openSheet(argv.sheet, argv.root ? { root: argv.root } : {});
+  const sheetOpts: { root?: string; prefix?: string } = {};
+  if (argv.root) sheetOpts.root = argv.root;
+  if (argv.prefix) sheetOpts.prefix = argv.prefix;
+  const sheet = await repo.openSheet(argv.sheet, sheetOpts);
   return { repo, sheet };
 }
 
@@ -164,8 +168,9 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
 
   const txOpts = buildTxOpts(argv, `${argv.sheet} upsert (${records.length})`);
 
+  const txSheetOpts: { prefix?: string } = argv.prefix ? { prefix: argv.prefix } : {};
   await repo.transact(txOpts, async (tx) => {
-    const target = tx.sheet(argv.sheet);
+    const target = tx.sheet(argv.sheet, txSheetOpts);
     for (const record of records) {
       const result: UpsertResult = await target.upsert(record);
       process.stdout.write(`${result.blob.hash} ${result.path}\n`);
@@ -217,8 +222,9 @@ async function runNormalize(argv: NormalizeArgs): Promise<void> {
   }
   if (records.length === 0) return;
   const txOpts = buildTxOpts(argv, `${argv.sheet} normalize`);
+  const txSheetOpts: { prefix?: string } = argv.prefix ? { prefix: argv.prefix } : {};
   await repo.transact(txOpts, async (tx) => {
-    const target = tx.sheet(argv.sheet);
+    const target = tx.sheet(argv.sheet, txSheetOpts);
     for (const r of records) {
       const result = await target.upsert(r);
       process.stdout.write(`${result.blob.hash} ${result.path}\n`);
@@ -240,6 +246,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       default: process.env['GIT_DIR'],
     })
     .option('root', { type: 'string', describe: 'Sub-directory under the data tree; default "/"' })
+    .option('prefix', {
+      type: 'string',
+      describe:
+        'Sub-prefix under each sheet\'s config root — scopes records to a sub-tree (multi-tenant)',
+    })
     .option('ref', { type: 'string', describe: "Parent ref/commit; default HEAD's branch" })
     .option('commit-to', { type: 'string', describe: 'Branch to update on commit' })
     .option('message', { type: 'string', describe: 'Commit message (mutating commands)' })

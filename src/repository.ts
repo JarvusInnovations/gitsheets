@@ -38,6 +38,13 @@ export interface OpenRepoOptions {
 export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
   /** Sub-directory under the data tree to scope this sheet to; default '.'. */
   readonly root?: string;
+  /**
+   * Optional sub-prefix under the resolved sheet root (and under `root` if
+   * set). Records read/written by this Sheet live at
+   * `<configRoot>/<prefix>/<rendered-path>.toml`. Use for multi-tenant
+   * sub-tree partitioning of a sheet's records. See specs/api/cli.md and #148.
+   */
+  readonly prefix?: string;
   /** Standard Schema validator; runs after the persisted JSON Schema. */
   readonly validator?: StandardSchemaV1<unknown, T>;
 }
@@ -46,6 +53,8 @@ export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
 export interface OpenSheetsOptions {
   /** Sub-directory under the data tree to scope every sheet to; default '.'. */
   readonly root?: string;
+  /** Optional sub-prefix applied to every sheet opened. See {@link OpenSheetOptions}. */
+  readonly prefix?: string;
 }
 
 export class Repository {
@@ -130,6 +139,9 @@ export class Repository {
     if (opts.validator !== undefined) {
       Object.assign(sheetOpts, { validator: opts.validator });
     }
+    if (opts.prefix !== undefined) {
+      Object.assign(sheetOpts, { prefix: opts.prefix });
+    }
     const sheet = new Sheet<T>(sheetOpts);
     // Eagerly validate config exists by reading once.
     await sheet.readConfig();
@@ -154,13 +166,17 @@ export class Repository {
       if (!match) continue;
       if (!child || (child as { isBlob?: boolean }).isBlob !== true) continue;
       const sheetName = match[1]!;
-      out[sheetName] = new Sheet({
+      const sheetOpts: import('./sheet.js').SheetConstructorOptions = {
         repo: this,
         workspace,
         dataTree,
         name: sheetName,
         configPath: joinTreePath(root, '.gitsheets', childName),
-      });
+      };
+      if (opts.prefix !== undefined) {
+        Object.assign(sheetOpts, { prefix: opts.prefix });
+      }
+      out[sheetName] = new Sheet(sheetOpts);
     }
     return out;
   }
@@ -207,7 +223,8 @@ export class Repository {
           ws: Workspace,
           tree: TreeObject,
           validator?: StandardSchemaV1<unknown, R>,
-        ): Sheet<R> => this.#makeTxSheet<R>(tx, name, ws, tree, validator),
+          prefix?: string,
+        ): Sheet<R> => this.#makeTxSheet<R>(tx, name, ws, tree, validator, prefix),
       });
 
       let value: T;
@@ -288,6 +305,7 @@ export class Repository {
     workspace: Workspace,
     tree: TreeObject,
     validator?: StandardSchemaV1<unknown, T>,
+    prefix?: string,
   ): Sheet<T> {
     const configPath = `.gitsheets/${name}.toml`;
     const opts: import('./sheet.js').SheetConstructorOptions<T> = {
@@ -299,6 +317,7 @@ export class Repository {
       transaction: tx,
     };
     if (validator !== undefined) Object.assign(opts, { validator });
+    if (prefix !== undefined) Object.assign(opts, { prefix });
     return new Sheet<T>(opts);
   }
 
