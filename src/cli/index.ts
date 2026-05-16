@@ -86,6 +86,13 @@ interface MigrateConfigArgs extends GlobalArgs {
   sheet: string;
 }
 
+interface InitArgs extends GlobalArgs {
+  sheet: string;
+  path?: string;
+  schema?: string;
+  force?: boolean;
+}
+
 // Exit codes per specs/api/cli.md
 function exitCodeForError(err: unknown): number {
   if (err instanceof ValidationError) return 22;
@@ -545,6 +552,66 @@ async function runInfer(argv: InferArgs): Promise<void> {
   );
 }
 
+async function runInit(argv: InitArgs): Promise<void> {
+  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
+
+  // Refuse to overwrite an existing config (unless --force).
+  const ref = argv.ref ?? 'HEAD';
+  if (!argv.force) {
+    try {
+      await readSheetConfigText(repo.gitDir, ref, configPath);
+      throw new Error(
+        `.gitsheets/${argv.sheet}.toml already exists at ${ref} — use --force to overwrite`,
+      );
+    } catch (err) {
+      // err is "already exists" → rethrow; otherwise it doesn't exist → proceed.
+      if (
+        err instanceof Error &&
+        err.message.startsWith(`.gitsheets/${argv.sheet}.toml already exists`)
+      ) {
+        throw err;
+      }
+    }
+  }
+
+  const config: RecordLike = {
+    gitsheet: {
+      root: argv.sheet,
+      path: argv.path ?? '${{ id }}',
+    },
+  };
+
+  if (argv.schema) {
+    const schemaText = await readFile(argv.schema, 'utf8');
+    const schemaParsed = JSON.parse(schemaText);
+    if (typeof schemaParsed !== 'object' || schemaParsed === null) {
+      throw new Error(`--schema: ${argv.schema} did not parse as a JSON object`);
+    }
+    (config['gitsheet'] as RecordLike)['schema'] = schemaParsed;
+  }
+
+  const newText = stringifyRecord(config);
+
+  // Validate the config parses through the standard SheetConfig loader so we
+  // don't commit something we'll then fail to open.
+  try {
+    const { parseConfigToml } = await import('../toml.js');
+    parseConfigToml(newText, configPath);
+  } catch (err) {
+    throw new Error(
+      `init produced an invalid config: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const txOpts = buildTxOpts(argv, `${argv.sheet} init sheet config`);
+  await repo.transact(txOpts, async (tx) => {
+    await tx.tree.writeChild(configPath, newText);
+    tx.markMutated();
+  });
+  process.stdout.write(`created .gitsheets/${argv.sheet}.toml\n`);
+}
+
 async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
   const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
@@ -845,6 +912,27 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       'Re-write every record through the canonical-normalization pipeline',
       (y) => y.positional('sheet', { type: 'string', demandOption: true }),
       runNormalize,
+    )
+    .command<InitArgs>(
+      'init <sheet>',
+      "Scaffold .gitsheets/<sheet>.toml with sensible defaults",
+      (y) =>
+        y
+          .positional('sheet', { type: 'string', demandOption: true })
+          .option('path', {
+            type: 'string',
+            describe: "Path template (default: '${{ id }}')",
+          })
+          .option('schema', {
+            type: 'string',
+            describe: 'Path to a JSON Schema file to embed under [gitsheet.schema]',
+          })
+          .option('force', {
+            type: 'boolean',
+            default: false,
+            describe: 'Overwrite an existing .gitsheets/<sheet>.toml',
+          }),
+      runInit,
     )
     .command<InferArgs>(
       'infer <sheet>',

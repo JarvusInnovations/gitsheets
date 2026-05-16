@@ -137,6 +137,27 @@ or after a manual edit that didn't preserve canonical key order.
 gitsheets normalize users
 ```
 
+### `gitsheets init <sheet>`
+
+Scaffold `.gitsheets/<sheet>.toml` with sensible defaults. Useful as a first-step before bulk-importing records.
+
+```bash
+gitsheets init users
+gitsheets init users --path='${{ slug }}'
+gitsheets init users --schema=./schemas/user.schema.json
+```
+
+Defaults:
+
+- `root = <sheet>` (the sheet name)
+- `path = '${{ id }}'`
+
+Flags:
+
+- `--path <tpl>` — override the path template.
+- `--schema <file>` — embed a JSON Schema file under `[gitsheet.schema]`. The schema is validated through the same loader the runtime uses; an invalid schema aborts before the transaction commits.
+- `--force` — overwrite an existing `.gitsheets/<sheet>.toml`. Without `--force`, init refuses to clobber.
+
 ### `gitsheets infer <sheet>`
 
 Scan every record in the sheet and write a conservative starter `[gitsheet.schema]` block into `.gitsheets/<sheet>.toml`. The committed schema captures observed types per field, plus `minimum`/`maximum` hints for numeric fields and `items.type` for arrays. Fields present in every record are listed under `required`.

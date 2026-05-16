@@ -122,9 +122,17 @@ git sheet migrate-config users
 
 See [#130](https://github.com/JarvusInnovations/gitsheets/issues/130).
 
-### `git sheet init <sheet>` _(deferred to post-1.0)_
+### `git sheet init <sheet>`
 
-Scaffold `.gitsheets/<sheet>.toml`. See [#139](https://github.com/JarvusInnovations/gitsheets/issues/139).
+Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '${{ id }}'`. Flags:
+
+- `--path <tpl>` — override the path template.
+- `--schema <file>` — embed a JSON Schema file at `[gitsheet.schema]`.
+- `--force` — overwrite an existing config.
+
+```bash
+git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
+```
 
 ## Exit codes
 

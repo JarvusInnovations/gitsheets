@@ -32,11 +32,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** `for await (const { name, mimeType, blob } of sheet.attachments(record))` — a higher-level iterator over a record's attachments, replacing the current low-level `blobMap` surface.
 - **Why deferred:** The current `getAttachments` / `getAttachment` / `setAttachment` API works; iterator is sugar. Nice ergonomics, not 1.0-critical.
 
-### `git sheet init` scaffold command — [#139](https://github.com/JarvusInnovations/gitsheets/issues/139)
-
-- **What:** A CLI command that writes a starter `.gitsheets/<name>.toml` from a JSON Schema file, from sample records, or from minimal flags.
-- **Why deferred:** Consumers can hand-author the TOML. Real ergonomics win but not on the 1.0 critical path.
-
 ### YAML format support (input + output) — [#61](https://github.com/JarvusInnovations/gitsheets/issues/61)
 
 - **What:** Accept and emit YAML in CLI ingest / export, alongside the existing JSON / TOML / CSV.
