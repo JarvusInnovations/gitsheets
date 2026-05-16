@@ -1,59 +1,21 @@
-# Gitsheets
+# gitsheets
 
-A toolkit for using a git repository to store low-volume, high-touch, human-scale data
+A git-backed document store for low-volume, high-touch, human-scale data.
 
-## Project setup
+> **v1.0 under heavy development.** The library is being rewritten as a
+> TypeScript-only ESM package. The current `develop` (and `1.0-substrate`)
+> branches do not yet expose the documented API. Track progress in the
+> [1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1).
 
-```
-npm install
-cd backend && npm install
-```
+## Spec-driven
 
-### Compiles and hot-reloads for development
+[`specs/`](specs/) is the source of truth. Start at [`specs/README.md`](specs/README.md).
 
-```
-npm run serve
-cd backend && npm start
-```
+- [`specs/architecture.md`](specs/architecture.md) — stack and packaging
+- [`specs/concepts.md`](specs/concepts.md) — Repository, Sheet, Record, Transaction, Store, Index
+- [`specs/api/`](specs/api/) — per-symbol API contracts
+- [`specs/behaviors/`](specs/behaviors/) — cross-cutting rules
 
-### Compiles and minifies for production
+## License
 
-```
-npm run build
-```
-
-### Run your tests
-
-```
-git init tests
-cd tests && git commit -m 'init' --allow-empty
-cd ../backend && GIT_DIR=../tests/.git npm start
-npm run test
-```
-
-### Lints and fixes files
-
-```
-npm run lint
-```
-
-### Customize configuration
-
-See [Configuration Reference](https://cli.vuejs.org/config/).
-
-## Using a disposable project environment
-
-With [Chef Habitat](https://habitat.sh) installed, you don't need
-anything else installed on your workstation to get a complete
-development environment:
-
-```bash
-# instruct Docker to open port 8080
-export HAB_DOCKER_OPTS='-p 8080:8080'
-
-# launch into a disposable studio shell
-hab studio enter
-```
-
-The [`.studiorc`](./.studiorc) script will run automatically to set up your
-studio and print a list of available commands right ahead of your prompt.
+[Apache-2.0](LICENSE).
