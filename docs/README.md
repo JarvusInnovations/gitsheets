@@ -2,43 +2,42 @@
 
 A git-backed document store for low-volume, high-touch, human-scale data.
 
-> **v1.0 docs under construction.** The pages here cover the post-1.0 surface.
-> For the full contract, [`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs)
-> is the source of truth.
-
-## Sections
-
-- [Quick start](quick-start.md) — `npm i gitsheets`, fresh TS project, first
-  typed write inside a transaction in ≤5 minutes
-- [CLI reference](cli.md) — `git sheet <command>` surface
-- [API reference](api.md) — pointer into the `specs/` directory
-- [Path templates](path-templates.md) — declaring where records live
-
-## Install
+Records are TOML files in a git repo, organized by a per-sheet path template. Every mutation is a commit — the commit log is the audit log. Schemas live alongside the data; validation runs on every write. Branches give you propose-review workflows for free.
 
 ```bash
 npm install gitsheets
 ```
 
-`gitsheets` is a TypeScript-first ESM package targeting Node.js ≥ 20 and
-Bun ≥ 1. The CLI installs as both `gitsheets` and `git-sheet`.
+Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and `git-sheet`.
 
-## Concepts at a glance
+## Get started
 
-- **Repository** — a git directory holding gitsheets data
-- **Sheet** — a typed collection declared by `.gitsheets/<name>.toml`
-- **Path template** — `${{ slug }}` / `${{ field/** }}` — where each record's
-  TOML file lives in the tree
-- **Transaction** — one commit per scope; multiple sheet mutations atomic
-- **Store** — typed wrapper over sheets, binds Standard Schema validators
-- **Push daemon** — async fast-forward push to a remote with retry/backoff
+- **[Quick start](quick-start.md)** — `npm install gitsheets`, declare a sheet, write a record, read it back. ≤ 5 minutes.
+- **[Concepts](concepts.md)** — Repository, Sheet, Path Template, Transaction, Store, Index, Push Daemon. The vocabulary every consumer needs.
 
-See [`specs/concepts.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/concepts.md)
-for the full vocabulary.
+## Reference
 
-## Why git as a substrate
+- **[CLI reference](cli.md)** — `git sheet <command>`, global flags, exit codes.
+- **[API reference](api.md)** — public exports + pointers into the per-symbol spec.
+- **[Path templates](path-templates.md)** — syntax, recursive fields, query pruning, invalid-char handling.
+- **[Validation](validation.md)** — JSON Schema in `.gitsheets/<sheet>.toml`, optional Standard Schema layering.
 
-Every mutation is a commit. The commit log is the audit log. Sheets diff
-cleanly because gitsheets writes records in a canonical, byte-stable form
-(deep-sorted TOML keys, optional array sort rules). Branches give you
-proposal / review workflows for free.
+## Recipes
+
+- **[Typed sheet with Zod](recipes/typed-sheet-with-zod.md)** — Standard Schema validator threading, type-safe upsert/query.
+- **[Request-bound transactions in Fastify](recipes/request-bound-transactions.md)** — one commit per HTTP request, with structured trailers.
+- **[Secondary indices](recipes/secondary-indices.md)** — in-memory `findByEmail` / `findByForeignKey` patterns.
+- **[Production push daemon](recipes/production-push-daemon.md)** — backoff config, auth strategies, monitoring.
+- **[Migrating a `[gitsheet.fields]` config](recipes/migrating-config.md)** — pre-v1.0 → v1.0 schema migration.
+
+## Migrating from pre-v1.0
+
+If you're updating from a pre-v1.0 internal install, the [migration guide](migration-guide.md) covers the breaking changes (legacy `GitSheets` class removed, HTTP server removed, ESM-only, validation reshape).
+
+## Where the contracts live
+
+[`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs) is the source of truth. The docs you're reading are the consumer-facing tour; the specs are the authoritative API + behavior contract. When in doubt, the spec wins.
+
+## License
+
+Apache-2.0. See [LICENSE](https://github.com/JarvusInnovations/gitsheets/blob/develop/LICENSE).

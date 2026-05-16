@@ -1,7 +1,7 @@
-site_name: Gitsheets Documentation
-site_description: Gitsheets is the toolkit for distributed recordkeeping that lives inside Git
+site_name: gitsheets
+site_description: A git-backed document store for low-volume, high-touch, human-scale data
 site_author: Jarvus Innovations
-copyright: 2020 Jarvus Innovations
+copyright: Apache-2.0 — Jarvus Innovations
 repo_url: https://github.com/JarvusInnovations/gitsheets
 edit_uri: edit/develop/docs
 
@@ -9,13 +9,33 @@ theme:
   name: material
   features:
     - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+    - content.action.edit
   palette:
     primary: "orange"
     accent: "deep purple"
 
+nav:
+  - Home: README.md
+  - Quick start: quick-start.md
+  - Concepts: concepts.md
+  - Guides:
+      - Path templates: path-templates.md
+      - Validation: validation.md
+      - CLI: cli.md
+      - API reference: api.md
+  - Recipes:
+      - Typed sheet with Zod: recipes/typed-sheet-with-zod.md
+      - Request-bound transactions: recipes/request-bound-transactions.md
+      - Secondary indices: recipes/secondary-indices.md
+      - Production push daemon: recipes/production-push-daemon.md
+      - Migrating a fields config: recipes/migrating-config.md
+  - Migration guide: migration-guide.md
+
 plugins:
   - search
-  - awesome-pages
 
 extra_javascript:
   - https://unpkg.com/mermaid@8.5.0/dist/mermaid.min.js
