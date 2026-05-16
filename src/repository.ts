@@ -178,8 +178,12 @@ export class Repository {
         committer,
         message: normalized.message,
         trailers: normalized.trailers,
-        sheetFactory: (name: string, ws: Workspace, tree: TreeObject): Sheet =>
-          this.#makeTxSheet(tx, name, ws, tree),
+        sheetFactory: (
+          name: string,
+          ws: Workspace,
+          tree: TreeObject,
+          validator?: StandardSchemaV1,
+        ): Sheet => this.#makeTxSheet(tx, name, ws, tree, validator),
       });
 
       let value: T;
@@ -197,16 +201,24 @@ export class Repository {
 
   // --- Private helpers ---
 
-  #makeTxSheet(tx: Transaction, name: string, workspace: Workspace, tree: TreeObject): Sheet {
+  #makeTxSheet(
+    tx: Transaction,
+    name: string,
+    workspace: Workspace,
+    tree: TreeObject,
+    validator?: StandardSchemaV1,
+  ): Sheet {
     const configPath = `.gitsheets/${name}.toml`;
-    return new Sheet({
+    const opts: import('./sheet.js').SheetConstructorOptions = {
       repo: this,
       workspace,
       dataTree: tree,
       name,
       configPath,
       transaction: tx,
-    });
+    };
+    if (validator !== undefined) Object.assign(opts, { validator });
+    return new Sheet(opts);
   }
 
   async #getWorkspace(): Promise<Workspace> {

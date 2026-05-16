@@ -9,6 +9,7 @@ import type { Repo as HologitRepo, TreeObject, Workspace } from 'hologit';
 
 import { RefError, TransactionError } from './errors.js';
 import type { Sheet } from './sheet.js';
+import type { StandardSchemaV1 } from './validation.js';
 
 const exec = promisify(execFile);
 
@@ -115,10 +116,13 @@ export class Transaction {
   readonly #committer: Author;
   readonly #message: string;
   readonly #trailers: Readonly<Record<string, string>>;
-  /** Sheets bound to this transaction's tree, cached by name. */
-  readonly #sheetCache = new Map<string, Sheet>();
   /** Function the Repository injects so Transaction.sheet() can build Sheet instances. */
-  readonly #sheetFactory: (name: string, workspace: Workspace, tree: TreeObject) => Sheet;
+  readonly #sheetFactory: (
+    name: string,
+    workspace: Workspace,
+    tree: TreeObject,
+    validator?: StandardSchemaV1,
+  ) => Sheet;
   #closed = false;
   #anyMutation = false;
 
@@ -132,7 +136,12 @@ export class Transaction {
     committer: Author;
     message: string;
     trailers: Readonly<Record<string, string>>;
-    sheetFactory: (name: string, workspace: Workspace, tree: TreeObject) => Sheet;
+    sheetFactory: (
+      name: string,
+      workspace: Workspace,
+      tree: TreeObject,
+      validator?: StandardSchemaV1,
+    ) => Sheet;
   }) {
     this.#hologitRepo = opts.hologitRepo;
     this.#workspace = opts.workspace;
@@ -167,16 +176,16 @@ export class Transaction {
     this.#anyMutation = true;
   }
 
-  /** Returns a Sheet whose writes route through this transaction's private tree. */
-  sheet(name: string): Sheet {
+  /**
+   * Returns a Sheet whose writes route through this transaction's private tree.
+   * `opts.validator` (optional) attaches a Standard Schema validator — used by
+   * Store.transact to thread per-sheet validators through to tx scope.
+   */
+  sheet(name: string, opts?: { validator?: StandardSchemaV1 }): Sheet {
     if (this.#closed) {
       throw new TransactionError('transaction_in_progress', 'transaction is already closed');
     }
-    let cached = this.#sheetCache.get(name);
-    if (cached) return cached;
-    cached = this.#sheetFactory(name, this.#workspace, this.#workspace.root);
-    this.#sheetCache.set(name, cached);
-    return cached;
+    return this.#sheetFactory(name, this.#workspace, this.#workspace.root, opts?.validator);
   }
 
   /**

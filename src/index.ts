@@ -19,6 +19,15 @@ export type {
 
 export { mergePatch } from './patch.js';
 
+export { openStore } from './store.js';
+export type {
+  OpenStoreOptions,
+  Store,
+  StoreTx,
+  StoreTransactFn,
+  ValidatorMap,
+} from './store.js';
+
 export { Transaction } from './transaction.js';
 export type {
   Author,
