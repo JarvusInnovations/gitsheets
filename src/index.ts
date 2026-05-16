@@ -24,6 +24,8 @@ export type {
   DiffStatus,
   DiffOptions,
   DiffChange,
+  AttachmentBlobHandle,
+  AttachmentEntry,
 } from './sheet.js';
 
 export { mergePatch } from './patch.js';

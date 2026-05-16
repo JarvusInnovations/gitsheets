@@ -153,7 +153,16 @@ await sheet.deleteAttachment(record, 'avatar.jpg');     // throws NotFoundError 
 await sheet.deleteAttachments(record);                  // no-op if record has no attachment dir
 ```
 
-The iterator API (`for await (const { name, mimeType, blob } of sheet.attachments(record))`) is deferred to a post-1.0 release. See [#140](https://github.com/JarvusInnovations/gitsheets/issues/140).
+Iterator surface:
+
+```typescript
+for await (const { name, mimeType, blob } of sheet.attachments(record)) {
+  const bytes = await blob.read();    // Buffer
+  // or pipe blob.stream() to wherever
+}
+```
+
+`mimeType` is inferred from the filename extension (with `application/octet-stream` for unknown extensions). `blob.read()` returns a `Buffer`; `blob.stream()` returns a `Readable` from `git cat-file blob <hash>` — useful for streaming large binary attachments without materializing the whole blob in memory.
 
 ## Diff
 

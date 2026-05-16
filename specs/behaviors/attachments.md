@@ -94,15 +94,23 @@ await sheet.deleteAttachments(record);
 
 **No-op** when the record has no attachment directory — idempotent, mirroring the cascade behavior on `Sheet.delete(record)`. The transaction is not marked mutated in the no-op case (so a transaction that does nothing else still completes without a commit).
 
-## Iterator API (deferred)
+## Iterator API
 
-A higher-level iterator surface is filed as [#140](https://github.com/JarvusInnovations/gitsheets/issues/140):
+A higher-level iterator surface — sugar over `getAttachments`:
 
 ```typescript
-for await (const { name, mimeType, blob } of sheet.attachments(record)) { ... }
+for await (const { name, mimeType, blob } of sheet.attachments(record)) {
+  const buf = await blob.read();      // Buffer
+  // or stream:
+  blob.stream().pipe(someWritable);
+}
 ```
 
-Sugar over `getAttachments`. Not in v1.0; the existing methods cover the use case.
+- `name` — the attachment filename (relative to the record's attachment dir)
+- `mimeType` — inferred from extension; `application/octet-stream` for unknown extensions
+- `blob` — handle with `.hash`, `.read()` (Buffer), and `.stream()` (Readable backed by `git cat-file blob <hash>`)
+
+The lower-level `getAttachments` / `getAttachment` methods remain for callers that want the raw blob-hash map.
 
 ## Atomicity
 

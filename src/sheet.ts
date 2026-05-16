@@ -1,9 +1,10 @@
 // Sheet — typed handle to one declared sheet in a Repository.
 // See specs/api/sheet.md and specs/concepts.md.
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { promisify } from 'node:util';
+import type { Readable } from 'node:stream';
 
 import type { BlobObject, TreeObject, Workspace } from 'hologit';
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
@@ -280,6 +281,103 @@ export interface QueryOptions {
    * to `controller.abort(reason)`).
    */
   readonly signal?: AbortSignal;
+}
+
+// --- Attachments iterator (#140) ---
+
+/**
+ * Handle on an attachment's bytes, returned by `Sheet.attachments()`. Wraps
+ * the raw blob hash with consumer-friendly `read()` (Buffer) and `stream()`
+ * (Readable) accessors. Spawns `git cat-file blob <hash>` under the hood.
+ */
+export interface AttachmentBlobHandle {
+  readonly hash: string;
+  read(): Promise<Buffer>;
+  stream(): Readable;
+}
+
+export interface AttachmentEntry {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly blob: AttachmentBlobHandle;
+}
+
+// Minimum-viable MIME map — covers the bulk of typical attachment uses
+// (images, audio, video, docs). Unknown extensions get application/octet-stream.
+const MIME_BY_EXT: Readonly<Record<string, string>> = {
+  // Text
+  txt: 'text/plain',
+  md: 'text/markdown',
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  toml: 'application/toml',
+  json: 'application/json',
+  yaml: 'application/yaml',
+  yml: 'application/yaml',
+  xml: 'application/xml',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  js: 'application/javascript',
+  ts: 'application/typescript',
+  svg: 'image/svg+xml',
+  // Images
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  ico: 'image/vnd.microsoft.icon',
+  tiff: 'image/tiff',
+  // Audio / video
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  // Documents / archives
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  '7z': 'application/x-7z-compressed',
+};
+
+function inferMimeType(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  if (dot < 0 || dot === filename.length - 1) return 'application/octet-stream';
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return MIME_BY_EXT[ext] ?? 'application/octet-stream';
+}
+
+function makeAttachmentBlobHandle(gitDir: string, hash: string): AttachmentBlobHandle {
+  return {
+    hash,
+    async read(): Promise<Buffer> {
+      return new Promise((resolve, reject) => {
+        const child = execFile(
+          'git',
+          ['cat-file', 'blob', hash],
+          { cwd: gitDir, encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024 },
+          (err, stdout) => {
+            if (err) return reject(err);
+            resolve(stdout as Buffer);
+          },
+        );
+        child.stdin?.end();
+      });
+    },
+    stream(): Readable {
+      const child = spawn('git', ['cat-file', 'blob', hash], { cwd: gitDir });
+      child.stdin.end();
+      return child.stdout;
+    },
+  };
 }
 
 // --- diffFrom (specs/api/sheet.md) ---
@@ -897,6 +995,31 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const dir = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath));
     if (!dir || !isTree(dir)) return null;
     return dir.getBlobMap();
+  }
+
+  /**
+   * Async iterator over a record's attachments. Each yielded item carries
+   * `name`, an extension-inferred `mimeType`, and a `blob` handle with
+   * `.read()` (returns `Buffer`) and `.stream()` (returns a Readable).
+   *
+   * The iterator is the friendlier consumer surface for browsing attachments.
+   * For programmatic blob-hash access, `getAttachments` remains.
+   *
+   * See specs/behaviors/attachments.md.
+   */
+  async *attachments(record: T | string): AsyncGenerator<AttachmentEntry> {
+    const blobMap = await this.getAttachments(record);
+    if (!blobMap) return;
+    const gitDir = this.#repo.gitDir;
+    for (const name in blobMap) {
+      const blob = blobMap[name];
+      if (!blob) continue;
+      yield {
+        name,
+        mimeType: inferMimeType(name),
+        blob: makeAttachmentBlobHandle(gitDir, blob.hash),
+      };
+    }
   }
 
   async setAttachment(

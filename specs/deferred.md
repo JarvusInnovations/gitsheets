@@ -27,11 +27,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** `repo.watch(callback)` API that emits events when the data tree changes externally (working-tree edits, ref updates from another process), letting consumers invalidate caches/indices live.
 - **Why deferred:** Gitsheets typically operates against refs, not the working tree. The use case is real for dev/seeding workflows but not load-bearing for production consumers.
 
-### Attachments iterator API — [#140](https://github.com/JarvusInnovations/gitsheets/issues/140)
-
-- **What:** `for await (const { name, mimeType, blob } of sheet.attachments(record))` — a higher-level iterator over a record's attachments, replacing the current low-level `blobMap` surface.
-- **Why deferred:** The current `getAttachments` / `getAttachment` / `setAttachment` API works; iterator is sugar. Nice ergonomics, not 1.0-critical.
-
 ### YAML format support (input + output) — [#61](https://github.com/JarvusInnovations/gitsheets/issues/61)
 
 - **What:** Accept and emit YAML in CLI ingest / export, alongside the existing JSON / TOML / CSV.
