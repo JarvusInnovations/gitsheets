@@ -382,14 +382,22 @@ export class Template {
    * against the partial query, the walk expands across all subtrees at that
    * level. The caller still applies the full equality filter on the yielded
    * record contents.
+   *
+   * `opts.extension` selects which file extension marks a record blob (the
+   * leaf of the path). Defaults to `.toml`; markdown sheets pass `.md` (and
+   * `.mdx` for mdx). The extension is stripped from the yielded `path`.
    */
   async *queryTree(
     tree: PathTemplateTree | undefined,
     query: RecordLike,
-    pathPrefix = '',
-    depth = 0,
+    opts: { pathPrefix?: string; depth?: number; extension?: string } = {},
   ): AsyncGenerator<PathTemplateQueryResult> {
     if (!tree) return;
+
+    const pathPrefix = opts.pathPrefix ?? '';
+    const depth = opts.depth ?? 0;
+    const extension = opts.extension ?? '.toml';
+    const extLen = extension.length;
 
     const numComponents = this.#components.length;
     let currentTree: PathTemplateTree = tree;
@@ -402,7 +410,7 @@ export class Template {
 
       if (isLast) {
         if (rendered !== undefined) {
-          const child = await currentTree.getChild(`${rendered}.toml`);
+          const child = await currentTree.getChild(`${rendered}${extension}`);
           if (child && isBlob(child)) {
             yield { path: joinPath(currentPrefix, rendered), blob: child };
           }
@@ -423,13 +431,13 @@ export class Template {
         const sortedKeys = allKeys.sort();
 
         for (const childPath of sortedKeys) {
-          if (!childPath.endsWith('.toml')) continue;
+          if (!childPath.endsWith(extension)) continue;
           if (attachmentPrefix && childPath.startsWith(attachmentPrefix)) continue;
 
           const child = children[childPath];
           if (!child || !isBlob(child)) continue;
 
-          const childName = childPath.slice(0, -5);
+          const childName = childPath.slice(0, -extLen);
           attachmentPrefix = `${childName}/`;
           yield { path: joinPath(currentPrefix, childName), blob: child };
         }
@@ -450,7 +458,11 @@ export class Template {
       for (const name in children) {
         const child = children[name];
         if (!child || !isTree(child)) continue;
-        yield* this.queryTree(child, query, joinPath(currentPrefix, name), i + 1);
+        yield* this.queryTree(child, query, {
+          pathPrefix: joinPath(currentPrefix, name),
+          depth: i + 1,
+          extension,
+        });
       }
       return;
     }
