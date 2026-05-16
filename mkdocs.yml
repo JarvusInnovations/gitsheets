@@ -3,7 +3,7 @@ site_description: Gitsheets is the toolkit for distributed recordkeeping that li
 site_author: Jarvus Innovations
 copyright: 2020 Jarvus Innovations
 repo_url: https://github.com/JarvusInnovations/gitsheets
-edit_uri: edit/master/docs
+edit_uri: edit/develop/docs
 
 theme:
   name: material
