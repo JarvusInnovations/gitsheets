@@ -131,6 +131,75 @@ describe('Sheet.defineIndex / findByIndex', () => {
     }
   });
 
+  it('pre-write check: rejects an upsert that would violate a unique index, leaving the tree unchanged', async () => {
+    const fixture = await makeRepo();
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+
+    // Seed alice
+    await repo.transact({ message: 'seed' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'alice', email: 'shared@x.org' });
+    });
+
+    // Open a sheet, define + build a unique index by email
+    const users = await repo.openSheet('users');
+    users.defineIndex('byEmail', { unique: true }, (r) => String(r['email']));
+    // Force-build the index
+    await users.findByIndex('byEmail', 'shared@x.org');
+
+    const headBefore = await repo.resolveRef('HEAD');
+
+    // Attempting to insert a different record with the same email should throw
+    // BEFORE any tree mutation.
+    await expect(
+      repo.transact({ message: 'should fail' }, async (tx) => {
+        // Re-define the index on the tx-bound sheet so it's pre-built there too.
+        const txUsers = tx.sheet('users');
+        txUsers.defineIndex('byEmail', { unique: true }, (r) => String(r['email']));
+        await txUsers.findByIndex('byEmail', 'shared@x.org');
+        // Now this upsert should fail
+        await txUsers.upsert({ slug: 'bob', email: 'shared@x.org' });
+      }),
+    ).rejects.toBeInstanceOf(IndexError);
+
+    // HEAD must not have advanced.
+    const headAfter = await repo.resolveRef('HEAD');
+    expect(headAfter).toBe(headBefore);
+  });
+
+  it('defineIndex({ eager: true }) returns a Promise that resolves when built', async () => {
+    const fixture = await makeRepo();
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    await repo.transact({ message: 'seed' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'a', team: 'eng' });
+      await tx.sheet('users').upsert({ slug: 'b', team: 'design' });
+    });
+
+    const users = await repo.openSheet('users');
+    const ready = users.defineIndex('byTeam', { eager: true }, (r) => String(r['team']));
+    expect(ready).toBeInstanceOf(Promise);
+    await ready;
+    // Index is now built — findByIndex should not need to re-walk.
+    const eng = await users.findByIndex('byTeam', 'eng');
+    expect((eng as unknown[]).length).toBe(1);
+  });
+
+  it('defineIndex({ eager: true }) rejects on a unique conflict', async () => {
+    const fixture = await makeRepo();
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    await repo.transact({ message: 'seed' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'a', email: 'dup@x.org' });
+      await tx.sheet('users').upsert({ slug: 'b', email: 'dup@x.org' });
+    });
+
+    const users = await repo.openSheet('users');
+    await expect(
+      users.defineIndex('byEmail', { unique: true, eager: true }, (r) => String(r['email'])),
+    ).rejects.toBeInstanceOf(IndexError);
+  });
+
   it('rebuilds after upsert on the same Sheet instance', async () => {
     const fixture = await makeRepo();
     await seedConfig(fixture, 'users', USERS_CONFIG);

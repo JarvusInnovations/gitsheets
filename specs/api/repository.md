@@ -13,7 +13,7 @@ import { openRepo } from 'gitsheets';
 
 const repo = await openRepo({
   gitDir?: string,           // path to a .git directory; default: discovered from cwd
-  workingTree?: boolean,     // default false; true to also resolve working-tree state
+  workTree?: string | null,  // optional working-tree path; default: null (bare-style operation)
 });
 ```
 
@@ -29,8 +29,7 @@ Returns a `Sheet` handle bound to this repository's current state.
 
 ```typescript
 const users = await repo.openSheet('users', {
-  root?: string,             // default: '/'
-  prefix?: string,           // optional sub-prefix under root; default: none
+  root?: string,              // default: '.'
   validator?: StandardSchema, // optional Standard Schema validator
 });
 ```
@@ -42,7 +41,7 @@ Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolve
 Returns `{ [sheetName]: Sheet }` covering every sheet declared in `.gitsheets/`.
 
 ```typescript
-const sheets = await repo.openSheets({ root?: string, prefix?: string });
+const sheets = await repo.openSheets({ root?: string });
 ```
 
 Used by `openStore` (see [api/store.md](store.md)).

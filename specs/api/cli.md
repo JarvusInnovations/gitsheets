@@ -37,12 +37,15 @@ git sheet upsert users '{"slug":"jane","email":"jane@x.org"}'
 
 Flags:
 
-- `--format <json|toml|csv>` — input format (default: inferred from extension, fallback `json`)
-- `--encoding <enc>` — default `utf8`
-- `--patch` — apply RFC 7396 patch semantics to existing records (replaces pre-v1.0 `--patch-existing` deepmerge behavior; see [behaviors/patch-semantics.md](../behaviors/patch-semantics.md))
-- `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted
-- `--attachments.<path>=<spec>` — attach a file alongside the record (format `[ext]:<source-path>`)
+- `--format <json|toml|csv>` — input format (default: inferred from extension, fallback `json`); see [`deferred.md`](../deferred.md) — JSON only in v1.0
+- `--encoding <enc>` — default `utf8`; see [`deferred.md`](../deferred.md) — utf-8 only in v1.0
+- `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted; see [`deferred.md`](../deferred.md)
+- `--attachments.<path>=<spec>` — attach a file alongside the record; see [`deferred.md`](../deferred.md)
 - `--message <msg>`, `--author-name`, `--author-email`, `--trailer.<Key>=<value>` — transaction metadata
+
+For patching existing records in v1.0, use the library API `Sheet.patch(query, partial)`
+([`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md)). A CLI `--patch` flag
+is deferred — see [`deferred.md`](../deferred.md).
 
 Output (per record, to stdout):
 

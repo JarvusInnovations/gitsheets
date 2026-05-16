@@ -126,6 +126,12 @@ export class Transaction {
   #closed = false;
   #anyMutation = false;
 
+  /**
+   * @internal — Transactions are created by Repository.transact (or
+   * Store.transact). Consumers do not construct Transaction directly; the
+   * constructor is exported only so the type is available for typing
+   * handler parameters.
+   */
   constructor(opts: {
     hologitRepo: HologitRepo;
     workspace: Workspace;
@@ -296,6 +302,8 @@ export class Transaction {
 
 // --- Author resolution from git config ---
 
+let anonymousWarned = false;
+
 export async function resolveAuthor(
   gitDir: string,
   explicit: Author | undefined,
@@ -311,6 +319,12 @@ export async function resolveAuthor(
     }
   } catch {
     // fall through to anonymous default
+  }
+  if (!anonymousWarned) {
+    anonymousWarned = true;
+    process.stderr.write(
+      'gitsheets: no commit author configured (set git config user.name + user.email, or pass opts.author); falling back to Anonymous <anonymous@gitsheets.local>\n',
+    );
   }
   return { name: 'Anonymous', email: 'anonymous@gitsheets.local' };
 }

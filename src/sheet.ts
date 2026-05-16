@@ -487,19 +487,30 @@ export class Sheet {
    * Declare a secondary in-memory index on this Sheet.
    *
    * Overloads:
-   *   defineIndex(name, keyFn)
-   *   defineIndex(name, opts, keyFn)
+   *   defineIndex(name, keyFn) → void
+   *   defineIndex(name, { unique?, eager?: false }, keyFn) → void
+   *   defineIndex(name, { unique?, eager: true }, keyFn)   → Promise<void>
    *
    * keyFn returns a string key; returning undefined / null excludes the
-   * record from the index entirely.
+   * record from the index entirely. With `eager: true`, the return value
+   * resolves when the initial build completes (or rejects on conflict).
    */
   defineIndex(name: string, keyFn: IndexKeyFn): void;
-  defineIndex(name: string, opts: DefineIndexOptions, keyFn: IndexKeyFn): void;
+  defineIndex(
+    name: string,
+    opts: DefineIndexOptions & { eager: true },
+    keyFn: IndexKeyFn,
+  ): Promise<void>;
+  defineIndex(
+    name: string,
+    opts: DefineIndexOptions & { eager?: false | undefined },
+    keyFn: IndexKeyFn,
+  ): void;
   defineIndex(
     name: string,
     optsOrFn: DefineIndexOptions | IndexKeyFn,
     maybeFn?: IndexKeyFn,
-  ): void {
+  ): void | Promise<void> {
     let opts: DefineIndexOptions;
     let keyFn: IndexKeyFn;
     if (typeof optsOrFn === 'function') {
@@ -524,11 +535,11 @@ export class Sheet {
     };
     this.#indexes.set(name, state);
     if (state.eager) {
-      // Fire-and-forget; first findByIndex awaits the rebuild path if anything failed.
-      void this.#ensureIndexBuilt(state).catch(() => {
-        // Errors surface on the next access via the standard build path.
-      });
+      // Per spec, eager defineIndex returns Promise<void> resolving when
+      // the build completes (or rejecting on conflict).
+      return this.#ensureIndexBuilt(state);
     }
+    return;
   }
 
   /**
@@ -658,6 +669,26 @@ export class Sheet {
         'path_render_failed',
         `could not generate any path for record in sheet "${this.#name}"`,
       );
+    }
+
+    // Pre-write unique-index check — throws before any tree mutation
+    // per specs/behaviors/indexing.md so the tree is never left in a state
+    // that contradicts a unique constraint.
+    for (const state of this.#indexes.values()) {
+      if (!state.built || !state.unique) continue;
+      const rawKey = state.keyFn(normalized);
+      if (rawKey === undefined || rawKey === null) continue;
+      const key = String(rawKey);
+      const owner = state.uniqueMap.get(key);
+      if (!owner) continue;
+      const ownerPath = (owner as Record<symbol, unknown>)[RECORD_PATH_KEY];
+      if (typeof ownerPath === 'string' && ownerPath !== recordPath) {
+        throw new IndexError(
+          'index_unique_conflict',
+          `unique index "${state.name}" on sheet "${this.#name}": key ${JSON.stringify(key)} is already used by ${ownerPath}`,
+          { conflictingPaths: [ownerPath, recordPath] },
+        );
+      }
     }
 
     // Rename: if the source record was loaded from a different path, delete the old one.

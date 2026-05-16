@@ -81,6 +81,18 @@ When an item is promoted, move it from this file into the relevant active spec a
 - **What:** Cancel a streaming query via AbortSignal.
 - **Why deferred:** Async generators naturally support `break`; the AbortSignal pattern is sugar for upstream HTTP integrations. Documented in `api/conventions.md`; not implemented in the v1.0 surface.
 
+### CLI `gitsheets upsert --patch`
+
+- **What:** A `--patch` flag on `upsert` to apply RFC 7396 merge-patch semantics to existing records, sugar over `Sheet.patch`.
+- **Why deferred:** The CLI ergonomics need design — how the input record splits between "query that selects the existing record" and "partial that gets merged" isn't obvious from a single JSON document on stdin. A v0 implementation that passed the input as both query and patch was a no-op and got removed. The library API `Sheet.patch(query, partial)` is the correct surface for now; programmatic consumers should use it directly.
+- **Tracking:** to be filed as a follow-up to #128 / #133.
+
+### Deep-generic type inference on `Store`
+
+- **What:** `store.users.upsert(...)` typed as `Sheet<z.infer<typeof UserSchema>>` so the consumer's record type flows through reads and writes. Same for `tx.users` inside `store.transact`.
+- **Why deferred:** Runtime validator threading is wired (validators run on writes via Standard Schema), but the TypeScript-level chain currently widens to `Sheet`. Consumers can cast or work with the typed Standard Schema's result types directly. The proper generic plumbing is mechanical but expanded the v1.0 surface beyond ship-readiness scope.
+- **Tracking:** part of the #131 follow-up.
+
 ## Dropped (no plan)
 
 ### `backend/server.js` HTTP server
