@@ -663,6 +663,74 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#transaction.markMutated();
   }
 
+  /**
+   * Remove a single attachment. Throws `NotFoundError` if the named attachment
+   * doesn't exist (so callers can't silently miss bugs). Sibling attachments
+   * are left intact. See specs/behaviors/attachments.md.
+   */
+  async deleteAttachment(record: T | string, name: string): Promise<void> {
+    if (this.#transaction === undefined) {
+      this.#checkStrictMode();
+      const tx = transactionContext.getStore();
+      if (tx !== undefined) {
+        await tx.sheet(this.#name).deleteAttachment(record, name);
+        return;
+      }
+      await this.#repo.transact(
+        { message: `${this.#name} deleteAttachment ${name}` },
+        async (innerTx) => {
+          await innerTx.sheet(this.#name).deleteAttachment(record, name);
+        },
+      );
+      return;
+    }
+    const config = await this.readConfig();
+    const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
+    const fullPath = joinTreePath(config.root, recordPath, name);
+    const existing = await this.#dataTree.getChild(fullPath);
+    if (!existing || !isBlob(existing)) {
+      throw new NotFoundError(
+        'record_not_found',
+        `${this.#name}: no attachment at ${joinTreePath(recordPath, name)}`,
+      );
+    }
+    await this.#dataTree.deleteChild(fullPath);
+    this.#transaction.markMutated();
+  }
+
+  /**
+   * Remove all attachments for a record. No-op if the record has no
+   * attachment directory (same idempotent shape as the cascade behavior in
+   * `Sheet.delete`). See specs/behaviors/attachments.md.
+   */
+  async deleteAttachments(record: T | string): Promise<void> {
+    if (this.#transaction === undefined) {
+      this.#checkStrictMode();
+      const tx = transactionContext.getStore();
+      if (tx !== undefined) {
+        await tx.sheet(this.#name).deleteAttachments(record);
+        return;
+      }
+      await this.#repo.transact(
+        { message: `${this.#name} deleteAttachments` },
+        async (innerTx) => {
+          await innerTx.sheet(this.#name).deleteAttachments(record);
+        },
+      );
+      return;
+    }
+    const config = await this.readConfig();
+    const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
+    const fullPath = joinTreePath(config.root, recordPath);
+    const existing = await this.#dataTree.getChild(fullPath);
+    if (!existing || !isTree(existing)) {
+      // No attachment dir — true no-op, don't even mark the tx mutated.
+      return;
+    }
+    await this.#dataTree.deleteChild(fullPath);
+    this.#transaction.markMutated();
+  }
+
   // --- Private helpers ---
 
   #checkStrictMode(): void {

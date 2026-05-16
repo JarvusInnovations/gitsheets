@@ -148,6 +148,9 @@ await sheet.setAttachments(record, { 'avatar.jpg': blob1, 'avatar-128.jpg': blob
 
 const attachments = await sheet.getAttachments(record); // current low-level surface
 const avatar = await sheet.getAttachment(record, 'avatar.jpg');
+
+await sheet.deleteAttachment(record, 'avatar.jpg');     // throws NotFoundError if missing
+await sheet.deleteAttachments(record);                  // no-op if record has no attachment dir
 ```
 
 The iterator API (`for await (const { name, mimeType, blob } of sheet.attachments(record))`) is deferred to a post-1.0 release. See [#140](https://github.com/JarvusInnovations/gitsheets/issues/140).

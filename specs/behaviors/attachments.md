@@ -76,19 +76,23 @@ if (blob) {
 
 ### `sheet.deleteAttachment(record, name)`
 
-> **Deferred — not in the v1.0 surface.** Tracked at [#153](https://github.com/JarvusInnovations/gitsheets/issues/153); see [`deferred.md`](../deferred.md). v1.0 ships the cascade behavior on `Sheet.delete(record)` (the attachment directory is removed with the record), but no per-file delete method.
-
-Remove a single attachment.
+Remove a single named attachment. Sibling attachments are left intact.
 
 ```typescript
 await sheet.deleteAttachment(record, 'avatar.jpg');
 ```
 
+Throws `NotFoundError` (`record_not_found`) if the named attachment doesn't exist — single-target deletion is strict so callers can't silently miss bugs.
+
 ### `sheet.deleteAttachments(record)`
 
-> **Deferred — not in the v1.0 surface.** Tracked at [#153](https://github.com/JarvusInnovations/gitsheets/issues/153); see [`deferred.md`](../deferred.md).
+Remove all attachments for a record (drops the entire attachment directory).
 
-Remove all attachments for a record.
+```typescript
+await sheet.deleteAttachments(record);
+```
+
+**No-op** when the record has no attachment directory — idempotent, mirroring the cascade behavior on `Sheet.delete(record)`. The transaction is not marked mutated in the no-op case (so a transaction that does nothing else still completes without a commit).
 
 ## Iterator API (deferred)
 

@@ -67,11 +67,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** `async *sheet.diffFrom(srcCommitHash?, { blobs?, records?, patches? })` yielding `{ path, status, src, dst, patch }` changes scoped to the sheet's root. Was used pre-v1.0 by the propose-review UI.
 - **Why deferred:** Internally relies on shelling out to `git diff-tree`; the surface is useful but isn't on the v1.0 critical path. Documented in `api/sheet.md` as still part of the spec, but not implemented in the v1.0 substrate.
 
-### `Sheet.deleteAttachment(s)` — [#153](https://github.com/JarvusInnovations/gitsheets/issues/153)
-
-- **What:** Explicit delete methods for individual attachments and full attachment sets.
-- **Why deferred:** `Sheet.delete(record)` cascades and deletes the attachment directory as a whole; per-file attachment removal can be done by re-writing the surviving attachments via `setAttachments`. A dedicated method is ergonomic but not blocking. `api/sheet.md` mentions both; this entry tracks the explicit implementation.
-
 ### CLI `--format` and `--encoding` for upsert/query — [#145](https://github.com/JarvusInnovations/gitsheets/issues/145)
 
 - **What:** `upsert` accepts `--format json|toml|csv` and `--encoding <enc>`; `query` accepts `--format json|csv|tsv|toml` plus `--headers`.
