@@ -30,3 +30,13 @@ export type {
   PathTemplateTree,
   PathTemplateQueryResult,
 } from './path-template/index.js';
+
+export type {
+  JSONSchema,
+  StandardSchemaV1,
+  StandardSchemaIssue,
+  StandardSchemaResult,
+  StandardSchemaFailure,
+  StandardSchemaSuccess,
+  StandardSchemaPathSegment,
+} from './validation.js';

@@ -18,6 +18,7 @@ import {
   type TransactionOptions,
   type TransactionResult,
 } from './transaction.js';
+import type { StandardSchemaV1 } from './validation.js';
 
 const exec = promisify(execFile);
 
@@ -31,6 +32,8 @@ export interface OpenRepoOptions {
 export interface OpenSheetOptions {
   /** Sub-directory under the data tree to scope this sheet to; default '.'. */
   readonly root?: string;
+  /** Standard Schema validator; runs after the persisted JSON Schema. */
+  readonly validator?: StandardSchemaV1;
 }
 
 export class Repository {
@@ -93,13 +96,17 @@ export class Repository {
     const workspace = await this.#getWorkspace();
     const dataTree = await this.#resolveDataTree(workspace, root);
     const configPath = joinTreePath(root, '.gitsheets', `${name}.toml`);
-    const sheet = new Sheet({
+    const sheetOpts: import('./sheet.js').SheetConstructorOptions = {
       repo: this,
       workspace,
       dataTree,
       name,
       configPath,
-    });
+    };
+    if (opts.validator !== undefined) {
+      Object.assign(sheetOpts, { validator: opts.validator });
+    }
+    const sheet = new Sheet(sheetOpts);
     // Eagerly validate config exists by reading once.
     await sheet.readConfig();
     return sheet;

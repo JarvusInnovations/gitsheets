@@ -15,6 +15,11 @@ import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
 import { stringifyRecord, parseToml, parseConfigToml } from './toml.js';
 import { Transaction, transactionContext } from './transaction.js';
+import {
+  validateRecord,
+  type JSONSchema,
+  type StandardSchemaV1,
+} from './validation.js';
 
 export const RECORD_SHEET_KEY = Symbol.for('gitsheets-sheet');
 export const RECORD_PATH_KEY = Symbol.for('gitsheets-path');
@@ -36,6 +41,8 @@ export interface SheetConfig {
   readonly root: string;
   readonly path: string;
   readonly fields: Readonly<Record<string, SheetFieldConfig>>;
+  /** JSON Schema for record validation; null if no [gitsheet.schema] block. */
+  readonly schema: JSONSchema | null;
 }
 
 // --- Result types ---
@@ -164,7 +171,19 @@ async function loadConfig(workspace: Workspace, configPath: string): Promise<She
       fieldsClean[fname] = entry;
     }
   }
-  const config: SheetConfig = { root, path, fields: fieldsClean };
+  const schemaRaw = (gitsheet as RecordLike)['schema'];
+  let schema: JSONSchema | null = null;
+  if (schemaRaw !== undefined && schemaRaw !== null) {
+    if (typeof schemaRaw !== 'object' || Array.isArray(schemaRaw)) {
+      throw new ConfigError(
+        'config_invalid',
+        `${configPath}: gitsheet.schema must be a table representing a JSON Schema`,
+      );
+    }
+    schema = schemaRaw as JSONSchema;
+  }
+
+  const config: SheetConfig = { root, path, fields: fieldsClean, schema };
   CONFIG_CACHE.set(node.hash, config);
   return config;
 }
@@ -225,6 +244,8 @@ export interface SheetConstructorOptions {
   readonly name: string;
   readonly configPath: string;
   readonly transaction?: Transaction;
+  /** Consumer-supplied Standard Schema validator; runs after JSON Schema. */
+  readonly validator?: StandardSchemaV1;
 }
 
 export class Sheet {
@@ -234,6 +255,7 @@ export class Sheet {
   readonly #name: string;
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
+  readonly #validator: StandardSchemaV1 | undefined;
 
   constructor(opts: SheetConstructorOptions) {
     this.#repo = opts.repo;
@@ -242,6 +264,7 @@ export class Sheet {
     this.#name = opts.name;
     this.#configPath = opts.configPath;
     this.#transaction = opts.transaction;
+    this.#validator = opts.validator;
   }
 
   get name(): string {
@@ -361,12 +384,33 @@ export class Sheet {
       return this.#upsertInTx(this.#transaction, record);
     }
     this.#checkStrictMode();
+
+    // The tx-bound Sheet returned by tx.sheet(name) doesn't carry this
+    // standalone Sheet's `validator`. Apply the Standard Schema layer here
+    // so its transform is reflected in what gets written. JSON Schema also
+    // runs here; the inner #upsertInTx will re-run it (cheap, idempotent).
+    let validated = record;
+    if (this.#validator !== undefined) {
+      const config = await this.readConfig();
+      validated = await validateRecord({
+        record: stripSymbols(record),
+        schema: config.schema,
+        schemaSourcePath: this.#configPath,
+        validator: this.#validator,
+      });
+      // Carry the original path annotation forward for rename detection.
+      const existing = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+      if (typeof existing === 'string') {
+        (validated as Record<symbol, unknown>)[RECORD_PATH_KEY] = existing;
+      }
+    }
+
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      return tx.sheet(this.#name).upsert(record);
+      return tx.sheet(this.#name).upsert(validated);
     }
     return this.#autoTransact(
-      async (innerTx) => innerTx.sheet(this.#name).upsert(record),
+      async (innerTx) => innerTx.sheet(this.#name).upsert(validated),
       (r) => `${this.#name} upsert ${r.path}`,
     );
   }
@@ -479,7 +523,22 @@ export class Sheet {
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
 
-    const normalized = await this.normalizeRecord(record);
+    // Validate before normalizing — per specs/behaviors/validation.md order:
+    // JSON Schema → Standard Schema (may transform) → normalize → render → write.
+    let validated = await validateRecord({
+      record: stripSymbols(record),
+      schema: config.schema,
+      schemaSourcePath: this.#configPath,
+      validator: this.#validator,
+    });
+    // Standard Schema may have transformed; re-attach annotations if the
+    // caller supplied them (for rename detection below).
+    const existing = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    if (typeof existing === 'string') {
+      (validated as Record<symbol, unknown>)[RECORD_PATH_KEY] = existing;
+    }
+
+    const normalized = await this.normalizeRecord(validated);
     const recordPath = template.render(normalized);
     if (!recordPath) {
       throw new PathTemplateError(
@@ -489,7 +548,6 @@ export class Sheet {
     }
 
     // Rename: if the source record was loaded from a different path, delete the old one.
-    const existing = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
     if (typeof existing === 'string' && existing !== recordPath) {
       try {
         await this.#dataTree.deleteChild(joinTreePath(config.root, `${existing}.toml`));
