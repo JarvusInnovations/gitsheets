@@ -361,7 +361,13 @@ export class Template {
           : await currentTree.getChildren();
 
         let attachmentPrefix: string | undefined;
-        const sortedKeys = Object.keys(children).sort();
+        // `for...in` walks own + inherited enumerable keys. hologit's
+        // getChildren() exposes loaded entries on the object's prototype
+        // and only stages local mutations as own properties — Object.keys
+        // would miss the loaded entries.
+        const allKeys: string[] = [];
+        for (const k in children) allKeys.push(k);
+        const sortedKeys = allKeys.sort();
 
         for (const childPath of sortedKeys) {
           if (!childPath.endsWith('.toml')) continue;
@@ -387,8 +393,10 @@ export class Template {
 
       // Unrenderable intermediate component: expand across all subtree children.
       const children = await currentTree.getChildren();
-      for (const [name, child] of Object.entries(children)) {
-        if (!isTree(child)) continue;
+      // for...in to include hologit's prototype-loaded entries (see comment above).
+      for (const name in children) {
+        const child = children[name];
+        if (!child || !isTree(child)) continue;
         yield* this.queryTree(child, query, joinPath(currentPrefix, name), i + 1);
       }
       return;

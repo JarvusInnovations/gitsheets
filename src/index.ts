@@ -1,6 +1,32 @@
 // Public exports for gitsheets.
-//
-// 1.0 substrate work-in-progress — only the error taxonomy is implemented so far.
-// Repository, Sheet, Transaction, Store, and the CLI surface are still being ported.
+// See specs/api/ for the full contract.
 
 export * from './errors.js';
+
+export { Repository, openRepo } from './repository.js';
+export type { OpenRepoOptions, OpenSheetOptions } from './repository.js';
+
+export { Sheet, RECORD_PATH_KEY, RECORD_SHEET_KEY } from './sheet.js';
+export type {
+  SheetConfig,
+  SheetFieldConfig,
+  SortRule,
+  UpsertResult,
+  SheetConstructorOptions,
+} from './sheet.js';
+
+export { Transaction } from './transaction.js';
+export type {
+  Author,
+  TransactionOptions,
+  TransactionResult,
+  TransactionHandler,
+} from './transaction.js';
+
+export { Template } from './path-template/index.js';
+export type {
+  RecordLike,
+  PathTemplateBlob,
+  PathTemplateTree,
+  PathTemplateQueryResult,
+} from './path-template/index.js';
