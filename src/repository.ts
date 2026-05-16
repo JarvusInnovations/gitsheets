@@ -224,7 +224,7 @@ export class Repository {
   async startPushDaemon(opts: PushDaemonOptions): Promise<PushDaemon> {
     if (this.#pushDaemon) {
       throw new TransactionError(
-        'commit_failed',
+        'push_daemon_running',
         'a push daemon is already running for this Repository — stop it first',
       );
     }

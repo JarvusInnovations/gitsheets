@@ -16,6 +16,7 @@ import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
 import { stringifyRecord, parseToml, parseConfigToml } from './toml.js';
+import sortKeys from 'sort-keys';
 import { Transaction, transactionContext } from './transaction.js';
 import {
   validateRecord,
@@ -369,7 +370,9 @@ export class Sheet {
         out[field] = [...value].sort(sorter);
       }
     }
-    return out;
+    // Deep-sort keys per specs/api/sheet.md — the returned JS object reflects
+    // canonical form even before TOML serialization.
+    return sortKeys(out, { deep: true }) as RecordLike;
   }
 
   async clear(): Promise<void> {
@@ -686,6 +689,14 @@ export class Sheet {
       throw new NotFoundError('record_not_found', `${this.#name}: no record at ${recordPath}`);
     }
     await this.#dataTree.deleteChild(fullPath);
+    // Cascade-delete the attachment directory at <recordPath>/, if any.
+    // Per specs/behaviors/attachments.md the attachment dir is deleted in
+    // the same operation.
+    try {
+      await this.#dataTree.deleteChild(joinTreePath(config.root, recordPath));
+    } catch {
+      // No attachment dir — that's fine.
+    }
     tx.markMutated();
     this.#invalidateIndexes();
   }

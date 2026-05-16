@@ -35,7 +35,6 @@ interface GlobalArgs {
 interface UpsertArgs extends GlobalArgs {
   sheet: string;
   input?: string;
-  patch?: boolean;
 }
 
 interface QueryArgs extends GlobalArgs {
@@ -158,6 +157,7 @@ function buildTxOpts(argv: GlobalArgs, defaultMessage: string): {
 
 async function runUpsert(argv: UpsertArgs): Promise<void> {
   const { repo, sheet } = await loadRepoAndSheet(argv);
+  void sheet; // loadRepoAndSheet validates the config exists
   const text = await readInput(argv.input);
   const records = parseJsonRecords(text);
   if (records.length === 0) return;
@@ -167,16 +167,7 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   await repo.transact(txOpts, async (tx) => {
     const target = tx.sheet(argv.sheet);
     for (const record of records) {
-      let result: UpsertResult;
-      if (argv.patch) {
-        // For --patch the user supplies a query that matches an existing
-        // record. The simplest convention: use the record itself as the
-        // query (every field), patching nothing. The CLI's `--patch` mode is
-        // a v1.0 minimum — richer query/patch handling is a follow-up.
-        result = await target.patch(record, record);
-      } else {
-        result = await target.upsert(record);
-      }
+      const result: UpsertResult = await target.upsert(record);
       process.stdout.write(`${result.blob.hash} ${result.path}\n`);
     }
   });
@@ -278,8 +269,7 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           .positional('input', {
             type: 'string',
             describe: "Inline JSON, a file path, or '-' for stdin",
-          })
-          .option('patch', { type: 'boolean', describe: 'Apply RFC 7396 merge patch' }),
+          }),
       runUpsert,
     )
     .command<QueryArgs>(

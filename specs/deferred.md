@@ -54,6 +54,33 @@ When an item is promoted, move it from this file into the relevant active spec a
 - **What:** A library-managed cache around parsed records, surviving across requests in a long-running consumer.
 - **Why deferred:** Once #138 (blob-hash record cache fix) lands, the existing per-sheet-instance cache covers most needs. A richer multi-instance cache can come if a consumer shows it's needed.
 
+### `Sheet.diffFrom` — diff against a prior commit
+
+- **What:** `async *sheet.diffFrom(srcCommitHash?, { blobs?, records?, patches? })` yielding `{ path, status, src, dst, patch }` changes scoped to the sheet's root. Was used pre-v1.0 by the propose-review UI.
+- **Why deferred:** Internally relies on shelling out to `git diff-tree`; the surface is useful but isn't on the v1.0 critical path. Documented in `api/sheet.md` as still part of the spec, but not implemented in the v1.0 substrate.
+- **Tracking:** to be filed as a follow-up to #128.
+
+### `Sheet.deleteAttachment(s)`
+
+- **What:** Explicit delete methods for individual attachments and full attachment sets.
+- **Why deferred:** `Sheet.delete(record)` cascades and deletes the attachment directory as a whole; per-file attachment removal can be done by re-writing the surviving attachments via `setAttachments`. A dedicated method is ergonomic but not blocking. `api/sheet.md` mentions both; this entry tracks the explicit implementation.
+
+### CLI `--format`, `--encoding`, `--delete-missing`, `--attachments`, `--prefix`, `--working`
+
+- **What:** Per `api/cli.md`, `upsert` accepts `--format json|toml|csv`, `--encoding`, `--delete-missing`, `--attachments.<path>=<spec>`; `query` accepts richer output formats; globally `--prefix` and `--working`.
+- **Why deferred:** v1.0 substrate CLI ships JSON in / newline-JSON out — enough to exercise the surface and prove integration. The fuller CLI surface comes in a follow-up CLI PR (one-off file format support is mostly orthogonal to the library).
+
+### CLI `git sheet edit`, `infer`, `migrate-config`
+
+- **What:** Three additional CLI commands documented in `api/cli.md`.
+- **Why deferred:** `edit` needs `$EDITOR` integration; `infer` and `migrate-config` are validation-config tooling that supplements #130. Library equivalents exist; CLI surface follows.
+- **Tracking:** part of #130 follow-up + a future scoped issue for `edit`.
+
+### `Sheet.query(opts.signal)` (AbortSignal)
+
+- **What:** Cancel a streaming query via AbortSignal.
+- **Why deferred:** Async generators naturally support `break`; the AbortSignal pattern is sugar for upstream HTTP integrations. Documented in `api/conventions.md`; not implemented in the v1.0 surface.
+
 ## Dropped (no plan)
 
 ### `backend/server.js` HTTP server

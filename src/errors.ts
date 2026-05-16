@@ -19,6 +19,7 @@ const STATUS_BY_CODE = {
   commit_failed: 500,
   index_unique_conflict: 409,
   index_not_defined: 500,
+  push_daemon_running: 409,
   ref_not_found: 404,
   not_an_ancestor: 409,
   path_render_failed: 422,
@@ -73,7 +74,8 @@ export type TransactionErrorCode =
   | 'transaction_in_progress'
   | 'transaction_required'
   | 'parent_moved'
-  | 'commit_failed';
+  | 'commit_failed'
+  | 'push_daemon_running';
 
 export class TransactionError extends GitsheetsError {
   constructor(code: TransactionErrorCode, message: string, options?: GitsheetsErrorOptions) {
