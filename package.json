@@ -1,44 +1,43 @@
 {
-  "name": "gitsheets-ui",
-  "version": "0.0.0",
-  "private": true,
+  "name": "gitsheets",
+  "version": "1.0.0-substrate.0",
+  "description": "A git-backed document store for low-volume, high-touch, human-scale data",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "gitsheets": "./bin/gitsheets",
+    "git-sheet": "./bin/gitsheets"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "serve": "vue-cli-service serve",
-    "build": "vue-cli-service build",
-    "lint": "vue-cli-service lint",
-    "test": "vue-cli-service test:e2e"
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
   },
-  "dependencies": {
-    "axios": "^0.19.0",
-    "core-js": "^2.6.5",
-    "s-ago": "^2.0.1",
-    "tailwindcss": "^1.0.5",
-    "unique-names-generator": "^3.0.0",
-    "vue": "^2.6.10",
-    "vue-awesome-notifications": "^3.0.3",
-    "vue-loading-overlay": "^3.2.0",
-    "vue-router": "^3.0.3",
-    "vuex": "^3.0.1"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JarvusInnovations/gitsheets.git"
   },
-  "devDependencies": {
-    "@vue/cli-plugin-babel": "^3.9.0",
-    "@vue/cli-plugin-e2e-cypress": "^3.10.0",
-    "@vue/cli-plugin-eslint": "^3.9.0",
-    "@vue/cli-service": "^3.9.0",
-    "babel-eslint": "^10.0.2",
-    "cypress-file-upload": "^3.3.3",
-    "eslint": "^5.16.0",
-    "eslint-config-prettier": "^6.0.0",
-    "eslint-loader": "^2.2.1",
-    "eslint-plugin-prettier": "^3.1.0",
-    "eslint-plugin-vue": "^5.2.3",
-    "postcss-import": "^12.0.1",
-    "postcss-nested": "^4.1.2",
-    "postcss-no-singleline-comment": "^1.0.1",
-    "postcss-scss": "^2.0.0",
-    "prettier": "^1.18.2",
-    "pug": "^2.0.4",
-    "pug-plain-loader": "^1.0.0",
-    "vue-template-compiler": "^2.6.10"
-  }
+  "homepage": "https://github.com/JarvusInnovations/gitsheets#readme",
+  "bugs": {
+    "url": "https://github.com/JarvusInnovations/gitsheets/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Jarvus Innovations"
 }
