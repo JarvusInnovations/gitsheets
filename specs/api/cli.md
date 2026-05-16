@@ -43,9 +43,7 @@ Flags:
 - `--attachment <name>=<source>` (repeatable) — attach a file alongside the (single) upserted record. `<source>` is a file path (relative to the input file's directory, or cwd for stdin input) or `-` for stdin. Requires a single-record input set.
 - `--message <msg>`, `--author-name`, `--author-email`, `--trailer Key=Value` (repeatable) — transaction metadata
 
-For patching existing records in v1.0, use the library API `Sheet.patch(query, partial)`
-([`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md)). A CLI `--patch` flag
-is deferred — see [`deferred.md`](../deferred.md).
+- `--patch` — treat each input record as an [RFC 7396 JSON Merge Patch](https://datatracker.ietf.org/doc/html/rfc7396). Path-template fields auto-derive the query; remaining fields are merged into the matched record. Cannot be combined with `--delete-missing` or `--attachment`. See [`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md).
 
 Output (per record, to stdout):
 

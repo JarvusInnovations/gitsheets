@@ -56,6 +56,15 @@ gitsheets upsert users '{"slug":"jane"}' \
   --attachment bio.md=-
 ```
 
+- `--patch` — treat each input record as an [RFC 7396 JSON Merge Patch](https://datatracker.ietf.org/doc/html/rfc7396). Fields present in the sheet's path template are split out as the query (which existing record to find); the remaining fields are merged into that record. `null` deletes a field. Cannot be combined with `--delete-missing` or `--attachment`.
+
+```bash
+# Update jane's email; delete her bio; add a team field.
+gitsheets upsert users '{"slug":"jane","email":"new@x.org","bio":null,"team":"eng"}' --patch
+```
+
+For sheets whose template uses expressions (e.g., `${{ slug.toLowerCase() }}`), the CLI does a best-effort identifier scan to find the query fields. If that doesn't yield the right split, use the library API `Sheet.patch(query, partial)` directly.
+
 TOML input supports three layouts: a `[[records]]` array of tables (recommended for multi-record files), a top-level table where every value is itself a table (each value becomes one record), or a single-record document.
 
 CSV input uses the first row as a header. Cell values stay as strings — type coercion belongs in the consumer schema, not in CSV parsing.

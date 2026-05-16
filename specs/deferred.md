@@ -67,11 +67,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** Read/write the working tree's state rather than HEAD.
 - **Why deferred:** Substantive library work — `Repository` needs a parallel read/write path against on-disk files (no commit). Split out of #148 during v1.1; `--prefix` shipped, `--working` tracked separately.
 
-### CLI `gitsheets upsert --patch` — [#149](https://github.com/JarvusInnovations/gitsheets/issues/149)
-
-- **What:** A `--patch` flag on `upsert` to apply RFC 7396 merge-patch semantics to existing records, sugar over `Sheet.patch`.
-- **Why deferred:** The CLI ergonomics need design — how the input record splits between "query that selects the existing record" and "partial that gets merged" isn't obvious from a single JSON document. A v0 implementation that passed the input as both query and patch was a no-op and got removed. The library API `Sheet.patch(query, partial)` is the correct surface for now.
-
 ### CLI `gitsheets edit` — open record in $EDITOR — [#150](https://github.com/JarvusInnovations/gitsheets/issues/150)
 
 - **What:** Open a record in `$EDITOR`, save, validate, upsert.

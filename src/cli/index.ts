@@ -50,6 +50,7 @@ interface UpsertArgs extends GlobalArgs {
   encoding?: string;
   deleteMissing?: boolean;
   attachment?: Record<string, string>;
+  patch?: boolean;
 }
 
 interface QueryArgs extends GlobalArgs {
@@ -228,9 +229,32 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
     }
   }
 
-  const messageDefault = argv.deleteMissing
-    ? `${argv.sheet} full-replace (${records.length})`
-    : `${argv.sheet} upsert (${records.length})`;
+  if (argv.patch && argv.deleteMissing) {
+    throw new Error('--patch and --delete-missing cannot be combined');
+  }
+  if (argv.patch && attachmentNames.length > 0) {
+    throw new Error('--patch and --attachment cannot be combined');
+  }
+
+  // For --patch: pre-load the sheet's path-template so we know which input
+  // fields form the query (record-identifier) and which are the patch payload.
+  let templateKeyFields: ReadonlySet<string> | undefined;
+  if (argv.patch) {
+    const config = await sheet.readConfig();
+    const tpl = (await import('../path-template/index.js')).Template.fromString(config.path);
+    templateKeyFields = new Set(tpl.getFieldNames());
+    if (templateKeyFields.size === 0) {
+      throw new Error(
+        '--patch: cannot auto-derive a query — sheet path template has no extractable field names',
+      );
+    }
+  }
+
+  const messageDefault = argv.patch
+    ? `${argv.sheet} patch (${records.length})`
+    : argv.deleteMissing
+      ? `${argv.sheet} full-replace (${records.length})`
+      : `${argv.sheet} upsert (${records.length})`;
   const txOpts = buildTxOpts(argv, messageDefault);
 
   const txSheetOpts: { prefix?: string } = argv.prefix ? { prefix: argv.prefix } : {};
@@ -252,6 +276,30 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
     const upsertedPaths = new Set<string>();
     let lastResult: UpsertResult | undefined;
     for (const record of records) {
+      if (argv.patch && templateKeyFields) {
+        // Split the input into (query, partial) using the template's field
+        // names: keys present in the template AND in the record form the
+        // query; the rest is the JSON Merge Patch payload.
+        const query: RecordLike = {};
+        const partial: RecordLike = {};
+        for (const [k, v] of Object.entries(record)) {
+          if (templateKeyFields.has(k)) {
+            query[k] = v;
+          } else {
+            partial[k] = v;
+          }
+        }
+        if (Object.keys(query).length === 0) {
+          throw new Error(
+            `--patch: input record does not include any of the path-template fields (${[...templateKeyFields].join(', ')})`,
+          );
+        }
+        const result: UpsertResult = await target.patch(query, partial as Partial<typeof record>);
+        upsertedPaths.add(result.path);
+        process.stdout.write(`${result.blob.hash} ${result.path}\n`);
+        lastResult = result;
+        continue;
+      }
       const result: UpsertResult = await target.upsert(record);
       upsertedPaths.add(result.path);
       process.stdout.write(`${result.blob.hash} ${result.path}\n`);
@@ -442,6 +490,12 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             default: false,
             describe:
               'DESTRUCTIVE: delete every record not present in the input set, in the same transaction',
+          })
+          .option('patch', {
+            type: 'boolean',
+            default: false,
+            describe:
+              'Treat each input record as an RFC 7396 merge-patch: fields matching the sheet path template become the query; the rest are merged into the matched record. Cannot be combined with --delete-missing or --attachment.',
           })
           .option('attachment', {
             type: 'string',
