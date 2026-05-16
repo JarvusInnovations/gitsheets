@@ -98,7 +98,7 @@ In practice, "replace this whole subtree" is `upsert`, not `patch`. If a consume
 ## Vs. `upsert`
 
 | | `upsert(newRecord)` | `patch(query, partial)` |
-|---|---|---|
+| --- | --- | --- |
 | Read existing first | No (write only) | Yes (`queryFirst(query)`) |
 | Required input | full record | partial — only changed fields |
 | Missing-record behavior | Creates a new one | `NotFoundError` |
@@ -112,7 +112,7 @@ Use `upsert` when you have the whole record. Use `patch` when you have just the 
 The pre-v1.0 `commands/upsert.js` `--patch-existing` flag used the `deepmerge` package, which has different rules:
 
 | Operation | deepmerge | RFC 7396 |
-|---|---|---|
+| --- | --- | --- |
 | Arrays | **Concat** by default (configurable) | **Replace** |
 | `null` values | Treat as a value (set to `null`) | **Delete** the key |
 | Nested objects | Merge recursively | Merge recursively (same) |

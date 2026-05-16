@@ -95,7 +95,7 @@ Both APIs are public. Use `Repository` for one-off scripts and dynamic discovery
 ## Errors
 
 | Class | Code | When |
-|---|---|---|
+| --- | --- | --- |
 | `ConfigError` | `config_missing` | A sheet in `validators` doesn't have a `.gitsheets/<name>.toml` |
 | `ConfigError` | `config_invalid` | A sheet's config TOML is malformed |
 | (errors from `Sheet`) | (various) | Per-sheet operations propagate normally |

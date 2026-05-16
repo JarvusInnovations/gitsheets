@@ -113,7 +113,7 @@ The Standard Schema layer is optional. Without it, only JSON Schema runs.
 ## Migration of pre-v1.0 `[gitsheet.fields]` config
 
 | Pre-v1.0 field | v1.0 placement | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `type: 'number' \| 'string' \| 'boolean'` | `[gitsheet.schema.properties.<name>].type` | Lossless |
 | `enum: [...]` | `[gitsheet.schema.properties.<name>].enum` | Lossless |
 | `default: <value>` | `[gitsheet.schema.properties.<name>].default` | Lossless |

@@ -11,7 +11,7 @@ The CLI is a thin wrapper around the JS API. Every command resolves to an operat
 These apply to every command unless noted otherwise:
 
 | Flag | Default | Source |
-|---|---|---|
+| --- | --- | --- |
 | `--git-dir <path>` | discovered | `GIT_DIR` env var |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` env var |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` env var |
@@ -132,7 +132,7 @@ Scaffold `.gitsheets/<sheet>.toml`. See [#139](https://github.com/JarvusInnovati
 ## Exit codes
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | 0 | Success |
 | 1 | Generic error (unhandled exception) |
 | 2 | Argument-parsing error |

@@ -122,7 +122,7 @@ interface TransactionResult<T> {
 ## Errors
 
 | Class | Code | When |
-|---|---|---|
+| --- | --- | --- |
 | `RefError` | `ref_not_found` | `parent` ref doesn't exist |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |

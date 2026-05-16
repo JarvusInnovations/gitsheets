@@ -145,7 +145,7 @@ await repo.transact({ message: '...' }, async (tx) => {
 ## Errors
 
 | Class | Code | When |
-|---|---|---|
+| --- | --- | --- |
 | `TransactionError` | `transaction_in_progress` | Concurrent `repo.transact` attempt |
 | `TransactionError` | `transaction_required` | Mutation outside a transaction in strict mode |
 | `TransactionError` | `parent_moved` | Optimistic-concurrency conflict at commit |

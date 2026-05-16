@@ -14,7 +14,7 @@ Every sheet declares a **path template** that determines where each record's TOM
 The template is a slash-separated string of components. Each component is either literal text, a field reference, or a JS expression.
 
 | Form | Example | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | Literal | `users/by-domain/` | Static path text |
 | Field reference | `${{ slug }}` | The value of `record.slug`, rendered to string |
 | Expression | `${{ slug.toLowerCase() }}` | Arbitrary JS expression with record fields in scope |

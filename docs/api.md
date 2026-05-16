@@ -35,7 +35,7 @@ import {
 ## Surface
 
 | Spec | Symbol | What it does |
-|---|---|---|
+| --- | --- | --- |
 | [`api/repository.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md) | `openRepo`, `Repository` | Open a git repo; orchestrate transactions, push daemon, sheet discovery |
 | [`api/sheet.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/sheet.md) | `Sheet` | Per-sheet handle: query, upsert, delete, patch, defineIndex, findByIndex, attachments |
 | [`api/transaction.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/transaction.md) | `Transaction` | Commit-scoped mutations; tx.sheet(name) yields tx-bound Sheets |
@@ -46,7 +46,7 @@ import {
 ## Behaviors
 
 | Spec | Topic |
-|---|---|
+| --- | --- |
 | [`behaviors/path-templates.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md) | `${{ field }}` / `${{ expression }}` / `${{ field/** }}`; query tree pruning |
 | [`behaviors/validation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md) | JSON Schema + optional Standard Schema layering |
 | [`behaviors/normalization.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md) | Canonical key sort + per-field array sort rules |

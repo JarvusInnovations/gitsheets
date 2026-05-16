@@ -9,7 +9,7 @@ For the full spec see
 ## Syntax
 
 | Form | Example | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | Literal | `users/by-domain/` | Static path text |
 | Field reference | `${{ slug }}` | The value of `record.slug` |
 | Expression | `${{ slug.toLowerCase() }}` | Arbitrary JS expression with record fields in scope |

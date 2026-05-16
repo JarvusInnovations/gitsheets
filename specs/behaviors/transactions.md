@@ -16,7 +16,7 @@ A **transaction** scopes a set of mutations to one commit. The mutations stage i
 One open transaction per `Repository` at a time, serialized by an in-process mutex.
 
 | Scenario | Behavior |
-|---|---|
+| --- | --- |
 | Two concurrent `repo.transact` calls | Second waits on the mutex; runs after the first commits or releases. |
 | Concurrent `repo.transact` *and* a permissive-mode `Sheet.upsert` outside a transaction | The permissive `upsert` opens its own transaction, contends for the same mutex. |
 | Same-process concurrent reads | Reads don't take the mutex. They see the *committed* state (pre-transaction tree). |

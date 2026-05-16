@@ -44,7 +44,7 @@ try {
 ## Code table
 
 | Class | Code | `status` | Meaning |
-|---|---|---:|---|
+| --- | --- | ---: | --- |
 | `ConfigError` | `config_missing` | 500 | `.gitsheets/<name>.toml` not found |
 | `ConfigError` | `config_invalid` | 500 | Sheet config TOML malformed or schema unparseable |
 | `ValidationError` | `validation_failed` | 422 | Record failed JSON Schema or Standard Schema validation |
@@ -84,7 +84,7 @@ The pre-v1.0 `errors.js` defined a few classes but consumer code (and even `back
 ## Migrating from pre-v1.0 names
 
 | Pre-v1.0 | v1.0 |
-|---|---|
+| --- | --- |
 | `SerializationError` | `ValidationError` (`validation_failed`) for record-validation cases; `ConfigError` (`config_invalid`) for sheet-config parse cases |
 | `ConfigError` | `ConfigError` (with stable `code`) |
 | `InvalidRefError` | `RefError` (`ref_not_found`) |

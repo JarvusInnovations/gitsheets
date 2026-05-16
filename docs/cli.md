@@ -9,7 +9,7 @@ operation on a `Repository` (or `Sheet`/`Transaction`).
 ## Global flags
 
 | Flag | Default | Env |
-|---|---|---|
+| --- | --- | --- |
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--ref <ref>` | `HEAD` | `GITSHEETS_REF` |
@@ -83,7 +83,7 @@ gitsheets normalize users
 ## Exit codes
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | 0 | Success |
 | 1 | Generic / unknown error |
 | 2 | Argument-parsing error |
