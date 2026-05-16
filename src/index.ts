@@ -21,6 +21,9 @@ export type {
   DefineIndexOptions,
   QueryFilter,
   QueryOptions,
+  DiffStatus,
+  DiffOptions,
+  DiffChange,
 } from './sheet.js';
 
 export { mergePatch } from './patch.js';

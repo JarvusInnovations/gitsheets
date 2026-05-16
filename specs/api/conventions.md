@@ -29,7 +29,8 @@ import {
 Type-only exports (interfaces, type aliases) flow alongside the value exports
 above. Notable ones: `TransactionResult`, `TransactionOptions`, `Author`,
 `SheetConfig`, `UpsertResult`, `IndexKeyFn`, `DefineIndexOptions`,
-`QueryFilter`, `QueryOptions`, `OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
+`QueryFilter`, `QueryOptions`, `DiffStatus`, `DiffOptions`, `DiffChange`,
+`OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
 `PushDaemonOptions`, `PushDaemonStatus`, `BackoffConfig`, `JSONSchema`,
 `StandardSchemaV1`, `ValidationIssue`, `RecordLike`.
 

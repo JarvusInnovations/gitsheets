@@ -62,11 +62,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** A library-managed cache around parsed records, surviving across requests in a long-running consumer.
 - **Why deferred:** Once #138 (blob-hash record cache fix) lands, the existing per-sheet-instance cache covers most needs. A richer multi-instance cache can come if a consumer shows it's needed.
 
-### `Sheet.diffFrom` — diff against a prior commit — [#152](https://github.com/JarvusInnovations/gitsheets/issues/152)
-
-- **What:** `async *sheet.diffFrom(srcCommitHash?, { blobs?, records?, patches? })` yielding `{ path, status, src, dst, patch }` changes scoped to the sheet's root. Was used pre-v1.0 by the propose-review UI.
-- **Why deferred:** Internally relies on shelling out to `git diff-tree`; the surface is useful but isn't on the v1.0 critical path. Documented in `api/sheet.md` as still part of the spec, but not implemented in the v1.0 substrate.
-
 ### CLI `--format` and `--encoding` for upsert/query — [#145](https://github.com/JarvusInnovations/gitsheets/issues/145)
 
 - **What:** `upsert` accepts `--format json|toml|csv` and `--encoding <enc>`; `query` accepts `--format json|csv|tsv|toml` plus `--headers`.

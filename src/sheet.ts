@@ -1,15 +1,19 @@
 // Sheet — typed handle to one declared sheet in a Repository.
 // See specs/api/sheet.md and specs/concepts.md.
 
+import { execFile } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
+import { promisify } from 'node:util';
 
 import type { BlobObject, TreeObject, Workspace } from 'hologit';
+import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
 import {
   ConfigError,
   IndexError,
   NotFoundError,
   PathTemplateError,
+  RefError,
   TransactionError,
 } from './errors.js';
 import { mergePatch } from './patch.js';
@@ -23,6 +27,8 @@ import {
   type JSONSchema,
   type StandardSchemaV1,
 } from './validation.js';
+
+const exec = promisify(execFile);
 
 export const RECORD_SHEET_KEY = Symbol.for('gitsheets-sheet');
 export const RECORD_PATH_KEY = Symbol.for('gitsheets-path');
@@ -276,6 +282,149 @@ export interface QueryOptions {
   readonly signal?: AbortSignal;
 }
 
+// --- diffFrom (specs/api/sheet.md) ---
+
+export type DiffStatus = 'added' | 'modified' | 'deleted' | 'renamed';
+
+/** Options for `Sheet.diffFrom`. */
+export interface DiffOptions {
+  /** Attach BlobObject handles for the src/dst blob hashes when set. */
+  readonly blobs?: boolean;
+  /** Parse src/dst TOML into records when set. */
+  readonly records?: boolean;
+  /** Generate an RFC 6902 JSON Patch between src and dst when set. */
+  readonly patches?: boolean;
+}
+
+/**
+ * One change yielded by `Sheet.diffFrom`. `srcMode`/`srcHash` are null for
+ * added records; `dstMode`/`dstHash` are null for deleted records.
+ *
+ * The optional fields populate based on the `opts` flag passed to diffFrom:
+ * - `blobs: true` → `srcBlob`/`dstBlob` (hologit `BlobObject` handles)
+ * - `records: true` → `src`/`dst` (parsed records)
+ * - `patches: true` → `patch` (RFC 6902 array; null/empty array on no-op)
+ */
+export interface DiffChange<T extends RecordLike = RecordLike> {
+  /** Record path relative to the sheet root, without the `.toml` suffix. */
+  readonly path: string;
+  readonly status: DiffStatus;
+  readonly srcMode: string | null;
+  readonly dstMode: string | null;
+  readonly srcHash: string | null;
+  readonly dstHash: string | null;
+  readonly srcBlob?: BlobObject;
+  readonly dstBlob?: BlobObject;
+  readonly src?: T;
+  readonly dst?: T;
+  readonly patch?: readonly JsonPatchOp[];
+}
+
+interface RawDiffEntry {
+  readonly status: DiffStatus;
+  readonly statusChar: string;
+  readonly srcMode: string | null;
+  readonly dstMode: string | null;
+  readonly srcHash: string | null;
+  readonly dstHash: string | null;
+  readonly canonicalPath: string;
+}
+
+function parseDiffTreeZ(output: string): RawDiffEntry[] {
+  // `git diff-tree -z -r --no-commit-id` formats each entry as:
+  //   :<srcMode> <dstMode> <srcHash> <dstHash> <statusToken>\0<srcPath>\0[<dstPath>\0]
+  // The `-z` flag NUL-separates the metadata line from each path, so any
+  // path with special characters in it is preserved verbatim. Status R/C
+  // emits two paths; everything else emits one.
+  const parts = output.split('\0');
+  const out: RawDiffEntry[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const meta = parts[i];
+    if (!meta || !meta.startsWith(':')) {
+      i++;
+      continue;
+    }
+    const tokens = meta.slice(1).split(' ');
+    if (tokens.length < 5) {
+      i++;
+      continue;
+    }
+    const srcMode = tokens[0]!;
+    const dstMode = tokens[1]!;
+    const srcHash = tokens[2]!;
+    const dstHash = tokens[3]!;
+    const statusToken = tokens[4]!;
+    const statusChar = statusToken[0] ?? '';
+    const status = mapDiffStatus(statusChar);
+    if (!status) {
+      i++;
+      continue;
+    }
+    i++;
+    const srcPath = parts[i++] ?? '';
+    let canonicalPath = srcPath;
+    if (statusChar === 'R' || statusChar === 'C') {
+      const dstPath = parts[i++] ?? srcPath;
+      canonicalPath = dstPath;
+    }
+    out.push({
+      status,
+      statusChar,
+      srcMode: srcMode === '000000' ? null : srcMode,
+      dstMode: dstMode === '000000' ? null : dstMode,
+      srcHash: /^0+$/.test(srcHash) ? null : srcHash,
+      dstHash: /^0+$/.test(dstHash) ? null : dstHash,
+      canonicalPath,
+    });
+  }
+  return out;
+}
+
+function mapDiffStatus(ch: string): DiffStatus | null {
+  switch (ch) {
+    case 'A':
+      return 'added';
+    case 'M':
+    case 'T':
+      return 'modified';
+    case 'D':
+      return 'deleted';
+    case 'R':
+    case 'C':
+      return 'renamed';
+    default:
+      return null;
+  }
+}
+
+async function readBlobAsRecord(
+  gitDir: string,
+  hash: string,
+): Promise<RecordLike | null> {
+  try {
+    const { stdout } = await exec('git', ['cat-file', 'blob', hash], {
+      cwd: gitDir,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return parseToml(stdout);
+  } catch {
+    // Blob unreadable or non-TOML — caller treats this as "no record".
+    return null;
+  }
+}
+
+function stripRecordPath(rawPath: string, root: string): string {
+  let p = rawPath;
+  const cleanRoot = root.replace(/^\/+|\/+$/g, '');
+  if (cleanRoot && cleanRoot !== '.' && cleanRoot !== '') {
+    const prefix = `${cleanRoot}/`;
+    if (p.startsWith(prefix)) p = p.slice(prefix.length);
+  }
+  if (p.endsWith('.toml')) p = p.slice(0, -5);
+  return p;
+}
+
 // --- Indexing ---
 
 export type IndexKeyFn<T extends RecordLike = RecordLike> = (
@@ -400,6 +549,104 @@ export class Sheet<T extends RecordLike = RecordLike> {
       results.push(record);
     }
     return results;
+  }
+
+  /**
+   * Async iterator of changes between `srcCommitHash` and the current tree,
+   * scoped to this sheet's root. `srcCommitHash` accepts a commit hash, a
+   * tree hash, or a ref name; if omitted it defaults to the empty tree
+   * (every current record yields `status: 'added'`).
+   *
+   * Currently scoped to `*.toml` entries — attachment-blob diffs are
+   * out-of-scope for v1.1.
+   *
+   * See specs/api/sheet.md#diffFrom and specs/behaviors/attachments.md.
+   */
+  async *diffFrom(
+    srcCommitHash?: string | null,
+    opts: DiffOptions = {},
+  ): AsyncGenerator<DiffChange<T>> {
+    const config = await this.readConfig();
+    const gitDir = this.#repo.gitDir;
+    const { TreeObject } = await import('hologit');
+    const srcRef = srcCommitHash ?? TreeObject.getEmptyTreeHash();
+    const dstTreeHash = await this.#dataTree.getHash();
+
+    const args = ['diff-tree', '-z', '-r', '-M', '--no-commit-id', srcRef, dstTreeHash];
+    const cleanRoot = config.root.replace(/^\/+|\/+$/g, '');
+    if (cleanRoot && cleanRoot !== '.') {
+      args.push('--', cleanRoot);
+    }
+
+    let stdout: string;
+    try {
+      const result = await exec('git', args, {
+        cwd: gitDir,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      stdout = result.stdout;
+    } catch (err) {
+      throw new RefError(
+        'ref_not_found',
+        `Sheet.diffFrom: git diff-tree failed for src=${srcRef} dst=${dstTreeHash}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+
+    const entries = parseDiffTreeZ(stdout);
+    for (const entry of entries) {
+      // v1.1 scope: `.toml` records only. Filter out anything else —
+      // attachments under the record dir, hidden files, accidental non-TOML
+      // content in the data tree.
+      if (!entry.canonicalPath.endsWith('.toml')) continue;
+      if (entry.canonicalPath.startsWith('.gitsheets/')) continue;
+      // When root is '.', sheet config blobs would otherwise appear as changes
+      // — they're metadata, not records.
+
+      const recordPath = stripRecordPath(entry.canonicalPath, config.root);
+
+      const change: Record<string, unknown> = {
+        path: recordPath,
+        status: entry.status,
+        srcMode: entry.srcMode,
+        dstMode: entry.dstMode,
+        srcHash: entry.srcHash,
+        dstHash: entry.dstHash,
+      };
+
+      if (opts.blobs) {
+        if (entry.srcHash) {
+          change['srcBlob'] = this.#repo.hologitRepo.createBlob({
+            hash: entry.srcHash,
+            mode: entry.srcMode ?? '100644',
+          });
+        }
+        if (entry.dstHash) {
+          change['dstBlob'] = this.#repo.hologitRepo.createBlob({
+            hash: entry.dstHash,
+            mode: entry.dstMode ?? '100644',
+          });
+        }
+      }
+
+      if (opts.records || opts.patches) {
+        const src = entry.srcHash ? await readBlobAsRecord(gitDir, entry.srcHash) : null;
+        const dst = entry.dstHash ? await readBlobAsRecord(gitDir, entry.dstHash) : null;
+        if (opts.records) {
+          if (src !== null) change['src'] = src;
+          if (dst !== null) change['dst'] = dst;
+        }
+        if (opts.patches) {
+          // rfc6902 treats undefined/null specially. For added: src is null,
+          // dst is the object → patch is a single `add` op. For deleted: src
+          // is the object, dst is null → patch is a single `remove` op. For
+          // modified: a sequence of ops describing the diff.
+          change['patch'] = rfc6902CreatePatch(src, dst);
+        }
+      }
+
+      yield change as unknown as DiffChange<T>;
+    }
   }
 
   async pathForRecord(record: T): Promise<string> {
