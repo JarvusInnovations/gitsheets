@@ -57,9 +57,23 @@ const UserSchema = z.object({
   fullName: z.string().optional(),
 });
 
+const ProjectSchema = z.object({
+  slug: z.string(),
+  title: z.string(),
+});
+
+const MembershipSchema = z.object({
+  userSlug: z.string(),
+  projectSlug: z.string(),
+});
+
 const repo = await openRepo();
 export const store = await openStore(repo, {
-  validators: { users: UserSchema },
+  validators: {
+    users: UserSchema,
+    projects: ProjectSchema,
+    memberships: MembershipSchema,
+  },
 });
 ```
 

@@ -19,7 +19,7 @@ import {
   IndexError, RefError, PathTemplateError, NotFoundError,
 
   // utilities
-  mergePatch,
+  mergePatch, validateRecord,
 
   // record annotation symbols (`record[RECORD_PATH_KEY]`, etc.)
   RECORD_SHEET_KEY, RECORD_PATH_KEY,
@@ -29,9 +29,9 @@ import {
 Type-only exports (interfaces, type aliases) flow alongside the value exports
 above. Notable ones: `TransactionResult`, `TransactionOptions`, `Author`,
 `SheetConfig`, `UpsertResult`, `IndexKeyFn`, `DefineIndexOptions`,
-`OpenStoreOptions`, `Store`, `StoreTx`, `PushDaemonOptions`,
-`PushDaemonStatus`, `BackoffConfig`, `JSONSchema`, `StandardSchemaV1`,
-`ValidationIssue`, `RecordLike`.
+`QueryFilter`, `OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
+`PushDaemonOptions`, `PushDaemonStatus`, `BackoffConfig`, `JSONSchema`,
+`StandardSchemaV1`, `ValidationIssue`, `RecordLike`.
 
 No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely.
 

@@ -172,19 +172,11 @@ Currently the daemon retries every failure including non-fast-forward rejections
 
 The right intervention when this happens: stop your consumer, investigate the remote (something else committed to your branch), reconcile, restart.
 
-## Multi-remote replication
+## Multi-remote replication (deferred)
 
-A `Repository` can host **one** push daemon at a time. To replicate the same commits to two remotes (primary + DR mirror), run two `Repository` instances pointing at the same `gitDir`:
+A `Repository` can host one push daemon at a time, and post-commit notifications fire only on the `Repository` instance that ran the `transact` — so a second `Repository` opened against the same `gitDir` wouldn't see those commits and wouldn't push them. In-process multi-remote replication isn't a working pattern in v1.0.
 
-```typescript
-const primary = await openRepo({ gitDir });
-const dr       = await openRepo({ gitDir });
-
-await primary.startPushDaemon({ remote: 'origin' });
-await dr.startPushDaemon({ remote: 'backup' });
-```
-
-Each daemon is bound to its remote independently. (The shared `gitDir` is fine — git's locking handles concurrent push attempts to different remotes.)
+This becomes workable once [#157 (push daemon startup-diff)](https://github.com/JarvusInnovations/gitsheets/issues/157) lands and a daemon catches up from the ref state rather than from in-process notifications. Until then, the right replication path is external — e.g., a `git push backup` triggered by an external scheduler or by a server-side hook on the primary remote.
 
 ## A complete production setup
 

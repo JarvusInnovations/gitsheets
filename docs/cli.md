@@ -33,9 +33,9 @@ gitsheets upsert users '{"slug":"jane","email":"jane@x.org"}'
 `input` is inline JSON (single record `{...}` or array `[{...}, ...]`),
 a file path, or `-` for stdin.
 
-Flags:
-
-- `--patch` — apply RFC 7396 merge patch instead of replacing
+(In v1.0 `upsert` accepts no extra flags beyond the global tx flags.
+A `--patch` flag for RFC 7396 merge semantics is deferred to [#149](https://github.com/JarvusInnovations/gitsheets/issues/149);
+use the library `Sheet.patch(query, partial)` for now.)
 
 Output (per record):
 

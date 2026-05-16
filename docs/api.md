@@ -19,7 +19,7 @@ import {
   IndexError, RefError, PathTemplateError, NotFoundError,
 
   // utilities
-  mergePatch,
+  mergePatch, validateRecord,
 
   // record annotation symbols
   RECORD_SHEET_KEY, RECORD_PATH_KEY,
@@ -223,6 +223,10 @@ Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 ### `mergePatch(target, patch)`
 
 RFC 7396 JSON Merge Patch as a pure function. Useful when you want the patch semantic without going through `Sheet.patch`. See [`specs/behaviors/patch-semantics.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/patch-semantics.md).
+
+### `validateRecord({ record, schema, validator? })`
+
+Run the same validation pipeline `Sheet.upsert` uses without going through a Sheet. Useful for pre-flight (UI form submission, CSV ingest, audit passes against legacy records). Returns the possibly-transformed record on success, throws `ValidationError` on failure. See [`specs/behaviors/validation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md).
 
 ## Conventions
 

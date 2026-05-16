@@ -19,6 +19,7 @@ export type {
   SheetConstructorOptions,
   IndexKeyFn,
   DefineIndexOptions,
+  QueryFilter,
 } from './sheet.js';
 
 export { mergePatch } from './patch.js';
@@ -30,6 +31,7 @@ export type {
   StoreTx,
   StoreTransactFn,
   ValidatorMap,
+  InferRecord,
 } from './store.js';
 
 export { PushDaemon } from './push-daemon.js';
@@ -55,6 +57,7 @@ export type {
   PathTemplateQueryResult,
 } from './path-template/index.js';
 
+export { validateRecord } from './validation.js';
 export type {
   JSONSchema,
   StandardSchemaV1,

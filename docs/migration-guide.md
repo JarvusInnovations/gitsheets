@@ -147,7 +147,7 @@ Every gitsheets error extends `GitsheetsError` and carries a stable `code`. See 
 
 ## CLI changes
 
-- `git sheet upsert` / `query` / `read` / `edit` / `normalize` — same command shape, rebuilt against the new core
+- `git sheet upsert` / `query` / `read` / `normalize` — same command shape, rebuilt against the new core (`edit` deferred to [#150](https://github.com/JarvusInnovations/gitsheets/issues/150))
 - `--patch-existing` → `--patch` (RFC 7396 semantics, deferred — use library `Sheet.patch` for now)
 - New global flags: `--message`, `--author-name`, `--author-email`, `--trailer Key=Value`, `--ref`, `--commit-to`
 - Exit codes are stable from v1.0 onward — see [CLI reference](cli.md#exit-codes)
