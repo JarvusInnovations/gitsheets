@@ -122,11 +122,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** On `startPushDaemon`, diff `<remote>/<branch>..<branch>` and queue any commits ahead of the remote, so a restarted daemon catches up. Spec at `behaviors/push-sync.md` requires this.
 - **Why deferred:** Substrate v1.0 only queues commits surfaced via `notifyCommit` after the daemon starts. The startup-diff path needs `git fetch` orchestration + careful error handling for an unreachable remote.
 
-### Deep-generic type inference on `Store` — [#155](https://github.com/JarvusInnovations/gitsheets/issues/155)
-
-- **What:** `store.users.upsert(...)` typed as `Sheet<z.infer<typeof UserSchema>>` so the consumer's record type flows through reads and writes. Same for `tx.users` inside `store.transact`.
-- **Why deferred:** Runtime validator threading is wired (validators run on writes via Standard Schema), but the TypeScript-level chain currently widens to `Sheet`. Consumers can cast or work with the typed Standard Schema's result types directly. The proper generic plumbing is mechanical but expanded the v1.0 surface beyond ship-readiness scope.
-
 ## Dropped (no plan)
 
 ### `backend/server.js` HTTP server

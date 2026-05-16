@@ -107,9 +107,9 @@ describe('validateRecord (JSON Schema layer)', () => {
 
 // --- Standard Schema layer ---
 
-function makeStandardSchema<I, O>(
+function makeStandardSchema<O extends Record<string, unknown> = Record<string, unknown>>(
   validate: (value: unknown) => { value: O } | { issues: Array<{ message: string; path?: string[] }> },
-): StandardSchemaV1<I, O> {
+): StandardSchemaV1<unknown, O> {
   return {
     '~standard': {
       version: 1,
@@ -217,12 +217,12 @@ describe('openSheet({ validator })', () => {
     await seedSheetConfig(fixture, 'users', USERS_WITH_SCHEMA);
     const repo = await openRepo({ gitDir: fixture.gitDir });
 
-    const downcaseEmail = makeStandardSchema((value) => ({
-      value: {
-        ...(value as Record<string, unknown>),
-        email: ((value as Record<string, unknown>)['email'] as string).toLowerCase(),
-      },
-    }));
+    const downcaseEmail = makeStandardSchema<Record<string, unknown>>((value) => {
+      const v = value as Record<string, unknown>;
+      return {
+        value: { ...v, email: (v['email'] as string).toLowerCase() } as Record<string, unknown>,
+      };
+    });
 
     // openSheet validator only attaches to the standalone Sheet; the tx-bound
     // Sheet (used inside repo.transact's handler) doesn't inherit it in v1.0

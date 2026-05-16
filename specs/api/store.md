@@ -57,8 +57,10 @@ When a sheet has an entry in `validators`, its type flows through:
 
 When a sheet does not have an entry in `validators`:
 
-- `store.<sheet>` is `Sheet<Record<string, unknown>>`
-- The JSON Schema in `.gitsheets/<sheet>.toml` still runs on every write — only the *TS-level* shape is `unknown`
+- It is **not** accessible through property access on `store`. The typed surface includes only sheets named in `validators`.
+- Use `repo.openSheet(name)` for one-off un-typed access — it returns `Sheet<Record<string, unknown>>` and the persisted JSON Schema still runs on every write.
+
+Rationale: a mapped-type-plus-index-signature shape (`{ [K in keyof V]: Sheet<…> } & Record<string, Sheet<unknown>>`) doesn't compose cleanly in TypeScript without losing the typo-protection that the typed `Store` surface exists for. Confining the typed surface to declared validators is the cleaner tradeoff.
 
 ## Sheet discovery
 
@@ -66,7 +68,7 @@ Sheets are discovered by enumerating `.gitsheets/*.toml`. The discovery happens 
 
 A sheet present in `validators` but missing from `.gitsheets/` throws `ConfigError` (`config_missing`) at `openStore` time.
 
-A sheet present in `.gitsheets/` but missing from `validators` is included as `Sheet<Record<string, unknown>>` — not an error.
+A sheet present in `.gitsheets/` but missing from `validators` is not exposed on the typed `Store` surface (see "Type inference" above); use `repo.openSheet(name)` for those.
 
 ## Transactions
 

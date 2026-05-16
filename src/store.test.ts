@@ -41,7 +41,9 @@ root = 'projects'
 path = '\${{ slug }}'
 `;
 
-function makeStandardSchema<O>(
+import type { RecordLike } from './path-template/index.js';
+
+function makeStandardSchema<O extends RecordLike = RecordLike>(
   validate: (value: unknown) => { value: O } | { issues: Array<{ message: string; path?: string[] }> },
 ): StandardSchemaV1<unknown, O> {
   return {
@@ -70,7 +72,7 @@ describe('openStore', () => {
     await seedConfigs(fixture, { users: USERS });
     const repo = await openRepo({ gitDir: fixture.gitDir });
 
-    const validator = makeStandardSchema((v) => ({ value: v }));
+    const validator = makeStandardSchema<RecordLike>((v) => ({ value: v as RecordLike }));
     await expect(
       openStore(repo, { validators: { projects: validator } }),
     ).rejects.toBeInstanceOf(ConfigError);
@@ -100,12 +102,12 @@ describe('openStore', () => {
     await seedConfigs(fixture, { users: USERS });
     const repo = await openRepo({ gitDir: fixture.gitDir });
 
-    const downcaseSlug = makeStandardSchema((value) => ({
-      value: {
-        ...(value as Record<string, unknown>),
-        slug: ((value as Record<string, unknown>)['slug'] as string).toLowerCase(),
-      },
-    }));
+    const downcaseSlug = makeStandardSchema<RecordLike>((value) => {
+      const v = value as Record<string, unknown>;
+      return {
+        value: { ...v, slug: (v['slug'] as string).toLowerCase() } as RecordLike,
+      };
+    });
 
     const store = await openStore(repo, { validators: { users: downcaseSlug } });
 

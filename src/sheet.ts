@@ -238,29 +238,43 @@ async function readBlobTomlCached(blob: BlobObject): Promise<string> {
   return text;
 }
 
+// --- Filter type ---
+
+/**
+ * Filter passed to `Sheet.query` / `queryFirst` / `queryAll`. Each field's
+ * value can be a literal (equality match) or a predicate function. When `T`
+ * is `Record<string, unknown>` (the default), arbitrary string keys are
+ * accepted; consumer-supplied `T` narrows to its own keys.
+ */
+export type QueryFilter<T extends RecordLike = RecordLike> = {
+  [K in keyof T]?: T[K] | ((value: T[K], record: T) => unknown);
+};
+
 // --- Indexing ---
 
-export type IndexKeyFn = (record: RecordLike) => string | undefined | null;
+export type IndexKeyFn<T extends RecordLike = RecordLike> = (
+  record: T,
+) => string | undefined | null;
 
 export interface DefineIndexOptions {
   readonly unique?: boolean;
   readonly eager?: boolean;
 }
 
-interface IndexState {
+interface IndexState<T extends RecordLike = RecordLike> {
   readonly name: string;
   readonly unique: boolean;
   readonly eager: boolean;
-  readonly keyFn: IndexKeyFn;
+  readonly keyFn: IndexKeyFn<T>;
   built: boolean;
   treeHashAtBuild: string | null;
-  uniqueMap: Map<string, RecordLike>;
-  multiMap: Map<string, RecordLike[]>;
+  uniqueMap: Map<string, T>;
+  multiMap: Map<string, T[]>;
 }
 
 // --- Sheet class ---
 
-export interface SheetConstructorOptions {
+export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
   readonly repo: Repository;
   readonly workspace: Workspace;
   readonly dataTree: TreeObject;
@@ -268,20 +282,20 @@ export interface SheetConstructorOptions {
   readonly configPath: string;
   readonly transaction?: Transaction;
   /** Consumer-supplied Standard Schema validator; runs after JSON Schema. */
-  readonly validator?: StandardSchemaV1;
+  readonly validator?: StandardSchemaV1<unknown, T>;
 }
 
-export class Sheet {
+export class Sheet<T extends RecordLike = RecordLike> {
   readonly #repo: Repository;
   readonly #workspace: Workspace;
   readonly #dataTree: TreeObject;
   readonly #name: string;
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
-  readonly #validator: StandardSchemaV1 | undefined;
-  readonly #indexes = new Map<string, IndexState>();
+  readonly #validator: StandardSchemaV1<unknown, T> | undefined;
+  readonly #indexes = new Map<string, IndexState<T>>();
 
-  constructor(opts: SheetConstructorOptions) {
+  constructor(opts: SheetConstructorOptions<T>) {
     this.#repo = opts.repo;
     this.#workspace = opts.workspace;
     this.#dataTree = opts.dataTree;
@@ -314,7 +328,7 @@ export class Sheet {
   }
 
   /** Async iterator over records matching the filter. */
-  async *query(filter: RecordLike = {}): AsyncGenerator<RecordLike> {
+  async *query(filter: QueryFilter<T> = {}): AsyncGenerator<T> {
     if (typeof filter === 'function') {
       throw new TypeError('Sheet.query() does not accept a function — pass a filter object');
     }
@@ -328,39 +342,42 @@ export class Sheet {
     // path-template tree interface; the casts bridge the type lattices.
     for await (const { blob, path: blobPath } of template.queryTree(
       sheetRoot as unknown as Parameters<typeof template.queryTree>[0],
-      filter,
+      filter as RecordLike,
     )) {
-      const record = await this.#readRecordFromBlob(blob as unknown as BlobObject, blobPath);
-      if (!queryMatches(filter, record)) continue;
+      const record = (await this.#readRecordFromBlob(
+        blob as unknown as BlobObject,
+        blobPath,
+      )) as T;
+      if (!queryMatches(filter as RecordLike, record as RecordLike)) continue;
       yield record;
     }
   }
 
-  async queryFirst(filter: RecordLike = {}): Promise<RecordLike | undefined> {
+  async queryFirst(filter: QueryFilter<T> = {}): Promise<T | undefined> {
     for await (const record of this.query(filter)) {
       return record;
     }
     return undefined;
   }
 
-  async queryAll(filter: RecordLike = {}): Promise<RecordLike[]> {
-    const results: RecordLike[] = [];
+  async queryAll(filter: QueryFilter<T> = {}): Promise<T[]> {
+    const results: T[] = [];
     for await (const record of this.query(filter)) {
       results.push(record);
     }
     return results;
   }
 
-  async pathForRecord(record: RecordLike): Promise<string> {
+  async pathForRecord(record: T): Promise<string> {
     const config = await this.readConfig();
-    return Template.fromString(config.path).render(record);
+    return Template.fromString(config.path).render(record as RecordLike);
   }
 
   /**
    * Apply canonical normalization (deep key sort + array-field sort rules)
    * without writing or validating.
    */
-  async normalizeRecord(record: RecordLike): Promise<RecordLike> {
+  async normalizeRecord(record: T): Promise<T> {
     const config = await this.readConfig();
     const out: RecordLike = { ...record };
     for (const [field, fcfg] of Object.entries(config.fields)) {
@@ -372,7 +389,7 @@ export class Sheet {
     }
     // Deep-sort keys per specs/api/sheet.md — the returned JS object reflects
     // canonical form even before TOML serialization.
-    return sortKeys(out, { deep: true }) as RecordLike;
+    return sortKeys(out, { deep: true }) as T;
   }
 
   async clear(): Promise<void> {
@@ -395,17 +412,21 @@ export class Sheet {
     this.#transaction.markMutated();
   }
 
-  async clone(): Promise<Sheet> {
-    return new Sheet({
+  async clone(): Promise<Sheet<T>> {
+    const opts: SheetConstructorOptions<T> = {
       repo: this.#repo,
       workspace: this.#workspace,
       dataTree: await this.#dataTree.clone(),
       name: this.#name,
       configPath: this.#configPath,
-    });
+    };
+    if (this.#validator !== undefined) {
+      Object.assign(opts, { validator: this.#validator });
+    }
+    return new Sheet<T>(opts);
   }
 
-  async upsert(record: RecordLike): Promise<UpsertResult> {
+  async upsert(record: T): Promise<UpsertResult> {
     if (this.#transaction !== undefined) {
       return this.#upsertInTx(this.#transaction, record);
     }
@@ -415,15 +436,15 @@ export class Sheet {
     // standalone Sheet's `validator`. Apply the Standard Schema layer here
     // so its transform is reflected in what gets written. JSON Schema also
     // runs here; the inner #upsertInTx will re-run it (cheap, idempotent).
-    let validated = record;
+    let validated: T = record;
     if (this.#validator !== undefined) {
       const config = await this.readConfig();
-      validated = await validateRecord({
-        record: stripSymbols(record),
+      validated = (await validateRecord({
+        record: stripSymbols(record as RecordLike),
         schema: config.schema,
         schemaSourcePath: this.#configPath,
         validator: this.#validator,
-      });
+      })) as T;
       // Carry the original path annotation forward for rename detection.
       const existing = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
       if (typeof existing === 'string') {
@@ -433,10 +454,10 @@ export class Sheet {
 
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      return tx.sheet(this.#name).upsert(validated);
+      return tx.sheet<T>(this.#name).upsert(validated);
     }
     return this.#autoTransact(
-      async (innerTx) => innerTx.sheet(this.#name).upsert(validated),
+      async (innerTx) => innerTx.sheet<T>(this.#name).upsert(validated),
       (r) => `${this.#name} upsert ${r.path}`,
     );
   }
@@ -446,7 +467,7 @@ export class Sheet {
    * validates, and upserts the result. Returns the same shape as upsert.
    * Throws NotFoundError if the query matches no record.
    */
-  async patch(query: RecordLike, partial: RecordLike): Promise<UpsertResult> {
+  async patch(query: QueryFilter<T>, partial: Partial<T>): Promise<UpsertResult> {
     const existing = await this.queryFirst(query);
     if (!existing) {
       throw new NotFoundError(
@@ -454,7 +475,7 @@ export class Sheet {
         `${this.#name}: no record matched ${JSON.stringify(query)}`,
       );
     }
-    const merged = mergePatch(stripSymbols(existing), partial) as RecordLike;
+    const merged = mergePatch(stripSymbols(existing as RecordLike), partial) as T;
     // Carry the record's path annotation forward so upsert's rename
     // detection deletes the old file if the new path differs.
     const existingPath = (existing as Record<symbol, unknown>)[RECORD_PATH_KEY];
@@ -464,7 +485,7 @@ export class Sheet {
     return this.upsert(merged);
   }
 
-  async delete(target: RecordLike | string): Promise<void> {
+  async delete(target: T | string): Promise<void> {
     if (this.#transaction !== undefined) {
       await this.#deleteInTx(this.#transaction, target);
       return;
@@ -495,24 +516,24 @@ export class Sheet {
    * record from the index entirely. With `eager: true`, the return value
    * resolves when the initial build completes (or rejects on conflict).
    */
-  defineIndex(name: string, keyFn: IndexKeyFn): void;
+  defineIndex(name: string, keyFn: IndexKeyFn<T>): void;
   defineIndex(
     name: string,
     opts: DefineIndexOptions & { eager: true },
-    keyFn: IndexKeyFn,
+    keyFn: IndexKeyFn<T>,
   ): Promise<void>;
   defineIndex(
     name: string,
     opts: DefineIndexOptions & { eager?: false | undefined },
-    keyFn: IndexKeyFn,
+    keyFn: IndexKeyFn<T>,
   ): void;
   defineIndex(
     name: string,
-    optsOrFn: DefineIndexOptions | IndexKeyFn,
-    maybeFn?: IndexKeyFn,
+    optsOrFn: DefineIndexOptions | IndexKeyFn<T>,
+    maybeFn?: IndexKeyFn<T>,
   ): void | Promise<void> {
     let opts: DefineIndexOptions;
-    let keyFn: IndexKeyFn;
+    let keyFn: IndexKeyFn<T>;
     if (typeof optsOrFn === 'function') {
       opts = {};
       keyFn = optsOrFn;
@@ -523,15 +544,15 @@ export class Sheet {
       }
       keyFn = maybeFn;
     }
-    const state: IndexState = {
+    const state: IndexState<T> = {
       name,
       unique: opts.unique ?? false,
       eager: opts.eager ?? false,
       keyFn,
       built: false,
       treeHashAtBuild: null,
-      uniqueMap: new Map(),
-      multiMap: new Map(),
+      uniqueMap: new Map<string, T>(),
+      multiMap: new Map<string, T[]>(),
     };
     this.#indexes.set(name, state);
     if (state.eager) {
@@ -544,9 +565,9 @@ export class Sheet {
 
   /**
    * Look up records by an index. Unique indexes return `record | undefined`;
-   * non-unique indexes return `RecordLike[]`.
+   * non-unique indexes return an array.
    */
-  async findByIndex(name: string, key: string): Promise<RecordLike | RecordLike[] | undefined> {
+  async findByIndex(name: string, key: string): Promise<T | T[] | undefined> {
     const state = this.#indexes.get(name);
     if (!state) {
       throw new IndexError('index_not_defined', `index "${name}" is not defined on sheet "${this.#name}"`);
@@ -556,7 +577,7 @@ export class Sheet {
     return state.multiMap.get(key) ?? [];
   }
 
-  async getAttachment(record: RecordLike | string, name: string): Promise<BlobObject | null> {
+  async getAttachment(record: T | string, name: string): Promise<BlobObject | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
     const node = await this.#dataTree.getChild(joinTreePath(config.root, recordPath, name));
@@ -564,7 +585,7 @@ export class Sheet {
   }
 
   async getAttachments(
-    record: RecordLike | string,
+    record: T | string,
   ): Promise<Record<string, BlobObject> | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
@@ -574,7 +595,7 @@ export class Sheet {
   }
 
   async setAttachment(
-    record: RecordLike | string,
+    record: T | string,
     name: string,
     blob: string | BlobObject,
   ): Promise<void> {
@@ -582,7 +603,7 @@ export class Sheet {
   }
 
   async setAttachments(
-    record: RecordLike | string,
+    record: T | string,
     attachments: Record<string, string | BlobObject>,
   ): Promise<void> {
     if (this.#transaction === undefined) {
@@ -643,18 +664,18 @@ export class Sheet {
     return staged;
   }
 
-  async #upsertInTx(tx: Transaction, record: RecordLike): Promise<UpsertResult> {
+  async #upsertInTx(tx: Transaction, record: T): Promise<UpsertResult> {
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
 
     // Validate before normalizing — per specs/behaviors/validation.md order:
     // JSON Schema → Standard Schema (may transform) → normalize → render → write.
-    let validated = await validateRecord({
-      record: stripSymbols(record),
+    let validated = (await validateRecord({
+      record: stripSymbols(record as RecordLike),
       schema: config.schema,
       schemaSourcePath: this.#configPath,
       validator: this.#validator,
-    });
+    })) as T;
     // Standard Schema may have transformed; re-attach annotations if the
     // caller supplied them (for rename detection below).
     const existing = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
@@ -663,7 +684,7 @@ export class Sheet {
     }
 
     const normalized = await this.normalizeRecord(validated);
-    const recordPath = template.render(normalized);
+    const recordPath = template.render(normalized as RecordLike);
     if (!recordPath) {
       throw new PathTemplateError(
         'path_render_failed',
@@ -700,7 +721,7 @@ export class Sheet {
       }
     }
 
-    const toml = stringifyRecord(stripSymbols(normalized));
+    const toml = stringifyRecord(stripSymbols(normalized as RecordLike));
     const blob = await this.#dataTree.writeChild(
       joinTreePath(config.root, `${recordPath}.toml`),
       toml,
@@ -710,7 +731,7 @@ export class Sheet {
     return { blob, path: recordPath };
   }
 
-  async #deleteInTx(tx: Transaction, target: RecordLike | string): Promise<void> {
+  async #deleteInTx(tx: Transaction, target: T | string): Promise<void> {
     const config = await this.readConfig();
     const recordPath =
       typeof target === 'string' ? target : await this.pathForRecord(target);
@@ -744,7 +765,7 @@ export class Sheet {
     }
   }
 
-  async #ensureIndexBuilt(state: IndexState): Promise<void> {
+  async #ensureIndexBuilt(state: IndexState<T>): Promise<void> {
     let currentHash: string | null = null;
     try {
       currentHash = await this.#dataTree.getHash();

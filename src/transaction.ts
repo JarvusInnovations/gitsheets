@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import type { Repo as HologitRepo, TreeObject, Workspace } from 'hologit';
 
 import { RefError, TransactionError } from './errors.js';
+import type { RecordLike } from './path-template/index.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
 
@@ -117,12 +118,12 @@ export class Transaction {
   readonly #message: string;
   readonly #trailers: Readonly<Record<string, string>>;
   /** Function the Repository injects so Transaction.sheet() can build Sheet instances. */
-  readonly #sheetFactory: (
+  readonly #sheetFactory: <T extends RecordLike = RecordLike>(
     name: string,
     workspace: Workspace,
     tree: TreeObject,
-    validator?: StandardSchemaV1,
-  ) => Sheet;
+    validator?: StandardSchemaV1<unknown, T>,
+  ) => Sheet<T>;
   #closed = false;
   #anyMutation = false;
 
@@ -142,12 +143,12 @@ export class Transaction {
     committer: Author;
     message: string;
     trailers: Readonly<Record<string, string>>;
-    sheetFactory: (
+    sheetFactory: <T extends RecordLike = RecordLike>(
       name: string,
       workspace: Workspace,
       tree: TreeObject,
-      validator?: StandardSchemaV1,
-    ) => Sheet;
+      validator?: StandardSchemaV1<unknown, T>,
+    ) => Sheet<T>;
   }) {
     this.#hologitRepo = opts.hologitRepo;
     this.#workspace = opts.workspace;
@@ -187,14 +188,17 @@ export class Transaction {
    * `opts.validator` (optional) attaches a Standard Schema validator — used by
    * Store.transact to thread per-sheet validators through to tx scope.
    */
-  sheet(name: string, opts?: { validator?: StandardSchemaV1 }): Sheet {
+  sheet<T extends RecordLike = RecordLike>(
+    name: string,
+    opts?: { validator?: StandardSchemaV1<unknown, T> },
+  ): Sheet<T> {
     if (this.#closed) {
       throw new TransactionError(
         'transaction_closed',
         'transaction is already closed — obtain a fresh Transaction via repo.transact',
       );
     }
-    return this.#sheetFactory(name, this.#workspace, this.#workspace.root, opts?.validator);
+    return this.#sheetFactory<T>(name, this.#workspace, this.#workspace.root, opts?.validator);
   }
 
   /**

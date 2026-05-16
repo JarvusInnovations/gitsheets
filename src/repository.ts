@@ -8,6 +8,7 @@ import { Repo as HologitRepo } from 'hologit';
 import type { TreeObject, Workspace } from 'hologit';
 
 import { ConfigError, RefError, TransactionError } from './errors.js';
+import type { RecordLike } from './path-template/index.js';
 import {
   PushDaemon,
   resolveBackoff,
@@ -34,11 +35,11 @@ export interface OpenRepoOptions {
   readonly workTree?: string | null;
 }
 
-export interface OpenSheetOptions {
+export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
   /** Sub-directory under the data tree to scope this sheet to; default '.'. */
   readonly root?: string;
   /** Standard Schema validator; runs after the persisted JSON Schema. */
-  readonly validator?: StandardSchemaV1;
+  readonly validator?: StandardSchemaV1<unknown, T>;
 }
 
 /** Options for {@link Repository.openSheets}. No `validator` — use {@link openStore} for that. */
@@ -111,12 +112,15 @@ export class Repository {
    * HEAD). Throws ConfigError(config_missing) when `.gitsheets/<name>.toml`
    * is absent.
    */
-  async openSheet(name: string, opts: OpenSheetOptions = {}): Promise<Sheet> {
+  async openSheet<T extends RecordLike = RecordLike>(
+    name: string,
+    opts: OpenSheetOptions<T> = {},
+  ): Promise<Sheet<T>> {
     const root = opts.root ?? '.';
     const workspace = await this.#getWorkspace();
     const dataTree = await this.#resolveDataTree(workspace, root);
     const configPath = joinTreePath(root, '.gitsheets', `${name}.toml`);
-    const sheetOpts: import('./sheet.js').SheetConstructorOptions = {
+    const sheetOpts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
       workspace,
       dataTree,
@@ -126,7 +130,7 @@ export class Repository {
     if (opts.validator !== undefined) {
       Object.assign(sheetOpts, { validator: opts.validator });
     }
-    const sheet = new Sheet(sheetOpts);
+    const sheet = new Sheet<T>(sheetOpts);
     // Eagerly validate config exists by reading once.
     await sheet.readConfig();
     return sheet;
@@ -198,12 +202,12 @@ export class Repository {
         committer,
         message: normalized.message,
         trailers: normalized.trailers,
-        sheetFactory: (
+        sheetFactory: <R extends RecordLike = RecordLike>(
           name: string,
           ws: Workspace,
           tree: TreeObject,
-          validator?: StandardSchemaV1,
-        ): Sheet => this.#makeTxSheet(tx, name, ws, tree, validator),
+          validator?: StandardSchemaV1<unknown, R>,
+        ): Sheet<R> => this.#makeTxSheet<R>(tx, name, ws, tree, validator),
       });
 
       let value: T;
@@ -272,15 +276,15 @@ export class Repository {
 
   // --- Private helpers ---
 
-  #makeTxSheet(
+  #makeTxSheet<T extends RecordLike = RecordLike>(
     tx: Transaction,
     name: string,
     workspace: Workspace,
     tree: TreeObject,
-    validator?: StandardSchemaV1,
-  ): Sheet {
+    validator?: StandardSchemaV1<unknown, T>,
+  ): Sheet<T> {
     const configPath = `.gitsheets/${name}.toml`;
-    const opts: import('./sheet.js').SheetConstructorOptions = {
+    const opts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
       workspace,
       dataTree: tree,
@@ -289,7 +293,7 @@ export class Repository {
       transaction: tx,
     };
     if (validator !== undefined) Object.assign(opts, { validator });
-    return new Sheet(opts);
+    return new Sheet<T>(opts);
   }
 
   async #getWorkspace(): Promise<Workspace> {
