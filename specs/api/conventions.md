@@ -29,7 +29,7 @@ import {
 Type-only exports (interfaces, type aliases) flow alongside the value exports
 above. Notable ones: `TransactionResult`, `TransactionOptions`, `Author`,
 `SheetConfig`, `UpsertResult`, `IndexKeyFn`, `DefineIndexOptions`,
-`QueryFilter`, `OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
+`QueryFilter`, `QueryOptions`, `OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
 `PushDaemonOptions`, `PushDaemonStatus`, `BackoffConfig`, `JSONSchema`,
 `StandardSchemaV1`, `ValidationIssue`, `RecordLike`.
 
@@ -67,17 +67,19 @@ Every error thrown by gitsheets extends `GitsheetsError` and carries a stable `c
 
 ## Cancellation
 
-Long-running iterations (`Sheet.query`) honor `AbortSignal` when one is passed in via the options. Without a signal, they run to completion.
+Long-running iterations (`Sheet.query`, `Sheet.queryFirst`, `Sheet.queryAll`) honor `AbortSignal` when one is passed in via the options. Without a signal, they run to completion.
 
 ```typescript
 const controller = new AbortController();
 for await (const record of sheet.query({}, { signal: controller.signal })) {
   // ...
-  if (someCondition) controller.abort();
+  if (someCondition) controller.abort();  // optional reason arg → signal.reason
 }
 ```
 
-`AbortError` is thrown after the next yield point. (Defer if implementation cost is high for v1.0; documented here as the convention for any iterator that adds cancellation later.)
+When the signal aborts, the next iteration (or the call itself, if aborted before invocation) throws `signal.reason` — which is whatever value was passed to `controller.abort(reason)`, or a `DOMException` with name `'AbortError'` if no reason was supplied. Callers can `try/catch` on the iteration and switch on the thrown value's shape.
+
+Any iterator added later in the public surface should follow the same convention (`opts.signal`, check before iteration, check at each yield).
 
 ## Async iteration over trees
 

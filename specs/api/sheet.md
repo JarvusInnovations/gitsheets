@@ -25,15 +25,15 @@ for await (const user of sheet.query({ accountLevel: 'staff' })) {
 - `filter` is a plain object. Each key on the filter is matched against the record's field by equality. Function-valued filter entries are called as `(recordValue, record) => boolean`. Nested objects descend recursively.
 - If the filter includes fields from the path template, gitsheets prunes the tree traversal to only matching subtrees (see [behaviors/path-templates.md](../behaviors/path-templates.md)).
 - Order of results: filesystem order within each tree level. Not guaranteed stable across implementation changes — sort in consumer code if order matters.
-- `opts.signal?: AbortSignal` — see [api/conventions.md](conventions.md#cancellation).
+- `opts.signal?: AbortSignal` — cancel a streaming query. The query checks the signal before iteration starts and again before each yield. If aborted, the next iteration throws `signal.reason` (a `DOMException` with name `'AbortError'` by default, or whatever value the consumer passed to `controller.abort(reason)`). See [api/conventions.md](conventions.md#cancellation).
 
-### `sheet.queryFirst(filter?)`
+### `sheet.queryFirst(filter?, opts?)`
 
-Returns `Promise<T | undefined>`. The first match, or `undefined`.
+Returns `Promise<T | undefined>`. The first match, or `undefined`. Honors the same `opts.signal` as `query`.
 
-### `sheet.queryAll(filter?)`
+### `sheet.queryAll(filter?, opts?)`
 
-Returns `Promise<T[]>`. All matches collected into an array. Convenience over `for await ... push`.
+Returns `Promise<T[]>`. All matches collected into an array. Convenience over `for await ... push`. Honors the same `opts.signal` as `query`.
 
 ### `sheet.pathForRecord(record)`
 

@@ -158,8 +158,8 @@ const daemon = await repo.startPushDaemon({
 });
 
 daemon.on('push',  ({ commit, durationMs }) => log.info({ commit, durationMs }));
-daemon.on('error', ({ commit, err, attempt }) => log.warn({ err, attempt }));
-daemon.on('retry', ({ commit, attempt, nextDelayMs }) => log.info({ attempt, nextDelayMs }));
+daemon.on('error', ({ commit, err, attempt, reason }) => log.warn({ err, attempt, reason }));
+daemon.on('retry', ({ commit, attempt, nextDelayMs, reason }) => log.info({ attempt, nextDelayMs, reason }));
 
 // ... later, at shutdown:
 await daemon.stop({ timeoutMs: 30_000 });

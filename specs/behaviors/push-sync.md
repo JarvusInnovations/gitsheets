@@ -36,9 +36,11 @@ If a consumer needs to incorporate changes from elsewhere (a manual edit, a sepa
 
 The underlying operation is `git push <remote> <branch>` with no `--force`. **Regular fast-forward only.**
 
-If the remote rejects the push (non-fast-forward, "remote contains work that you do not have"), the daemon does not retry — it emits an `error` event and surfaces a hard error in `daemon.status()`. The consumer needs to intervene; a never-force-push policy is non-negotiable.
+If the remote rejects the push (non-fast-forward, "remote contains work that you do not have"), the daemon does not retry — it emits an `error` event with `reason: 'non-fast-forward'` and surfaces a hard error in `daemon.status()` (also with `lastError.reason === 'non-fast-forward'`). The consumer needs to intervene; a never-force-push policy is non-negotiable.
 
 The daemon does *not* attempt to merge or rebase. The local commit history is the source of truth.
+
+Subsequent `repo.transact` commits will trigger fresh push attempts. If the remote is still ahead, those attempts also fail and emit their own `non-fast-forward` errors — each commit gets one classified error, never a retry storm.
 
 ## Backoff
 
@@ -72,15 +74,19 @@ Or accept the default with `backoff: 'exponential'`.
 
 ```typescript
 daemon.on('push',  ({ commit, durationMs }) => { ... });
-daemon.on('retry', ({ commit, attempt, nextDelayMs }) => { ... });
-daemon.on('error', ({ commit, err, attempt }) => { ... });
+daemon.on('retry', ({ commit, attempt, nextDelayMs, reason }) => { ... });
+daemon.on('error', ({ commit, err, attempt, reason }) => { ... });
 daemon.on('stopped', () => { ... });
 ```
 
 - `push` — successful push. `durationMs` is wall-clock for the push attempt.
-- `retry` — a failed attempt has been scheduled for retry. Fires *before* the delay.
-- `error` — a failure occurred. May or may not be retried; if retried, a `retry` event follows.
+- `retry` — a failed attempt has been scheduled for retry. Fires *before* the delay. `reason` mirrors the upstream `error`'s classification.
+- `error` — a failure occurred. `reason` is one of:
+  - `'non-fast-forward'` — terminal. No `retry` event follows. Status' `lastError.reason` carries the same value.
+  - `'unknown'` — anything else (network, auth, transient git errors). Retried per the configured backoff unless `maxRetries` is exhausted.
 - `stopped` — emitted after `daemon.stop()` completes draining.
+
+For startup-backlog errors (see "Startup backlog" below) the `commit` field is `null` and `attempt` is `0`; the failure surfaces through the same `error` event channel.
 
 Consumers building observability surfaces typically attach to `push`, `retry`, `error` for Prometheus / structured-logging fan-out.
 
@@ -91,7 +97,12 @@ daemon.status();
 // → {
 //   running: boolean,
 //   lastPushAt: ISO 8601 | null,
-//   lastError: { message: string, at: ISO 8601, attempt: number } | null,
+//   lastError: {
+//     message: string,
+//     at: ISO 8601,
+//     attempt: number,
+//     reason: 'non-fast-forward' | 'unknown',
+//   } | null,
 //   pendingCommits: number,
 //   currentBackoffMs: number | null,        // current delay, if a retry is scheduled
 //   currentAttempt: number | null,           // which attempt we're on for the next commit
@@ -135,6 +146,16 @@ For container deployments, common patterns:
 Pushing a commit that's already on the remote is a no-op (`Everything up-to-date`). Push attempts are safe to retry.
 
 If the daemon restarts and finds commits in the local repo that aren't on the remote, it pushes them. The daemon doesn't track a "pending" state across restarts — it diffs local vs. remote on startup and queues anything ahead.
+
+## Startup backlog
+
+`repo.startPushDaemon` returns the handle synchronously to the caller, then performs the startup-backlog check on the next event-loop tick (so consumers can attach `error` / `push` listeners first):
+
+1. `git fetch <remote> <branch>` — best-effort, populates `refs/remotes/<remote>/<branch>`. If this fails (unreachable remote, auth) the daemon emits an `error` event with `commit: null`, `attempt: 0`, classified `reason`. The check continues — a previously-cached remote-tracking ref may still be usable.
+2. `git rev-list --count <remote>/<branch>..<branch>` — counts local commits the remote doesn't have. If the remote-tracking ref doesn't exist after the fetch (e.g., the branch was never on the remote), the check exits silently; the daemon stays alive for future `notifyCommit` events.
+3. If the count is non-zero, the daemon primes its pending counter and immediately drains — the queued commits flow through the same push pipeline as live ones.
+
+The startup check **never throws**. The consumer's `await repo.startPushDaemon(opts)` resolves with the handle even when the remote is unreachable; observability comes through `error` events and `daemon.status()`.
 
 ## Push frequency
 

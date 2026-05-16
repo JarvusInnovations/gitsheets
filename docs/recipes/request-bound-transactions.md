@@ -87,8 +87,8 @@ import { repo } from './store.js';
 
 if (process.env.NODE_ENV === 'production') {
   const daemon = await repo.startPushDaemon({ remote: 'origin' });
-  daemon.on('error', ({ err, attempt }) =>
-    console.error('[push-daemon]', err, 'attempt', attempt),
+  daemon.on('error', ({ err, attempt, reason }) =>
+    console.error('[push-daemon]', err, 'attempt', attempt, 'reason', reason),
   );
 }
 ```

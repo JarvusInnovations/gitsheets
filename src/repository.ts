@@ -271,6 +271,12 @@ export class Repository {
       if (idx >= 0) this.#postCommitHooks.splice(idx, 1);
       this.#pushDaemon = null;
     });
+    // Defer the startup-backlog check so the consumer has a tick to attach
+    // `error` / `push` listeners on the returned handle. See #157 + the
+    // "Startup backlog" section of specs/behaviors/push-sync.md.
+    setImmediate(() => {
+      void daemon.checkStartupBacklog();
+    });
     return daemon;
   }
 
