@@ -248,9 +248,19 @@ describe('Repository.transact (permissive default)', () => {
       tx.sheet('users').upsert({ slug: 'second', n: 2 }),
     );
     const [ra, rb] = await Promise.all([a, b]);
+
+    // Both committed successfully and produced distinct commits.
     expect(ra.commitHash).not.toBe(rb.commitHash);
-    // Second's parent should be first's commit
-    expect(rb.parentCommitHash).toBe(ra.commitHash);
+
+    // The mutex serialized them, but the *order* depends on which transact
+    // call reaches mutex.acquire() first (after its resolveAuthor `git config`
+    // await). That's racy on a loaded CI runner. The invariant we care about
+    // is "one ran after the other" — exactly one of them sees the other's
+    // commit as its parent.
+    const aParentIsB = ra.parentCommitHash === rb.commitHash;
+    const bParentIsA = rb.parentCommitHash === ra.commitHash;
+    expect(aParentIsB || bParentIsA).toBe(true);
+    expect(aParentIsB && bParentIsA).toBe(false);
   });
 });
 
