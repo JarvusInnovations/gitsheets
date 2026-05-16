@@ -42,6 +42,11 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** Accept and emit YAML in CLI ingest / export, alongside the existing JSON / TOML / CSV.
 - **Why deferred:** Long-standing backlog request with no concrete current consumer.
 
+### Content-typed records: markdown bodies with TOML frontmatter — [#158](https://github.com/JarvusInnovations/gitsheets/issues/158)
+
+- **What:** Sheet-level `[gitsheet.format] type='markdown'` option that stores records as `.md` files with TOML frontmatter (`+++` delimited) and a designated body field, with optional markdownlint normalization of the body. Pluggable format discriminator leaves room for MDX (free alias) and future formats.
+- **Why deferred:** Additive 1.x feature, opt-in per sheet, fully backward-compatible with TOML records. Not on the v1.0 critical path; landed as a tracked feature idea from a PR #144 design discussion.
+
 ### Persisted indexes
 
 - **What:** Allow secondary indices (currently in-memory only) to materialize to disk under a `.gitsheets/.indexes/` tree, so consumers don't pay rebuild cost across restarts.
