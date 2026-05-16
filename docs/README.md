@@ -1,60 +1,44 @@
-# Getting Started
+# gitsheets
 
-Gitsheets is the toolkit for distributed recordkeeping that lives inside Git.
+A git-backed document store for low-volume, high-touch, human-scale data.
 
-## Overview
+> **v1.0 docs under construction.** The pages here cover the post-1.0 surface.
+> For the full contract, [`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs)
+> is the source of truth.
 
-To prepare a repository for use with Gitsheets, all you need is a way to map a named sheet to a tree of normalized [`TOML`](https://toml.io/) files (containing one record per file).
+## Sections
 
-## Natural keys
+- [Quick start](quick-start.md) — `npm i gitsheets`, fresh TS project, first
+  typed write inside a transaction in ≤5 minutes
+- [CLI reference](cli.md) — `git sheet <command>` surface
+- [API reference](api.md) — pointer into the `specs/` directory
+- [Path templates](path-templates.md) — declaring where records live
 
-Gitsheets works best with records that have [natural keys](https://en.wikipedia.org/wiki/Natural_key), and doesn't provide any mechanism out-of-the-box for assigning keys randomly/sequentially. If your records don't yet contain any unique identifier, assign your own somehow before loading them into a git sheet.
+## Install
 
-## Declare a sheet
-
-To declare a sheet named `todos` for example, create a file in your git repository at `.gitsheets/todos.toml`:
-
-```toml
-[gitsheet]
-root = "data/todos"
-path = "user-${{ userId }}/${{ id }}"
+```bash
+npm install gitsheets
 ```
 
-This configuration declares two essential things about the `todos` sheet:
+`gitsheets` is a TypeScript-first ESM package targeting Node.js ≥ 20 and
+Bun ≥ 1. The CLI installs as both `gitsheets` and `git-sheet`.
 
-- **`gitsheet.root`** declares the root path within the repository containing all records for this sheet
-    - all `.toml` files under this path are considered to declare records
-    - the path may contain any number of `/`s to nest the sheet's root
-- **`gitsheet.path`** declares a template for finding the path to a given record
-    - `${{ expression }}` path components can use arbitrary javascript
+## Concepts at a glance
 
-The `todos` sheet can now be upserted and queried by any Gitsheets interface.
+- **Repository** — a git directory holding gitsheets data
+- **Sheet** — a typed collection declared by `.gitsheets/<name>.toml`
+- **Path template** — `${{ slug }}` / `${{ field/** }}` — where each record's
+  TOML file lives in the tree
+- **Transaction** — one commit per scope; multiple sheet mutations atomic
+- **Store** — typed wrapper over sheets, binds Standard Schema validators
+- **Push daemon** — async fast-forward push to a remote with retry/backoff
 
-## Upsert records
+See [`specs/concepts.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/concepts.md)
+for the full vocabulary.
 
-- [Using the `git sheet` command line interface](./cli/)
-- [Using the `gitsheets` NodeJS module](./nodejs/)
-- *Coming soon: Using the Gitsheets UI*
+## Why git as a substrate
 
-## Record format
-
-Records are stored one-per file in TOML format with keys sorted alphabetically:
-
-```toml
-completed = false
-id = 181
-title = "ut cupiditate sequi aliquam fuga maiores"
-userId = 10
-```
-
-The goals of this serialization are to:
-
-- Consistently render records to a normal form, such that identical record content will produce the same content hash
-- Be decently readable in text and diff form
-- Be easy to hand-edit
-- Store basic data types consistently
-- Generate minimal diff noise
-
-## Querying records
-
-- Path templates are indexes
+Every mutation is a commit. The commit log is the audit log. Sheets diff
+cleanly because gitsheets writes records in a canonical, byte-stable form
+(deep-sorted TOML keys, optional array sort rules). Branches give you
+proposal / review workflows for free.
