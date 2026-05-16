@@ -1258,7 +1258,7 @@
 </tr>
 <tr>
 <td><code>--patch-existing</code> (CLI, <code>deepmerge</code>)</td>
-<td><code>--patch</code> (CLI, RFC 7396) — deferred to <a href="https://github.com/JarvusInnovations/gitsheets/issues/149">#149</a>; use library <code>sheet.patch(query, partial)</code> for now</td>
+<td><code>--patch</code> (CLI, RFC 7396 — semantic change: <code>null</code> deletes, arrays replace)</td>
 </tr>
 <tr>
 <td>HTTP <code>POST /sheets/:name</code></td>
@@ -1363,11 +1363,16 @@
 <p>Every gitsheets error extends <code>GitsheetsError</code> and carries a stable <code>code</code>. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/errors.md"><code>specs/api/errors.md</code></a> for the full hierarchy + code table.</p>
 <h2 id="cli-changes">CLI changes<a class="headerlink" href="#cli-changes" title="Permanent link"> ¶</a></h2>
 <ul>
-<li><code>git sheet upsert</code> / <code>query</code> / <code>read</code> / <code>normalize</code> — same command shape, rebuilt against the new core (<code>edit</code> deferred to <a href="https://github.com/JarvusInnovations/gitsheets/issues/150">#150</a>)</li>
-<li><code>--patch-existing</code> → <code>--patch</code> (RFC 7396 semantics, deferred — use library <code>Sheet.patch</code> for now)</li>
+<li><code>git sheet upsert</code> / <code>query</code> / <code>read</code> / <code>normalize</code> — same command shape, rebuilt against the new core</li>
+<li><code>git sheet edit &lt;sheet&gt; &lt;path&gt;</code> — new in v1.1: <code>$EDITOR</code>-based round-trip on a record</li>
+<li><code>git sheet init &lt;sheet&gt;</code> — new in v1.1: scaffold a starter <code>.gitsheets/&lt;sheet&gt;.toml</code></li>
+<li><code>git sheet infer &lt;sheet&gt;</code> / <code>migrate-config &lt;sheet&gt;</code> — new in v1.1: schema inference and pre-v1.0 fields-config migration</li>
+<li><code>--patch-existing</code> → <code>--patch</code> (RFC 7396 semantics: <code>null</code> deletes, arrays replace)</li>
+<li><code>--format</code> (<code>json|toml|csv</code> upsert; <code>json|csv|tsv|toml</code> query/read), <code>--encoding</code>, <code>--delete-missing</code>, <code>--attachment &lt;name&gt;=&lt;source&gt;</code> — all shipped in v1.1</li>
+<li><code>--prefix</code> (<code>GITSHEETS_PREFIX</code>) for multi-tenant sub-tree scoping</li>
 <li>New global flags: <code>--message</code>, <code>--author-name</code>, <code>--author-email</code>, <code>--trailer Key=Value</code>, <code>--ref</code>, <code>--commit-to</code></li>
 <li>Exit codes are stable from v1.0 onward — see <a href="../cli/#exit-codes">CLI reference</a></li>
-<li><code>--format</code> (CSV / TOML), <code>--encoding</code>, <code>--delete-missing</code>, <code>--attachments</code> deferred to v1.x</li>
+<li><code>--working</code> (read/write the working tree state) remains deferred — tracked at <a href="https://github.com/JarvusInnovations/gitsheets/issues/165">#165</a></li>
 </ul>
 <h2 id="going-forward">Going forward<a class="headerlink" href="#going-forward" title="Permanent link"> ¶</a></h2>
 <p>Once migrated, the recipes are the fastest path to common patterns:</p>

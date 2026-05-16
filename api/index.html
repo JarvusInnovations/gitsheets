@@ -761,6 +761,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#diff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#indexing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1290,6 +1301,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#diff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#indexing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1484,9 +1506,11 @@
 <span class="w">  </span><span class="nx">OpenRepoOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetsOptions</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">TransactionOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionResult</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionHandler</span><span class="p">,</span><span class="w"> </span><span class="nx">Author</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">SheetConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SheetFieldConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SortRule</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertResult</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">SheetConstructorOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">IndexKeyFn</span><span class="p">,</span><span class="w"> </span><span class="nx">DefineIndexOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryFilter</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">SheetConstructorOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">IndexKeyFn</span><span class="p">,</span><span class="w"> </span><span class="nx">DefineIndexOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryFilter</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryOptions</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">DiffStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffChange</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">AttachmentBlobHandle</span><span class="p">,</span><span class="w"> </span><span class="nx">AttachmentEntry</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">OpenStoreOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">Store</span><span class="p">,</span><span class="w"> </span><span class="nx">StoreTx</span><span class="p">,</span><span class="w"> </span><span class="nx">StoreTransactFn</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidatorMap</span><span class="p">,</span><span class="w"> </span><span class="nx">InferRecord</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">PushDaemonOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">PushDaemonStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">BackoffConfig</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">PushDaemonOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">PushDaemonStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">PushFailureReason</span><span class="p">,</span><span class="w"> </span><span class="nx">BackoffConfig</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">JSONSchema</span><span class="p">,</span><span class="w"> </span><span class="nx">StandardSchemaV1</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidationIssue</span><span class="p">,</span><span class="w"> </span><span class="nx">StandardSchemaResult</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">RecordLike</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateBlob</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateTree</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateQueryResult</span><span class="p">,</span>
 <span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
@@ -1554,16 +1578,16 @@
 </thead>
 <tbody>
 <tr>
-<td><code>sheet.query(filter?)</code></td>
-<td><code>AsyncGenerator&lt;T&gt;</code> — iterator</td>
+<td><code>sheet.query(filter?, opts?)</code></td>
+<td><code>AsyncGenerator&lt;T&gt;</code> — iterator; <code>opts.signal</code> for AbortSignal cancellation</td>
 </tr>
 <tr>
-<td><code>sheet.queryFirst(filter?)</code></td>
-<td><code>Promise&lt;T \| undefined&gt;</code></td>
+<td><code>sheet.queryFirst(filter?, opts?)</code></td>
+<td><code>Promise&lt;T \| undefined&gt;</code> — honors <code>opts.signal</code></td>
 </tr>
 <tr>
-<td><code>sheet.queryAll(filter?)</code></td>
-<td><code>Promise&lt;T[]&gt;</code></td>
+<td><code>sheet.queryAll(filter?, opts?)</code></td>
+<td><code>Promise&lt;T[]&gt;</code> — honors <code>opts.signal</code></td>
 </tr>
 <tr>
 <td><code>sheet.pathForRecord(record)</code></td>
@@ -1631,6 +1655,33 @@
 <tr>
 <td><code>sheet.setAttachments(record, map)</code></td>
 <td>Bulk variant</td>
+</tr>
+<tr>
+<td><code>sheet.deleteAttachment(record, name)</code></td>
+<td>Remove a single attachment; throws <code>NotFoundError</code> if missing</td>
+</tr>
+<tr>
+<td><code>sheet.deleteAttachments(record)</code></td>
+<td>Remove all attachments; idempotent no-op when no attachment dir</td>
+</tr>
+<tr>
+<td><code>sheet.attachments(record)</code></td>
+<td><code>AsyncGenerator&lt;AttachmentEntry&gt;</code> yielding <code>{name, mimeType, blob}</code> with <code>.read()</code> / <code>.stream()</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="diff">Diff<a class="headerlink" href="#diff" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sheet.diffFrom(srcCommitHash?, opts?)</code></td>
+<td><code>AsyncGenerator&lt;DiffChange&lt;T&gt;&gt;</code> — per-record changes since <code>srcCommitHash</code> (defaults to the empty tree). <code>opts.blobs</code> / <code>opts.records</code> / <code>opts.patches</code> attach hologit blob handles, parsed src/dst records, and RFC 6902 JSON Patches respectively. Throws <code>RefError</code> if <code>srcCommitHash</code> doesn&rsquo;t resolve.</td>
 </tr>
 </tbody>
 </table>
@@ -1718,11 +1769,11 @@
 </tr>
 <tr>
 <td><code>retry</code></td>
-<td><code>{ commit, attempt, nextDelayMs }</code></td>
+<td><code>{ commit, attempt, nextDelayMs, reason }</code></td>
 </tr>
 <tr>
 <td><code>error</code></td>
-<td><code>{ commit, err, attempt }</code></td>
+<td><code>{ commit, err, attempt, reason }</code> — <code>reason: 'non-fast-forward' \| 'unknown'</code>. NFF is terminal (no retry).</td>
 </tr>
 <tr>
 <td><code>stopped</code></td>
@@ -1740,7 +1791,7 @@
 <tbody>
 <tr>
 <td><code>daemon.status()</code></td>
-<td>Snapshot: running, lastPushAt, lastError, pendingCommits, currentBackoffMs, currentAttempt</td>
+<td>Snapshot: running, lastPushAt, lastError (with <code>reason</code>), pendingCommits, currentBackoffMs, currentAttempt</td>
 </tr>
 <tr>
 <td><code>daemon.stop({ timeoutMs })</code></td>
@@ -1748,6 +1799,7 @@
 </tr>
 </tbody>
 </table>
+<p>On <code>startPushDaemon</code> the daemon also runs a one-shot startup-backlog check (fetch + <code>rev-list --count &lt;remote&gt;/&lt;branch&gt;..&lt;branch&gt;</code>) and queues any commits ahead of the remote; this is how a restarted daemon catches up.</p>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/push-sync.md"><code>specs/behaviors/push-sync.md</code></a> · <a href="../recipes/production-push-daemon/">production recipe</a></p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link"> ¶</a></h2>
 <p>All gitsheets exceptions extend <code>GitsheetsError</code>:</p>
@@ -1809,7 +1861,7 @@
 <h2 id="conventions">Conventions<a class="headerlink" href="#conventions" title="Permanent link"> ¶</a></h2>
 <p>Read <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/conventions.md"><code>specs/api/conventions.md</code></a> for the cross-cutting rules: TypeScript posture, async patterns, options-object pattern, default refs/paths.</p>
 <h2 id="stability">Stability<a class="headerlink" href="#stability" title="Permanent link"> ¶</a></h2>
-<p>Everything documented in <a href="https://github.com/JarvusInnovations/gitsheets/tree/develop/specs"><code>specs/</code></a> (and re-exported from <code>gitsheets</code>) is stable from v1.0 forward. Internal modules under <code>dist/</code> that aren&rsquo;t re-exported are implementation details and may change in minor releases.</p>
+<p>Everything documented in <a href="https://github.com/JarvusInnovations/gitsheets/tree/develop/specs"><code>specs/</code></a> (and re-exported from <code>gitsheets</code>) is stable from v1.0 onward. Additions in minor versions are additive (new methods, new options). Internal modules under <code>dist/</code> that aren&rsquo;t re-exported are implementation details and may change in minor releases.</p>
 
 
 

@@ -1271,9 +1271,10 @@
 
 <h1 id="migrating-a-legacy-gitsheetfields-config">Migrating a legacy <code>[gitsheet.fields]</code> config<a class="headerlink" href="#migrating-a-legacy-gitsheetfields-config" title="Permanent link"> ¶</a></h1>
 <p>Pre-v1.0 gitsheets used a <code>[gitsheet.fields]</code> block for typed field configuration. v1.0 replaces it with a proper <code>[gitsheet.schema]</code> JSON Schema block. The mapping is lossless for <code>type</code> / <code>enum</code> / <code>default</code>; <code>sort</code> stays where it is (it&rsquo;s a different concept); <code>trueValues</code> / <code>falseValues</code> move to a CSV-ingest helper.</p>
-<blockquote>
-<p>The <code>gitsheets migrate-config &lt;sheet&gt;</code> CLI command that automates this is tracked at <a href="https://github.com/JarvusInnovations/gitsheets/issues/151">#151</a> — until that lands, follow this guide manually.</p>
-</blockquote>
+<p>The <code>gitsheets migrate-config &lt;sheet&gt;</code> CLI command (shipped in v1.1) automates this:</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>migrate-config<span class="w"> </span>users<span class="w"> </span>--message<span class="o">=</span><span class="s1">&#39;migrate users config to v1.0 schema&#39;</span>
+</code></pre></div>
+<p>This guide walks through what the command does step-by-step, useful when you want to understand the resulting config or apply migrations by hand.</p>
 <h2 id="mapping-table">Mapping table<a class="headerlink" href="#mapping-table" title="Permanent link"> ¶</a></h2>
 <table>
 <thead>
@@ -1481,7 +1482,7 @@
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link"> ¶</a></h2>
 <ul>
 <li><a href="../../validation/">Validation</a> — full pipeline</li>
-<li><a href="https://github.com/JarvusInnovations/gitsheets/issues/151">Issue #151</a> — <code>gitsheets migrate-config</code> CLI (automated migration)</li>
+<li><a href="../../cli/#gitsheets-migrate-config-sheet"><code>gitsheets migrate-config</code></a> — the CLI command that automates this whole flow</li>
 <li><a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md"><code>specs/behaviors/validation.md</code></a></li>
 <li><a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md"><code>specs/behaviors/normalization.md</code></a></li>
 </ul>

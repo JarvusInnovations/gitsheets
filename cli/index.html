@@ -683,10 +683,54 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-edit-sheet-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets edit &lt;sheet&gt; &lt;path&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-normalize-sheet" class="md-nav__link">
     <span class="md-ellipsis">
       
         gitsheets normalize &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-init-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets init &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-infer-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets infer &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-migrate-config-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets migrate-config &lt;sheet&gt;
       
     </span>
   </a>
@@ -714,17 +758,6 @@
     <span class="md-ellipsis">
       
         Error output
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deferred-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deferred commands
       
     </span>
   </a>
@@ -1096,10 +1129,54 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-edit-sheet-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets edit &lt;sheet&gt; &lt;path&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-normalize-sheet" class="md-nav__link">
     <span class="md-ellipsis">
       
         gitsheets normalize &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-init-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets init &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-infer-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets infer &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-migrate-config-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets migrate-config &lt;sheet&gt;
       
     </span>
   </a>
@@ -1127,17 +1204,6 @@
     <span class="md-ellipsis">
       
         Error output
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deferred-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deferred commands
       
     </span>
   </a>
@@ -1195,6 +1261,11 @@ operation on a <code>Repository</code> (or <code>Sheet</code>/<code>Transaction<
 <td><code>GITSHEETS_ROOT</code></td>
 </tr>
 <tr>
+<td><code>--prefix &lt;path&gt;</code></td>
+<td>none</td>
+<td><code>GITSHEETS_PREFIX</code></td>
+</tr>
+<tr>
 <td><code>--ref &lt;ref&gt;</code></td>
 <td><code>HEAD</code></td>
 <td><code>GITSHEETS_REF</code></td>
@@ -1221,45 +1292,147 @@ operation on a <code>Repository</code> (or <code>Sheet</code>/<code>Transaction<
 </tr>
 </tbody>
 </table>
+<p><code>--prefix</code> scopes records to a sub-tree under each sheet&rsquo;s configured root —
+useful for multi-tenant deployments where one git repo holds many tenants
+under <code>&lt;root&gt;/&lt;tenant&gt;/...</code>. With <code>--prefix tenant-a</code>, a sheet whose config
+declares <code>root = 'users'</code> reads/writes records at <code>users/tenant-a/&lt;path&gt;.toml</code>.
+The sheet&rsquo;s <code>.gitsheets/&lt;name&gt;.toml</code> config file is unaffected — only the
+record data tree is scoped.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link"> ¶</a></h2>
 <h3 id="gitsheets-upsert-sheet-input"><code>gitsheets upsert &lt;sheet&gt; [input]</code><a class="headerlink" href="#gitsheets-upsert-sheet-input" title="Permanent link"> ¶</a></h3>
 <p>Insert or update one or more records.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>users.json
 gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span>records.jsonl
 gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">&#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;jane@x.org&quot;}&#39;</span>
+gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>users.csv<span class="w"> </span>--format<span class="o">=</span>csv
+gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>users.toml<span class="w"> </span>--format<span class="o">=</span>toml
 </code></pre></div>
 <p><code>input</code> is inline JSON (single record <code>{...}</code> or array <code>[{...}, ...]</code>),
 a file path, or <code>-</code> for stdin.</p>
-<p>(In v1.0 <code>upsert</code> accepts no extra flags beyond the global tx flags.
-A <code>--patch</code> flag for RFC 7396 merge semantics is deferred to <a href="https://github.com/JarvusInnovations/gitsheets/issues/149">#149</a>;
-use the library <code>Sheet.patch(query, partial)</code> for now.)</p>
+<p>Flags:</p>
+<ul>
+<li><code>--format &lt;json|toml|csv&gt;</code> — input format. Default: inferred from extension (<code>*.toml</code> → TOML, <code>*.csv</code> → CSV), otherwise JSON.</li>
+<li><code>--encoding &lt;enc&gt;</code> — encoding for file/stdin input. Default <code>utf8</code>. Accepts any Node <code>BufferEncoding</code>.</li>
+<li><code>--delete-missing</code> — <strong>DESTRUCTIVE</strong>: full-replace mode. After upserting every input record, deletes any record in the sheet whose path isn&rsquo;t in the input set, in the same transaction. If validation fails on any input record, the whole transaction rolls back and the tree is unchanged.</li>
+<li><code>--attachment &lt;name&gt;=&lt;source&gt;</code> (repeatable) — attach a file alongside the (single) upserted record in the same transaction. <code>&lt;source&gt;</code> is a file path (relative to the input file&rsquo;s directory, or cwd when input is stdin) or <code>-</code> for stdin (only one <code>-</code> per command). Requires a single-record input set.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">&#39;{&quot;slug&quot;:&quot;jane&quot;}&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--attachment<span class="w"> </span>avatar.jpg<span class="o">=</span>./assets/jane.jpg<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--attachment<span class="w"> </span>bio.md<span class="o">=</span>-
+</code></pre></div>
+<ul>
+<li><code>--patch</code> — treat each input record as an <a href="https://datatracker.ietf.org/doc/html/rfc7396">RFC 7396 JSON Merge Patch</a>. Fields present in the sheet&rsquo;s path template are split out as the query (which existing record to find); the remaining fields are merged into that record. <code>null</code> deletes a field. Cannot be combined with <code>--delete-missing</code> or <code>--attachment</code>.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1"># Update jane&#39;s email; delete her bio; add a team field.</span>
+gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">&#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;new@x.org&quot;,&quot;bio&quot;:null,&quot;team&quot;:&quot;eng&quot;}&#39;</span><span class="w"> </span>--patch
+</code></pre></div>
+<p>For sheets whose template uses expressions (e.g., <code>${{ slug.toLowerCase() }}</code>), the CLI does a best-effort identifier scan to find the query fields. If that doesn&rsquo;t yield the right split, use the library API <code>Sheet.patch(query, partial)</code> directly.</p>
+<p>TOML input supports three layouts: a <code>[[records]]</code> array of tables (recommended for multi-record files), a top-level table where every value is itself a table (each value becomes one record), or a single-record document.</p>
+<p>CSV input uses the first row as a header. Cell values stay as strings — type coercion belongs in the consumer schema, not in CSV parsing.</p>
 <p>Output (per record):</p>
 <div class="highlight"><pre><span></span><code>&lt;blob-hash&gt; &lt;rendered-path&gt;
 </code></pre></div>
 <h3 id="gitsheets-query-sheet"><code>gitsheets query &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-query-sheet" title="Permanent link"> ¶</a></h3>
-<p>Read records. Output is newline-delimited JSON.</p>
+<p>Read records. Output is newline-delimited JSON by default.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>query<span class="w"> </span>users
 gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="w"> </span>--filter<span class="w"> </span><span class="nv">email</span><span class="o">=</span>jane@x.org
 gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="w"> </span>--filter<span class="w"> </span><span class="nv">status</span><span class="o">=</span>active<span class="w"> </span>--filter<span class="w"> </span><span class="nv">project_id</span><span class="o">=</span>p1
 gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="w"> </span>--fields<span class="w"> </span>slug<span class="w"> </span>email<span class="w"> </span>--limit<span class="w"> </span><span class="m">100</span>
+gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="w"> </span>--format<span class="o">=</span>csv<span class="w"> </span>--fields<span class="w"> </span>slug<span class="w"> </span>email
+gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="w"> </span>--format<span class="o">=</span>toml<span class="w"> </span>&gt;<span class="w"> </span>users.toml
 </code></pre></div>
 <p>Flags:</p>
 <ul>
 <li><code>--filter &lt;field&gt;=&lt;value&gt;</code> (repeatable) — equality filter</li>
-<li><code>--fields &lt;name&gt;...</code> — output column subset</li>
+<li><code>--fields &lt;name&gt;...</code> — output column subset (order preserved)</li>
 <li><code>--limit &lt;n&gt;</code></li>
+<li><code>--format &lt;json|csv|tsv|toml&gt;</code> — output format. Default <code>json</code> (newline-delimited).</li>
+<li><code>--headers</code> / <code>--no-headers</code> — emit a header row for CSV/TSV. Default <code>true</code>.</li>
 </ul>
+<p>TOML output emits a <code>[[records]]</code> array of tables, round-trippable through <code>upsert --format=toml</code>.</p>
 <h3 id="gitsheets-read-sheet-path"><code>gitsheets read &lt;sheet&gt; &lt;path&gt;</code><a class="headerlink" href="#gitsheets-read-sheet-path" title="Permanent link"> ¶</a></h3>
 <p>Read a single record by its rendered path.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span><span class="nb">read</span><span class="w"> </span>users<span class="w"> </span>jane
+gitsheets<span class="w"> </span><span class="nb">read</span><span class="w"> </span>users<span class="w"> </span>jane<span class="w"> </span>--format<span class="o">=</span>toml
 </code></pre></div>
-<p>Output: pretty-printed JSON.</p>
+<p>Flags:</p>
+<ul>
+<li><code>--format &lt;json|toml|csv|tsv&gt;</code> — output format. Default: pretty-printed JSON.</li>
+</ul>
+<h3 id="gitsheets-edit-sheet-path"><code>gitsheets edit &lt;sheet&gt; &lt;path&gt;</code><a class="headerlink" href="#gitsheets-edit-sheet-path" title="Permanent link"> ¶</a></h3>
+<p>Open a record in <code>$EDITOR</code> for interactive editing. On save:</p>
+<ol>
+<li>The CLI re-reads the tmpfile, parses it as TOML.</li>
+<li>If the file is byte-identical to what was written out, no commit is made (idempotent — no empty commits).</li>
+<li>Otherwise the parsed record is upserted in a transaction; validation, normalization, and path rendering all run.</li>
+</ol>
+<p>Editor resolution: <code>$VISUAL</code> → <code>$EDITOR</code> → <code>vi</code>. The editor is spawned through a shell, so <code>EDITOR="code --wait"</code> and similar wrapped commands work. Exit-code 0 from the editor means &ldquo;save&rdquo;; anything else aborts without commit.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>edit<span class="w"> </span>users<span class="w"> </span>jane
+</code></pre></div>
+<p>Validation failures abort with a clear message rather than re-opening the editor — re-edit the input via <code>gitsheets read users &lt;path&gt; --format=toml</code> plus <code>upsert</code> if you need a second pass.</p>
 <h3 id="gitsheets-normalize-sheet"><code>gitsheets normalize &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-normalize-sheet" title="Permanent link"> ¶</a></h3>
 <p>Re-write every record in the sheet through canonical normalization in one
 transaction. Use case: after upgrading <code>[gitsheet.fields.&lt;name&gt;.sort]</code> rules,
 or after a manual edit that didn&rsquo;t preserve canonical key order.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>normalize<span class="w"> </span>users
 </code></pre></div>
+<h3 id="gitsheets-init-sheet"><code>gitsheets init &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-init-sheet" title="Permanent link"> ¶</a></h3>
+<p>Scaffold <code>.gitsheets/&lt;sheet&gt;.toml</code> with sensible defaults. Useful as a first-step before bulk-importing records.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>init<span class="w"> </span>users
+gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--path<span class="o">=</span><span class="s1">&#39;${{ slug }}&#39;</span>
+gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--schema<span class="o">=</span>./schemas/user.schema.json
+</code></pre></div>
+<p>Defaults:</p>
+<ul>
+<li><code>root = &lt;sheet&gt;</code> (the sheet name)</li>
+<li><code>path = '${{ id }}'</code></li>
+</ul>
+<p>Flags:</p>
+<ul>
+<li><code>--path &lt;tpl&gt;</code> — override the path template.</li>
+<li><code>--schema &lt;file&gt;</code> — embed a JSON Schema file under <code>[gitsheet.schema]</code>. The schema is validated through the same loader the runtime uses; an invalid schema aborts before the transaction commits.</li>
+<li><code>--force</code> — overwrite an existing <code>.gitsheets/&lt;sheet&gt;.toml</code>. Without <code>--force</code>, init refuses to clobber.</li>
+</ul>
+<h3 id="gitsheets-infer-sheet"><code>gitsheets infer &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-infer-sheet" title="Permanent link"> ¶</a></h3>
+<p>Scan every record in the sheet and write a conservative starter <code>[gitsheet.schema]</code> block into <code>.gitsheets/&lt;sheet&gt;.toml</code>. The committed schema captures observed types per field, plus <code>minimum</code>/<code>maximum</code> hints for numeric fields and <code>items.type</code> for arrays. Fields present in every record are listed under <code>required</code>.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>infer<span class="w"> </span>users
+</code></pre></div>
+<p>Existing <code>root</code>, <code>path</code>, and any non-schema <code>fields.&lt;name&gt;.sort</code> rules are preserved. The result is a starting point — review and tighten (add <code>pattern</code>, <code>format</code>, etc.) before relying on it.</p>
+<h3 id="gitsheets-migrate-config-sheet"><code>gitsheets migrate-config &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-migrate-config-sheet" title="Permanent link"> ¶</a></h3>
+<p>Convert a pre-v1.0 <code>[gitsheet.fields]</code> config to a v1.0 <code>[gitsheet.schema]</code> config in one transaction.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>migrate-config<span class="w"> </span>orders
+</code></pre></div>
+<p>Migration table (matches <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md#migration-of-pre-v10-gitsheetfields-config"><code>specs/behaviors/validation.md</code></a>):</p>
+<table>
+<thead>
+<tr>
+<th>Pre-v1.0 field</th>
+<th>v1.0 placement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type: 'number' \| 'string' \| 'boolean'</code></td>
+<td><code>[gitsheet.schema.properties.&lt;name&gt;].type</code></td>
+</tr>
+<tr>
+<td><code>enum: [...]</code></td>
+<td><code>[gitsheet.schema.properties.&lt;name&gt;].enum</code></td>
+</tr>
+<tr>
+<td><code>default: &lt;value&gt;</code></td>
+<td><code>[gitsheet.schema.properties.&lt;name&gt;].default</code></td>
+</tr>
+<tr>
+<td><code>sort: ...</code></td>
+<td><code>[gitsheet.fields.&lt;name&gt;.sort]</code> (unchanged)</td>
+</tr>
+<tr>
+<td><code>trueValues: [...]</code>, <code>falseValues: [...]</code></td>
+<td>Warning to stderr — move to CSV-ingest helper</td>
+</tr>
+</tbody>
+</table>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link"> ¶</a></h2>
 <table>
 <thead>
@@ -1314,15 +1487,6 @@ or after a manual edit that didn&rsquo;t preserve canonical key order.</p>
   code:   validation_failed
   issue:  email: must match format &quot;email&quot; (json-schema)
 </code></pre></div>
-<h2 id="deferred-commands">Deferred commands<a class="headerlink" href="#deferred-commands" title="Permanent link"> ¶</a></h2>
-<p>These are documented in <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/cli.md"><code>specs/api/cli.md</code></a>
-but not shipped in the v1.0 substrate; they land in follow-up PRs:</p>
-<ul>
-<li><code>gitsheets edit &lt;sheet&gt; &lt;path&gt;</code> — open in <code>$EDITOR</code></li>
-<li><code>gitsheets infer &lt;sheet&gt;</code> — generate a starter JSON Schema from records</li>
-<li><code>gitsheets migrate-config &lt;sheet&gt;</code> — convert legacy <code>[gitsheet.fields]</code></li>
-<li><code>gitsheets init &lt;sheet&gt;</code> — scaffold a new sheet config (#139)</li>
-</ul>
 
 
 
