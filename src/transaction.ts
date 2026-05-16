@@ -123,6 +123,7 @@ export class Transaction {
     workspace: Workspace,
     tree: TreeObject,
     validator?: StandardSchemaV1<unknown, T>,
+    prefix?: string,
   ) => Sheet<T>;
   #closed = false;
   #anyMutation = false;
@@ -148,6 +149,7 @@ export class Transaction {
       workspace: Workspace,
       tree: TreeObject,
       validator?: StandardSchemaV1<unknown, T>,
+      prefix?: string,
     ) => Sheet<T>;
   }) {
     this.#hologitRepo = opts.hologitRepo;
@@ -185,12 +187,15 @@ export class Transaction {
 
   /**
    * Returns a Sheet whose writes route through this transaction's private tree.
-   * `opts.validator` (optional) attaches a Standard Schema validator — used by
-   * Store.transact to thread per-sheet validators through to tx scope.
+   *
+   * - `opts.validator` (optional) attaches a Standard Schema validator — used
+   *   by Store.transact to thread per-sheet validators through to tx scope.
+   * - `opts.prefix` (optional) scopes records to a sub-prefix under the
+   *   sheet's `config.root`. Used by the CLI `--prefix` flag.
    */
   sheet<T extends RecordLike = RecordLike>(
     name: string,
-    opts?: { validator?: StandardSchemaV1<unknown, T> },
+    opts?: { validator?: StandardSchemaV1<unknown, T>; prefix?: string },
   ): Sheet<T> {
     if (this.#closed) {
       throw new TransactionError(
@@ -198,7 +203,13 @@ export class Transaction {
         'transaction is already closed — obtain a fresh Transaction via repo.transact',
       );
     }
-    return this.#sheetFactory<T>(name, this.#workspace, this.#workspace.root, opts?.validator);
+    return this.#sheetFactory<T>(
+      name,
+      this.#workspace,
+      this.#workspace.root,
+      opts?.validator,
+      opts?.prefix,
+    );
   }
 
   /**

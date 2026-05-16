@@ -51,9 +51,9 @@ gitsheets/
 │   ├── sheet.ts              # Sheet class
 │   ├── transaction.ts        # Transaction class
 │   ├── store.ts              # openStore + Store type
+│   ├── *.test.ts             # Vitest specs co-located with the units they cover
 │   └── index.ts              # public re-exports
-├── tests/                    # Vitest (or node --test) suite
-├── docs/                     # User-facing documentation (see #141)
+├── docs/                     # User-facing documentation (mkdocs)
 ├── specs/                    # ← source of truth, this directory
 ├── .claude/
 │   ├── agents/               # spec-drift-auditor

@@ -33,9 +33,11 @@ import type {
   OpenRepoOptions, OpenSheetOptions, OpenSheetsOptions,
   TransactionOptions, TransactionResult, TransactionHandler, Author,
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult,
-  SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter,
+  SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, QueryOptions,
+  DiffStatus, DiffOptions, DiffChange,
+  AttachmentBlobHandle, AttachmentEntry,
   OpenStoreOptions, Store, StoreTx, StoreTransactFn, ValidatorMap, InferRecord,
-  PushDaemonOptions, PushDaemonStatus, BackoffConfig,
+  PushDaemonOptions, PushDaemonStatus, PushFailureReason, BackoffConfig,
   JSONSchema, StandardSchemaV1, ValidationIssue, StandardSchemaResult,
   RecordLike, PathTemplateBlob, PathTemplateTree, PathTemplateQueryResult,
 } from 'gitsheets';
@@ -89,9 +91,9 @@ const store = await openStore(repo, {
 
 | Method | Returns |
 | --- | --- |
-| `sheet.query(filter?)` | `AsyncGenerator<T>` — iterator |
-| `sheet.queryFirst(filter?)` | `Promise<T \| undefined>` |
-| `sheet.queryAll(filter?)` | `Promise<T[]>` |
+| `sheet.query(filter?, opts?)` | `AsyncGenerator<T>` — iterator; `opts.signal` for AbortSignal cancellation |
+| `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` — honors `opts.signal` |
+| `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` — honors `opts.signal` |
 | `sheet.pathForRecord(record)` | `Promise<string>` — rendered path, no write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` — canonical form, no write |
 
@@ -115,6 +117,15 @@ All write methods route through a transaction — permissive mode auto-opens one
 | `sheet.getAttachments(record)` | Map of name → BlobObject |
 | `sheet.setAttachment(record, name, blob)` | Add or replace |
 | `sheet.setAttachments(record, map)` | Bulk variant |
+| `sheet.deleteAttachment(record, name)` | Remove a single attachment; throws `NotFoundError` if missing |
+| `sheet.deleteAttachments(record)` | Remove all attachments; idempotent no-op when no attachment dir |
+| `sheet.attachments(record)` | `AsyncGenerator<AttachmentEntry>` yielding `{name, mimeType, blob}` with `.read()` / `.stream()` |
+
+### Diff
+
+| Method | Returns |
+| --- | --- |
+| `sheet.diffFrom(srcCommitHash?, opts?)` | `AsyncGenerator<DiffChange<T>>` — per-record changes since `srcCommitHash` (defaults to the empty tree). `opts.blobs` / `opts.records` / `opts.patches` attach hologit blob handles, parsed src/dst records, and RFC 6902 JSON Patches respectively. Throws `RefError` if `srcCommitHash` doesn't resolve. |
 
 ### Indexing
 
@@ -173,14 +184,16 @@ Returned from `repo.startPushDaemon(opts)`. EventEmitter with:
 | Event | Payload |
 | --- | --- |
 | `push` | `{ commit, durationMs }` |
-| `retry` | `{ commit, attempt, nextDelayMs }` |
-| `error` | `{ commit, err, attempt }` |
+| `retry` | `{ commit, attempt, nextDelayMs, reason }` |
+| `error` | `{ commit, err, attempt, reason }` — `reason: 'non-fast-forward' \| 'unknown'`. NFF is terminal (no retry). |
 | `stopped` | (none) |
 
 | Method | Purpose |
 | --- | --- |
-| `daemon.status()` | Snapshot: running, lastPushAt, lastError, pendingCommits, currentBackoffMs, currentAttempt |
+| `daemon.status()` | Snapshot: running, lastPushAt, lastError (with `reason`), pendingCommits, currentBackoffMs, currentAttempt |
 | `daemon.stop({ timeoutMs })` | Drain in-flight retries (graceful) |
+
+On `startPushDaemon` the daemon also runs a one-shot startup-backlog check (fetch + `rev-list --count <remote>/<branch>..<branch>`) and queues any commits ahead of the remote; this is how a restarted daemon catches up.
 
 → [`specs/behaviors/push-sync.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/push-sync.md) · [production recipe](recipes/production-push-daemon.md)
 
@@ -234,4 +247,4 @@ Read [`specs/api/conventions.md`](https://github.com/JarvusInnovations/gitsheets
 
 ## Stability
 
-Everything documented in [`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs) (and re-exported from `gitsheets`) is stable from v1.0 forward. Internal modules under `dist/` that aren't re-exported are implementation details and may change in minor releases.
+Everything documented in [`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs) (and re-exported from `gitsheets`) is stable from v1.0 onward. Additions in minor versions are additive (new methods, new options). Internal modules under `dist/` that aren't re-exported are implementation details and may change in minor releases.

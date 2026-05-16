@@ -27,16 +27,6 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** `repo.watch(callback)` API that emits events when the data tree changes externally (working-tree edits, ref updates from another process), letting consumers invalidate caches/indices live.
 - **Why deferred:** Gitsheets typically operates against refs, not the working tree. The use case is real for dev/seeding workflows but not load-bearing for production consumers.
 
-### Attachments iterator API — [#140](https://github.com/JarvusInnovations/gitsheets/issues/140)
-
-- **What:** `for await (const { name, mimeType, blob } of sheet.attachments(record))` — a higher-level iterator over a record's attachments, replacing the current low-level `blobMap` surface.
-- **Why deferred:** The current `getAttachments` / `getAttachment` / `setAttachment` API works; iterator is sugar. Nice ergonomics, not 1.0-critical.
-
-### `git sheet init` scaffold command — [#139](https://github.com/JarvusInnovations/gitsheets/issues/139)
-
-- **What:** A CLI command that writes a starter `.gitsheets/<name>.toml` from a JSON Schema file, from sample records, or from minimal flags.
-- **Why deferred:** Consumers can hand-author the TOML. Real ergonomics win but not on the 1.0 critical path.
-
 ### YAML format support (input + output) — [#61](https://github.com/JarvusInnovations/gitsheets/issues/61)
 
 - **What:** Accept and emit YAML in CLI ingest / export, alongside the existing JSON / TOML / CSV.
@@ -62,50 +52,10 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** A library-managed cache around parsed records, surviving across requests in a long-running consumer.
 - **Why deferred:** Once #138 (blob-hash record cache fix) lands, the existing per-sheet-instance cache covers most needs. A richer multi-instance cache can come if a consumer shows it's needed.
 
-### `Sheet.diffFrom` — diff against a prior commit — [#152](https://github.com/JarvusInnovations/gitsheets/issues/152)
+### CLI `--working` global flag — [#165](https://github.com/JarvusInnovations/gitsheets/issues/165)
 
-- **What:** `async *sheet.diffFrom(srcCommitHash?, { blobs?, records?, patches? })` yielding `{ path, status, src, dst, patch }` changes scoped to the sheet's root. Was used pre-v1.0 by the propose-review UI.
-- **Why deferred:** Internally relies on shelling out to `git diff-tree`; the surface is useful but isn't on the v1.0 critical path. Documented in `api/sheet.md` as still part of the spec, but not implemented in the v1.0 substrate.
-
-### `Sheet.deleteAttachment(s)` — [#153](https://github.com/JarvusInnovations/gitsheets/issues/153)
-
-- **What:** Explicit delete methods for individual attachments and full attachment sets.
-- **Why deferred:** `Sheet.delete(record)` cascades and deletes the attachment directory as a whole; per-file attachment removal can be done by re-writing the surviving attachments via `setAttachments`. A dedicated method is ergonomic but not blocking. `api/sheet.md` mentions both; this entry tracks the explicit implementation.
-
-### CLI `--format` and `--encoding` for upsert/query — [#145](https://github.com/JarvusInnovations/gitsheets/issues/145)
-
-- **What:** `upsert` accepts `--format json|toml|csv` and `--encoding <enc>`; `query` accepts `--format json|csv|tsv|toml` plus `--headers`.
-- **Why deferred:** v1.0 substrate CLI ships JSON-in / newline-JSON-out — enough to exercise the surface and prove integration. CSV/TOML in/out support is a separable CLI PR.
-
-### CLI `gitsheets upsert --delete-missing` — [#146](https://github.com/JarvusInnovations/gitsheets/issues/146)
-
-- **What:** Full-replace upsert mode — records in the sheet but not in the input are deleted in the same transaction.
-- **Why deferred:** Destructive convenience flag; v1.0 ships additive-only to keep the surface narrow.
-
-### CLI `gitsheets upsert --attachments` — [#147](https://github.com/JarvusInnovations/gitsheets/issues/147)
-
-- **What:** `--attachments.<name>=<source-path>` flags to attach files alongside the record in the same transaction.
-- **Why deferred:** Library substrate exists (`Sheet.setAttachment`); CLI wiring is purely arg-parsing.
-
-### CLI `--prefix` and `--working` global flags — [#148](https://github.com/JarvusInnovations/gitsheets/issues/148)
-
-- **What:** `--prefix` (sub-prefix under the data root) and `--working` (read/write the working tree rather than HEAD).
-- **Why deferred:** Both need library plumbing too — `--prefix` would thread through `Repository.openSheet`, and `--working` would need `Repository` to resolve the working tree's state.
-
-### CLI `gitsheets upsert --patch` — [#149](https://github.com/JarvusInnovations/gitsheets/issues/149)
-
-- **What:** A `--patch` flag on `upsert` to apply RFC 7396 merge-patch semantics to existing records, sugar over `Sheet.patch`.
-- **Why deferred:** The CLI ergonomics need design — how the input record splits between "query that selects the existing record" and "partial that gets merged" isn't obvious from a single JSON document. A v0 implementation that passed the input as both query and patch was a no-op and got removed. The library API `Sheet.patch(query, partial)` is the correct surface for now.
-
-### CLI `gitsheets edit` — open record in $EDITOR — [#150](https://github.com/JarvusInnovations/gitsheets/issues/150)
-
-- **What:** Open a record in `$EDITOR`, save, validate, upsert.
-- **Why deferred:** Needs `$EDITOR` spawn + tmpfile dance; orthogonal to the substrate.
-
-### CLI `gitsheets infer` + `migrate-config` — [#151](https://github.com/JarvusInnovations/gitsheets/issues/151)
-
-- **What:** `infer` generates a starter `[gitsheet.schema]` from existing records; `migrate-config` converts pre-v1.0 `[gitsheet.fields]` configs.
-- **Why deferred:** Validation-config tooling that supplements #130's library work. Library APIs exist; CLI surface follows.
+- **What:** Read/write the working tree's state rather than HEAD.
+- **Why deferred:** Substantive library work — `Repository` needs a parallel read/write path against on-disk files (no commit). Split out of #148 during v1.1; `--prefix` shipped, `--working` tracked separately.
 
 ## Dropped (no plan)
 

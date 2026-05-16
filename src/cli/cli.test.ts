@@ -102,6 +102,69 @@ describe('CLI: upsert + query + read', () => {
     expect(code).toBe(0);
   });
 
+  it('scopes records to --prefix on upsert + query', async () => {
+    const fixture = await makeRepoWithUsers();
+
+    // Upsert under prefix tenant-a
+    captureStdout().restore();
+    await main([
+      '--git-dir',
+      fixture.gitDir,
+      '--prefix',
+      'tenant-a',
+      '--message',
+      'seed tenant-a',
+      'upsert',
+      'users',
+      '{"slug":"jane"}',
+    ]);
+
+    // Upsert under prefix tenant-b
+    captureStdout().restore();
+    await main([
+      '--git-dir',
+      fixture.gitDir,
+      '--prefix',
+      'tenant-b',
+      '--message',
+      'seed tenant-b',
+      'upsert',
+      'users',
+      '{"slug":"pat"}',
+    ]);
+
+    // Query tenant-a — should only see jane
+    const aCap = captureStdout();
+    try {
+      await main(['--git-dir', fixture.gitDir, '--prefix', 'tenant-a', 'query', 'users']);
+    } finally {
+      const out = aCap.restore();
+      expect(out).toContain('"slug":"jane"');
+      expect(out).not.toContain('"slug":"pat"');
+    }
+
+    // Query tenant-b — should only see pat
+    const bCap = captureStdout();
+    try {
+      await main(['--git-dir', fixture.gitDir, '--prefix', 'tenant-b', 'query', 'users']);
+    } finally {
+      const out = bCap.restore();
+      expect(out).toContain('"slug":"pat"');
+      expect(out).not.toContain('"slug":"jane"');
+    }
+
+    // No prefix — sheet root is empty (records live under tenant subdirs only)
+    const allCap = captureStdout();
+    try {
+      await main(['--git-dir', fixture.gitDir, 'query', 'users']);
+    } finally {
+      const out = allCap.restore();
+      // The sheet's tree walker doesn't descend into nested non-template subdirs
+      // by default; without --prefix nothing in the root matches the template.
+      expect(out.trim()).toBe('');
+    }
+  });
+
   it('applies --filter to query', async () => {
     const fixture = await makeRepoWithUsers();
     captureStdout().restore();

@@ -148,31 +148,48 @@ await sheet.setAttachments(record, { 'avatar.jpg': blob1, 'avatar-128.jpg': blob
 
 const attachments = await sheet.getAttachments(record); // current low-level surface
 const avatar = await sheet.getAttachment(record, 'avatar.jpg');
+
+await sheet.deleteAttachment(record, 'avatar.jpg');     // throws NotFoundError if missing
+await sheet.deleteAttachments(record);                  // no-op if record has no attachment dir
 ```
 
-The iterator API (`for await (const { name, mimeType, blob } of sheet.attachments(record))`) is deferred to a post-1.0 release. See [#140](https://github.com/JarvusInnovations/gitsheets/issues/140).
+Iterator surface:
+
+```typescript
+for await (const { name, mimeType, blob } of sheet.attachments(record)) {
+  const bytes = await blob.read();    // Buffer
+  // or pipe blob.stream() to wherever
+}
+```
+
+`mimeType` is inferred from the filename extension (with `application/octet-stream` for unknown extensions). `blob.read()` returns a `Buffer`; `blob.stream()` returns a `Readable` from `git cat-file blob <hash>` — useful for streaming large binary attachments without materializing the whole blob in memory.
 
 ## Diff
 
 ### `sheet.diffFrom(srcCommitHash?, opts?)`
 
-> **Deferred — not in the v1.0 surface.** Tracked at [#152](https://github.com/JarvusInnovations/gitsheets/issues/152); see [`deferred.md`](../deferred.md).
-
-Async iterator of changes between `srcCommitHash` and the current tree, scoped to this sheet's root.
+Async iterator of changes between `srcCommitHash` and the current tree, scoped to this sheet's root. Useful for "what changed since the last review" surfaces, audit trails, change-feed consumers.
 
 ```typescript
 for await (const change of sheet.diffFrom('HEAD~1', { records: true, patches: true })) {
-  // change.status: 'added' | 'modified' | 'deleted' | 'renamed'
-  // change.path
-  // change.src / change.dst  (when records: true)
-  // change.patch             (when patches: true)
+  // change.path                            // record path (no .toml suffix, relative to sheet root)
+  // change.status                          // 'added' | 'modified' | 'deleted' | 'renamed'
+  // change.srcMode / change.dstMode        // git file modes (null on add/delete)
+  // change.srcHash / change.dstHash        // blob hashes (null on add/delete)
+  // change.src / change.dst                // parsed records (records: true)
+  // change.patch                           // RFC 6902 JSON Patch ops (patches: true)
+  // change.srcBlob / change.dstBlob        // hologit BlobObject handles (blobs: true)
 }
 ```
 
-- `srcCommitHash` defaults to the empty tree (all current records are "added").
-- `opts.blobs?: boolean` — include raw blob handles
-- `opts.records?: boolean` — include parsed src/dst records
-- `opts.patches?: boolean` — include RFC 6902 (JSON Patch) patches between src and dst
+- `srcCommitHash` accepts a commit hash, a tree hash, or a ref name (`'HEAD~1'`, `'main'`). Defaults to the empty tree — every current record yields `status: 'added'`.
+- `opts.blobs?: boolean` — attach `srcBlob` / `dstBlob` (hologit `BlobObject`) handles.
+- `opts.records?: boolean` — parse src/dst TOML into records.
+- `opts.patches?: boolean` — produce an RFC 6902 JSON Patch (`Operation[]`) from src to dst. Add and delete entries get a single-op patch (`add` / `remove` on the root); modify entries get the full op sequence.
+
+Scope: `*.toml` records only. Attachment-blob diffs (binary blobs under the record dir) are out of scope for v1.1 — consumers diff attachment blob hashes directly using the hashes the iterator surfaces.
+
+Throws `RefError` (`ref_not_found`) when `srcCommitHash` doesn't resolve.
 
 ## Errors
 

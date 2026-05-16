@@ -29,8 +29,10 @@ import {
 Type-only exports (interfaces, type aliases) flow alongside the value exports
 above. Notable ones: `TransactionResult`, `TransactionOptions`, `Author`,
 `SheetConfig`, `UpsertResult`, `IndexKeyFn`, `DefineIndexOptions`,
-`QueryFilter`, `QueryOptions`, `OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
-`PushDaemonOptions`, `PushDaemonStatus`, `BackoffConfig`, `JSONSchema`,
+`QueryFilter`, `QueryOptions`, `DiffStatus`, `DiffOptions`, `DiffChange`,
+`AttachmentBlobHandle`, `AttachmentEntry`,
+`OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
+`PushDaemonOptions`, `PushDaemonStatus`, `PushFailureReason`, `BackoffConfig`, `JSONSchema`,
 `StandardSchemaV1`, `ValidationIssue`, `RecordLike`.
 
 No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely.

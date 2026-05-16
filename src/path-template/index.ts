@@ -267,6 +267,32 @@ function joinPath(prefix: string, name: string): string {
   return prefix ? `${prefix}/${name}` : name;
 }
 
+// --- Identifier extraction (for Template.getFieldNames on ExpressionParts) ---
+
+// Bare identifiers anywhere in the expression source. Members (`x.y`) match
+// only `x` because the `\b` boundary follows a non-word char.
+const IDENTIFIER_RE = /(?<![.\w$])([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
+
+const JS_RESERVED = new Set<string>([
+  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default',
+  'delete', 'do', 'else', 'enum', 'export', 'extends', 'false', 'finally', 'for',
+  'function', 'if', 'import', 'in', 'instanceof', 'new', 'null', 'return',
+  'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'undefined',
+  'var', 'void', 'while', 'with', 'yield', 'let', 'static', 'async', 'await',
+  'of', 'Array', 'Boolean', 'Date', 'Number', 'Object', 'String', 'Math',
+  'JSON', 'RegExp', 'Symbol', 'Promise', 'Map', 'Set', 'NaN', 'Infinity',
+  'globalThis',
+]);
+
+function extractIdentifiers(source: string): string[] {
+  const out: string[] = [];
+  for (const match of source.matchAll(IDENTIFIER_RE)) {
+    const id = match[1]!;
+    if (!JS_RESERVED.has(id)) out.push(id);
+  }
+  return out;
+}
+
 // --- Template class ---
 
 const TEMPLATE_CACHE = new Map<string, Template>();
@@ -295,6 +321,33 @@ export class Template {
 
   get componentCount(): number {
     return this.#components.length;
+  }
+
+  /**
+   * Names of record fields that contribute to rendering this template.
+   * Used by consumers that need to identify a record by its template-rendered
+   * path (e.g., `Sheet.patch` query auto-derivation in the CLI).
+   *
+   * For `field`-style components, the name is the field directly. For
+   * expression components, a best-effort identifier scan returns any bare
+   * identifiers in the expression source — excluding JS-language keywords
+   * and globals. False positives (e.g., for `(slug || legacy_id)`) are fine
+   * because the caller still passes only known input fields downstream.
+   */
+  getFieldNames(): readonly string[] {
+    const seen = new Set<string>();
+    for (const c of this.#components) {
+      for (const p of c.parts) {
+        if (p.kind === 'field') {
+          seen.add(p.name);
+        } else if (p.kind === 'expression') {
+          for (const id of extractIdentifiers(p.source)) {
+            seen.add(id);
+          }
+        }
+      }
+    }
+    return [...seen];
   }
 
   /**

@@ -21,6 +21,11 @@ export type {
   DefineIndexOptions,
   QueryFilter,
   QueryOptions,
+  DiffStatus,
+  DiffOptions,
+  DiffChange,
+  AttachmentBlobHandle,
+  AttachmentEntry,
 } from './sheet.js';
 
 export { mergePatch } from './patch.js';
@@ -39,6 +44,7 @@ export { PushDaemon } from './push-daemon.js';
 export type {
   PushDaemonOptions,
   PushDaemonStatus,
+  PushFailureReason,
   BackoffConfig,
 } from './push-daemon.js';
 

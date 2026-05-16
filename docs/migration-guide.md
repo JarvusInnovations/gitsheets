@@ -27,7 +27,7 @@ If you've been running a pre-v1.0 internal install, here's what changes and how 
 | `sheet.delete(query)` | `sheet.delete(query)` (same name) |
 | `sheet.query(filter)` | `sheet.query(filter)` async iterator (same name) |
 | `sheet.commit(message)` | `repo.transact({ message }, async tx => { await tx.sheet(...).upsert(...) })` |
-| `--patch-existing` (CLI, `deepmerge`) | `--patch` (CLI, RFC 7396) — deferred to [#149](https://github.com/JarvusInnovations/gitsheets/issues/149); use library `sheet.patch(query, partial)` for now |
+| `--patch-existing` (CLI, `deepmerge`) | `--patch` (CLI, RFC 7396 — semantic change: `null` deletes, arrays replace) |
 | HTTP `POST /sheets/:name` | Your own HTTP layer + `sheet.upsert(...)` |
 
 ## Permissive vs strict mode
@@ -147,11 +147,16 @@ Every gitsheets error extends `GitsheetsError` and carries a stable `code`. See 
 
 ## CLI changes
 
-- `git sheet upsert` / `query` / `read` / `normalize` — same command shape, rebuilt against the new core (`edit` deferred to [#150](https://github.com/JarvusInnovations/gitsheets/issues/150))
-- `--patch-existing` → `--patch` (RFC 7396 semantics, deferred — use library `Sheet.patch` for now)
+- `git sheet upsert` / `query` / `read` / `normalize` — same command shape, rebuilt against the new core
+- `git sheet edit <sheet> <path>` — new in v1.1: `$EDITOR`-based round-trip on a record
+- `git sheet init <sheet>` — new in v1.1: scaffold a starter `.gitsheets/<sheet>.toml`
+- `git sheet infer <sheet>` / `migrate-config <sheet>` — new in v1.1: schema inference and pre-v1.0 fields-config migration
+- `--patch-existing` → `--patch` (RFC 7396 semantics: `null` deletes, arrays replace)
+- `--format` (`json|toml|csv` upsert; `json|csv|tsv|toml` query/read), `--encoding`, `--delete-missing`, `--attachment <name>=<source>` — all shipped in v1.1
+- `--prefix` (`GITSHEETS_PREFIX`) for multi-tenant sub-tree scoping
 - New global flags: `--message`, `--author-name`, `--author-email`, `--trailer Key=Value`, `--ref`, `--commit-to`
 - Exit codes are stable from v1.0 onward — see [CLI reference](cli.md#exit-codes)
-- `--format` (CSV / TOML), `--encoding`, `--delete-missing`, `--attachments` deferred to v1.x
+- `--working` (read/write the working tree state) remains deferred — tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165)
 
 ## Going forward
 

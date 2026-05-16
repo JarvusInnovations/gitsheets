@@ -76,29 +76,41 @@ if (blob) {
 
 ### `sheet.deleteAttachment(record, name)`
 
-> **Deferred — not in the v1.0 surface.** Tracked at [#153](https://github.com/JarvusInnovations/gitsheets/issues/153); see [`deferred.md`](../deferred.md). v1.0 ships the cascade behavior on `Sheet.delete(record)` (the attachment directory is removed with the record), but no per-file delete method.
-
-Remove a single attachment.
+Remove a single named attachment. Sibling attachments are left intact.
 
 ```typescript
 await sheet.deleteAttachment(record, 'avatar.jpg');
 ```
 
+Throws `NotFoundError` (`record_not_found`) if the named attachment doesn't exist — single-target deletion is strict so callers can't silently miss bugs.
+
 ### `sheet.deleteAttachments(record)`
 
-> **Deferred — not in the v1.0 surface.** Tracked at [#153](https://github.com/JarvusInnovations/gitsheets/issues/153); see [`deferred.md`](../deferred.md).
-
-Remove all attachments for a record.
-
-## Iterator API (deferred)
-
-A higher-level iterator surface is filed as [#140](https://github.com/JarvusInnovations/gitsheets/issues/140):
+Remove all attachments for a record (drops the entire attachment directory).
 
 ```typescript
-for await (const { name, mimeType, blob } of sheet.attachments(record)) { ... }
+await sheet.deleteAttachments(record);
 ```
 
-Sugar over `getAttachments`. Not in v1.0; the existing methods cover the use case.
+**No-op** when the record has no attachment directory — idempotent, mirroring the cascade behavior on `Sheet.delete(record)`. The transaction is not marked mutated in the no-op case (so a transaction that does nothing else still completes without a commit).
+
+## Iterator API
+
+A higher-level iterator surface — sugar over `getAttachments`:
+
+```typescript
+for await (const { name, mimeType, blob } of sheet.attachments(record)) {
+  const buf = await blob.read();      // Buffer
+  // or stream:
+  blob.stream().pipe(someWritable);
+}
+```
+
+- `name` — the attachment filename (relative to the record's attachment dir)
+- `mimeType` — inferred from extension; `application/octet-stream` for unknown extensions
+- `blob` — handle with `.hash`, `.read()` (Buffer), and `.stream()` (Readable backed by `git cat-file blob <hash>`)
+
+The lower-level `getAttachments` / `getAttachment` methods remain for callers that want the raw blob-hash map.
 
 ## Atomicity
 
@@ -147,4 +159,4 @@ The library does not invoke git LFS automatically. Consumers wanting LFS configu
 - [api/sheet.md](../api/sheet.md)
 - [behaviors/path-templates.md](path-templates.md)
 - [behaviors/transactions.md](transactions.md)
-- [GitHub #140](https://github.com/JarvusInnovations/gitsheets/issues/140) — iterator API (deferred)
+- [GitHub #140](https://github.com/JarvusInnovations/gitsheets/issues/140) — iterator API (shipped v1.1)

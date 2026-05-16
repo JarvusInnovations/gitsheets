@@ -1,15 +1,20 @@
 // Sheet — typed handle to one declared sheet in a Repository.
 // See specs/api/sheet.md and specs/concepts.md.
 
+import { execFile, spawn } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
+import { promisify } from 'node:util';
+import type { Readable } from 'node:stream';
 
 import type { BlobObject, TreeObject, Workspace } from 'hologit';
+import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
 import {
   ConfigError,
   IndexError,
   NotFoundError,
   PathTemplateError,
+  RefError,
   TransactionError,
 } from './errors.js';
 import { mergePatch } from './patch.js';
@@ -23,6 +28,8 @@ import {
   type JSONSchema,
   type StandardSchemaV1,
 } from './validation.js';
+
+const exec = promisify(execFile);
 
 export const RECORD_SHEET_KEY = Symbol.for('gitsheets-sheet');
 export const RECORD_PATH_KEY = Symbol.for('gitsheets-path');
@@ -276,6 +283,246 @@ export interface QueryOptions {
   readonly signal?: AbortSignal;
 }
 
+// --- Attachments iterator (#140) ---
+
+/**
+ * Handle on an attachment's bytes, returned by `Sheet.attachments()`. Wraps
+ * the raw blob hash with consumer-friendly `read()` (Buffer) and `stream()`
+ * (Readable) accessors. Spawns `git cat-file blob <hash>` under the hood.
+ */
+export interface AttachmentBlobHandle {
+  readonly hash: string;
+  read(): Promise<Buffer>;
+  stream(): Readable;
+}
+
+export interface AttachmentEntry {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly blob: AttachmentBlobHandle;
+}
+
+// Minimum-viable MIME map — covers the bulk of typical attachment uses
+// (images, audio, video, docs). Unknown extensions get application/octet-stream.
+const MIME_BY_EXT: Readonly<Record<string, string>> = {
+  // Text
+  txt: 'text/plain',
+  md: 'text/markdown',
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  toml: 'application/toml',
+  json: 'application/json',
+  yaml: 'application/yaml',
+  yml: 'application/yaml',
+  xml: 'application/xml',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  js: 'application/javascript',
+  ts: 'application/typescript',
+  svg: 'image/svg+xml',
+  // Images
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  ico: 'image/vnd.microsoft.icon',
+  tiff: 'image/tiff',
+  // Audio / video
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  // Documents / archives
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  '7z': 'application/x-7z-compressed',
+};
+
+function inferMimeType(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  if (dot < 0 || dot === filename.length - 1) return 'application/octet-stream';
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return MIME_BY_EXT[ext] ?? 'application/octet-stream';
+}
+
+function makeAttachmentBlobHandle(gitDir: string, hash: string): AttachmentBlobHandle {
+  return {
+    hash,
+    async read(): Promise<Buffer> {
+      return new Promise((resolve, reject) => {
+        const child = execFile(
+          'git',
+          ['cat-file', 'blob', hash],
+          { cwd: gitDir, encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024 },
+          (err, stdout) => {
+            if (err) return reject(err);
+            resolve(stdout as Buffer);
+          },
+        );
+        child.stdin?.end();
+      });
+    },
+    stream(): Readable {
+      const child = spawn('git', ['cat-file', 'blob', hash], { cwd: gitDir });
+      child.stdin.end();
+      return child.stdout;
+    },
+  };
+}
+
+// --- diffFrom (specs/api/sheet.md) ---
+
+export type DiffStatus = 'added' | 'modified' | 'deleted' | 'renamed';
+
+/** Options for `Sheet.diffFrom`. */
+export interface DiffOptions {
+  /** Attach BlobObject handles for the src/dst blob hashes when set. */
+  readonly blobs?: boolean;
+  /** Parse src/dst TOML into records when set. */
+  readonly records?: boolean;
+  /** Generate an RFC 6902 JSON Patch between src and dst when set. */
+  readonly patches?: boolean;
+}
+
+/**
+ * One change yielded by `Sheet.diffFrom`. `srcMode`/`srcHash` are null for
+ * added records; `dstMode`/`dstHash` are null for deleted records.
+ *
+ * The optional fields populate based on the `opts` flag passed to diffFrom:
+ * - `blobs: true` → `srcBlob`/`dstBlob` (hologit `BlobObject` handles)
+ * - `records: true` → `src`/`dst` (parsed records)
+ * - `patches: true` → `patch` (RFC 6902 array; null/empty array on no-op)
+ */
+export interface DiffChange<T extends RecordLike = RecordLike> {
+  /** Record path relative to the sheet root, without the `.toml` suffix. */
+  readonly path: string;
+  readonly status: DiffStatus;
+  readonly srcMode: string | null;
+  readonly dstMode: string | null;
+  readonly srcHash: string | null;
+  readonly dstHash: string | null;
+  readonly srcBlob?: BlobObject;
+  readonly dstBlob?: BlobObject;
+  readonly src?: T;
+  readonly dst?: T;
+  readonly patch?: readonly JsonPatchOp[];
+}
+
+interface RawDiffEntry {
+  readonly status: DiffStatus;
+  readonly statusChar: string;
+  readonly srcMode: string | null;
+  readonly dstMode: string | null;
+  readonly srcHash: string | null;
+  readonly dstHash: string | null;
+  readonly canonicalPath: string;
+}
+
+function parseDiffTreeZ(output: string): RawDiffEntry[] {
+  // `git diff-tree -z -r --no-commit-id` formats each entry as:
+  //   :<srcMode> <dstMode> <srcHash> <dstHash> <statusToken>\0<srcPath>\0[<dstPath>\0]
+  // The `-z` flag NUL-separates the metadata line from each path, so any
+  // path with special characters in it is preserved verbatim. Status R/C
+  // emits two paths; everything else emits one.
+  const parts = output.split('\0');
+  const out: RawDiffEntry[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const meta = parts[i];
+    if (!meta || !meta.startsWith(':')) {
+      i++;
+      continue;
+    }
+    const tokens = meta.slice(1).split(' ');
+    if (tokens.length < 5) {
+      i++;
+      continue;
+    }
+    const srcMode = tokens[0]!;
+    const dstMode = tokens[1]!;
+    const srcHash = tokens[2]!;
+    const dstHash = tokens[3]!;
+    const statusToken = tokens[4]!;
+    const statusChar = statusToken[0] ?? '';
+    const status = mapDiffStatus(statusChar);
+    if (!status) {
+      i++;
+      continue;
+    }
+    i++;
+    const srcPath = parts[i++] ?? '';
+    let canonicalPath = srcPath;
+    if (statusChar === 'R' || statusChar === 'C') {
+      const dstPath = parts[i++] ?? srcPath;
+      canonicalPath = dstPath;
+    }
+    out.push({
+      status,
+      statusChar,
+      srcMode: srcMode === '000000' ? null : srcMode,
+      dstMode: dstMode === '000000' ? null : dstMode,
+      srcHash: /^0+$/.test(srcHash) ? null : srcHash,
+      dstHash: /^0+$/.test(dstHash) ? null : dstHash,
+      canonicalPath,
+    });
+  }
+  return out;
+}
+
+function mapDiffStatus(ch: string): DiffStatus | null {
+  switch (ch) {
+    case 'A':
+      return 'added';
+    case 'M':
+    case 'T':
+      return 'modified';
+    case 'D':
+      return 'deleted';
+    case 'R':
+    case 'C':
+      return 'renamed';
+    default:
+      return null;
+  }
+}
+
+async function readBlobAsRecord(
+  gitDir: string,
+  hash: string,
+): Promise<RecordLike | null> {
+  try {
+    const { stdout } = await exec('git', ['cat-file', 'blob', hash], {
+      cwd: gitDir,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return parseToml(stdout);
+  } catch {
+    // Blob unreadable or non-TOML — caller treats this as "no record".
+    return null;
+  }
+}
+
+function stripRecordPath(rawPath: string, root: string): string {
+  let p = rawPath;
+  const cleanRoot = root.replace(/^\/+|\/+$/g, '');
+  if (cleanRoot && cleanRoot !== '.' && cleanRoot !== '') {
+    const prefix = `${cleanRoot}/`;
+    if (p.startsWith(prefix)) p = p.slice(prefix.length);
+  }
+  if (p.endsWith('.toml')) p = p.slice(0, -5);
+  return p;
+}
+
 // --- Indexing ---
 
 export type IndexKeyFn<T extends RecordLike = RecordLike> = (
@@ -309,6 +556,12 @@ export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
   readonly transaction?: Transaction;
   /** Consumer-supplied Standard Schema validator; runs after JSON Schema. */
   readonly validator?: StandardSchemaV1<unknown, T>;
+  /**
+   * Optional sub-prefix under the sheet's `config.root`. Records read/written
+   * by this Sheet live at `<config.root>/<prefix>/<rendered-path>.toml`. See
+   * specs/api/cli.md and #148.
+   */
+  readonly prefix?: string;
 }
 
 export class Sheet<T extends RecordLike = RecordLike> {
@@ -319,6 +572,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
+  readonly #prefix: string;
   readonly #indexes = new Map<string, IndexState<T>>();
 
   constructor(opts: SheetConstructorOptions<T>) {
@@ -329,6 +583,23 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#configPath = opts.configPath;
     this.#transaction = opts.transaction;
     this.#validator = opts.validator;
+    this.#prefix = (opts.prefix ?? '').replace(/^\/+|\/+$/g, '');
+  }
+
+  /**
+   * The effective tree path where this sheet's records live, formed by
+   * joining `config.root` and the optional `prefix`. Normalized; never has
+   * leading/trailing slashes.
+   */
+  #effectiveRoot(config: SheetConfig): string {
+    const root = config.root.replace(/^\/+|\/+$/g, '');
+    if (!this.#prefix) return root;
+    return joinTreePath(root, this.#prefix);
+  }
+
+  /** Options to forward when delegating into a `tx.sheet(name, opts)` call. */
+  #txDelegateOpts(): { prefix?: string } {
+    return this.#prefix ? { prefix: this.#prefix } : {};
   }
 
   get name(): string {
@@ -365,7 +636,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
-    const sheetRoot = await this.#getSheetRoot(config.root);
+    const sheetRoot = await this.#getSheetRoot(this.#effectiveRoot(config));
     if (!sheetRoot) return;
 
     // hologit's TreeObject/BlobObject are structurally compatible with the
@@ -402,6 +673,104 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return results;
   }
 
+  /**
+   * Async iterator of changes between `srcCommitHash` and the current tree,
+   * scoped to this sheet's root. `srcCommitHash` accepts a commit hash, a
+   * tree hash, or a ref name; if omitted it defaults to the empty tree
+   * (every current record yields `status: 'added'`).
+   *
+   * Currently scoped to `*.toml` entries — attachment-blob diffs are
+   * out-of-scope for v1.1.
+   *
+   * See specs/api/sheet.md#diffFrom and specs/behaviors/attachments.md.
+   */
+  async *diffFrom(
+    srcCommitHash?: string | null,
+    opts: DiffOptions = {},
+  ): AsyncGenerator<DiffChange<T>> {
+    const config = await this.readConfig();
+    const gitDir = this.#repo.gitDir;
+    const { TreeObject } = await import('hologit');
+    const srcRef = srcCommitHash ?? TreeObject.getEmptyTreeHash();
+    const dstTreeHash = await this.#dataTree.getHash();
+
+    const args = ['diff-tree', '-z', '-r', '-M', '--no-commit-id', srcRef, dstTreeHash];
+    const effectiveRoot = this.#effectiveRoot(config);
+    if (effectiveRoot && effectiveRoot !== '.') {
+      args.push('--', effectiveRoot);
+    }
+
+    let stdout: string;
+    try {
+      const result = await exec('git', args, {
+        cwd: gitDir,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      stdout = result.stdout;
+    } catch (err) {
+      throw new RefError(
+        'ref_not_found',
+        `Sheet.diffFrom: git diff-tree failed for src=${srcRef} dst=${dstTreeHash}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+
+    const entries = parseDiffTreeZ(stdout);
+    for (const entry of entries) {
+      // v1.1 scope: `.toml` records only. Filter out anything else —
+      // attachments under the record dir, hidden files, accidental non-TOML
+      // content in the data tree.
+      if (!entry.canonicalPath.endsWith('.toml')) continue;
+      if (entry.canonicalPath.startsWith('.gitsheets/')) continue;
+      // When root is '.', sheet config blobs would otherwise appear as changes
+      // — they're metadata, not records.
+
+      const recordPath = stripRecordPath(entry.canonicalPath, this.#effectiveRoot(config));
+
+      const change: Record<string, unknown> = {
+        path: recordPath,
+        status: entry.status,
+        srcMode: entry.srcMode,
+        dstMode: entry.dstMode,
+        srcHash: entry.srcHash,
+        dstHash: entry.dstHash,
+      };
+
+      if (opts.blobs) {
+        if (entry.srcHash) {
+          change['srcBlob'] = this.#repo.hologitRepo.createBlob({
+            hash: entry.srcHash,
+            mode: entry.srcMode ?? '100644',
+          });
+        }
+        if (entry.dstHash) {
+          change['dstBlob'] = this.#repo.hologitRepo.createBlob({
+            hash: entry.dstHash,
+            mode: entry.dstMode ?? '100644',
+          });
+        }
+      }
+
+      if (opts.records || opts.patches) {
+        const src = entry.srcHash ? await readBlobAsRecord(gitDir, entry.srcHash) : null;
+        const dst = entry.dstHash ? await readBlobAsRecord(gitDir, entry.dstHash) : null;
+        if (opts.records) {
+          if (src !== null) change['src'] = src;
+          if (dst !== null) change['dst'] = dst;
+        }
+        if (opts.patches) {
+          // rfc6902 treats undefined/null specially. For added: src is null,
+          // dst is the object → patch is a single `add` op. For deleted: src
+          // is the object, dst is null → patch is a single `remove` op. For
+          // modified: a sequence of ops describing the diff.
+          change['patch'] = rfc6902CreatePatch(src, dst);
+        }
+      }
+
+      yield change as unknown as DiffChange<T>;
+    }
+  }
+
   async pathForRecord(record: T): Promise<string> {
     const config = await this.readConfig();
     return Template.fromString(config.path).render(record as RecordLike);
@@ -429,12 +798,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async clear(): Promise<void> {
     if (this.#transaction === undefined) {
       await this.#repo.transact({ message: `${this.#name} clear` }, async (tx) => {
-        await tx.sheet(this.#name).clear();
+        await tx.sheet(this.#name, this.#txDelegateOpts()).clear();
       });
       return;
     }
     const config = await this.readConfig();
-    const sheetTree = await this.#dataTree.getSubtree(config.root, true);
+    const sheetTree = await this.#dataTree.getSubtree(this.#effectiveRoot(config), true);
     if (sheetTree) {
       const children = await sheetTree.getChildren();
       const names: string[] = [];
@@ -488,10 +857,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      return tx.sheet<T>(this.#name).upsert(validated);
+      return tx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated);
     }
     return this.#autoTransact(
-      async (innerTx) => innerTx.sheet<T>(this.#name).upsert(validated),
+      async (innerTx) => innerTx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated),
       (r) => `${this.#name} upsert ${r.path}`,
     );
   }
@@ -527,12 +896,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#checkStrictMode();
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      await tx.sheet(this.#name).delete(target);
+      await tx.sheet(this.#name, this.#txDelegateOpts()).delete(target);
       return;
     }
     const path = typeof target === 'string' ? target : await this.pathForRecord(target);
     await this.#repo.transact({ message: `${this.#name} delete ${path}` }, async (innerTx) => {
-      await innerTx.sheet(this.#name).delete(target);
+      await innerTx.sheet(this.#name, this.#txDelegateOpts()).delete(target);
     });
   }
 
@@ -614,7 +983,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async getAttachment(record: T | string, name: string): Promise<BlobObject | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const node = await this.#dataTree.getChild(joinTreePath(config.root, recordPath, name));
+    const node = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath, name));
     return node && isBlob(node) ? node : null;
   }
 
@@ -623,9 +992,34 @@ export class Sheet<T extends RecordLike = RecordLike> {
   ): Promise<Record<string, BlobObject> | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const dir = await this.#dataTree.getChild(joinTreePath(config.root, recordPath));
+    const dir = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath));
     if (!dir || !isTree(dir)) return null;
     return dir.getBlobMap();
+  }
+
+  /**
+   * Async iterator over a record's attachments. Each yielded item carries
+   * `name`, an extension-inferred `mimeType`, and a `blob` handle with
+   * `.read()` (returns `Buffer`) and `.stream()` (returns a Readable).
+   *
+   * The iterator is the friendlier consumer surface for browsing attachments.
+   * For programmatic blob-hash access, `getAttachments` remains.
+   *
+   * See specs/behaviors/attachments.md.
+   */
+  async *attachments(record: T | string): AsyncGenerator<AttachmentEntry> {
+    const blobMap = await this.getAttachments(record);
+    if (!blobMap) return;
+    const gitDir = this.#repo.gitDir;
+    for (const name in blobMap) {
+      const blob = blobMap[name];
+      if (!blob) continue;
+      yield {
+        name,
+        mimeType: inferMimeType(name),
+        blob: makeAttachmentBlobHandle(gitDir, blob.hash),
+      };
+    }
   }
 
   async setAttachment(
@@ -644,13 +1038,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
       if (tx !== undefined) {
-        await tx.sheet(this.#name).setAttachments(record, attachments);
+        await tx.sheet(this.#name, this.#txDelegateOpts()).setAttachments(record, attachments);
         return;
       }
       await this.#repo.transact(
         { message: `${this.#name} attachments` },
         async (innerTx) => {
-          await innerTx.sheet(this.#name).setAttachments(record, attachments);
+          await innerTx.sheet(this.#name, this.#txDelegateOpts()).setAttachments(record, attachments);
         },
       );
       return;
@@ -658,8 +1052,76 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
     for (const [aName, content] of Object.entries(attachments)) {
-      await this.#dataTree.writeChild(joinTreePath(config.root, recordPath, aName), content);
+      await this.#dataTree.writeChild(joinTreePath(this.#effectiveRoot(config), recordPath, aName), content);
     }
+    this.#transaction.markMutated();
+  }
+
+  /**
+   * Remove a single attachment. Throws `NotFoundError` if the named attachment
+   * doesn't exist (so callers can't silently miss bugs). Sibling attachments
+   * are left intact. See specs/behaviors/attachments.md.
+   */
+  async deleteAttachment(record: T | string, name: string): Promise<void> {
+    if (this.#transaction === undefined) {
+      this.#checkStrictMode();
+      const tx = transactionContext.getStore();
+      if (tx !== undefined) {
+        await tx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachment(record, name);
+        return;
+      }
+      await this.#repo.transact(
+        { message: `${this.#name} deleteAttachment ${name}` },
+        async (innerTx) => {
+          await innerTx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachment(record, name);
+        },
+      );
+      return;
+    }
+    const config = await this.readConfig();
+    const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
+    const fullPath = joinTreePath(this.#effectiveRoot(config), recordPath, name);
+    const existing = await this.#dataTree.getChild(fullPath);
+    if (!existing || !isBlob(existing)) {
+      throw new NotFoundError(
+        'record_not_found',
+        `${this.#name}: no attachment at ${joinTreePath(recordPath, name)}`,
+      );
+    }
+    await this.#dataTree.deleteChild(fullPath);
+    this.#transaction.markMutated();
+  }
+
+  /**
+   * Remove all attachments for a record. No-op if the record has no
+   * attachment directory (same idempotent shape as the cascade behavior in
+   * `Sheet.delete`). See specs/behaviors/attachments.md.
+   */
+  async deleteAttachments(record: T | string): Promise<void> {
+    if (this.#transaction === undefined) {
+      this.#checkStrictMode();
+      const tx = transactionContext.getStore();
+      if (tx !== undefined) {
+        await tx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachments(record);
+        return;
+      }
+      await this.#repo.transact(
+        { message: `${this.#name} deleteAttachments` },
+        async (innerTx) => {
+          await innerTx.sheet(this.#name, this.#txDelegateOpts()).deleteAttachments(record);
+        },
+      );
+      return;
+    }
+    const config = await this.readConfig();
+    const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
+    const fullPath = joinTreePath(this.#effectiveRoot(config), recordPath);
+    const existing = await this.#dataTree.getChild(fullPath);
+    if (!existing || !isTree(existing)) {
+      // No attachment dir — true no-op, don't even mark the tx mutated.
+      return;
+    }
+    await this.#dataTree.deleteChild(fullPath);
     this.#transaction.markMutated();
   }
 
@@ -749,7 +1211,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     // Rename: if the source record was loaded from a different path, delete the old one.
     if (typeof existing === 'string' && existing !== recordPath) {
       try {
-        await this.#dataTree.deleteChild(joinTreePath(config.root, `${existing}.toml`));
+        await this.#dataTree.deleteChild(joinTreePath(this.#effectiveRoot(config), `${existing}.toml`));
       } catch {
         // Old path may not exist — ignore.
       }
@@ -757,7 +1219,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const toml = stringifyRecord(stripSymbols(normalized as RecordLike));
     const blob = await this.#dataTree.writeChild(
-      joinTreePath(config.root, `${recordPath}.toml`),
+      joinTreePath(this.#effectiveRoot(config), `${recordPath}.toml`),
       toml,
     );
     tx.markMutated();
@@ -769,7 +1231,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const config = await this.readConfig();
     const recordPath =
       typeof target === 'string' ? target : await this.pathForRecord(target);
-    const fullPath = joinTreePath(config.root, `${recordPath}.toml`);
+    const fullPath = joinTreePath(this.#effectiveRoot(config), `${recordPath}.toml`);
     const existing = await this.#dataTree.getChild(fullPath);
     if (!existing) {
       throw new NotFoundError('record_not_found', `${this.#name}: no record at ${recordPath}`);
@@ -779,7 +1241,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     // Per specs/behaviors/attachments.md the attachment dir is deleted in
     // the same operation.
     try {
-      await this.#dataTree.deleteChild(joinTreePath(config.root, recordPath));
+      await this.#dataTree.deleteChild(joinTreePath(this.#effectiveRoot(config), recordPath));
     } catch {
       // No attachment dir — that's fine.
     }

@@ -2,7 +2,13 @@
 
 Pre-v1.0 gitsheets used a `[gitsheet.fields]` block for typed field configuration. v1.0 replaces it with a proper `[gitsheet.schema]` JSON Schema block. The mapping is lossless for `type` / `enum` / `default`; `sort` stays where it is (it's a different concept); `trueValues` / `falseValues` move to a CSV-ingest helper.
 
-> The `gitsheets migrate-config <sheet>` CLI command that automates this is tracked at [#151](https://github.com/JarvusInnovations/gitsheets/issues/151) — until that lands, follow this guide manually.
+The `gitsheets migrate-config <sheet>` CLI command (shipped in v1.1) automates this:
+
+```bash
+gitsheets migrate-config users --message='migrate users config to v1.0 schema'
+```
+
+This guide walks through what the command does step-by-step, useful when you want to understand the resulting config or apply migrations by hand.
 
 ## Mapping table
 
@@ -233,6 +239,6 @@ gitsheets: ValidationError: record failed JSON Schema validation
 ## See also
 
 - [Validation](../validation.md) — full pipeline
-- [Issue #151](https://github.com/JarvusInnovations/gitsheets/issues/151) — `gitsheets migrate-config` CLI (automated migration)
+- [`gitsheets migrate-config`](../cli.md#gitsheets-migrate-config-sheet) — the CLI command that automates this whole flow
 - [`specs/behaviors/validation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md)
 - [`specs/behaviors/normalization.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md)

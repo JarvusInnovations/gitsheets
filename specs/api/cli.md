@@ -17,15 +17,16 @@ These apply to every command unless noted otherwise:
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` env var |
 | `--ref <ref>` | `HEAD` | `GITSHEETS_REF` env var |
 | `--commit-to <ref>` | derived from `--ref` (if ref is a branch) | none |
-| `--working` | false | none |
 
-`--ref` selects which commit/branch to read from or transact against. `--commit-to` overrides which branch a write-transaction advances. `--working` reads/writes the working tree state (not a committed tree).
+`--ref` selects which commit/branch to read from or transact against. `--commit-to` overrides which branch a write-transaction advances.
+
+A `--working` flag — read/write the working tree state instead of a committed tree — is documented but not yet implemented; it's tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165) and listed in [`deferred.md`](../deferred.md).
 
 These options unify what [#106](https://github.com/JarvusInnovations/gitsheets/issues/106) asked for. Every mutating command implicitly uses `repo.transact` and accepts `--message`, `--author-name`, `--author-email`, and one or more `--trailer Key=Value` flags (repeatable).
 
 ## Commands
 
-### `git sheet upsert <sheet> [file]`
+### `git sheet upsert <sheet> [input]`
 
 Insert or update one or more records.
 
@@ -37,15 +38,12 @@ git sheet upsert users '{"slug":"jane","email":"jane@x.org"}'
 
 Flags:
 
-- `--format <json|toml|csv>` — input format (default: inferred from extension, fallback `json`); see [`deferred.md`](../deferred.md) — JSON only in v1.0
-- `--encoding <enc>` — default `utf8`; see [`deferred.md`](../deferred.md) — utf-8 only in v1.0
-- `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted; see [`deferred.md`](../deferred.md)
-- `--attachments.<path>=<spec>` — attach a file alongside the record; see [`deferred.md`](../deferred.md)
+- `--format <json|toml|csv>` — input format. Default: inferred from extension (`*.toml` → TOML, `*.csv` → CSV), otherwise JSON.
+- `--encoding <enc>` — encoding for file/stdin input. Default `utf8`.
+- `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted in the same transaction.
+- `--attachment <name>=<source>` (repeatable) — attach a file alongside the (single) upserted record. `<source>` is a file path (relative to the input file's directory, or cwd for stdin input) or `-` for stdin. Requires a single-record input set.
+- `--patch` — treat each input record as an [RFC 7396 JSON Merge Patch](https://datatracker.ietf.org/doc/html/rfc7396). Path-template fields auto-derive the query; remaining fields are merged into the matched record. Cannot be combined with `--delete-missing` or `--attachment`. See [`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md).
 - `--message <msg>`, `--author-name`, `--author-email`, `--trailer Key=Value` (repeatable) — transaction metadata
-
-For patching existing records in v1.0, use the library API `Sheet.patch(query, partial)`
-([`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md)). A CLI `--patch` flag
-is deferred — see [`deferred.md`](../deferred.md).
 
 Output (per record, to stdout):
 
@@ -78,9 +76,12 @@ Read a single record by exact path.
 
 ```bash
 git sheet read users users/janedoe
+git sheet read users users/janedoe --format=toml
 ```
 
-Output: TOML or JSON to stdout (per `--format`).
+Flags:
+
+- `--format <json|toml|csv|tsv>` — output format. Default: pretty-printed JSON.
 
 ### `git sheet edit <sheet> <path>`
 
@@ -124,9 +125,17 @@ git sheet migrate-config users
 
 See [#130](https://github.com/JarvusInnovations/gitsheets/issues/130).
 
-### `git sheet init <sheet>` _(deferred to post-1.0)_
+### `git sheet init <sheet>`
 
-Scaffold `.gitsheets/<sheet>.toml`. See [#139](https://github.com/JarvusInnovations/gitsheets/issues/139).
+Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '${{ id }}'`. Flags:
+
+- `--path <tpl>` — override the path template.
+- `--schema <file>` — embed a JSON Schema file at `[gitsheet.schema]`.
+- `--force` — overwrite an existing config.
+
+```bash
+git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
+```
 
 ## Exit codes
 
