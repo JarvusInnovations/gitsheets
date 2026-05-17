@@ -32,10 +32,11 @@ Type-only exports (selected highlights):
 import type {
   OpenRepoOptions, OpenSheetOptions, OpenSheetsOptions,
   TransactionOptions, TransactionResult, TransactionHandler, Author,
-  SheetConfig, SheetFieldConfig, SortRule, UpsertResult,
+  SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions,
   SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, QueryOptions,
   DiffStatus, DiffOptions, DiffChange,
   AttachmentBlobHandle, AttachmentEntry,
+  Format, FormatConfig,
   OpenStoreOptions, Store, StoreTx, StoreTransactFn, ValidatorMap, InferRecord,
   PushDaemonOptions, PushDaemonStatus, PushFailureReason, BackoffConfig,
   JSONSchema, StandardSchemaV1, ValidationIssue, StandardSchemaResult,
@@ -91,9 +92,10 @@ const store = await openStore(repo, {
 
 | Method | Returns |
 | --- | --- |
-| `sheet.query(filter?, opts?)` | `AsyncGenerator<T>` — iterator; `opts.signal` for AbortSignal cancellation |
-| `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` — honors `opts.signal` |
-| `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` — honors `opts.signal` |
+| `sheet.query(filter?, opts?)` | `AsyncGenerator<T>` — iterator; `opts.signal` for AbortSignal cancellation; `opts.withBody` for content-typed body loading |
+| `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` — honors `opts.signal`, `opts.withBody` |
+| `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` — honors `opts.signal`, `opts.withBody` |
+| `sheet.loadBody(record)` | `Promise<T>` — hydrate a body-less record (content-typed sheets) |
 | `sheet.pathForRecord(record)` | `Promise<string>` — rendered path, no write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` — canonical form, no write |
 
@@ -101,7 +103,7 @@ const store = await openStore(repo, {
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.upsert(record)` | Insert or replace; returns `{ blob, path }` |
+| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for content-typed sheets |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachments |
 | `sheet.patch(query, partial)` | RFC 7396 merge patch over an existing record |
 | `sheet.clear()` | Remove every record from the sheet's tree |

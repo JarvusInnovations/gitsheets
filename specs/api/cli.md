@@ -69,6 +69,7 @@ Flags:
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` (default: `json`)
 - `--headers` (CSV/TSV only; default: true)
+- `--no-body` — for content-typed (markdown/mdx) sheets, suppress the body field in the output. No effect on TOML sheets. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
 
 ### `git sheet read <sheet> <path>`
 

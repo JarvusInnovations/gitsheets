@@ -95,6 +95,7 @@ Flags:
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` — output format. Default `json` (newline-delimited).
 - `--headers` / `--no-headers` — emit a header row for CSV/TSV. Default `true`.
+- `--body` / `--no-body` — for content-typed (markdown/mdx) sheets, include or suppress the body field in the output. Default `true`. Use `--no-body` for bulk metadata pipelines on large bodies. No effect on TOML sheets.
 
 TOML output emits a `[[records]]` array of tables, round-trippable through `upsert --format=toml`.
 

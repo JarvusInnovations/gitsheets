@@ -61,6 +61,7 @@ interface QueryArgs extends GlobalArgs {
   limit?: number;
   format?: string;
   headers?: boolean;
+  body?: boolean;
 }
 
 interface ReadArgs extends GlobalArgs {
@@ -363,12 +364,15 @@ async function runQuery(argv: QueryArgs): Promise<void> {
   const format: OutputFormat = validateOutputFormat(argv.format) ?? 'json';
   const headers = argv.headers ?? true;
   const fields = argv.fields;
+  // `--body` defaults to true; `--no-body` flips it off via yargs' implicit
+  // boolean negation. No effect on TOML sheets.
+  const withBody = argv.body ?? true;
 
   let yielded = 0;
   let headerWritten = false;
   const allRecords: RecordLike[] = []; // only used for TOML output
 
-  for await (const record of sheet.query(filter)) {
+  for await (const record of sheet.query(filter, { withBody })) {
     if (format === 'csv' || format === 'tsv') {
       if (!headerWritten) {
         // Header columns come from --fields, otherwise from the first record.
@@ -881,6 +885,12 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             type: 'boolean',
             default: true,
             describe: 'Emit a header row for CSV/TSV output (default: true)',
+          })
+          .option('body', {
+            type: 'boolean',
+            default: true,
+            describe:
+              'For content-typed (markdown) sheets, include the body field. Pass --no-body for header-only reads. No effect on TOML sheets.',
           }),
       runQuery,
     )
