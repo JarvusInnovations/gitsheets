@@ -35,7 +35,7 @@ await repo.transact({ message: '...' }, async (tx) => {
 });
 ```
 
-`tx.sheet(name)` returns a `Sheet` with the same API as the outer `Repository.openSheet(name)` — except all writes route through the transaction's private tree.
+`tx.sheet(name, opts?)` returns a `Sheet` with the same API as the outer `Repository.openSheet(name)` — except all writes route through the transaction's private tree. `opts` accepts `validator?: StandardSchema` (used by [`Store.transact`](store.md) to thread per-sheet validators through to tx scope) and `prefix?: string` (sub-prefix under the sheet's configured root — same shape as `Repository.openSheet({ prefix })`; useful when a multi-tenant request handler opens a transaction and needs every sheet within it scoped to one tenant).
 
 ## Read isolation
 

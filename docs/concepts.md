@@ -167,6 +167,10 @@ await daemon.stop({ timeoutMs: 30_000 });
 
 A consumer process that writes to gitsheets is the **single writer**. Pulling from the remote at runtime would risk overwriting in-memory state; that's why the daemon is push-only. If a consumer needs to incorporate changes from elsewhere, the canonical path is: stop the consumer, pull, restart.
 
+**Non-fast-forward rejections are terminal.** When the remote has work the local doesn't (someone else pushed a divergent commit), the daemon emits one `error` event with `reason: 'non-fast-forward'` and stops retrying that batch — `daemon.status().lastError.reason` carries the same value. A force-push would resolve the symptom but is never the right move; consumer intervention is required (stop, reconcile, restart). Subsequent commits still trigger fresh push attempts and produce their own classified errors.
+
+**Startup-backlog check.** When a daemon starts, it fetches the configured remote and runs `git rev-list --count <remote>/<branch>..<branch>` — any commits the remote doesn't have are queued immediately. This lets a restarted daemon catch up on a backlog that accumulated while it was down, without needing a new `repo.transact` to nudge it.
+
 See the [production push daemon recipe](recipes/production-push-daemon.md) for auth strategies and monitoring patterns.
 
 ## Validation
@@ -244,10 +248,20 @@ A binary blob colocated with a record. Stored at `<recordPath>/<attachmentName>`
 
 ```typescript
 await sheet.setAttachment(record, 'avatar.jpg', blob);
-const blob = await sheet.getAttachment(record, 'avatar.jpg');
+const avatarBlob = await sheet.getAttachment(record, 'avatar.jpg');
+
+// Iterator surface (v1.1):
+for await (const { name, mimeType, blob } of sheet.attachments(record)) {
+  const buf = await blob.read();   // Buffer
+  // or pipe blob.stream() — Readable backed by `git cat-file blob <hash>`
+}
+
+// Explicit removal (v1.1):
+await sheet.deleteAttachment(record, 'avatar.jpg');  // throws NotFoundError if missing
+await sheet.deleteAttachments(record);               // idempotent — removes the whole dir
 ```
 
-Attachments are first-class: included in tree commits, deleted with their record (cascade), accessible per-record via `sheet.getAttachments(record)`.
+Attachments are first-class: included in tree commits, deleted with their record (cascade-on-record-delete), accessible per-record via `sheet.getAttachments(record)` (raw blob map) or the `sheet.attachments(record)` iterator (`{name, mimeType, blob}` with `.read()` / `.stream()`). The iterator's `mimeType` is inferred from the filename extension, defaulting to `application/octet-stream`.
 
 ## Commits as audit log
 

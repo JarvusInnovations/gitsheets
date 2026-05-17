@@ -70,6 +70,10 @@ A sheet present in `validators` but missing from `.gitsheets/` throws `ConfigErr
 
 A sheet present in `.gitsheets/` but missing from `validators` is not exposed on the typed `Store` surface (see "Type inference" above); use `repo.openSheet(name)` for those.
 
+### `prefix` is not threaded through `openStore`
+
+`openStore` calls `repo.openSheets()` internally without a `prefix` parameter, so the typed `Store` surface always opens sheets without sub-tree scoping. For prefix-scoped typed access, open each prefix-scoped sheet via `repo.openSheet(name, { prefix, validator })` and assemble a wrapper manually. This is a deliberate scope cut — multi-tenant deployments typically open one `Store` per tenant, not one `Store` that spans tenants.
+
 ## Transactions
 
 `store.transact(opts, handler)` is a thin wrapper over `repo.transact` that passes a `tx` object exposing `tx.<sheet>` aliases:

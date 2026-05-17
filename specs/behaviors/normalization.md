@@ -147,4 +147,4 @@ This is load-bearing for:
 
 - [api/sheet.md](../api/sheet.md)
 - [behaviors/validation.md](validation.md)
-- The Canonical Sorting doc in [docs/canonical-sorting.md](../../docs/canonical-sorting.md) (pre-v1.0; will be incorporated into the v1.0 docs in [#141](https://github.com/JarvusInnovations/gitsheets/issues/141))
+- [behaviors/content-types.md](content-types.md) — markdown body normalization layers on top of this pipeline

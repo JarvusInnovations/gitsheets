@@ -75,12 +75,14 @@ const store = await openStore(repo, {
 
 | Method | Purpose |
 | --- | --- |
-| `repo.openSheet<T>(name, opts?)` | Sheet handle, optionally with a Standard Schema validator |
-| `repo.openSheets(opts?)` | All sheets keyed by name |
+| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix` |
+| `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix` |
 | `repo.transact(opts, handler)` | Run a handler in a single-commit transaction |
 | `repo.requireExplicitTransactions()` | Switch to strict mode (one-way) |
 | `repo.startPushDaemon(opts)` | Start async push to a configured remote |
 | `repo.resolveRef(ref)` | Resolve a ref or commit hash; returns `string \| null` |
+
+`opts.prefix` scopes records to a sub-tree under each sheet's configured root — useful for multi-tenant deployments where one git repo holds many tenants under `<root>/<tenant>/...`. Mirrors the CLI `--prefix` flag (env `GITSHEETS_PREFIX`). The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped.
 
 → [`specs/api/repository.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md)
 
@@ -143,7 +145,7 @@ All write methods route through a transaction — permissive mode auto-opens one
 
 | Member | Purpose |
 | --- | --- |
-| `tx.sheet<T>(name, opts?)` | Sheet bound to the tx's tree |
+| `tx.sheet<T>(name, opts?)` | Sheet bound to the tx's tree; `opts.validator`, `opts.prefix` |
 | `tx.parentCommitHash` | Commit hash the tx parents on (may be `null` for fresh repos) |
 | `tx.parentRef` / `tx.branchRef` | Refs being read from / advanced |
 
