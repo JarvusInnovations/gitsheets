@@ -1572,11 +1572,11 @@
 <tbody>
 <tr>
 <td><code>repo.openSheet&lt;T&gt;(name, opts?)</code></td>
-<td>Sheet handle, optionally with a Standard Schema validator</td>
+<td>Sheet handle; <code>opts.validator</code> (Standard Schema), <code>opts.root</code>, <code>opts.prefix</code></td>
 </tr>
 <tr>
 <td><code>repo.openSheets(opts?)</code></td>
-<td>All sheets keyed by name</td>
+<td>All sheets keyed by name; <code>opts.root</code>, <code>opts.prefix</code></td>
 </tr>
 <tr>
 <td><code>repo.transact(opts, handler)</code></td>
@@ -1596,6 +1596,7 @@
 </tr>
 </tbody>
 </table>
+<p><code>opts.prefix</code> scopes records to a sub-tree under each sheet&rsquo;s configured root — useful for multi-tenant deployments where one git repo holds many tenants under <code>&lt;root&gt;/&lt;tenant&gt;/...</code>. Mirrors the CLI <code>--prefix</code> flag (env <code>GITSHEETS_PREFIX</code>). The sheet&rsquo;s <code>.gitsheets/&lt;name&gt;.toml</code> config file is unaffected — only the record data tree is scoped.</p>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md"><code>specs/api/repository.md</code></a></p>
 <h2 id="sheet">Sheet<a class="headerlink" href="#sheet" title="Permanent link"> ¶</a></h2>
 <p><code>Sheet&lt;T extends RecordLike = RecordLike&gt;</code> — generic on the record type. With a validator (via <code>openSheet({ validator })</code> or <code>openStore</code>), <code>T</code> flows through every method signature.</p>
@@ -1755,7 +1756,7 @@
 <tbody>
 <tr>
 <td><code>tx.sheet&lt;T&gt;(name, opts?)</code></td>
-<td>Sheet bound to the tx&rsquo;s tree</td>
+<td>Sheet bound to the tx&rsquo;s tree; <code>opts.validator</code>, <code>opts.prefix</code></td>
 </tr>
 <tr>
 <td><code>tx.parentCommitHash</code></td>

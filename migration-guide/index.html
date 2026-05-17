@@ -1040,6 +1040,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v11-v12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.1 → v1.2
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.1 → v1.2">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1197,6 +1247,56 @@
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v11-v12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.1 → v1.2
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.1 → v1.2">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1403,6 +1503,24 @@
 <li>New global flags: <code>--message</code>, <code>--author-name</code>, <code>--author-email</code>, <code>--trailer Key=Value</code>, <code>--ref</code>, <code>--commit-to</code></li>
 <li>Exit codes are stable from v1.0 onward — see <a href="../cli/#exit-codes">CLI reference</a></li>
 <li><code>--working</code> (read/write the working tree state) remains deferred — tracked at <a href="https://github.com/JarvusInnovations/gitsheets/issues/165">#165</a></li>
+</ul>
+<h2 id="v11-v12">v1.1 → v1.2<a class="headerlink" href="#v11-v12" title="Permanent link"> ¶</a></h2>
+<p>Fully additive minor release. Existing v1.1 code keeps working.</p>
+<h3 id="library">Library<a class="headerlink" href="#library" title="Permanent link"> ¶</a></h3>
+<ul>
+<li><strong>Content-typed records.</strong> A sheet can opt into <code>[gitsheet.format] type = 'markdown'</code> (or <code>'mdx'</code>) to store records as <code>.md</code> files with TOML frontmatter and a designated body field. Bodies are normalized through <code>markdownlint --fix</code> on write; the frontmatter stays canonical TOML. Default remains TOML — existing sheets are unchanged. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/content-types.md"><code>behaviors/content-types.md</code></a> and the <a href="../recipes/markdown-cms/">Markdown CMS recipe</a>.</li>
+<li><strong>Lazy body loading.</strong> <code>Sheet.query</code> / <code>queryFirst</code> / <code>queryAll</code> accept <code>opts.withBody</code> (default <code>true</code>). Setting <code>withBody: false</code> on a markdown sheet skips body bytes entirely — useful for listing pages and bulk metadata reads. Hydrate on demand with <code>await sheet.loadBody(record)</code>. Index builds always use body-less reads (don&rsquo;t index on body content). No effect on TOML sheets.</li>
+<li><strong><code>Sheet.upsert(record, opts?)</code>.</strong> Adds <code>opts.allowMissingBody</code> for content-typed sheets — explicit opt-in to upsert a record without a body field. Default behavior throws if the body field is missing, so a body-less upsert can&rsquo;t silently erase on-disk content. <code>Sheet.patch</code> handles <code>{ body: null }</code> deletions transparently (it passes <code>allowMissingBody: true</code> to the internal upsert).</li>
+<li><strong>New public types</strong>: <code>Format</code>, <code>FormatConfig</code>, <code>UpsertOptions</code>.</li>
+</ul>
+<h3 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link"> ¶</a></h3>
+<ul>
+<li><strong><code>gitsheets check &lt;sheet&gt; &lt;file&gt; [--fix]</code></strong> — new. Verify a record file in the working tree is parseable, schema-valid, and canonical. With <code>--fix</code>, rewrite to canonical. Never commits. Designed for post-edit hooks (<code>--fix</code>) and CI pre-commit verification (no <code>--fix</code>). Exit codes: 0 ok, 1 not-canonical (no <code>--fix</code>), 22 ValidationError, 64 ConfigError.</li>
+<li><strong><code>gitsheets query --no-body</code></strong> — new flag. For content-typed sheets, suppresses the body field in output. No effect on TOML sheets.</li>
+</ul>
+<h3 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link"> ¶</a></h3>
+<ul>
+<li><strong><code>skills/gitsheets/</code></strong> — bundled Claude Code skill for developers consuming gitsheets. Reference material covering the CLI, the TypeScript API, and the sheet config syntax. Install it in your <code>.claude/skills/</code> (or via plugin) to give Claude focused gitsheets context.</li>
 </ul>
 <h2 id="going-forward">Going forward<a class="headerlink" href="#going-forward" title="Permanent link"> ¶</a></h2>
 <p>Once migrated, the recipes are the fastest path to common patterns:</p>
