@@ -1,0 +1,40 @@
+{
+  "skill_name": "gitsheets",
+  "evals": [
+    {
+      "id": 1,
+      "name": "design-a-blog-cms-sheet-config",
+      "prompt": "I'm building a small blog with gitsheets. Posts have a slug, title, publish date, tags array, and a long markdown body. Slugs are kebab-case, tags should be deduplicated and alphabetized on save, and the publish date should validate as ISO-8601. Write me the `.gitsheets/posts.toml` config. Also: I want the files on disk to be `.md` with frontmatter so I can edit them in VS Code with the markdown preview, and I want listing pages (which only show the title + date) to be fast — don't load the body unless needed.\n\nAlongside the config, write a short TypeScript snippet showing: (a) opening the sheet via `openStore` with a Zod validator, (b) the listing-page query (no body), and (c) loading a single post for the article page (with body).",
+      "expected_output": "A working .gitsheets/posts.toml (with [gitsheet.format] type='markdown' body='body', [gitsheet.fields.tags.sort], [gitsheet.schema] requiring slug/title/publishedAt with format='date-time') plus a TypeScript snippet using openStore + Zod, query({}, {withBody:false}) for listing, and loadBody() or default-withBody query for single article.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "fastify-handler-with-validation",
+      "prompt": "I have a Fastify HTTP handler that needs to create a new user in gitsheets and return the new user's slug. The user is validated against a Zod schema. The commit message should include the request ID as a trailer, and use the authenticated user's email as the author. If validation fails, return 422 with the issues; if anything else fails, return 500.\n\nWrite the handler. Assume `repo` is already opened via `openRepo`, `UserSchema` is already imported, and `request.user` and `request.id` are available. Don't write the Fastify boilerplate — just the handler body.",
+      "expected_output": "A handler that calls openStore (or assumes store is available) with the Zod validator threaded in, uses store.transact (or repo.transact + tx.sheet) with author + trailers from the request, catches ValidationError (instanceof or by err.code === 'validation_failed') to return 422 with err.issues, lets other errors bubble. Should NOT use repo.transact then a separate sheet.upsert outside the transaction.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "post-edit-hook-setup",
+      "prompt": "I'm letting an AI agent (Claude Code) edit gitsheets record files directly in my repo. The agent edits .md files under `content/posts/` (a markdown sheet) and .toml files under `data/users/` (a TOML sheet). I want a post-edit hook that runs after each agent edit and either auto-fixes the canonical form or flags a validation error. How do I wire that up? What command(s) do I run, and how do I structure the hook so it knows which sheet a given file belongs to?",
+      "expected_output": "Should recommend `gitsheets check <sheet> $FILE --fix` as the post-edit command, explain that the sheet name has to be known per path prefix (sheets are addressed by name, not auto-detected), give a settings.json or hook-script example that maps a path glob to the right sheet name, and note that exit 22 indicates ValidationError, exit 64 indicates parse failure. Should also distinguish --fix mode (auto-rewrite) from no-fix CI verification mode.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "diff-from-feature-branch",
+      "prompt": "I want to write a TypeScript function that takes two commit hashes and produces a human-readable change summary for one sheet — showing which records were added, modified, deleted, and (for modified ones) which fields changed. I want this for a code review tool that shows what changed in a feature branch's data updates. The sheet is called 'users'.",
+      "expected_output": "Should use sheet.diffFrom(srcCommitHash, {records: true, patches: true}), iterate over the async generator, group by change.status, and for 'modified' entries use change.patch (RFC 6902 ops) to enumerate field-level changes. Should NOT try to manually compare two sets of records.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "upsert-vs-patch-confusion",
+      "prompt": "I have a record like `{slug: 'jane', email: 'jane@x.org', team: 'eng', joined: '2024-01-01'}`. I want to update just the team to 'design' without touching the other fields. I tried `await sheet.upsert({slug: 'jane', team: 'design'})` and it wiped out email and joined! What am I doing wrong?",
+      "expected_output": "Should explain that upsert is a full-record replace by design — it's not a partial update. The fix is sheet.patch({slug: 'jane'}, {team: 'design'}) which uses RFC 7396 merge semantics: only the keys in the partial override; other fields are preserved. Should also note that null in the partial deletes that field (RFC 7396 semantics).",
+      "files": []
+    }
+  ]
+}
