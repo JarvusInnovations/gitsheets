@@ -576,6 +576,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#content-typed-sheets-markdown-mdx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Content-typed sheets (markdown / mdx)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#canonical-normalization" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -827,6 +838,8 @@
       
         
       
+        
+      
     
     
     
@@ -971,6 +984,34 @@
     
   
     Production push daemon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/markdown-cms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Markdown CMS pattern
   
 
     
@@ -1165,6 +1206,17 @@
     <span class="md-ellipsis">
       
         Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#content-typed-sheets-markdown-mdx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Content-typed sheets (markdown / mdx)
       
     </span>
   </a>
@@ -1375,6 +1427,43 @@ ${{ a }}/${{ b }}           # path segments separated by `/`
 <p>Failure at either layer throws <code>ValidationError</code> with a structured <code>issues</code> array. The <code>source</code> field on each issue identifies which layer raised it.</p>
 <p>The Standard Schema layer can <strong>transform</strong> the record (lower-casing, defaulting, parsing) — the transformed value is what gets normalized + written.</p>
 <p>See <a href="../validation/">validation</a> for the full pipeline.</p>
+<h2 id="content-typed-sheets-markdown-mdx">Content-typed sheets (markdown / mdx)<a class="headerlink" href="#content-typed-sheets-markdown-mdx" title="Permanent link"> ¶</a></h2>
+<p>A sheet&rsquo;s <code>[gitsheet.format]</code> block can switch its on-disk storage from
+<code>.toml</code> to <code>.md</code> files with TOML frontmatter and a designated body field.
+Useful when the records <em>are</em> documents — blog posts, knowledge-base
+entries, docs — and you want editor affordances (markdown highlighting,
+preview, lint) on the body rather than a triple-quoted string inside TOML.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># .gitsheets/posts.toml</span>
+<span class="k">[gitsheet]</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;posts&#39;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;${{ slug }}&#39;</span>
+
+<span class="k">[gitsheet.format]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;markdown&#39;</span><span class="w">      </span><span class="c1"># &#39;mdx&#39; for .mdx files (same parser, different ext)</span>
+<span class="n">body</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;body&#39;</span><span class="w">          </span><span class="c1"># the field that becomes the file body</span>
+</code></pre></div>
+<p>A record like <code>{slug: 'hello', title: 'Hi', body: '# Hello\n\nWorld'}</code>
+lands on disk as <code>posts/hello.md</code>:</p>
+<div class="highlight"><pre><span></span><code>+++
+slug = &quot;hello&quot;
+title = &quot;Hi&quot;
++++
+
+<span class="gh"># Hello</span>
+
+World
+</code></pre></div>
+<p>Frontmatter is canonical TOML (deep-sorted, byte-stable). The body is
+normalized through <code>markdownlint --fix</code> on write — the default rules
+with line-length and first-line-H1 turned off; consumers can override
+via <code>[gitsheet.format.markdownlint]</code> or disable entirely with
+<code>markdownlint = false</code>.</p>
+<p>For bulk metadata queries (filtering, indexing, reporting), the body is
+lazily loadable — <code>sheet.query({}, { withBody: false })</code> skips body bytes
+entirely, and <code>await sheet.loadBody(record)</code> hydrates one when needed.
+Index builds always use body-less reads.</p>
+<p>See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/content-types.md">content-typed records (spec)</a>
+and the <a href="../recipes/markdown-cms/">Markdown CMS recipe</a>.</p>
 <h2 id="canonical-normalization">Canonical normalization<a class="headerlink" href="#canonical-normalization" title="Permanent link"> ¶</a></h2>
 <p>Independent of validation: rules that affect <em>how the record&rsquo;s bytes are written</em> so logically-equal records produce byte-identical TOML.</p>
 <ul>

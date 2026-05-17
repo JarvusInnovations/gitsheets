@@ -694,6 +694,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-check-sheet-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets check &lt;sheet&gt; &lt;file&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-normalize-sheet" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -816,6 +827,8 @@
   
     
     
+      
+        
       
         
       
@@ -991,6 +1004,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../recipes/markdown-cms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Markdown CMS pattern
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../recipes/migrating-config/" class="md-nav__link">
         
   
@@ -1133,6 +1174,17 @@
     <span class="md-ellipsis">
       
         gitsheets edit &lt;sheet&gt; &lt;path&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-check-sheet-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets check &lt;sheet&gt; &lt;file&gt;
       
     </span>
   </a>
@@ -1348,6 +1400,7 @@ gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="
 <li><code>--limit &lt;n&gt;</code></li>
 <li><code>--format &lt;json|csv|tsv|toml&gt;</code> — output format. Default <code>json</code> (newline-delimited).</li>
 <li><code>--headers</code> / <code>--no-headers</code> — emit a header row for CSV/TSV. Default <code>true</code>.</li>
+<li><code>--body</code> / <code>--no-body</code> — for content-typed (markdown/mdx) sheets, include or suppress the body field in the output. Default <code>true</code>. Use <code>--no-body</code> for bulk metadata pipelines on large bodies. No effect on TOML sheets.</li>
 </ul>
 <p>TOML output emits a <code>[[records]]</code> array of tables, round-trippable through <code>upsert --format=toml</code>.</p>
 <h3 id="gitsheets-read-sheet-path"><code>gitsheets read &lt;sheet&gt; &lt;path&gt;</code><a class="headerlink" href="#gitsheets-read-sheet-path" title="Permanent link"> ¶</a></h3>
@@ -1370,6 +1423,22 @@ gitsheets<span class="w"> </span><span class="nb">read</span><span class="w"> </
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>edit<span class="w"> </span>users<span class="w"> </span>jane
 </code></pre></div>
 <p>Validation failures abort with a clear message rather than re-opening the editor — re-edit the input via <code>gitsheets read users &lt;path&gt; --format=toml</code> plus <code>upsert</code> if you need a second pass.</p>
+<h3 id="gitsheets-check-sheet-file"><code>gitsheets check &lt;sheet&gt; &lt;file&gt;</code><a class="headerlink" href="#gitsheets-check-sheet-file" title="Permanent link"> ¶</a></h3>
+<p>Verify a record file in the working tree is parseable, schema-valid, and in canonical form. Designed for two distinct workflows:</p>
+<p><strong>CI / pre-commit verification</strong> — exit non-zero if the file isn&rsquo;t canonical; don&rsquo;t touch it:</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>check<span class="w"> </span>posts<span class="w"> </span>posts/hello.md
+</code></pre></div>
+<p><strong>Post-edit auto-formatter</strong> — rewrite to canonical form; exit 0:</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>check<span class="w"> </span>posts<span class="w"> </span>posts/hello.md<span class="w"> </span>--fix
+</code></pre></div>
+<p>Useful as a post-edit hook for AI agents that modify record files directly: the hook runs <code>gitsheets check &lt;sheet&gt; $file --fix</code> after each edit, leaving the file in canonical form (deep-sorted keys, normalized markdown body for content-typed sheets) and rejecting it loudly if it fails schema.</p>
+<p>Exit codes:</p>
+<ul>
+<li><code>0</code> — file is canonical and valid (or <code>--fix</code> rewrote it)</li>
+<li><code>1</code> — file is parseable + valid but not canonical (without <code>--fix</code>)</li>
+<li><code>22</code> — <code>ValidationError</code> (schema)</li>
+<li><code>64</code> — <code>ConfigError</code> (parse failed)</li>
+</ul>
 <h3 id="gitsheets-normalize-sheet"><code>gitsheets normalize &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-normalize-sheet" title="Permanent link"> ¶</a></h3>
 <p>Re-write every record in the sheet through canonical normalization in one
 transaction. Use case: after upgrading <code>[gitsheet.fields.&lt;name&gt;.sort]</code> rules,
