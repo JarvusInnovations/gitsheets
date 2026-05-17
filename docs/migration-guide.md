@@ -158,6 +158,26 @@ Every gitsheets error extends `GitsheetsError` and carries a stable `code`. See 
 - Exit codes are stable from v1.0 onward — see [CLI reference](cli.md#exit-codes)
 - `--working` (read/write the working tree state) remains deferred — tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165)
 
+## v1.1 → v1.2
+
+Fully additive minor release. Existing v1.1 code keeps working.
+
+### Library
+
+- **Content-typed records.** A sheet can opt into `[gitsheet.format] type = 'markdown'` (or `'mdx'`) to store records as `.md` files with TOML frontmatter and a designated body field. Bodies are normalized through `markdownlint --fix` on write; the frontmatter stays canonical TOML. Default remains TOML — existing sheets are unchanged. See [`behaviors/content-types.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/content-types.md) and the [Markdown CMS recipe](recipes/markdown-cms.md).
+- **Lazy body loading.** `Sheet.query` / `queryFirst` / `queryAll` accept `opts.withBody` (default `true`). Setting `withBody: false` on a markdown sheet skips body bytes entirely — useful for listing pages and bulk metadata reads. Hydrate on demand with `await sheet.loadBody(record)`. Index builds always use body-less reads (don't index on body content). No effect on TOML sheets.
+- **`Sheet.upsert(record, opts?)`.** Adds `opts.allowMissingBody` for content-typed sheets — explicit opt-in to upsert a record without a body field. Default behavior throws if the body field is missing, so a body-less upsert can't silently erase on-disk content. `Sheet.patch` handles `{ body: null }` deletions transparently (it passes `allowMissingBody: true` to the internal upsert).
+- **New public types**: `Format`, `FormatConfig`, `UpsertOptions`.
+
+### CLI
+
+- **`gitsheets check <sheet> <file> [--fix]`** — new. Verify a record file in the working tree is parseable, schema-valid, and canonical. With `--fix`, rewrite to canonical. Never commits. Designed for post-edit hooks (`--fix`) and CI pre-commit verification (no `--fix`). Exit codes: 0 ok, 1 not-canonical (no `--fix`), 22 ValidationError, 64 ConfigError.
+- **`gitsheets query --no-body`** — new flag. For content-typed sheets, suppresses the body field in output. No effect on TOML sheets.
+
+### Tooling
+
+- **`skills/gitsheets/`** — bundled Claude Code skill for developers consuming gitsheets. Reference material covering the CLI, the TypeScript API, and the sheet config syntax. Install it in your `.claude/skills/` (or via plugin) to give Claude focused gitsheets context.
+
 ## Going forward
 
 Once migrated, the recipes are the fastest path to common patterns:

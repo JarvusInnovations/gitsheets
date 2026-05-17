@@ -108,6 +108,24 @@ Independent of validation: rules that affect *how the record's bytes are written
 
 See [behaviors/normalization.md](behaviors/normalization.md).
 
+## Format
+
+A sheet's on-disk storage format. Default: TOML (`.toml` files). Setting `[gitsheet.format] type = 'markdown'` (or `'mdx'`) switches to markdown files with TOML frontmatter and a designated body field. Format is fixed per sheet — there's no per-record discriminator because the path template has to render a single canonical filename per record.
+
+The pluggable format module (`src/format/`) registers `toml`, `markdown`, and `mdx`; future formats slot in without re-shaping the sheet config grammar.
+
+See [behaviors/content-types.md](behaviors/content-types.md).
+
+## Body field (content-typed sheets)
+
+A content-typed sheet declares one of its record fields as the body (`[gitsheet.format] body = '<field>'`). At serialize time the body field is split out into the markdown body of the file; everything else becomes TOML frontmatter. At parse time the inverse: frontmatter becomes record fields, body bytes become the body field. The body field cannot collide with a path-template field.
+
+Bodies are *lazy* — `Sheet.query` / `queryFirst` / `queryAll` accept `opts.withBody` (default `true`); `withBody: false` skips body bytes entirely. `Sheet.loadBody(record)` hydrates a body-less record on demand. Index builds always use body-less reads.
+
+## Prefix scoping
+
+`prefix` is a runtime knob (on `Repository.openSheet({ prefix })` / `Transaction.sheet(name, { prefix })` / the CLI `--prefix` flag) that scopes record reads/writes to a sub-tree under the sheet's configured root. Useful for multi-tenant deployments where one git repo holds many tenants under `<root>/<tenant>/...`. The `.gitsheets/<name>.toml` sheet config file is unaffected — only the record data tree is scoped.
+
 ## Commits as audit log
 
 There is no separate audit table. Every mutation produces a commit with author, committer, timestamp, full diff, message, and structured trailers. Queries that an audit table would serve are answered by `git log --grep` / `--author` / `-- <path>/`.

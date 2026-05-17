@@ -27,15 +27,20 @@ import {
 ```
 
 Type-only exports (interfaces, type aliases) flow alongside the value exports
-above. Notable ones: `TransactionResult`, `TransactionOptions`, `Author`,
-`SheetConfig`, `UpsertResult`, `UpsertOptions`,
+above. The full list: `OpenRepoOptions`, `OpenSheetOptions`, `OpenSheetsOptions`,
+`TransactionOptions`, `TransactionResult`, `TransactionHandler`, `Author`,
+`SheetConfig`, `SheetFieldConfig`, `SortRule`, `UpsertResult`, `UpsertOptions`,
+`SheetConstructorOptions`,
 `IndexKeyFn`, `DefineIndexOptions`,
 `QueryFilter`, `QueryOptions`, `DiffStatus`, `DiffOptions`, `DiffChange`,
 `AttachmentBlobHandle`, `AttachmentEntry`,
 `Format`, `FormatConfig`,
-`OpenStoreOptions`, `Store`, `StoreTx`, `InferRecord`,
-`PushDaemonOptions`, `PushDaemonStatus`, `PushFailureReason`, `BackoffConfig`, `JSONSchema`,
-`StandardSchemaV1`, `ValidationIssue`, `RecordLike`.
+`OpenStoreOptions`, `Store`, `StoreTx`, `StoreTransactFn`, `ValidatorMap`, `InferRecord`,
+`PushDaemonOptions`, `PushDaemonStatus`, `PushFailureReason`, `BackoffConfig`,
+`JSONSchema`, `StandardSchemaV1`, `StandardSchemaIssue`, `StandardSchemaResult`,
+`StandardSchemaFailure`, `StandardSchemaSuccess`, `StandardSchemaPathSegment`,
+`ValidationIssue`, `RecordLike`,
+`PathTemplateBlob`, `PathTemplateTree`, `PathTemplateQueryResult`.
 
 No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely.
 
@@ -113,6 +118,12 @@ When a root isn't specified:
 
 - `Repository.openSheet(name)` defaults `root` to `/` (repo root) — `.gitsheets/<name>.toml` is read from there.
 - The CLI honors `GITSHEETS_ROOT` and `GITSHEETS_PREFIX` for overrides (matching the pre-v1.0 behavior).
+
+### Prefix scoping
+
+`prefix` is an optional runtime parameter — both `Repository.openSheet({ prefix })` / `openSheets({ prefix })` / `Transaction.sheet(name, { prefix })` accept it, and the CLI exposes it as `--prefix` (env `GITSHEETS_PREFIX`). When set, records are read and written under `<configRoot>/<prefix>/<rendered-path>.<ext>` instead of `<configRoot>/<rendered-path>.<ext>`. The `.gitsheets/<name>.toml` config file location is unaffected by `prefix` — only the record data tree is scoped. Default: empty string (no prefix). Useful for multi-tenant sub-tree partitioning where one git repo holds many tenants under `<root>/<tenant>/...`.
+
+`prefix` is not threaded through `openStore` — for prefix-scoped typed access, open prefix-scoped sheets via `repo.openSheet` directly and assemble a typed wrapper manually.
 
 ## I/O
 

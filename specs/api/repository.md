@@ -30,9 +30,12 @@ Returns a `Sheet` handle bound to this repository's current state.
 ```typescript
 const users = await repo.openSheet('users', {
   root?: string,              // default: '.'
+  prefix?: string,            // optional sub-prefix under the sheet's configured root
   validator?: StandardSchema, // optional Standard Schema validator
 });
 ```
+
+`opts.prefix` scopes record reads/writes to `<configRoot>/<prefix>/<rendered-path>.<ext>`. Useful for multi-tenant sub-tree partitioning. The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped. Mirrors the CLI `--prefix` global flag (env `GITSHEETS_PREFIX`). See [api/cli.md](cli.md#global-flags) for the CLI surface.
 
 Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolved root.
 
@@ -41,10 +44,13 @@ Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolve
 Returns `{ [sheetName]: Sheet }` covering every sheet declared in `.gitsheets/`.
 
 ```typescript
-const sheets = await repo.openSheets({ root?: string });
+const sheets = await repo.openSheets({
+  root?: string,
+  prefix?: string,            // applied to every discovered sheet
+});
 ```
 
-`openSheets` returns un-validated sheets keyed by name. To attach per-sheet validators, use [`openStore`](store.md) instead — `openSheets` does not accept a `validators` map.
+`openSheets` returns un-validated sheets keyed by name. To attach per-sheet validators, use [`openStore`](store.md) instead — `openSheets` does not accept a `validators` map. `opts.prefix` is applied uniformly to every sheet returned; for per-sheet differing prefixes, call `openSheet` directly with each name.
 
 Used by `openStore` (see [api/store.md](store.md)).
 

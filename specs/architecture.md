@@ -15,13 +15,17 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 | Language | **TypeScript** (strict) | Discoverability for consumers; type-flow from `.gitsheets/<sheet>.toml` JSON Schema through to typed `Store.<sheet>.upsert(...)` |
 | Module format | **ESM-only** | Modern Node + Bun + edge runtimes all handle ESM. Dual CJS/ESM build deferred until a concrete consumer needs it. |
 | Runtime | **Node.js ≥ 20**, **Bun ≥ 1** | Both have native ESM, both can host the CLI. No Deno target in v1.0. |
-| Tree primitives | **hologit (JS)** | Provides `TreeObject`, `BlobObject`, repo discovery, in-memory mutable trees, packfile access via the `git` CLI. v1.0 stays on the JS substrate. |
+| Tree primitives | **hologit (JS)** | Provides `TreeObject`, `BlobObject`, repo discovery, in-memory mutable trees, packfile access via the `git` CLI. v1.0–v1.2 stay on the JS substrate; the Rust [holo-tree migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is deferred. |
 | TOML | **`@iarna/toml`** | Preserves date types; canonical-sorted keys for byte-stable normalization. |
-| JSON Schema validation | **`ajv`** | Industry-standard, well-maintained, fast. Used for the persisted shape contract per [behaviors/validation.md](behaviors/validation.md). |
+| Canonical key sort | **`sort-keys`** | Deep alphabetical key sorting on every write for byte-stable normalization. |
+| JSON Schema validation | **`ajv`** + **`ajv-formats`** | Industry-standard, well-maintained, fast. Used for the persisted shape contract per [behaviors/validation.md](behaviors/validation.md). `ajv-formats` carries `date-time`, `email`, etc. |
 | Runtime validator (consumer-supplied) | Any **[Standard Schema](https://standardschema.dev)** implementation | Consumer chooses Zod / Valibot / ArkType / Effect Schema. Gitsheets calls `~standard.validate`. |
-| JSON Merge Patch | **`json-merge-patch`** (or equivalent) | RFC 7396 semantics — see [behaviors/patch-semantics.md](behaviors/patch-semantics.md). |
-| Tests | **Vitest** (or `node --test` — pick at start of #137) | TS-native, ESM-native. Replaces Jest + Cypress. |
-| CLI argument parsing | **`yargs`** (current dep) or equivalent | Whatever gives clean TS types for command modules. |
+| JSON Merge Patch | **inline** in `src/patch.ts` (~40 lines) | RFC 7396 semantics — see [behaviors/patch-semantics.md](behaviors/patch-semantics.md). No external dependency; the `json-merge-patch` package was removed during the v1.0 substrate purge. |
+| JSON Patch (RFC 6902) | **`rfc6902`** | Generates RFC 6902 ops for `Sheet.diffFrom({ patches: true })` (v1.1). |
+| Markdown normalization | **`markdownlint`** (pinned `^0.40`) | Body normalization on write for content-typed sheets (v1.2). See [behaviors/content-types.md](behaviors/content-types.md). |
+| CSV / TSV I/O | **`csv-parse`** + **`csv-stringify`** | CLI `--format=csv\|tsv` on `upsert` / `query` / `read` (v1.1). |
+| Tests | **Vitest** (v4) | TS-native, ESM-native. Replaces Jest + Cypress. |
+| CLI argument parsing | **`yargs`** | Clean TS types for command modules. |
 
 ### What we deliberately don't use
 
@@ -83,8 +87,8 @@ These belong to the library and are not consumer concerns:
 - **Versioning:** semver. v1.0.0 is the cut after all `[1.0]`-tagged issues in the [1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1) close. Patch releases inside 1.x preserve the documented API.
 - **Breaking changes** — only at major boundaries. The library's pre-1.0 API does not constrain v1.0 (the legacy `GitSheets` class is purged outright; no migration shim).
 
-## Holo-tree migration (v1.1)
+## Holo-tree migration (deferred post-v1.2)
 
-[Issue #127](https://github.com/JarvusInnovations/gitsheets/issues/127) tracks the swap to a Rust `holo-tree` crate via `napi-rs`. **This is a 1.1 internal-engine change with no public-API impact** — consumers should not see any difference, only ~100x faster tree operations.
+[Issue #127](https://github.com/JarvusInnovations/gitsheets/issues/127) tracks the swap to a Rust `holo-tree` crate via `napi-rs`. **This is an internal-engine change with no public-API impact** — consumers should not see any difference, only ~100x faster tree operations.
 
-v1.0 ships on the current JS hologit substrate. The holo-tree migration begins after 1.0 closes.
+v1.0, v1.1, and v1.2 all shipped on the current JS hologit substrate. The holo-tree migration remains deferred; it's a substantial substrate swap that needs its own focused release. Tracked in [`deferred.md`](deferred.md).

@@ -6,7 +6,7 @@ A record may have any number of **attachments** — binary blobs colocated with 
 
 ## Applies To
 
-- [api/sheet.md](../api/sheet.md) — `getAttachment`, `getAttachments`, `setAttachment`, `setAttachments`
+- [api/sheet.md](../api/sheet.md) — `getAttachment`, `getAttachments`, `setAttachment`, `setAttachments`, `deleteAttachment`, `deleteAttachments`, `attachments` (iterator)
 - [behaviors/path-templates.md](path-templates.md) — query traversal skips attachment subtrees
 
 ## Storage layout
