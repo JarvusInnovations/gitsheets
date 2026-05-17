@@ -95,6 +95,7 @@ Flags:
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` — output format. Default `json` (newline-delimited).
 - `--headers` / `--no-headers` — emit a header row for CSV/TSV. Default `true`.
+- `--body` / `--no-body` — for content-typed (markdown/mdx) sheets, include or suppress the body field in the output. Default `true`. Use `--no-body` for bulk metadata pipelines on large bodies. No effect on TOML sheets.
 
 TOML output emits a `[[records]]` array of tables, round-trippable through `upsert --format=toml`.
 
@@ -126,6 +127,31 @@ gitsheets edit users jane
 ```
 
 Validation failures abort with a clear message rather than re-opening the editor — re-edit the input via `gitsheets read users <path> --format=toml` plus `upsert` if you need a second pass.
+
+### `gitsheets check <sheet> <file>`
+
+Verify a record file in the working tree is parseable, schema-valid, and in canonical form. Designed for two distinct workflows:
+
+**CI / pre-commit verification** — exit non-zero if the file isn't canonical; don't touch it:
+
+```bash
+gitsheets check posts posts/hello.md
+```
+
+**Post-edit auto-formatter** — rewrite to canonical form; exit 0:
+
+```bash
+gitsheets check posts posts/hello.md --fix
+```
+
+Useful as a post-edit hook for AI agents that modify record files directly: the hook runs `gitsheets check <sheet> $file --fix` after each edit, leaving the file in canonical form (deep-sorted keys, normalized markdown body for content-typed sheets) and rejecting it loudly if it fails schema.
+
+Exit codes:
+
+- `0` — file is canonical and valid (or `--fix` rewrote it)
+- `1` — file is parseable + valid but not canonical (without `--fix`)
+- `22` — `ValidationError` (schema)
+- `64` — `ConfigError` (parse failed)
 
 ### `gitsheets normalize <sheet>`
 

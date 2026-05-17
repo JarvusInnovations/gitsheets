@@ -11,9 +11,7 @@ const halfCpus = Math.max(2, Math.floor(cpus().length / 2));
 export default defineConfig({
   test: {
     testTimeout: 20_000,
-    poolOptions: {
-      forks: { maxForks: halfCpus },
-      threads: { maxThreads: halfCpus },
-    },
+    maxWorkers: halfCpus,
+    minWorkers: 1,
   },
 });

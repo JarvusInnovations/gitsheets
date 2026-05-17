@@ -69,6 +69,7 @@ Flags:
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` (default: `json`)
 - `--headers` (CSV/TSV only; default: true)
+- `--no-body` — for content-typed (markdown/mdx) sheets, suppress the body field in the output. No effect on TOML sheets. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
 
 ### `git sheet read <sheet> <path>`
 
@@ -92,6 +93,27 @@ git sheet edit users users/janedoe
 ```
 
 Honors the same transaction flags as `upsert`.
+
+### `git sheet check <sheet> <file>`
+
+Verify a record file in the working tree is parseable, schema-valid, and in canonical form. Doesn't commit — works against the working tree only.
+
+```bash
+git sheet check posts posts/hello.md             # report-only
+git sheet check posts posts/hello.md --fix       # rewrite to canonical if needed
+```
+
+Designed for post-edit hooks (`--fix`) and CI verification (no `--fix`):
+
+- `gitsheets check <sheet> $FILE` — for CI / pre-commit verification. Exit 1 if the file isn't already canonical; doesn't touch the file.
+- `gitsheets check <sheet> $FILE --fix` — for post-edit auto-formatting. Rewrites the file in canonical form and exits 0.
+
+Exit codes:
+
+- `0` — file is canonical and valid (or `--fix` rewrote it successfully)
+- `1` — file is parseable + schema-valid but not canonical (without `--fix`)
+- `22` — `ValidationError` (schema)
+- `64` — `ConfigError` (file failed to parse as the sheet's format)
 
 ### `git sheet normalize <sheet>`
 

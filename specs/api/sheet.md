@@ -26,14 +26,21 @@ for await (const user of sheet.query({ accountLevel: 'staff' })) {
 - If the filter includes fields from the path template, gitsheets prunes the tree traversal to only matching subtrees (see [behaviors/path-templates.md](../behaviors/path-templates.md)).
 - Order of results: filesystem order within each tree level. Not guaranteed stable across implementation changes — sort in consumer code if order matters.
 - `opts.signal?: AbortSignal` — cancel a streaming query. The query checks the signal before iteration starts and again before each yield. If aborted, the next iteration throws `signal.reason` (a `DOMException` with name `'AbortError'` by default, or whatever value the consumer passed to `controller.abort(reason)`). See [api/conventions.md](conventions.md#cancellation).
+- `opts.withBody?: boolean` — for content-typed (markdown/mdx) sheets, whether to load the body field. Default `true`. Setting `false` reads only the frontmatter; the body field is `undefined` on yielded records. No effect on TOML sheets. Filters that reference the body field throw `TypeError` under `withBody: false`. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
 
 ### `sheet.queryFirst(filter?, opts?)`
 
-Returns `Promise<T | undefined>`. The first match, or `undefined`. Honors the same `opts.signal` as `query`.
+Returns `Promise<T | undefined>`. The first match, or `undefined`. Honors the same `opts.signal` and `opts.withBody` as `query`.
 
 ### `sheet.queryAll(filter?, opts?)`
 
-Returns `Promise<T[]>`. All matches collected into an array. Convenience over `for await ... push`. Honors the same `opts.signal` as `query`.
+Returns `Promise<T[]>`. All matches collected into an array. Convenience over `for await ... push`. Honors the same `opts.signal` and `opts.withBody` as `query`.
+
+### `sheet.loadBody(record)`
+
+Hydrate a body-less record (returned by `query` / `queryFirst` / `queryAll` / `findByIndex` under `withBody: false`) with its full body. Re-reads the record blob and returns a fresh record with the body field populated. For TOML sheets (no body concept), returns the record unchanged. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
+
+Throws `NotFoundError` if the underlying blob is missing. Throws `TypeError` if the input lacks the `RECORD_PATH_KEY` annotation (i.e., the record didn't come from a Sheet read).
 
 ### `sheet.pathForRecord(record)`
 
@@ -47,7 +54,7 @@ Returns `Promise<T>` — the record with canonical normalization applied (sorted
 
 All write methods stage to the current transaction's tree (or, in permissive mode, auto-open and commit a single-mutation transaction). See [behaviors/transactions.md](../behaviors/transactions.md).
 
-### `sheet.upsert(record)`
+### `sheet.upsert(record, opts?)`
 
 ```typescript
 const { blob, path } = await sheet.upsert({
@@ -61,8 +68,10 @@ const { blob, path } = await sheet.upsert({
 - Applies canonical normalization
 - Renders the record's path from the template
 - If the record was loaded from disk (has the `Symbol.for('gitsheets-path')` annotation) and the new rendered path differs, the old path's file is deleted (rename semantics)
-- Writes the TOML blob to the tree
+- Serializes through the configured sheet format (TOML by default, markdown/mdx for content-typed sheets — see [behaviors/content-types.md](../behaviors/content-types.md)) and writes the blob
 - Returns the staged blob + its path
+
+`opts.allowMissingBody?: boolean` — content-typed sheets only. Permits an upsert whose record omits the configured body field; without it, a missing body throws `TypeError` so a body-less upsert can't silently erase on-disk content. See [behaviors/content-types.md](../behaviors/content-types.md#upsert-with-a-body-less-record).
 
 Throws `ValidationError` on invalid input. Throws `PathTemplateError` if the template can't render against the record.
 

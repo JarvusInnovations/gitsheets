@@ -182,6 +182,53 @@ The Standard Schema layer can **transform** the record (lower-casing, defaulting
 
 See [validation](validation.md) for the full pipeline.
 
+## Content-typed sheets (markdown / mdx)
+
+A sheet's `[gitsheet.format]` block can switch its on-disk storage from
+`.toml` to `.md` files with TOML frontmatter and a designated body field.
+Useful when the records *are* documents — blog posts, knowledge-base
+entries, docs — and you want editor affordances (markdown highlighting,
+preview, lint) on the body rather than a triple-quoted string inside TOML.
+
+```toml
+# .gitsheets/posts.toml
+[gitsheet]
+root = 'posts'
+path = '${{ slug }}'
+
+[gitsheet.format]
+type = 'markdown'      # 'mdx' for .mdx files (same parser, different ext)
+body = 'body'          # the field that becomes the file body
+```
+
+A record like `{slug: 'hello', title: 'Hi', body: '# Hello\n\nWorld'}`
+lands on disk as `posts/hello.md`:
+
+```markdown
++++
+slug = "hello"
+title = "Hi"
++++
+
+# Hello
+
+World
+```
+
+Frontmatter is canonical TOML (deep-sorted, byte-stable). The body is
+normalized through `markdownlint --fix` on write — the default rules
+with line-length and first-line-H1 turned off; consumers can override
+via `[gitsheet.format.markdownlint]` or disable entirely with
+`markdownlint = false`.
+
+For bulk metadata queries (filtering, indexing, reporting), the body is
+lazily loadable — `sheet.query({}, { withBody: false })` skips body bytes
+entirely, and `await sheet.loadBody(record)` hydrates one when needed.
+Index builds always use body-less reads.
+
+See [content-typed records (spec)](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/content-types.md)
+and the [Markdown CMS recipe](recipes/markdown-cms.md).
+
 ## Canonical normalization
 
 Independent of validation: rules that affect *how the record's bytes are written* so logically-equal records produce byte-identical TOML.

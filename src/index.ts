@@ -16,6 +16,7 @@ export type {
   SheetFieldConfig,
   SortRule,
   UpsertResult,
+  UpsertOptions,
   SheetConstructorOptions,
   IndexKeyFn,
   DefineIndexOptions,
@@ -27,6 +28,8 @@ export type {
   AttachmentBlobHandle,
   AttachmentEntry,
 } from './sheet.js';
+
+export type { Format, FormatConfig } from './format/index.js';
 
 export { mergePatch } from './patch.js';
 

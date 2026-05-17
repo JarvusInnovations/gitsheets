@@ -20,7 +20,7 @@ import {
 import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
-import { stringifyRecord, parseToml, parseConfigToml } from './toml.js';
+import { stringifyRecord, parseConfigToml } from './toml.js';
 import sortKeys from 'sort-keys';
 import { Transaction, transactionContext } from './transaction.js';
 import {
@@ -28,6 +28,7 @@ import {
   type JSONSchema,
   type StandardSchemaV1,
 } from './validation.js';
+import { getFormat, resolveFormatConfig, type Format, type FormatConfig } from './format/index.js';
 
 const exec = promisify(execFile);
 
@@ -53,6 +54,8 @@ export interface SheetConfig {
   readonly fields: Readonly<Record<string, SheetFieldConfig>>;
   /** JSON Schema for record validation; null if no [gitsheet.schema] block. */
   readonly schema: JSONSchema | null;
+  /** Storage-format config from `[gitsheet.format]` (default: `type = 'toml'`). */
+  readonly format: FormatConfig;
 }
 
 // --- Result types ---
@@ -60,6 +63,18 @@ export interface SheetConfig {
 export interface UpsertResult {
   readonly blob: BlobObject;
   readonly path: string;
+}
+
+/**
+ * Options for `Sheet.upsert`. For content-typed (markdown) sheets only:
+ * `allowMissingBody: true` permits an upsert whose record omits the body
+ * field. Default `false` because upsert is a full-record replace — silently
+ * erasing an on-disk body is rarely the intent. Consumers wanting a body-
+ * preserving update should use `Sheet.patch(query, partial)` (which always
+ * full-loads the existing record before merging).
+ */
+export interface UpsertOptions {
+  readonly allowMissingBody?: boolean;
 }
 
 // --- Helpers ---
@@ -203,7 +218,43 @@ async function loadConfig(workspace: Workspace, configPath: string): Promise<She
     schema = schemaRaw as JSONSchema;
   }
 
-  const config: SheetConfig = { root, path, fields: fieldsClean, schema };
+  let format: FormatConfig;
+  try {
+    format = resolveFormatConfig((gitsheet as RecordLike)['format']);
+  } catch (err) {
+    throw new ConfigError(
+      'config_invalid',
+      `${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+  // Body-field collision: a sheet whose path template references the body
+  // field would render the same key for a record regardless of body content.
+  if (format.body !== undefined) {
+    if (format.type !== 'markdown' && format.type !== 'mdx') {
+      throw new ConfigError(
+        'config_invalid',
+        `${configPath}: [gitsheet.format].body only applies to markdown/mdx formats`,
+      );
+    }
+    // Static check: the path template's getFieldNames must not include the
+    // body field. Tested against the registered field name only — expressions
+    // referencing body are caught lazily during render.
+    const fieldNames = Template.fromString(path).getFieldNames();
+    if (fieldNames.includes(format.body)) {
+      throw new ConfigError(
+        'config_invalid',
+        `${configPath}: [gitsheet.format].body = ${JSON.stringify(format.body)} collides with the path template — the body field cannot also identify the record`,
+      );
+    }
+  } else if (format.type === 'markdown' || format.type === 'mdx') {
+    throw new ConfigError(
+      'config_invalid',
+      `${configPath}: [gitsheet.format].body is required when type is "markdown" or "mdx"`,
+    );
+  }
+
+  const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };
   CONFIG_CACHE.set(node.hash, config);
   return config;
 }
@@ -246,12 +297,12 @@ function validateSortRule(sort: unknown, configPath: string, field: string): voi
 // parsed copy — avoiding the original cache's v8.serialize/Date-subclass
 // issue without leaking mutable shared state.
 
-const TOML_TEXT_CACHE = new Map<string, string>();
-async function readBlobTomlCached(blob: BlobObject): Promise<string> {
-  const cached = TOML_TEXT_CACHE.get(blob.hash);
+const RECORD_TEXT_CACHE = new Map<string, string>();
+async function readBlobTextCached(blob: BlobObject): Promise<string> {
+  const cached = RECORD_TEXT_CACHE.get(blob.hash);
   if (cached !== undefined) return cached;
   const text = await blob.read();
-  TOML_TEXT_CACHE.set(blob.hash, text);
+  RECORD_TEXT_CACHE.set(blob.hash, text);
   return text;
 }
 
@@ -281,6 +332,18 @@ export interface QueryOptions {
    * to `controller.abort(reason)`).
    */
   readonly signal?: AbortSignal;
+  /**
+   * For content-typed sheets (markdown/mdx), whether to load the body field
+   * into yielded records. Defaults to `true`. Setting `false` reads only the
+   * frontmatter — the body field is `undefined`. Saves I/O at scale for
+   * bulk metadata queries. Has no effect on TOML sheets (no body concept).
+   *
+   * When `withBody: false`, filters that reference the body field throw
+   * `TypeError` at query start (the filter would silently match zero).
+   *
+   * @see specs/behaviors/content-types.md#lazy-body-loading
+   */
+  readonly withBody?: boolean;
 }
 
 // --- Attachments iterator (#140) ---
@@ -499,27 +562,29 @@ function mapDiffStatus(ch: string): DiffStatus | null {
 async function readBlobAsRecord(
   gitDir: string,
   hash: string,
+  format: Format,
+  formatConfig: FormatConfig,
 ): Promise<RecordLike | null> {
   try {
     const { stdout } = await exec('git', ['cat-file', 'blob', hash], {
       cwd: gitDir,
       maxBuffer: 64 * 1024 * 1024,
     });
-    return parseToml(stdout);
+    return format.parse(stdout, formatConfig);
   } catch {
-    // Blob unreadable or non-TOML — caller treats this as "no record".
+    // Blob unreadable or unparsable — caller treats this as "no record".
     return null;
   }
 }
 
-function stripRecordPath(rawPath: string, root: string): string {
+function stripRecordPath(rawPath: string, root: string, extension: string): string {
   let p = rawPath;
   const cleanRoot = root.replace(/^\/+|\/+$/g, '');
   if (cleanRoot && cleanRoot !== '.' && cleanRoot !== '') {
     const prefix = `${cleanRoot}/`;
     if (p.startsWith(prefix)) p = p.slice(prefix.length);
   }
-  if (p.endsWith('.toml')) p = p.slice(0, -5);
+  if (p.endsWith(extension)) p = p.slice(0, -extension.length);
   return p;
 }
 
@@ -602,6 +667,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return this.#prefix ? { prefix: this.#prefix } : {};
   }
 
+  /** Resolve the active `Format` for this sheet's storage type. */
+  #getFormat(config: SheetConfig): Format {
+    return getFormat(config.format.type);
+  }
+
   get name(): string {
     return this.#name;
   }
@@ -639,16 +709,31 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const sheetRoot = await this.#getSheetRoot(this.#effectiveRoot(config));
     if (!sheetRoot) return;
 
+    const format = this.#getFormat(config);
+    const withBody = opts.withBody ?? true;
+    const bodyField = config.format.body;
+    // Guard: if the consumer asked for body-less reads but their filter
+    // references the body field, we'd silently match zero records. Fail
+    // loudly at query start instead.
+    if (!withBody && bodyField !== undefined && bodyField in (filter as RecordLike)) {
+      throw new TypeError(
+        `Sheet.query: filter references body field ${JSON.stringify(bodyField)} while withBody: false — bodies aren't loaded so the filter would match nothing`,
+      );
+    }
+
     // hologit's TreeObject/BlobObject are structurally compatible with the
     // path-template tree interface; the casts bridge the type lattices.
     for await (const { blob, path: blobPath } of template.queryTree(
       sheetRoot as unknown as Parameters<typeof template.queryTree>[0],
       filter as RecordLike,
+      { extension: format.extension },
     )) {
       if (signal?.aborted) throwAborted(signal);
       const record = (await this.#readRecordFromBlob(
         blob as unknown as BlobObject,
         blobPath,
+        config,
+        { headerOnly: !withBody },
       )) as T;
       if (!queryMatches(filter as RecordLike, record as RecordLike)) continue;
       yield record;
@@ -671,6 +756,40 @@ export class Sheet<T extends RecordLike = RecordLike> {
       results.push(record);
     }
     return results;
+  }
+
+  /**
+   * Hydrate a body-less record returned by `query`/`findByIndex` with its
+   * full body. Re-reads the record blob at the path annotation symbol and
+   * returns a fresh record with the body field populated.
+   *
+   * For TOML sheets (no body concept) this returns the input record
+   * unchanged after a fresh parse. For markdown/mdx sheets the body field
+   * is populated from the on-disk blob.
+   *
+   * @see specs/behaviors/content-types.md#lazy-body-loading
+   */
+  async loadBody(record: T): Promise<T> {
+    const recordPath = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    if (typeof recordPath !== 'string') {
+      throw new TypeError(
+        `Sheet.loadBody: record is missing the path annotation (RECORD_PATH_KEY) — did it come from query()?`,
+      );
+    }
+    const config = await this.readConfig();
+    const format = this.#getFormat(config);
+    const fullPath = joinTreePath(
+      this.#effectiveRoot(config),
+      `${recordPath}${format.extension}`,
+    );
+    const node = await this.#dataTree.getChild(fullPath);
+    if (!node || !isBlob(node)) {
+      throw new NotFoundError(
+        'record_not_found',
+        `Sheet.loadBody: no record blob at ${fullPath}`,
+      );
+    }
+    return (await this.#readRecordFromBlob(node, recordPath, config)) as T;
   }
 
   /**
@@ -715,17 +834,16 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
     }
 
+    const format = this.#getFormat(config);
     const entries = parseDiffTreeZ(stdout);
     for (const entry of entries) {
-      // v1.1 scope: `.toml` records only. Filter out anything else —
-      // attachments under the record dir, hidden files, accidental non-TOML
-      // content in the data tree.
-      if (!entry.canonicalPath.endsWith('.toml')) continue;
+      // Scope to record files for this sheet's storage format. Attachments
+      // (any extension), hidden files, and `.gitsheets/` config blobs are
+      // filtered out — they're not records.
+      if (!entry.canonicalPath.endsWith(format.extension)) continue;
       if (entry.canonicalPath.startsWith('.gitsheets/')) continue;
-      // When root is '.', sheet config blobs would otherwise appear as changes
-      // — they're metadata, not records.
 
-      const recordPath = stripRecordPath(entry.canonicalPath, this.#effectiveRoot(config));
+      const recordPath = stripRecordPath(entry.canonicalPath, this.#effectiveRoot(config), format.extension);
 
       const change: Record<string, unknown> = {
         path: recordPath,
@@ -752,8 +870,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
       }
 
       if (opts.records || opts.patches) {
-        const src = entry.srcHash ? await readBlobAsRecord(gitDir, entry.srcHash) : null;
-        const dst = entry.dstHash ? await readBlobAsRecord(gitDir, entry.dstHash) : null;
+        const src = entry.srcHash
+          ? await readBlobAsRecord(gitDir, entry.srcHash, format, config.format)
+          : null;
+        const dst = entry.dstHash
+          ? await readBlobAsRecord(gitDir, entry.dstHash, format, config.format)
+          : null;
         if (opts.records) {
           if (src !== null) change['src'] = src;
           if (dst !== null) change['dst'] = dst;
@@ -829,9 +951,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return new Sheet<T>(opts);
   }
 
-  async upsert(record: T): Promise<UpsertResult> {
+  async upsert(record: T, opts: UpsertOptions = {}): Promise<UpsertResult> {
     if (this.#transaction !== undefined) {
-      return this.#upsertInTx(this.#transaction, record);
+      return this.#upsertInTx(this.#transaction, record, opts);
     }
     this.#checkStrictMode();
 
@@ -857,10 +979,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      return tx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated);
+      return tx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated, opts);
     }
     return this.#autoTransact(
-      async (innerTx) => innerTx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated),
+      async (innerTx) =>
+        innerTx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated, opts),
       (r) => `${this.#name} upsert ${r.path}`,
     );
   }
@@ -885,7 +1008,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (typeof existingPath === 'string') {
       (merged as Record<symbol, unknown>)[RECORD_PATH_KEY] = existingPath;
     }
-    return this.upsert(merged);
+    // patch may produce a record missing the body field (e.g., `{body: null}`
+    // deletes per RFC 7396). The consumer's intent is explicit at the patch
+    // call site, so we don't trip the upsert allowMissingBody guard here.
+    return this.upsert(merged, { allowMissingBody: true });
   }
 
   async delete(target: T | string): Promise<void> {
@@ -1160,9 +1286,27 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return staged;
   }
 
-  async #upsertInTx(tx: Transaction, record: T): Promise<UpsertResult> {
+  async #upsertInTx(
+    tx: Transaction,
+    record: T,
+    opts: UpsertOptions = {},
+  ): Promise<UpsertResult> {
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
+
+    // Body presence guard: upsert is a full-record replace. A markdown sheet
+    // whose record omits the body field would silently erase the on-disk
+    // body. Require explicit opt-in to make the trade visible.
+    const bodyField = config.format.body;
+    if (
+      bodyField !== undefined &&
+      !opts.allowMissingBody &&
+      (record as Record<string, unknown>)[bodyField] === undefined
+    ) {
+      throw new TypeError(
+        `Sheet.upsert: record is missing the body field ${JSON.stringify(bodyField)}. Pass { allowMissingBody: true } to opt in, or use Sheet.patch for body-preserving frontmatter updates.`,
+      );
+    }
 
     // Validate before normalizing — per specs/behaviors/validation.md order:
     // JSON Schema → Standard Schema (may transform) → normalize → render → write.
@@ -1208,19 +1352,23 @@ export class Sheet<T extends RecordLike = RecordLike> {
       }
     }
 
+    const format = this.#getFormat(config);
+
     // Rename: if the source record was loaded from a different path, delete the old one.
     if (typeof existing === 'string' && existing !== recordPath) {
       try {
-        await this.#dataTree.deleteChild(joinTreePath(this.#effectiveRoot(config), `${existing}.toml`));
+        await this.#dataTree.deleteChild(
+          joinTreePath(this.#effectiveRoot(config), `${existing}${format.extension}`),
+        );
       } catch {
         // Old path may not exist — ignore.
       }
     }
 
-    const toml = stringifyRecord(stripSymbols(normalized as RecordLike));
+    const text = await format.serialize(stripSymbols(normalized as RecordLike), config.format);
     const blob = await this.#dataTree.writeChild(
-      joinTreePath(this.#effectiveRoot(config), `${recordPath}.toml`),
-      toml,
+      joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`),
+      text,
     );
     tx.markMutated();
     this.#invalidateIndexes();
@@ -1229,9 +1377,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
   async #deleteInTx(tx: Transaction, target: T | string): Promise<void> {
     const config = await this.readConfig();
+    const format = this.#getFormat(config);
     const recordPath =
       typeof target === 'string' ? target : await this.pathForRecord(target);
-    const fullPath = joinTreePath(this.#effectiveRoot(config), `${recordPath}.toml`);
+    const fullPath = joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`);
     const existing = await this.#dataTree.getChild(fullPath);
     if (!existing) {
       throw new NotFoundError('record_not_found', `${this.#name}: no record at ${recordPath}`);
@@ -1272,7 +1421,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     state.uniqueMap.clear();
     state.multiMap.clear();
-    for await (const record of this.query()) {
+    // Index builds always use body-less reads. Indexing by body content is
+    // not a supported use case; consumers needing the body should call
+    // sheet.loadBody(record) after findByIndex returns.
+    // @see specs/behaviors/content-types.md#lazy-body-loading
+    for await (const record of this.query({}, { withBody: false })) {
       const rawKey = state.keyFn(record);
       if (rawKey === undefined || rawKey === null) continue;
       const key = String(rawKey);
@@ -1302,11 +1455,19 @@ export class Sheet<T extends RecordLike = RecordLike> {
     state.built = true;
   }
 
-  async #readRecordFromBlob(blob: BlobObject, path: string): Promise<RecordLike> {
-    const text = await readBlobTomlCached(blob);
+  async #readRecordFromBlob(
+    blob: BlobObject,
+    path: string,
+    config: SheetConfig,
+    opts: { headerOnly?: boolean } = {},
+  ): Promise<RecordLike> {
+    const text = await readBlobTextCached(blob);
+    const format = this.#getFormat(config);
     let parsed: RecordLike;
     try {
-      parsed = parseToml(text);
+      parsed = opts.headerOnly
+        ? format.parseHeaderOnly(text, config.format)
+        : format.parse(text, config.format);
     } catch (err) {
       throw new ConfigError(
         'config_invalid',

@@ -61,6 +61,7 @@ interface QueryArgs extends GlobalArgs {
   limit?: number;
   format?: string;
   headers?: boolean;
+  body?: boolean;
 }
 
 interface ReadArgs extends GlobalArgs {
@@ -91,6 +92,12 @@ interface InitArgs extends GlobalArgs {
   path?: string;
   schema?: string;
   force?: boolean;
+}
+
+interface CheckArgs extends GlobalArgs {
+  sheet: string;
+  file: string;
+  fix?: boolean;
 }
 
 // Exit codes per specs/api/cli.md
@@ -363,12 +370,15 @@ async function runQuery(argv: QueryArgs): Promise<void> {
   const format: OutputFormat = validateOutputFormat(argv.format) ?? 'json';
   const headers = argv.headers ?? true;
   const fields = argv.fields;
+  // `--body` defaults to true; `--no-body` flips it off via yargs' implicit
+  // boolean negation. No effect on TOML sheets.
+  const withBody = argv.body ?? true;
 
   let yielded = 0;
   let headerWritten = false;
   const allRecords: RecordLike[] = []; // only used for TOML output
 
-  for await (const record of sheet.query(filter)) {
+  for await (const record of sheet.query(filter, { withBody })) {
     if (format === 'csv' || format === 'tsv') {
       if (!headerWritten) {
         // Header columns come from --fields, otherwise from the first record.
@@ -671,6 +681,96 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
   );
 }
 
+/**
+ * `gitsheets check <sheet> <file>` — verify a single record file in the
+ * working tree is parseable, schema-valid, and in canonical form. Pass
+ * `--fix` to also rewrite the file in canonical form when it isn't.
+ *
+ * Two use cases:
+ *
+ * - **CI / pre-commit verification:** `gitsheets check posts $file` — exits
+ *   non-zero if the file isn't already canonical. Doesn't touch the file.
+ * - **Post-edit auto-formatter:** `gitsheets check posts $file --fix` —
+ *   rewrites the file to canonical form, exits 0 (1 only on parse /
+ *   validation failure).
+ *
+ * Exit codes:
+ * - `0` — file is canonical and valid (or `--fix` rewrote it successfully)
+ * - `1` — file is parseable + valid but not canonical (without `--fix`)
+ * - `22` — `ValidationError` (record fails schema)
+ * - `64` — `ConfigError` (file failed to parse as the sheet's format)
+ *
+ * Works against the working tree only. Never commits.
+ */
+async function runCheck(argv: CheckArgs): Promise<void> {
+  const { sheet } = await loadRepoAndSheet(argv);
+  const config = await sheet.readConfig();
+  const { getFormat } = await import('../format/index.js');
+  const format = getFormat(config.format.type);
+
+  const absPath = isAbsolute(argv.file) ? argv.file : join(process.cwd(), argv.file);
+
+  // Read the file from the working tree (not from git). If the path doesn't
+  // exist, fail with a clear message rather than a cryptic ENOENT.
+  let original: string;
+  try {
+    original = await readFile(absPath, 'utf8');
+  } catch (err) {
+    throw new NotFoundError(
+      'record_not_found',
+      `gitsheets check: cannot read ${argv.file}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Parse via the sheet's format. Parse errors surface as ConfigError so the
+  // exit code is well-defined.
+  let record: RecordLike;
+  try {
+    record = format.parse(original, config.format);
+  } catch (err) {
+    throw new ConfigError(
+      'config_invalid',
+      `gitsheets check: failed to parse ${argv.file} as ${config.format.type}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+
+  // Validate the parsed record through the sheet's schema (and any registered
+  // Standard Schema validator). Throws ValidationError on failure — the CLI
+  // error handler maps it to exit 22.
+  const { validateRecord } = await import('../validation.js');
+  const validated = await validateRecord({
+    record: { ...record },
+    schema: config.schema,
+    schemaSourcePath: `.gitsheets/${argv.sheet}.toml`,
+  });
+
+  // Normalize the record (deep key sort + per-field array sort rules) and
+  // re-serialize via the sheet's format. For markdown sheets the body also
+  // goes through markdownlint at this step.
+  const normalized = await sheet.normalizeRecord(validated as never);
+  const newText = await format.serialize(
+    { ...(normalized as RecordLike) },
+    config.format,
+  );
+
+  if (newText === original) {
+    process.stdout.write(`ok ${argv.file}\n`);
+    return;
+  }
+
+  if (argv.fix) {
+    await writeFile(absPath, newText, 'utf8');
+    process.stdout.write(`fixed ${argv.file}\n`);
+    return;
+  }
+
+  process.stderr.write(
+    `gitsheets check: ${argv.file} is not in canonical form. Run with --fix to rewrite.\n`,
+  );
+  process.exit(1);
+}
+
 async function runEdit(argv: EditArgs): Promise<void> {
   const { repo, sheet } = await loadRepoAndSheet(argv);
   const target = argv.path.endsWith('.toml') ? argv.path.slice(0, -5) : argv.path;
@@ -881,6 +981,12 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             type: 'boolean',
             default: true,
             describe: 'Emit a header row for CSV/TSV output (default: true)',
+          })
+          .option('body', {
+            type: 'boolean',
+            default: true,
+            describe:
+              'For content-typed (markdown) sheets, include the body field. Pass --no-body for header-only reads. No effect on TOML sheets.',
           }),
       runQuery,
     )
@@ -906,6 +1012,21 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           .positional('sheet', { type: 'string', demandOption: true })
           .positional('path', { type: 'string', demandOption: true }),
       runEdit,
+    )
+    .command<CheckArgs>(
+      'check <sheet> <file>',
+      "Verify a record file in the working tree is parseable, valid, and canonical. --fix rewrites it.",
+      (y) =>
+        y
+          .positional('sheet', { type: 'string', demandOption: true })
+          .positional('file', { type: 'string', demandOption: true })
+          .option('fix', {
+            type: 'boolean',
+            default: false,
+            describe:
+              'Rewrite the file in canonical form when it isn\'t already (no commit; working tree only)',
+          }),
+      runCheck,
     )
     .command<NormalizeArgs>(
       'normalize <sheet>',

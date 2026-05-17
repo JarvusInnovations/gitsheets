@@ -28,6 +28,7 @@ Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and 
 - **[Request-bound transactions in Fastify](recipes/request-bound-transactions.md)** — one commit per HTTP request, with structured trailers.
 - **[Secondary indices](recipes/secondary-indices.md)** — in-memory `findByEmail` / `findByForeignKey` patterns.
 - **[Production push daemon](recipes/production-push-daemon.md)** — backoff config, auth strategies, monitoring.
+- **[Markdown CMS pattern](recipes/markdown-cms.md)** — content-typed sheets: records as `.md` with TOML frontmatter; lazy body loading.
 - **[Migrating a `[gitsheet.fields]` config](recipes/migrating-config.md)** — pre-v1.0 → v1.0 schema migration.
 
 ## Migrating from pre-v1.0
