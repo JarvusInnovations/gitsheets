@@ -65,6 +65,18 @@ export interface UpsertResult {
   readonly path: string;
 }
 
+/**
+ * Options for `Sheet.upsert`. For content-typed (markdown) sheets only:
+ * `allowMissingBody: true` permits an upsert whose record omits the body
+ * field. Default `false` because upsert is a full-record replace — silently
+ * erasing an on-disk body is rarely the intent. Consumers wanting a body-
+ * preserving update should use `Sheet.patch(query, partial)` (which always
+ * full-loads the existing record before merging).
+ */
+export interface UpsertOptions {
+  readonly allowMissingBody?: boolean;
+}
+
 // --- Helpers ---
 
 function isBlob(node: unknown): node is BlobObject {
@@ -320,6 +332,18 @@ export interface QueryOptions {
    * to `controller.abort(reason)`).
    */
   readonly signal?: AbortSignal;
+  /**
+   * For content-typed sheets (markdown/mdx), whether to load the body field
+   * into yielded records. Defaults to `true`. Setting `false` reads only the
+   * frontmatter — the body field is `undefined`. Saves I/O at scale for
+   * bulk metadata queries. Has no effect on TOML sheets (no body concept).
+   *
+   * When `withBody: false`, filters that reference the body field throw
+   * `TypeError` at query start (the filter would silently match zero).
+   *
+   * @see specs/behaviors/content-types.md#lazy-body-loading
+   */
+  readonly withBody?: boolean;
 }
 
 // --- Attachments iterator (#140) ---
@@ -686,6 +710,16 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (!sheetRoot) return;
 
     const format = this.#getFormat(config);
+    const withBody = opts.withBody ?? true;
+    const bodyField = config.format.body;
+    // Guard: if the consumer asked for body-less reads but their filter
+    // references the body field, we'd silently match zero records. Fail
+    // loudly at query start instead.
+    if (!withBody && bodyField !== undefined && bodyField in (filter as RecordLike)) {
+      throw new TypeError(
+        `Sheet.query: filter references body field ${JSON.stringify(bodyField)} while withBody: false — bodies aren't loaded so the filter would match nothing`,
+      );
+    }
 
     // hologit's TreeObject/BlobObject are structurally compatible with the
     // path-template tree interface; the casts bridge the type lattices.
@@ -699,6 +733,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
         blob as unknown as BlobObject,
         blobPath,
         config,
+        { headerOnly: !withBody },
       )) as T;
       if (!queryMatches(filter as RecordLike, record as RecordLike)) continue;
       yield record;
@@ -721,6 +756,40 @@ export class Sheet<T extends RecordLike = RecordLike> {
       results.push(record);
     }
     return results;
+  }
+
+  /**
+   * Hydrate a body-less record returned by `query`/`findByIndex` with its
+   * full body. Re-reads the record blob at the path annotation symbol and
+   * returns a fresh record with the body field populated.
+   *
+   * For TOML sheets (no body concept) this returns the input record
+   * unchanged after a fresh parse. For markdown/mdx sheets the body field
+   * is populated from the on-disk blob.
+   *
+   * @see specs/behaviors/content-types.md#lazy-body-loading
+   */
+  async loadBody(record: T): Promise<T> {
+    const recordPath = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    if (typeof recordPath !== 'string') {
+      throw new TypeError(
+        `Sheet.loadBody: record is missing the path annotation (RECORD_PATH_KEY) — did it come from query()?`,
+      );
+    }
+    const config = await this.readConfig();
+    const format = this.#getFormat(config);
+    const fullPath = joinTreePath(
+      this.#effectiveRoot(config),
+      `${recordPath}${format.extension}`,
+    );
+    const node = await this.#dataTree.getChild(fullPath);
+    if (!node || !isBlob(node)) {
+      throw new NotFoundError(
+        'record_not_found',
+        `Sheet.loadBody: no record blob at ${fullPath}`,
+      );
+    }
+    return (await this.#readRecordFromBlob(node, recordPath, config)) as T;
   }
 
   /**
@@ -882,9 +951,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return new Sheet<T>(opts);
   }
 
-  async upsert(record: T): Promise<UpsertResult> {
+  async upsert(record: T, opts: UpsertOptions = {}): Promise<UpsertResult> {
     if (this.#transaction !== undefined) {
-      return this.#upsertInTx(this.#transaction, record);
+      return this.#upsertInTx(this.#transaction, record, opts);
     }
     this.#checkStrictMode();
 
@@ -910,10 +979,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     const tx = transactionContext.getStore();
     if (tx !== undefined) {
-      return tx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated);
+      return tx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated, opts);
     }
     return this.#autoTransact(
-      async (innerTx) => innerTx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated),
+      async (innerTx) =>
+        innerTx.sheet<T>(this.#name, this.#txDelegateOpts()).upsert(validated, opts),
       (r) => `${this.#name} upsert ${r.path}`,
     );
   }
@@ -938,7 +1008,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (typeof existingPath === 'string') {
       (merged as Record<symbol, unknown>)[RECORD_PATH_KEY] = existingPath;
     }
-    return this.upsert(merged);
+    // patch may produce a record missing the body field (e.g., `{body: null}`
+    // deletes per RFC 7396). The consumer's intent is explicit at the patch
+    // call site, so we don't trip the upsert allowMissingBody guard here.
+    return this.upsert(merged, { allowMissingBody: true });
   }
 
   async delete(target: T | string): Promise<void> {
@@ -1213,9 +1286,27 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return staged;
   }
 
-  async #upsertInTx(tx: Transaction, record: T): Promise<UpsertResult> {
+  async #upsertInTx(
+    tx: Transaction,
+    record: T,
+    opts: UpsertOptions = {},
+  ): Promise<UpsertResult> {
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
+
+    // Body presence guard: upsert is a full-record replace. A markdown sheet
+    // whose record omits the body field would silently erase the on-disk
+    // body. Require explicit opt-in to make the trade visible.
+    const bodyField = config.format.body;
+    if (
+      bodyField !== undefined &&
+      !opts.allowMissingBody &&
+      (record as Record<string, unknown>)[bodyField] === undefined
+    ) {
+      throw new TypeError(
+        `Sheet.upsert: record is missing the body field ${JSON.stringify(bodyField)}. Pass { allowMissingBody: true } to opt in, or use Sheet.patch for body-preserving frontmatter updates.`,
+      );
+    }
 
     // Validate before normalizing — per specs/behaviors/validation.md order:
     // JSON Schema → Standard Schema (may transform) → normalize → render → write.
@@ -1330,7 +1421,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     state.uniqueMap.clear();
     state.multiMap.clear();
-    for await (const record of this.query()) {
+    // Index builds always use body-less reads. Indexing by body content is
+    // not a supported use case; consumers needing the body should call
+    // sheet.loadBody(record) after findByIndex returns.
+    // @see specs/behaviors/content-types.md#lazy-body-loading
+    for await (const record of this.query({}, { withBody: false })) {
       const rawKey = state.keyFn(record);
       if (rawKey === undefined || rawKey === null) continue;
       const key = String(rawKey);

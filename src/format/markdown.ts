@@ -3,6 +3,13 @@
 // the markdown body; on serialize, the body is optionally normalized via
 // markdownlint --fix.
 //
+// **Trailing newline convention.** The on-disk file always ends with exactly
+// one `\n` (per the spec). The body that round-trips through serialize/parse
+// therefore *does not* carry a trailing newline — a `body` value of `'hi\n'`
+// is normalized to `'hi'` on the way out. This matches how every UNIX text
+// editor handles files: the final newline belongs to the file, not the
+// content.
+//
 // See specs/behaviors/content-types.md.
 
 import { lint } from 'markdownlint/promise';
