@@ -1,6 +1,6 @@
 {
   "name": "gitsheets",
-  "version": "1.0.0-substrate.0",
+  "version": "0.0.0-dev",
   "description": "A git-backed document store for low-volume, high-touch, human-scale data",
   "type": "module",
   "main": "./dist/index.js",

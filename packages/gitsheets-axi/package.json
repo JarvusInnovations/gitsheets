@@ -1,6 +1,6 @@
 {
   "name": "gitsheets-axi",
-  "version": "1.0.0-substrate.0",
+  "version": "0.0.0-dev",
   "description": "Agent-facing CLI for gitsheets — token-efficient TOON output, idempotent mutations, self-installing session hooks.",
   "type": "module",
   "bin": {
