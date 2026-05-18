@@ -14,6 +14,7 @@ import { readCommand, READ_HELP } from '../src/commands/read.js';
 import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
 import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
 import { deleteCommand, DELETE_HELP } from '../src/commands/delete.js';
+import { checkCommand, CHECK_HELP } from '../src/commands/check.js';
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
@@ -22,6 +23,7 @@ const COMMAND_HELP: Record<string, string> = {
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
   delete: DELETE_HELP,
+  check: CHECK_HELP,
 };
 
 const COMMANDS = {
@@ -31,6 +33,7 @@ const COMMANDS = {
   upsert: upsertCommand,
   patch: patchCommand,
   delete: deleteCommand,
+  check: checkCommand,
 } as Record<
   string,
   (args: string[], ctx: GitsheetsContext | undefined) => Promise<string | Record<string, unknown>>

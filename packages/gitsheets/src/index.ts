@@ -30,6 +30,12 @@ export type {
   AttachmentEntry,
 } from './sheet.js';
 
+export {
+  getFormat,
+  hasFormat,
+  registerFormat,
+  resolveFormatConfig,
+} from './format/index.js';
 export type { Format, FormatConfig } from './format/index.js';
 
 export { mergePatch } from './patch.js';
