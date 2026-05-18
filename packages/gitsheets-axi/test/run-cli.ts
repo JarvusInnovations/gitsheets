@@ -11,17 +11,26 @@ import { homeCommand } from '../src/commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from '../src/commands/sheets.js';
 import { queryCommand, QUERY_HELP } from '../src/commands/query.js';
 import { readCommand, READ_HELP } from '../src/commands/read.js';
+import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
+import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
+import { deleteCommand, DELETE_HELP } from '../src/commands/delete.js';
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
   query: QUERY_HELP,
   read: READ_HELP,
+  upsert: UPSERT_HELP,
+  patch: PATCH_HELP,
+  delete: DELETE_HELP,
 };
 
 const COMMANDS = {
   sheets: sheetsCommand,
   query: queryCommand,
   read: readCommand,
+  upsert: upsertCommand,
+  patch: patchCommand,
+  delete: deleteCommand,
 } as Record<
   string,
   (args: string[], ctx: GitsheetsContext | undefined) => Promise<string | Record<string, unknown>>
@@ -40,6 +49,9 @@ export async function runCli(argv: string[], cwd: string): Promise<RunResult> {
   const prevCwd = process.cwd();
   const prevExit = process.exitCode;
   let captured = '';
+
+  const prevNoStdin = process.env['GITSHEETS_AXI_NO_STDIN'];
+  process.env['GITSHEETS_AXI_NO_STDIN'] = '1';
 
   try {
     process.chdir(cwd);
@@ -63,5 +75,10 @@ export async function runCli(argv: string[], cwd: string): Promise<RunResult> {
   } finally {
     process.chdir(prevCwd);
     process.exitCode = prevExit;
+    if (prevNoStdin === undefined) {
+      delete process.env['GITSHEETS_AXI_NO_STDIN'];
+    } else {
+      process.env['GITSHEETS_AXI_NO_STDIN'] = prevNoStdin;
+    }
   }
 }

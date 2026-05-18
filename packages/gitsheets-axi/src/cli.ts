@@ -8,6 +8,9 @@ import { homeCommand } from './commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from './commands/sheets.js';
 import { queryCommand, QUERY_HELP } from './commands/query.js';
 import { readCommand, READ_HELP } from './commands/read.js';
+import { upsertCommand, UPSERT_HELP } from './commands/upsert.js';
+import { patchCommand, PATCH_HELP } from './commands/patch.js';
+import { deleteCommand, DELETE_HELP } from './commands/delete.js';
 
 const DESCRIPTION =
   'gitsheets — agent-facing interface for the git-backed document store. ' +
@@ -16,22 +19,27 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[4]:
-  (none)=home, sheets, query, read
+commands[7]:
+  (none)=home, sheets, query, read, upsert, patch, delete
 flags[2]:
   --help, -v/-V/--version
 examples:
   gitsheets-axi
   gitsheets-axi sheets
-  gitsheets-axi sheets view users
   gitsheets-axi query users --filter status=active
   gitsheets-axi read posts hello --full
+  gitsheets-axi upsert users --data '{"slug":"jane","email":"jane@x.org"}'
+  gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane"}'
+  gitsheets-axi delete users jane
 `;
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
   query: QUERY_HELP,
   read: READ_HELP,
+  upsert: UPSERT_HELP,
+  patch: PATCH_HELP,
+  delete: DELETE_HELP,
 };
 
 type CommandFn = (args: string[], ctx: GitsheetsContext) => Promise<string | Record<string, unknown>>;
@@ -40,6 +48,9 @@ const COMMANDS: Record<string, CommandFn> = {
   sheets: sheetsCommand,
   query: queryCommand,
   read: readCommand,
+  upsert: upsertCommand,
+  patch: patchCommand,
+  delete: deleteCommand,
 };
 
 export async function main(): Promise<void> {
