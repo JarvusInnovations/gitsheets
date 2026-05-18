@@ -6,10 +6,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w gitsheets",
-    "test": "npm test -w gitsheets",
+    "build": "npm run build -w gitsheets && npm run build -w gitsheets-axi",
+    "test": "npm test --workspaces --if-present",
     "test:watch": "npm run test:watch -w gitsheets",
-    "type-check": "npm run type-check -w gitsheets"
+    "type-check": "npm run type-check --workspaces --if-present"
   },
   "engines": {
     "node": ">=20"
