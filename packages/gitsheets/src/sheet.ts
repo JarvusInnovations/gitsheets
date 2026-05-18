@@ -66,6 +66,24 @@ export interface UpsertResult {
 }
 
 /**
+ * Result of `Sheet.willChange` — the pre-flight idempotency check for upsert.
+ *
+ * `changed` is `false` when the canonical bytes for the supplied record
+ * match the current blob byte-for-byte. Consumers use this to skip
+ * commits that would produce empty diffs.
+ */
+export interface WillChangeResult {
+  /** Would `upsert(record)` write different bytes than what's already at `path`? */
+  readonly changed: boolean;
+  /** Sheet-relative path the record renders to (per the path template). */
+  readonly path: string;
+  /** Hash of the existing blob at `path`. `undefined` when the record doesn't exist on disk yet. */
+  readonly currentBlobHash?: string;
+  /** Serialized bytes (UTF-8 text) that `upsert` would write. */
+  readonly nextText: string;
+}
+
+/**
  * Options for `Sheet.upsert`. For content-typed (markdown) sheets only:
  * `allowMissingBody: true` permits an upsert whose record omits the body
  * field. Default `false` because upsert is a full-record replace — silently
@@ -1291,6 +1309,47 @@ export class Sheet<T extends RecordLike = RecordLike> {
     record: T,
     opts: UpsertOptions = {},
   ): Promise<UpsertResult> {
+    const { config, format, normalized, recordPath, previousPath, text } =
+      await this.#prepareUpsert(record, opts);
+
+    // Rename: if the source record was loaded from a different path, delete the old one.
+    if (previousPath !== undefined && previousPath !== recordPath) {
+      try {
+        await this.#dataTree.deleteChild(
+          joinTreePath(this.#effectiveRoot(config), `${previousPath}${format.extension}`),
+        );
+      } catch {
+        // Old path may not exist — ignore.
+      }
+    }
+
+    const blob = await this.#dataTree.writeChild(
+      joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`),
+      text,
+    );
+    tx.markMutated();
+    this.#invalidateIndexes();
+    void normalized; // referenced in prepare for unique-index check
+    return { blob, path: recordPath };
+  }
+
+  /**
+   * Shared pipeline used by `upsert` and `willChange`. Runs validation,
+   * normalization, path rendering, body-presence guard, unique-index check,
+   * and format serialization — every check `upsert` would perform — but
+   * stops short of writing to the tree.
+   */
+  async #prepareUpsert(
+    record: T,
+    opts: UpsertOptions,
+  ): Promise<{
+    config: SheetConfig;
+    format: Format;
+    normalized: T;
+    recordPath: string;
+    previousPath: string | undefined;
+    text: string;
+  }> {
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
 
@@ -1310,7 +1369,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     // Validate before normalizing — per specs/behaviors/validation.md order:
     // JSON Schema → Standard Schema (may transform) → normalize → render → write.
-    let validated = (await validateRecord({
+    const validated = (await validateRecord({
       record: stripSymbols(record as RecordLike),
       schema: config.schema,
       schemaSourcePath: this.#configPath,
@@ -1318,9 +1377,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
     })) as T;
     // Standard Schema may have transformed; re-attach annotations if the
     // caller supplied them (for rename detection below).
-    const existing = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
-    if (typeof existing === 'string') {
-      (validated as Record<symbol, unknown>)[RECORD_PATH_KEY] = existing;
+    const previousPath = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    if (typeof previousPath === 'string') {
+      (validated as Record<symbol, unknown>)[RECORD_PATH_KEY] = previousPath;
     }
 
     const normalized = await this.normalizeRecord(validated);
@@ -1353,26 +1412,52 @@ export class Sheet<T extends RecordLike = RecordLike> {
     }
 
     const format = this.#getFormat(config);
+    const text = await format.serialize(
+      stripSymbols(normalized as RecordLike),
+      config.format,
+    );
 
-    // Rename: if the source record was loaded from a different path, delete the old one.
-    if (typeof existing === 'string' && existing !== recordPath) {
-      try {
-        await this.#dataTree.deleteChild(
-          joinTreePath(this.#effectiveRoot(config), `${existing}${format.extension}`),
-        );
-      } catch {
-        // Old path may not exist — ignore.
-      }
+    return {
+      config,
+      format,
+      normalized,
+      recordPath,
+      previousPath: typeof previousPath === 'string' ? previousPath : undefined,
+      text,
+    };
+  }
+
+  /**
+   * Pre-flight idempotency check for `upsert`. Runs validation, normalization,
+   * and serialization but does NOT mutate the tree. Compares the resulting
+   * bytes to the current blob at the rendered path.
+   *
+   * Returns `{ changed: false, ... }` when the canonical serialization matches
+   * the existing blob — consumers can skip the commit. Throws the same errors
+   * `upsert` would on the same input (`ValidationError`, `IndexError`,
+   * `PathTemplateError`).
+   */
+  async willChange(record: T, opts: UpsertOptions = {}): Promise<WillChangeResult> {
+    const { config, format, recordPath, text } = await this.#prepareUpsert(record, opts);
+
+    const fullPath = joinTreePath(
+      this.#effectiveRoot(config),
+      `${recordPath}${format.extension}`,
+    );
+    const existing = await this.#dataTree.getChild(fullPath);
+
+    if (!existing || !isBlob(existing)) {
+      return { changed: true, path: recordPath, nextText: text };
     }
 
-    const text = await format.serialize(stripSymbols(normalized as RecordLike), config.format);
-    const blob = await this.#dataTree.writeChild(
-      joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`),
-      text,
-    );
-    tx.markMutated();
-    this.#invalidateIndexes();
-    return { blob, path: recordPath };
+    const currentText = await readBlobTextCached(existing);
+    const changed = currentText !== text;
+    return {
+      changed,
+      path: recordPath,
+      currentBlobHash: existing.hash,
+      nextText: text,
+    };
   }
 
   async #deleteInTx(tx: Transaction, target: T | string): Promise<void> {

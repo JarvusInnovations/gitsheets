@@ -17,6 +17,7 @@ export type {
   SortRule,
   UpsertResult,
   UpsertOptions,
+  WillChangeResult,
   SheetConstructorOptions,
   IndexKeyFn,
   DefineIndexOptions,
