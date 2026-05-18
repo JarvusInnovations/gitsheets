@@ -47,14 +47,16 @@ jobs:
 
       - run: npm ci
 
+      # Build before type-check and test — gitsheets-axi consumes `gitsheets`
+      # through its `dist/` output.
+      - name: Build
+        run: npm run build
+
       - name: Type-check
         run: npm run type-check
 
       - name: Test
         run: npm test
-
-      - name: Build
-        run: npm run build
 
       - name: Publish gitsheets
         run: npm publish --provenance --access public -w gitsheets

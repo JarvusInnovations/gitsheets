@@ -24,11 +24,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Build first: gitsheets-axi consumes the `gitsheets` workspace through
+      # its `dist/` (the `main`/`types` fields point there), so type-check
+      # and test both need the library built before they run.
+      - name: Build
+        run: npm run build
+
       - name: Type-check
         run: npm run type-check
 
       - name: Test
         run: npm test
-
-      - name: Build
-        run: npm run build
