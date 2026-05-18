@@ -15,6 +15,16 @@ import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
 import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
 import { deleteCommand, DELETE_HELP } from '../src/commands/delete.js';
 import { checkCommand, CHECK_HELP } from '../src/commands/check.js';
+import { diffCommand, DIFF_HELP } from '../src/commands/diff.js';
+import { normalizeCommand, NORMALIZE_HELP } from '../src/commands/normalize.js';
+import { initCommand, INIT_HELP } from '../src/commands/init.js';
+import { inferCommand, INFER_HELP } from '../src/commands/infer.js';
+import {
+  migrateConfigCommand,
+  MIGRATE_CONFIG_HELP,
+} from '../src/commands/migrate-config.js';
+import { attachmentCommand, ATTACHMENT_HELP } from '../src/commands/attachment.js';
+import { pushCommand, PUSH_HELP } from '../src/commands/push.js';
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
@@ -24,6 +34,13 @@ const COMMAND_HELP: Record<string, string> = {
   patch: PATCH_HELP,
   delete: DELETE_HELP,
   check: CHECK_HELP,
+  diff: DIFF_HELP,
+  normalize: NORMALIZE_HELP,
+  init: INIT_HELP,
+  infer: INFER_HELP,
+  'migrate-config': MIGRATE_CONFIG_HELP,
+  attachment: ATTACHMENT_HELP,
+  push: PUSH_HELP,
 };
 
 const COMMANDS = {
@@ -34,6 +51,13 @@ const COMMANDS = {
   patch: patchCommand,
   delete: deleteCommand,
   check: checkCommand,
+  diff: diffCommand,
+  normalize: normalizeCommand,
+  init: initCommand,
+  infer: inferCommand,
+  'migrate-config': migrateConfigCommand,
+  attachment: attachmentCommand,
+  push: pushCommand,
 } as Record<
   string,
   (args: string[], ctx: GitsheetsContext | undefined) => Promise<string | Record<string, unknown>>
