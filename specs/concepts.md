@@ -112,7 +112,7 @@ See [behaviors/normalization.md](behaviors/normalization.md).
 
 A sheet's on-disk storage format. Default: TOML (`.toml` files). Setting `[gitsheet.format] type = 'markdown'` (or `'mdx'`) switches to markdown files with TOML frontmatter and a designated body field. Format is fixed per sheet — there's no per-record discriminator because the path template has to render a single canonical filename per record.
 
-The pluggable format module (`src/format/`) registers `toml`, `markdown`, and `mdx`; future formats slot in without re-shaping the sheet config grammar.
+The pluggable format module (`packages/gitsheets/src/format/`) registers `toml`, `markdown`, and `mdx`; future formats slot in without re-shaping the sheet config grammar.
 
 See [behaviors/content-types.md](behaviors/content-types.md).
 

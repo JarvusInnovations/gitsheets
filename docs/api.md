@@ -44,7 +44,7 @@ import type {
 } from 'gitsheets';
 ```
 
-No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely without notice. The package-root surface is the only stable API.
+No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `packages/gitsheets/src/` freely without notice. The package-root surface is the only stable API.
 
 ## Factories
 

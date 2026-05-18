@@ -1,6 +1,6 @@
 # Specs
 
-This directory is the source of truth for what `gitsheets` *should be*. The implementation under `src/` is brought into conformance with these specs — not the other way around.
+This directory is the source of truth for what `gitsheets` *should be*. The implementation under `packages/gitsheets/src/` is brought into conformance with these specs — not the other way around.
 
 If you're about to write code, you're in the wrong place. Start here, read the relevant spec, then go write code that matches it.
 
@@ -67,7 +67,7 @@ Gitsheets has no UI. The pre-v1.0 Vue frontend is being removed (see [GitHub #12
 
 ## What specs do NOT cover
 
-- **Implementation details** — internal class hierarchies, helper-function naming, file organization within `src/`
+- **Implementation details** — internal class hierarchies, helper-function naming, file organization within `packages/gitsheets/src/`
 - **Performance microbenches** — covered in PR descriptions and the [holo-tree migration](https://github.com/JarvusInnovations/gitsheets/issues/127), not here
 - **Test cases** — tests derive from specs but aren't the spec
 - **Repository housekeeping** — branch naming, release procedure, CI workflow specifics
