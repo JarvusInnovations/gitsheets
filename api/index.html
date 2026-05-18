@@ -16,7 +16,7 @@
         <link rel="prev" href="../cli/">
       
       
-        <link rel="next" href="../recipes/typed-sheet-with-zod/">
+        <link rel="next" href="../axi/">
       
       
         
@@ -447,6 +447,8 @@
   
     
     
+      
+        
       
         
       
@@ -887,6 +889,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#toml-round-tripping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TOML round-tripping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format dispatch
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -918,6 +942,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../axi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gitsheets-axi (agent CLI)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1457,6 +1509,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#toml-round-tripping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TOML round-tripping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format dispatch
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1526,6 +1600,8 @@
 
 <span class="w">  </span><span class="c1">// utilities</span>
 <span class="w">  </span><span class="nx">mergePatch</span><span class="p">,</span><span class="w"> </span><span class="nx">validateRecord</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">parseToml</span><span class="p">,</span><span class="w"> </span><span class="nx">parseConfigToml</span><span class="p">,</span><span class="w"> </span><span class="nx">stringifyRecord</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">getFormat</span><span class="p">,</span><span class="w"> </span><span class="nx">hasFormat</span><span class="p">,</span><span class="w"> </span><span class="nx">registerFormat</span><span class="p">,</span><span class="w"> </span><span class="nx">resolveFormatConfig</span><span class="p">,</span>
 
 <span class="w">  </span><span class="c1">// record annotation symbols</span>
 <span class="w">  </span><span class="nx">RECORD_SHEET_KEY</span><span class="p">,</span><span class="w"> </span><span class="nx">RECORD_PATH_KEY</span><span class="p">,</span>
@@ -1535,7 +1611,7 @@
 <div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="kr">type</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="nx">OpenRepoOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetsOptions</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">TransactionOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionResult</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionHandler</span><span class="p">,</span><span class="w"> </span><span class="nx">Author</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">SheetConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SheetFieldConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SortRule</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertResult</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertOptions</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">SheetConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SheetFieldConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SortRule</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertResult</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">WillChangeResult</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">SheetConstructorOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">IndexKeyFn</span><span class="p">,</span><span class="w"> </span><span class="nx">DefineIndexOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryFilter</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryOptions</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">DiffStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffChange</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">AttachmentBlobHandle</span><span class="p">,</span><span class="w"> </span><span class="nx">AttachmentEntry</span><span class="p">,</span>
@@ -1657,6 +1733,10 @@
 <td>RFC 7396 merge patch over an existing record</td>
 </tr>
 <tr>
+<td><code>sheet.willChange(record, opts?)</code></td>
+<td>Pre-flight idempotency check — returns <code>{ changed, path, currentBlobHash?, nextText }</code> without mutating the tree (v1.3)</td>
+</tr>
+<tr>
 <td><code>sheet.clear()</code></td>
 <td>Remove every record from the sheet&rsquo;s tree</td>
 </tr>
@@ -1667,6 +1747,7 @@
 </tbody>
 </table>
 <p>All write methods route through a transaction — permissive mode auto-opens one; strict mode requires <code>repo.transact</code>.</p>
+<p><code>willChange</code> runs upsert&rsquo;s full validation + normalization + serialization pipeline and compares the resulting bytes to the existing blob at the rendered path. Useful for consumers that want commit-skipping idempotency semantics — &ldquo;only commit if something actually changed.&rdquo; Throws the same errors upsert would on the same input (<code>ValidationError</code>, <code>IndexError</code>, <code>PathTemplateError</code>).</p>
 <h3 id="attachments">Attachments<a class="headerlink" href="#attachments" title="Permanent link"> ¶</a></h3>
 <table>
 <thead>
@@ -1894,6 +1975,58 @@
 <p>RFC 7396 JSON Merge Patch as a pure function. Useful when you want the patch semantic without going through <code>Sheet.patch</code>. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/patch-semantics.md"><code>specs/behaviors/patch-semantics.md</code></a>.</p>
 <h3 id="validaterecord-record-schema-validator"><code>validateRecord({ record, schema, validator? })</code><a class="headerlink" href="#validaterecord-record-schema-validator" title="Permanent link"> ¶</a></h3>
 <p>Run the same validation pipeline <code>Sheet.upsert</code> uses without going through a Sheet. Useful for pre-flight (UI form submission, CSV ingest, audit passes against legacy records). Returns the possibly-transformed record on success, throws <code>ValidationError</code> on failure. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md"><code>specs/behaviors/validation.md</code></a>.</p>
+<h3 id="toml-round-tripping">TOML round-tripping<a class="headerlink" href="#toml-round-tripping" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parseToml(text)</code></td>
+<td>Parse TOML to a plain object; preserves <code>@iarna/toml</code> date types</td>
+</tr>
+<tr>
+<td><code>parseConfigToml(text, sourcePath)</code></td>
+<td>Same parse with config-aware error messages — for <code>.gitsheets/&lt;sheet&gt;.toml</code></td>
+</tr>
+<tr>
+<td><code>stringifyRecord(record)</code></td>
+<td>Serialize an object to canonical TOML (deep-sorted keys)</td>
+</tr>
+</tbody>
+</table>
+<p>Used by the AXI tool&rsquo;s config-scaffolding commands; available to consumers that need raw config-text round-tripping.</p>
+<h3 id="format-dispatch">Format dispatch<a class="headerlink" href="#format-dispatch" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>getFormat(type)</code></td>
+<td>Resolve a format implementation by name (<code>'toml'</code>, <code>'markdown'</code>, <code>'mdx'</code>)</td>
+</tr>
+<tr>
+<td><code>hasFormat(type)</code></td>
+<td>Probe whether a format is registered</td>
+</tr>
+<tr>
+<td><code>registerFormat(type, impl)</code></td>
+<td>Register a custom format implementation</td>
+</tr>
+<tr>
+<td><code>resolveFormatConfig(raw)</code></td>
+<td>Validate and normalize a <code>[gitsheet.format]</code> block</td>
+</tr>
+</tbody>
+</table>
+<p>Available for consumers who want to render records through a sheet&rsquo;s configured format without going through a <code>Sheet</code> instance.</p>
 <h2 id="conventions">Conventions<a class="headerlink" href="#conventions" title="Permanent link"> ¶</a></h2>
 <p>Read <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/conventions.md"><code>specs/api/conventions.md</code></a> for the cross-cutting rules: TypeScript posture, async patterns, options-object pattern, default refs/paths.</p>
 <h2 id="stability">Stability<a class="headerlink" href="#stability" title="Permanent link"> ¶</a></h2>

@@ -452,6 +452,8 @@
       
         
       
+        
+      
     
     
     
@@ -596,6 +598,34 @@
     
   
     API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../axi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gitsheets-axi (agent CLI)
   
 
     
@@ -1090,6 +1120,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v12-v13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.2 → v1.3
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.2 → v1.3">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#library_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tooling_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#repository-layout-no-consumer-impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository layout (no consumer impact)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1289,6 +1380,67 @@
     <span class="md-ellipsis">
       
         Tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v12-v13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.2 → v1.3
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.2 → v1.3">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#library_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tooling_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#repository-layout-no-consumer-impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository layout (no consumer impact)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
       
     </span>
   </a>
@@ -1522,6 +1674,24 @@
 <ul>
 <li><strong><code>skills/gitsheets/</code></strong> — bundled Claude Code skill for developers consuming gitsheets. Reference material covering the CLI, the TypeScript API, and the sheet config syntax. Install it in your <code>.claude/skills/</code> (or via plugin) to give Claude focused gitsheets context.</li>
 </ul>
+<h2 id="v12-v13">v1.2 → v1.3<a class="headerlink" href="#v12-v13" title="Permanent link"> ¶</a></h2>
+<p>Fully additive minor release. Existing v1.2 code keeps working.</p>
+<h3 id="library_1">Library<a class="headerlink" href="#library_1" title="Permanent link"> ¶</a></h3>
+<ul>
+<li><strong><code>Sheet.willChange(record, opts?)</code></strong> — new. Pre-flight idempotency check that runs upsert&rsquo;s full validation + normalization + serialization pipeline and compares the resulting bytes to the existing blob at the rendered path — without mutating the tree. Returns <code>{ changed, path, currentBlobHash?, nextText }</code>. Consumers that want commit-skipping semantics (&ldquo;only commit if something actually changed&rdquo;) can pre-flight + skip when <code>changed: false</code>. Throws the same errors <code>upsert</code> would.</li>
+<li><strong>New utility exports</strong>: <code>parseToml</code>, <code>parseConfigToml</code>, <code>stringifyRecord</code> (TOML round-tripping), <code>getFormat</code>, <code>hasFormat</code>, <code>registerFormat</code>, <code>resolveFormatConfig</code> (format dispatch). All were already in the package&rsquo;s internal modules; v1.3 surfaces them at the package root for consumers who need raw-bytes round-tripping or custom format registration.</li>
+<li><strong>New public type</strong>: <code>WillChangeResult</code>.</li>
+</ul>
+<h3 id="tooling_1">Tooling<a class="headerlink" href="#tooling_1" title="Permanent link"> ¶</a></h3>
+<ul>
+<li><strong><code>gitsheets-axi</code></strong> — new sibling npm package. Agent-facing CLI with TOON output, idempotent mutations, self-installing session hooks (Claude Code + Codex), format-aware default schemas. Lockstep-versioned with the library on minor. See <a href="../axi/"><code>docs/axi.md</code></a>. Install with <code>npm install -g gitsheets-axi</code>.</li>
+</ul>
+<h3 id="repository-layout-no-consumer-impact">Repository layout (no consumer impact)<a class="headerlink" href="#repository-layout-no-consumer-impact" title="Permanent link"> ¶</a></h3>
+<ul>
+<li>The repository was promoted to an npm workspaces monorepo. The published <code>gitsheets</code> package now lives at <code>packages/gitsheets/</code>; the agent-facing companion at <code>packages/gitsheets-axi/</code>. Consumer code is unaffected — <code>import { ... } from 'gitsheets'</code> resolves the same surface as before, and the published tarball has the same shape.</li>
+</ul>
+<h3 id="cli_1">CLI<a class="headerlink" href="#cli_1" title="Permanent link"> ¶</a></h3>
+<p>No new commands on the human <code>gitsheets</code> CLI in v1.3. The agent-facing operations (TOON output, idempotent mutations) live in <code>gitsheets-axi</code> rather than as flags on the human CLI — the two contracts disagree on too many defaults to coexist in one binary.</p>
 <h2 id="going-forward">Going forward<a class="headerlink" href="#going-forward" title="Permanent link"> ¶</a></h2>
 <p>Once migrated, the recipes are the fastest path to common patterns:</p>
 <ul>

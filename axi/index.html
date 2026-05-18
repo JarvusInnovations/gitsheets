@@ -13,26 +13,28 @@
       
       
       
+        <link rel="prev" href="../api/">
       
-        <link rel="next" href="quick-start/">
+      
+        <link rel="next" href="../recipes/typed-sheet-with-zod/">
       
       
         
       
       
-      <link rel="icon" href="assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>gitsheets</title>
+        <title>gitsheets-axi (agent CLI) - gitsheets</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,7 +53,7 @@
       
     
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#gitsheets" class="md-skip">
+        <a href="#gitsheets-axi" class="md-skip">
           Skip to content
         </a>
       
@@ -88,7 +90,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="gitsheets" class="md-header__button md-logo" aria-label="gitsheets" data-md-component="logo">
+    <a href=".." title="gitsheets" class="md-header__button md-logo" aria-label="gitsheets" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -108,7 +110,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              gitsheets-axi (agent CLI)
             
           </span>
         </div>
@@ -191,11 +193,9 @@
   
   
   
-    
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="." class="md-tabs__link">
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
         
   
   
@@ -214,7 +214,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="quick-start/" class="md-tabs__link">
+      <a href="../quick-start/" class="md-tabs__link">
         
   
   
@@ -233,7 +233,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="concepts/" class="md-tabs__link">
+      <a href="../concepts/" class="md-tabs__link">
         
   
   
@@ -250,11 +250,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="path-templates/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../path-templates/" class="md-tabs__link">
           
   
   
@@ -276,7 +278,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="recipes/typed-sheet-with-zod/" class="md-tabs__link">
+        <a href="../recipes/typed-sheet-with-zod/" class="md-tabs__link">
           
   
   
@@ -296,7 +298,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="migration-guide/" class="md-tabs__link">
+      <a href="../migration-guide/" class="md-tabs__link">
         
   
   
@@ -331,7 +333,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="gitsheets" class="md-nav__button md-logo" aria-label="gitsheets" data-md-component="logo">
+    <a href=".." title="gitsheets" class="md-nav__button md-logo" aria-label="gitsheets" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -358,37 +360,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Home
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -404,92 +379,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#get-started" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Get started
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#recipes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recipes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#migrating-from-pre-v10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Migrating from pre-v1.0
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#where-the-contracts-live" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Where the contracts live
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#license" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        License
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -501,7 +390,7 @@
   
   
     <li class="md-nav__item">
-      <a href="quick-start/" class="md-nav__link">
+      <a href="../quick-start/" class="md-nav__link">
         
   
   
@@ -528,7 +417,7 @@
   
   
     <li class="md-nav__item">
-      <a href="concepts/" class="md-nav__link">
+      <a href="../concepts/" class="md-nav__link">
         
   
   
@@ -552,8 +441,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -571,19 +462,22 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
             
   
   
@@ -601,7 +495,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -619,7 +513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="path-templates/" class="md-nav__link">
+      <a href="../path-templates/" class="md-nav__link">
         
   
   
@@ -647,7 +541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="validation/" class="md-nav__link">
+      <a href="../validation/" class="md-nav__link">
         
   
   
@@ -675,7 +569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="cli/" class="md-nav__link">
+      <a href="../cli/" class="md-nav__link">
         
   
   
@@ -703,7 +597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="api/" class="md-nav__link">
+      <a href="../api/" class="md-nav__link">
         
   
   
@@ -728,10 +622,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="axi/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gitsheets-axi (agent CLI)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -747,6 +668,114 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-use-which" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to use which
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-different-from-the-human-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What&rsquo;s different from the human CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output-toon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output: TOON
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#idempotency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Idempotency
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session hooks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -832,7 +861,7 @@
   
   
     <li class="md-nav__item">
-      <a href="recipes/typed-sheet-with-zod/" class="md-nav__link">
+      <a href="../recipes/typed-sheet-with-zod/" class="md-nav__link">
         
   
   
@@ -860,7 +889,7 @@
   
   
     <li class="md-nav__item">
-      <a href="recipes/request-bound-transactions/" class="md-nav__link">
+      <a href="../recipes/request-bound-transactions/" class="md-nav__link">
         
   
   
@@ -888,7 +917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="recipes/secondary-indices/" class="md-nav__link">
+      <a href="../recipes/secondary-indices/" class="md-nav__link">
         
   
   
@@ -916,7 +945,7 @@
   
   
     <li class="md-nav__item">
-      <a href="recipes/production-push-daemon/" class="md-nav__link">
+      <a href="../recipes/production-push-daemon/" class="md-nav__link">
         
   
   
@@ -944,7 +973,7 @@
   
   
     <li class="md-nav__item">
-      <a href="recipes/markdown-cms/" class="md-nav__link">
+      <a href="../recipes/markdown-cms/" class="md-nav__link">
         
   
   
@@ -972,7 +1001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="recipes/migrating-config/" class="md-nav__link">
+      <a href="../recipes/migrating-config/" class="md-nav__link">
         
   
   
@@ -1007,7 +1036,7 @@
   
   
     <li class="md-nav__item">
-      <a href="migration-guide/" class="md-nav__link">
+      <a href="../migration-guide/" class="md-nav__link">
         
   
   
@@ -1054,10 +1083,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#get-started" class="md-nav__link">
+  <a href="#when-to-use-which" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Get started
+        When to use which
       
     </span>
   </a>
@@ -1065,10 +1094,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference" class="md-nav__link">
+  <a href="#whats-different-from-the-human-cli" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reference
+        What&rsquo;s different from the human CLI
       
     </span>
   </a>
@@ -1076,10 +1105,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#recipes" class="md-nav__link">
+  <a href="#output-toon" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Recipes
+        Output: TOON
       
     </span>
   </a>
@@ -1087,10 +1116,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#migrating-from-pre-v10" class="md-nav__link">
+  <a href="#idempotency" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Migrating from pre-v1.0
+        Idempotency
       
     </span>
   </a>
@@ -1098,10 +1127,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-the-contracts-live" class="md-nav__link">
+  <a href="#session-hooks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Where the contracts live
+        Session hooks
       
     </span>
   </a>
@@ -1109,10 +1138,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#license" class="md-nav__link">
+  <a href="#commands" class="md-nav__link">
     <span class="md-ellipsis">
       
-        License
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -1136,7 +1187,7 @@
 
 
   
-    <a href="https://github.com/JarvusInnovations/gitsheets/edit/develop/docs/README.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/JarvusInnovations/gitsheets/edit/develop/docs/axi.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1144,40 +1195,164 @@
   
 
 
-<h1 id="gitsheets">gitsheets<a class="headerlink" href="#gitsheets" title="Permanent link"> ¶</a></h1>
-<p>A git-backed document store for low-volume, high-touch, human-scale data.</p>
-<p>Records are TOML files in a git repo, organized by a per-sheet path template. Every mutation is a commit — the commit log is the audit log. Schemas live alongside the data; validation runs on every write. Branches give you propose-review workflows for free.</p>
-<div class="highlight"><pre><span></span><code>npm<span class="w"> </span>install<span class="w"> </span>gitsheets
+<h1 id="gitsheets-axi">gitsheets-axi<a class="headerlink" href="#gitsheets-axi" title="Permanent link"> ¶</a></h1>
+<p><code>gitsheets-axi</code> is the agent-facing companion to <code>gitsheets</code>. Same library underneath, different ergonomics: TOON output by default, errors on stdout, idempotent mutations, format-aware schemas, self-installing session hooks.</p>
+<div class="highlight"><pre><span></span><code>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>gitsheets-axi
+gitsheets-axi<span class="w">              </span><span class="c1"># session-aware home view in a gitsheets-managed repo</span>
 </code></pre></div>
-<p>Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as <code>gitsheets</code> and <code>git-sheet</code>.</p>
-<h2 id="get-started">Get started<a class="headerlink" href="#get-started" title="Permanent link"> ¶</a></h2>
+<p><code>gitsheets-axi</code> ships lockstep on minor with <code>gitsheets</code> (<code>gitsheets-axi@1.3.x</code> ↔ <code>gitsheets@1.3.x</code>). Patch versions are independent.</p>
+<h2 id="when-to-use-which">When to use which<a class="headerlink" href="#when-to-use-which" title="Permanent link"> ¶</a></h2>
+<p>The two packages are intentionally separate because the AXI contract disagrees with a human-CLI contract on too many defaults to coexist in one binary without conditional logic at every output site.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent reads/writes records via shell execution</td>
+<td><code>gitsheets-axi</code></td>
+</tr>
+<tr>
+<td>Writing TypeScript that imports the library</td>
+<td><a href="../api/"><code>gitsheets</code></a> library</td>
+</tr>
+<tr>
+<td>Authoring <code>.gitsheets/&lt;name&gt;.toml</code> configs</td>
+<td>Either (configs are shared)</td>
+</tr>
+<tr>
+<td>Building a long-running consumer service</td>
+<td><code>gitsheets</code> library (with push daemon)</td>
+</tr>
+<tr>
+<td>Post-edit / pre-commit hook for record files</td>
+<td><code>gitsheets-axi check</code></td>
+</tr>
+<tr>
+<td>Interactive human workflow</td>
+<td><code>gitsheets</code> (human CLI)</td>
+</tr>
+</tbody>
+</table>
+<p>Sheet configs are the shared substrate — both tools read the same <code>.gitsheets/*.toml</code> files. Whichever way you read/write the data, the schema, path template, normalization rules, and format are the same.</p>
+<h2 id="whats-different-from-the-human-cli">What&rsquo;s different from the human CLI<a class="headerlink" href="#whats-different-from-the-human-cli" title="Permanent link"> ¶</a></h2>
+<p>Every difference is in service of agents talking to the CLI through shell execution rather than humans driving it interactively.</p>
+<table>
+<thead>
+<tr>
+<th>Convention</th>
+<th><code>gitsheets</code> (human)</th>
+<th><code>gitsheets-axi</code> (agent)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Errors</td>
+<td>stderr, non-zero exit</td>
+<td><strong>stdout</strong> (agents read it), non-zero exit</td>
+</tr>
+<tr>
+<td><code>$ &lt;bin&gt;</code> with no args</td>
+<td>usage / help</td>
+<td><strong>live content</strong> (sheets + counts + suggested actions)</td>
+</tr>
+<tr>
+<td>Duplicate / no-op mutation</td>
+<td>throws <code>NotFoundError</code> / similar</td>
+<td><strong>idempotent</strong>, exit 0 with <code>result: "no-op"</code></td>
+</tr>
+<tr>
+<td>Default output</td>
+<td>JSON / pretty per <code>--format</code></td>
+<td><strong>TOON</strong> (~40% fewer tokens), <code>--format=json</code> opt-out</td>
+</tr>
+<tr>
+<td>Default schema</td>
+<td>every field a human might want</td>
+<td><strong>minimal</strong>, <code>--fields</code> opts in to more</td>
+</tr>
+<tr>
+<td><code>--help</code></td>
+<td>full manual per command</td>
+<td>concise reference + 2-3 examples</td>
+</tr>
+<tr>
+<td>Session-hook install</td>
+<td>doesn&rsquo;t touch agent config</td>
+<td><strong>self-installs</strong> SessionStart hooks</td>
+</tr>
+</tbody>
+</table>
+<h2 id="output-toon">Output: TOON<a class="headerlink" href="#output-toon" title="Permanent link"> ¶</a></h2>
+<p><a href="https://toonformat.dev/">TOON</a> (Token-Oriented Object Notation) is the default output format on stdout:</p>
+<div class="highlight"><pre><span></span><code>count: 2 of 2 total
+records[2]{slug,email,name,path}:
+  bob,bob@x.org,Bob Smith,bob
+  jane,jane@x.org,Jane Doe,jane
+help[1]: Run `gitsheets-axi read users &lt;path&gt;` to view a single record
+</code></pre></div>
+<p>The <code>records[2]{slug,email,name,path}:</code> header declares the schema; each subsequent line is a row. Object detail views use <code>key: value</code> shape. Suggestions arrive as <code>help[N]:</code> lists. TOON saves ~40% on tokens compared to equivalent JSON while staying readable.</p>
+<p><code>--format=json</code> opts back to JSON for agents / pipelines that prefer it.</p>
+<h2 id="idempotency">Idempotency<a class="headerlink" href="#idempotency" title="Permanent link"> ¶</a></h2>
+<p>Every mutation pre-flights against the current on-disk state. When the resulting bytes would match what&rsquo;s already there, the command exits <code>0</code> with <code>result: "no-op"</code> and <strong>produces no commit</strong>.</p>
+<div class="highlight"><pre><span></span><code>$ gitsheets-axi upsert users --data &#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;jane@x.org&quot;}&#39;
+result: committed
+sheet: users
+path: jane
+commit: a1b2c3...
+
+$ gitsheets-axi upsert users --data &#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;jane@x.org&quot;}&#39;
+result: no-op
+sheet: users
+path: jane
+</code></pre></div>
+<p>Same goes for <code>patch</code>, <code>delete</code>, <code>check --fix</code>, <code>normalize</code>, <code>init</code>, <code>infer</code>, <code>migrate-config</code>, <code>attachment set</code>, <code>attachment delete</code>, and <code>push</code> — re-runs with unchanged input produce no commit.</p>
+<p>Under the hood, mutations use the library&rsquo;s <a href="../api/"><code>Sheet.willChange()</code></a> (added in v1.3) to check whether the canonical bytes would differ from what&rsquo;s already at the rendered path. Re-runnable workflows can safely retry on disconnects without bookkeeping.</p>
+<h2 id="session-hooks">Session hooks<a class="headerlink" href="#session-hooks" title="Permanent link"> ¶</a></h2>
+<p>On first invocation, <code>gitsheets-axi</code> self-installs <code>SessionStart</code> hooks into:</p>
 <ul>
-<li><strong><a href="quick-start/">Quick start</a></strong> — <code>npm install gitsheets</code>, declare a sheet, write a record, read it back. ≤ 5 minutes.</li>
-<li><strong><a href="concepts/">Concepts</a></strong> — Repository, Sheet, Path Template, Transaction, Store, Index, Push Daemon. The vocabulary every consumer needs.</li>
+<li><strong>Claude Code</strong> — <code>~/.claude/settings.json</code></li>
+<li><strong>Codex</strong> — <code>~/.codex/hooks.json</code> + <code>[features].hooks = true</code> in <code>config.toml</code></li>
 </ul>
-<h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link"> ¶</a></h2>
+<p>The hook runs the bare home view at every session start, so the agent&rsquo;s initial context already includes a compact view of the current repo&rsquo;s sheets. The install is <strong>self-healing</strong> — every invocation re-checks the hook&rsquo;s binary path and updates it if the executable moved (reinstall, asdf version change, etc.).</p>
+<p>Set <code>GITSHEETS_AXI_DISABLE_HOOKS=1</code> to suppress installation.</p>
+<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link"> ¶</a></h2>
+<div class="highlight"><pre><span></span><code>gitsheets-axi                            # home view (bare invocation)
+gitsheets-axi sheets [list|view &lt;name&gt;]  # sheets in this repo
+gitsheets-axi query &lt;sheet&gt; [filters]    # list records
+gitsheets-axi read &lt;sheet&gt; &lt;path&gt;        # single record detail
+gitsheets-axi upsert &lt;sheet&gt;             # create or replace (idempotent)
+gitsheets-axi patch &lt;sheet&gt; &lt;q&gt; &lt;p&gt;      # RFC 7396 merge patch (idempotent)
+gitsheets-axi delete &lt;sheet&gt; &lt;path&gt;      # remove a record (idempotent)
+gitsheets-axi check &lt;sheet&gt; &lt;file&gt;       # verify + optionally --fix
+gitsheets-axi diff &lt;sheet&gt; [&lt;src-ref&gt;]   # TOON change summary
+gitsheets-axi normalize &lt;sheet&gt;          # bulk re-canonicalize
+gitsheets-axi init &lt;sheet&gt;               # scaffold a starter config
+gitsheets-axi infer &lt;sheet&gt;              # observe records → schema
+gitsheets-axi migrate-config &lt;sheet&gt;     # pre-v1.0 [fields] → [schema]
+gitsheets-axi attachment &lt;list|get|set|delete&gt; &lt;sheet&gt; &lt;path&gt; [&lt;name&gt;]
+gitsheets-axi push                       # one-shot git push
+</code></pre></div>
+<p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.</p>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link"> ¶</a></h2>
+<p>Errors go to <strong>stdout</strong> (not stderr — agents typically don&rsquo;t read stderr), in the same structured shape:</p>
+<div class="highlight"><pre><span></span><code>error: Record failed validation: slug: must NOT have fewer than 1 characters
+code: VALIDATION_FAILED
+help[1]: Run `gitsheets-axi sheets view users` to see the schema
+</code></pre></div>
+<p>Stable codes the agent can switch on: <code>VALIDATION_FAILED</code>, <code>NOT_FOUND</code>, <code>CONFIG_INVALID</code>, <code>NOT_CANONICAL</code>, <code>INDEX_CONFLICT</code>, <code>NOT_A_REPOSITORY</code>, <code>INVALID_JSON</code>, <code>PATH_TEMPLATE_ERROR</code>, <code>REF_ERROR</code>, <code>TRANSACTION_ERROR</code>, <code>CONFIG_EXISTS</code>, <code>NO_RECORDS</code>, <code>WRITE_ERROR</code>, <code>NON_FAST_FORWARD</code>, <code>PUSH_FAILED</code>.</p>
+<p>Exit codes are stable: <code>0</code> for success (incl. no-ops), <code>2</code> for validation/usage errors, <code>1</code> for everything else.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link"> ¶</a></h2>
 <ul>
-<li><strong><a href="cli/">CLI reference</a></strong> — <code>git sheet &lt;command&gt;</code>, global flags, exit codes.</li>
-<li><strong><a href="api/">API reference</a></strong> — public exports + pointers into the per-symbol spec.</li>
-<li><strong><a href="axi/"><code>gitsheets-axi</code></a></strong> — the agent-facing companion CLI (TOON output, idempotent mutations, session hooks).</li>
-<li><strong><a href="path-templates/">Path templates</a></strong> — syntax, recursive fields, query pruning, invalid-char handling.</li>
-<li><strong><a href="validation/">Validation</a></strong> — JSON Schema in <code>.gitsheets/&lt;sheet&gt;.toml</code>, optional Standard Schema layering.</li>
+<li><a href="../api/">API reference</a> — the library both tools share</li>
+<li><a href="../cli/">CLI reference</a> — the human <code>gitsheets</code> / <code>git sheet</code> CLI</li>
+<li><a href="../concepts/">Concepts</a> — Repository, Sheet, Path Template, Transaction</li>
+<li><a href="https://github.com/kunchenguid/axi">AXI specification</a> — the 10 ergonomic principles</li>
+<li><a href="https://toonformat.dev/">TOON specification</a> — the output format</li>
 </ul>
-<h2 id="recipes">Recipes<a class="headerlink" href="#recipes" title="Permanent link"> ¶</a></h2>
-<ul>
-<li><strong><a href="recipes/typed-sheet-with-zod/">Typed sheet with Zod</a></strong> — Standard Schema validator threading, type-safe upsert/query.</li>
-<li><strong><a href="recipes/request-bound-transactions/">Request-bound transactions in Fastify</a></strong> — one commit per HTTP request, with structured trailers.</li>
-<li><strong><a href="recipes/secondary-indices/">Secondary indices</a></strong> — in-memory <code>findByEmail</code> / <code>findByForeignKey</code> patterns.</li>
-<li><strong><a href="recipes/production-push-daemon/">Production push daemon</a></strong> — backoff config, auth strategies, monitoring.</li>
-<li><strong><a href="recipes/markdown-cms/">Markdown CMS pattern</a></strong> — content-typed sheets: records as <code>.md</code> with TOML frontmatter; lazy body loading.</li>
-<li><strong><a href="recipes/migrating-config/">Migrating a <code>[gitsheet.fields]</code> config</a></strong> — pre-v1.0 → v1.0 schema migration.</li>
-</ul>
-<h2 id="migrating-from-pre-v10">Migrating from pre-v1.0<a class="headerlink" href="#migrating-from-pre-v10" title="Permanent link"> ¶</a></h2>
-<p>If you&rsquo;re updating from a pre-v1.0 internal install, the <a href="migration-guide/">migration guide</a> covers the breaking changes (legacy <code>GitSheets</code> class removed, HTTP server removed, ESM-only, validation reshape).</p>
-<h2 id="where-the-contracts-live">Where the contracts live<a class="headerlink" href="#where-the-contracts-live" title="Permanent link"> ¶</a></h2>
-<p><a href="https://github.com/JarvusInnovations/gitsheets/tree/develop/specs"><code>specs/</code></a> is the source of truth. The docs you&rsquo;re reading are the consumer-facing tour; the specs are the authoritative API + behavior contract. When in doubt, the spec wins.</p>
-<h2 id="license">License<a class="headerlink" href="#license" title="Permanent link"> ¶</a></h2>
-<p>Apache-2.0. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/LICENSE">LICENSE</a>.</p>
 
 
 
@@ -1231,10 +1406,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@8.5.0/dist/mermaid.min.js"></script>
       
