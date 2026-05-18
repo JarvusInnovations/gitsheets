@@ -19,13 +19,38 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false  # never use caching in release builds
 
-      - name: Set package.json version from tag
+      - name: Set versions from tag
         run: |
           set -e
           SOURCE_TAG="${GITHUB_REF#refs/tags/}"
-          npm version --no-git-tag-version -w gitsheets "${SOURCE_TAG#v}"
+          VERSION="${SOURCE_TAG#v}"
+          npm version --no-git-tag-version -w gitsheets "$VERSION"
+          npm version --no-git-tag-version -w gitsheets-axi "$VERSION"
+
+      - name: Pin gitsheets-axi → gitsheets dep range
+        run: |
+          set -e
+          SOURCE_TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${SOURCE_TAG#v}"
+          # gitsheets-axi declares `"gitsheets": "*"` so the workspace symlink
+          # resolves during development. At publish time, pin it to the exact
+          # matching minor — lockstep with gitsheets means `gitsheets-axi@1.3.x`
+          # always wants `gitsheets@^1.3.0`.
+          MINOR_RANGE="^${VERSION%%-*}"
+          node -e "
+            const fs = require('fs');
+            const p = require('./packages/gitsheets-axi/package.json');
+            p.dependencies.gitsheets = '$MINOR_RANGE';
+            fs.writeFileSync('./packages/gitsheets-axi/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          cat packages/gitsheets-axi/package.json | grep gitsheets
 
       - run: npm ci
+
+      # Build before type-check and test — gitsheets-axi consumes `gitsheets`
+      # through its `dist/` output.
+      - name: Build
+        run: npm run build
 
       - name: Type-check
         run: npm run type-check
@@ -33,7 +58,8 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build
-        run: npm run build
+      - name: Publish gitsheets
+        run: npm publish --provenance --access public -w gitsheets
 
-      - run: npm publish --provenance --access public -w gitsheets
+      - name: Publish gitsheets-axi
+        run: npm publish --provenance --access public -w gitsheets-axi

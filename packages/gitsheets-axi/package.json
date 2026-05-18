@@ -1,0 +1,55 @@
+{
+  "name": "gitsheets-axi",
+  "version": "1.0.0-substrate.0",
+  "description": "Agent-facing CLI for gitsheets — token-efficient TOON output, idempotent mutations, self-installing session hooks.",
+  "type": "module",
+  "bin": {
+    "gitsheets-axi": "dist/bin/gitsheets-axi.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/bin/gitsheets-axi.js",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JarvusInnovations/gitsheets.git",
+    "directory": "packages/gitsheets-axi"
+  },
+  "homepage": "https://github.com/JarvusInnovations/gitsheets#readme",
+  "bugs": {
+    "url": "https://github.com/JarvusInnovations/gitsheets/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Jarvus Innovations",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "gitsheets",
+    "axi",
+    "agent",
+    "cli",
+    "toon",
+    "git"
+  ],
+  "dependencies": {
+    "@toon-format/toon": "^2.2.0",
+    "axi-sdk-js": "^0.1.6",
+    "gitsheets": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}
