@@ -15,12 +15,23 @@
 import { lint } from 'markdownlint/promise';
 import { applyFixes } from 'markdownlint';
 
+import { ValidationError } from '../errors.js';
 import { parseToml, stringifyRecord } from '../toml.js';
 import type { RecordLike } from '../path-template/index.js';
 import type { Format, FormatConfig } from './index.js';
 
 const DELIMITER = '+++';
 const DELIMITER_LINE_RE = /^\+\+\+\s*$/m;
+
+// First ATX-style H1 line: `# Title text`. Captures the trimmed title.
+// Only ATX (not setext `====`) — the spec uses ATX universally and the
+// roundtrip rewriter relies on a stable single-line replacement.
+//
+// Trailing whitespace match is `[ \t]*` (not `\s*`) on purpose: `\s` includes
+// newlines, and greedy `\s*$` in multiline mode will eat blank lines after
+// the heading, which makes rewriteLeadingH1 swallow the spacer between the
+// H1 and the next paragraph.
+const H1_LINE_RE = /^# (.+?)[ \t]*$/m;
 
 /**
  * Default markdownlint rules layered on top of any consumer config. MD013
@@ -48,7 +59,16 @@ async function normalizeBody(
 ): Promise<string> {
   if (config.markdownlint === false) return body;
   const userConfig = config.markdownlint ?? {};
-  const merged = { ...DEFAULT_MARKDOWNLINT_CONFIG, ...userConfig };
+  const merged: Record<string, unknown> = { ...DEFAULT_MARKDOWNLINT_CONFIG, ...userConfig };
+
+  // Auto-enable MD041 (first-line H1) when title-from-H1 extraction is on,
+  // unless the consumer explicitly opted out. A body that doesn't start with
+  // an H1 would silently produce `undefined` as the title — better to fail
+  // loud at the body level than catch it indirectly via schema validation.
+  if (config.title !== undefined && !('MD041' in userConfig)) {
+    merged['MD041'] = true;
+  }
+
   const result = await lint({
     strings: { record: body },
     // markdownlint's `Configuration` type is a structural shape — cast through
@@ -58,6 +78,36 @@ async function normalizeBody(
   const issues = result['record'] ?? [];
   if (issues.length === 0) return body;
   return applyFixes(body, issues);
+}
+
+/**
+ * Extract the first ATX-style H1 from a markdown body, or `undefined` if
+ * absent. Returns the title with surrounding whitespace trimmed.
+ */
+export function extractFirstH1(body: string): string | undefined {
+  const m = H1_LINE_RE.exec(body);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Rewrite (or prepend) the first ATX H1 of a markdown body to `newTitle`.
+ * Used by `Sheet.patch` to reconcile a title-only delta into the body —
+ * the consumer says "rename to X" and the body's `# old` becomes `# X`.
+ *
+ * If the body has no H1 at all, prepends `# newTitle\n\n` to the body.
+ * Internal — consumers operate at the record level via `Sheet.patch`.
+ */
+export function rewriteLeadingH1(body: string, newTitle: string): string {
+  const m = H1_LINE_RE.exec(body);
+  if (m && m.index !== undefined) {
+    const before = body.slice(0, m.index);
+    const after = body.slice(m.index + m[0].length);
+    return `${before}# ${newTitle}${after}`;
+  }
+  // Prepend an H1 when none exists. A blank line separates the heading from
+  // existing body content (markdownlint MD022 requires one).
+  if (body.length === 0) return `# ${newTitle}\n`;
+  return `# ${newTitle}\n\n${body}`;
 }
 
 export const markdownFormat: Format = {
@@ -78,6 +128,43 @@ export const markdownFormat: Format = {
     for (const [k, v] of Object.entries(record)) {
       if (k === bodyField) continue;
       frontmatter[k] = v;
+    }
+
+    // Title-from-H1: when [gitsheet.format].title is set, the body's first H1
+    // is the authoritative title. We enforce the invariant
+    // `record[titleField] === <body's first H1, or undefined>` and write the
+    // extracted value into frontmatter. A consumer-supplied title that
+    // disagrees with the body's H1 is a logic error — throw rather than
+    // silently picking one.
+    const titleField = config.title;
+    if (titleField !== undefined) {
+      const extracted = extractFirstH1(body);
+      const supplied = frontmatter[titleField];
+      if (
+        supplied !== undefined &&
+        supplied !== null &&
+        supplied !== extracted
+      ) {
+        throw new ValidationError(
+          'validation_failed',
+          `record.${titleField} (${JSON.stringify(supplied)}) disagrees with body's first H1 (${JSON.stringify(extracted)}). Use \`Sheet.patch\` if you want to rename via either field — \`upsert\` requires self-consistent input.`,
+          {
+            issues: [
+              {
+                path: [titleField],
+                message: `disagrees with body's first H1 (${JSON.stringify(extracted)})`,
+                source: 'json-schema',
+              },
+            ],
+          },
+        );
+      }
+      if (extracted !== undefined) {
+        frontmatter[titleField] = extracted;
+      } else {
+        // No H1 in body → ensure no stale title leaks into frontmatter.
+        delete frontmatter[titleField];
+      }
     }
 
     const fmText = stringifyRecord(frontmatter);

@@ -17,6 +17,20 @@ export interface FormatConfig {
   /** Field name holding the body text (markdown formats only). */
   readonly body?: string;
   /**
+   * Field name to denormalize from the body's first H1 (markdown formats
+   * only). When set, the format pipeline:
+   *
+   *   - Extracts the first H1 from the body (line matching `^#\s+...`).
+   *   - Enforces the invariant `record[title] === body's first H1`. Writes
+   *     with a disagreeing title throw `ValidationError`.
+   *   - Auto-enables markdownlint's `MD041` (first-line H1) — fail loud on
+   *     bodies that don't start with a heading. Consumer can override.
+   *
+   * See `Sheet.patch` for how patch reconciles title-only or body-only
+   * deltas against the invariant.
+   */
+  readonly title?: string;
+  /**
    * Markdownlint configuration object, or `false` to disable normalization.
    * Markdown formats only.
    */
@@ -87,8 +101,14 @@ export function resolveFormatConfig(raw: unknown): FormatConfig {
   const obj = raw as Record<string, unknown>;
   const typeRaw = obj['type'];
   const type = typeof typeRaw === 'string' ? typeRaw : 'toml';
-  const out: { type: string; body?: string; markdownlint?: Readonly<Record<string, unknown>> | false } = { type };
+  const out: {
+    type: string;
+    body?: string;
+    title?: string;
+    markdownlint?: Readonly<Record<string, unknown>> | false;
+  } = { type };
   if (typeof obj['body'] === 'string') out.body = obj['body'];
+  if (typeof obj['title'] === 'string') out.title = obj['title'];
   if (obj['markdownlint'] === false) {
     out.markdownlint = false;
   } else if (

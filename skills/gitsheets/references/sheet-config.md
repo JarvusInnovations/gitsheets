@@ -160,13 +160,17 @@ Optional. Switches the sheet's on-disk storage from `.toml` to markdown-with-fro
 [gitsheet.format]
 type = 'markdown'      # default: 'toml'. 'mdx' is an alias with .mdx extension.
 body = 'body'          # required for markdown/mdx — field that holds the body text
+title = 'title'        # optional — denormalize body's first H1 into this field (v1.3)
 
 [gitsheet.format.markdownlint]
 # Optional. Passed to markdownlint --fix during serialize.
 # Default-rules-on-top: { default = true, MD013 = false, MD041 = false }
+# When [gitsheet.format].title is set, MD041 auto-enables (consumer can override).
 # Override any rule:
 MD024 = false          # allow duplicate headings (long-form prose)
 ```
+
+When `title` is set, the library enforces `record[<title>] === <body's first H1, or undefined>` on every write. `Sheet.upsert` with disagreeing input throws `ValidationError`; `Sheet.patch({title: 'X'})` rewrites the body's H1; `Sheet.patch({body: '# Y\n…'})` re-derives the title. The on-disk file remains a standalone markdown document — the H1 stays in the body verbatim.
 
 Disable normalization entirely:
 

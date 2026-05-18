@@ -25,6 +25,7 @@ path = '${{ slug }}'
 [gitsheet.format]
 type = 'markdown'           # default: 'toml'. 'mdx' is an alias (same parser, .mdx extension).
 body = 'body'               # field name that holds the body text; required when type='markdown' or 'mdx'
+title = 'title'             # optional — denormalize body's first H1 into this field (see "Title from H1")
 
 [gitsheet.format.markdownlint]
 # Optional. Passed straight through as markdownlint config.
@@ -32,6 +33,7 @@ body = 'body'               # field name that holds the body text; required when
 #   default = true     (all default rules)
 #   MD013 = false      (line-length 80 disabled — prose / long lines OK)
 #   MD041 = false      (first-line H1 not required — many bodies start with prose)
+# When [gitsheet.format].title is set, MD041 is auto-enabled (consumer can override).
 ```
 
 Disable normalization entirely with `markdownlint = false`:
@@ -153,6 +155,86 @@ The body-less path uses `format.parseHeaderOnly`, which reads bytes from the blo
 ```bash
 gitsheets query posts --filter status=published --no-body --format=csv
 ```
+
+## Title from H1
+
+When `[gitsheet.format].title` names a field, the format pipeline treats that field as a denormalization of the body's first H1.
+
+### Invariant
+
+> `record[<title>] === <body's first H1, or undefined>`
+
+Frontmatter and body H1 always agree on disk. The pipeline enforces this on every write.
+
+"First H1" is the first line of the body that matches the ATX-style regex `^# (.+?)[ \t]*$`. Setext-style (`Title\n====`) is not recognized.
+
+### Why denormalize?
+
+A common authoring convention is to put the title as the first H1 of the body:
+
+```markdown
++++
+slug = "hello-world"
++++
+
+# Hello, world
+
+Body content here.
+```
+
+The denormalization gives consumers both ergonomics: the title is queryable / indexable as a record field (no body load needed) AND the on-disk file is a standalone markdown document with a proper heading.
+
+### Behavior — `Sheet.upsert(record, opts?)`
+
+Consumer asserts the complete new state. The input must already satisfy the invariant.
+
+| Input | Outcome |
+|---|---|
+| `{slug, body: '# Y\n…'}` | derives `title = 'Y'`, writes |
+| `{slug, title: 'Y', body: '# Y\n…'}` | consistent, writes |
+| `{slug, title: 'X', body: '# Y\n…'}` | throws `ValidationError` — input is self-inconsistent |
+| `{slug, body: 'no heading\n…'}` | extracted title is `undefined` → frontmatter omits `title` |
+| `{slug, title: 'X', body: 'no heading\n…'}` | throws `ValidationError` — supplied title without an H1 to back it |
+
+The body-presence guard from `upsert` still applies — `{slug, title: 'X'}` (no body) throws regardless of the title invariant.
+
+### Behavior — `Sheet.patch(query, partial)`
+
+Consumer supplies a delta. Patch applies it and reconciles to maintain the invariant.
+
+| `partial` | Patch's job |
+|---|---|
+| `{title: 'X'}` | rewrite body's first H1 to `# X` (or prepend `# X\n\n` if no H1); write `title = 'X'` |
+| `{body: '# Y\n…'}` | re-derive title from new body's H1; write `title = 'Y'` |
+| `{title: 'X', body: '# X\n…'}` | consistent, write as-is |
+| `{title: 'X', body: '# Y\n…'}` | throws `ValidationError` — delta itself is self-inconsistent |
+| `{tags: ['intro']}` | neither title nor body touched, invariant preserved trivially |
+| `{body: 'no heading'}` | title becomes `undefined` (frontmatter omits `title`) |
+
+The asymmetry between `upsert({title: 'X'})` (throws because body wasn't supplied) and `patch({title: 'X'})` (works — rewrites body's H1) mirrors PUT vs PATCH semantics: `upsert` is a state assertion; `patch` is a reconciled delta.
+
+### Markdownlint interaction
+
+When `[gitsheet.format].title` is set, **MD041** (first-line-must-be-H1) auto-enables in the markdownlint config so a body that starts with prose fails loud at the body level rather than silently producing `undefined` as the title.
+
+Consumer can override:
+
+```toml
+[gitsheet.format.markdownlint]
+MD041 = false   # opt out of the auto-enable
+```
+
+### Performance
+
+The denormalization is free at runtime — both reads stay fast:
+
+| Operation | Cost vs. no-title-extraction |
+|---|---|
+| `query({}, {withBody: false})` | Same — title is in frontmatter, no body bytes loaded |
+| `query()` (with body) | Same — body fully loaded as today |
+| Index build | Same — body-less reads see title in frontmatter |
+| `upsert` | + 1 regex scan over body (already in memory) |
+| `patch({title})` | + 1 `rewriteLeadingH1` call (single regex replace) |
 
 ## Edge cases
 

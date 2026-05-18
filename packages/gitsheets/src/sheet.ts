@@ -29,6 +29,7 @@ import {
   type StandardSchemaV1,
 } from './validation.js';
 import { getFormat, resolveFormatConfig, type Format, type FormatConfig } from './format/index.js';
+import { extractFirstH1, rewriteLeadingH1 } from './format/markdown.js';
 
 const exec = promisify(execFile);
 
@@ -1026,6 +1027,51 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (typeof existingPath === 'string') {
       (merged as Record<symbol, unknown>)[RECORD_PATH_KEY] = existingPath;
     }
+
+    // Title↔body H1 reconciliation for content-typed sheets with title
+    // extraction enabled. `upsert` enforces `record[title] === <body's first
+    // H1>`. patch's job is to keep the invariant satisfied when the consumer
+    // supplies only one side of the delta.
+    //
+    //   {title: 'X'} only        → rewrite body's first H1 to `# X`
+    //   {body: '# Y\n...'} only  → re-derive title from new body's H1
+    //   {title, body} both       → pass through; upsert validates consistency
+    //   neither in partial       → invariant trivially preserved
+    const config = await this.readConfig();
+    const titleField = config.format.title;
+    const bodyField = config.format.body;
+    if (titleField !== undefined && bodyField !== undefined) {
+      const partialFields = partial as Record<string, unknown>;
+      const titleInPatch = titleField in partialFields;
+      const bodyInPatch = bodyField in partialFields;
+      const mergedAny = merged as Record<string, unknown>;
+
+      if (titleInPatch && !bodyInPatch) {
+        // Consumer set the title; rewrite the body's first H1 to match.
+        const titleValue = mergedAny[titleField];
+        const currentBody = typeof mergedAny[bodyField] === 'string'
+          ? (mergedAny[bodyField] as string)
+          : '';
+        if (typeof titleValue === 'string') {
+          mergedAny[bodyField] = rewriteLeadingH1(currentBody, titleValue);
+        }
+      } else if (bodyInPatch && !titleInPatch) {
+        // Consumer set the body; re-derive the title from the new H1. If the
+        // new body has no H1, the title becomes undefined (the serializer
+        // will drop the frontmatter field).
+        const newBody = typeof mergedAny[bodyField] === 'string'
+          ? (mergedAny[bodyField] as string)
+          : '';
+        const derivedTitle = extractFirstH1(newBody);
+        if (derivedTitle !== undefined) {
+          mergedAny[titleField] = derivedTitle;
+        } else {
+          delete mergedAny[titleField];
+        }
+      }
+      // Both supplied or neither — upsert handles validation / no-op.
+    }
+
     // patch may produce a record missing the body field (e.g., `{body: null}`
     // deletes per RFC 7396). The consumer's intent is explicit at the patch
     // call site, so we don't trip the upsert allowMissingBody guard here.
