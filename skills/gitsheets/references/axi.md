@@ -159,6 +159,52 @@ Outputs:
 - `CONFIG_INVALID` when the file fails to parse as the sheet's format
 - `NOT_FOUND` when the target file doesn't exist
 
+### `gitsheets-axi diff <sheet> [<src-ref>] [--patches]`
+
+TOON change summary between a source ref and the current tree. With no `<src-ref>`, compares against the empty tree — every current record shows as `added`, useful for one-shot snapshots.
+
+Default columns: `status` (added/modified/deleted/renamed), `path`, `src_hash`, `dst_hash`. `--patches` adds an RFC 6902 patch column with the per-change ops as JSON-encoded TOON.
+
+### `gitsheets-axi normalize <sheet>`
+
+Bulk re-canonicalize every record in a sheet. Per-record idempotency via `sheet.willChange` means only records whose canonical bytes differ from disk get rewritten; if every record is already canonical, exits with `result: "no-op"` and no commit.
+
+Use this when migrating sheets to a new schema or after a normalization-rule change in the sheet config. For single-file fixes, `check --fix` is cheaper.
+
+### `gitsheets-axi init <sheet> [--path <template>] [--schema <file>] [--force]`
+
+Scaffold a starter `.gitsheets/<sheet>.toml`. `--path` defaults to `${{ id }}`; `--schema` loads a JSON file and embeds it as the sheet's JSON Schema. Refuses to overwrite an existing config unless `--force` is set; if the rendered config matches the existing one byte-for-byte, returns `result: "no-op"`.
+
+### `gitsheets-axi infer <sheet>`
+
+Walks the sheet's records, observes which fields appear with which types and how often, and writes back a generated `[gitsheet.schema]` block. Fields present in every record become `required`. Idempotent when the inferred schema matches the current config. Errors with `NO_RECORDS` if there's nothing to observe.
+
+### `gitsheets-axi migrate-config <sheet>`
+
+Translates a pre-v1.0 `[gitsheet.fields]` block into the modern `[gitsheet.schema]` block. `type`/`enum`/`default` move into JSON Schema properties; `sort` rules stay on the field (they're a normalization concern, not validation). `trueValues`/`falseValues` are dropped with a warning. No-op when there's no `[gitsheet.fields]` block.
+
+### `gitsheets-axi attachment <subcommand>`
+
+Manage binary blobs colocated with records. Subcommands:
+
+| Subcommand | Flags / Notes |
+|---|---|
+| `list <sheet> <path>` | Table of attachment names + mime types + blob hashes |
+| `get <sheet> <path> <name>` | Base64-encoded content + metadata; truncated at ~64 KB unless `--full` |
+| `set <sheet> <path> <name> [--file f / --data t / stdin]` | Idempotent on byte-match |
+| `delete <sheet> <path> [<name>]` | Delete one (idempotent on already-missing) or all if name omitted |
+
+### `gitsheets-axi push [--remote r] [--branch b]`
+
+One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, current HEAD branch. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
+
+Errors map to:
+
+- `NON_FAST_FORWARD` — remote has work the local doesn't; reconcile externally before retrying
+- `PUSH_FAILED` — network/auth/transient; safe to retry
+
+This is **not** a daemon lifecycle command — for retry-with-backoff semantics in a long-running consumer, use `Repository.startPushDaemon` from the library.
+
 ## When to use `gitsheets-axi` vs `gitsheets`
 
 | Scenario | Use |
