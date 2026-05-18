@@ -1546,7 +1546,7 @@
 <span class="w">  </span><span class="nx">RecordLike</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateBlob</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateTree</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateQueryResult</span><span class="p">,</span>
 <span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
 </code></pre></div>
-<p>No deep imports (<code>gitsheets/lib/Sheet</code>) — the implementation can rearrange <code>src/</code> freely without notice. The package-root surface is the only stable API.</p>
+<p>No deep imports (<code>gitsheets/lib/Sheet</code>) — the implementation can rearrange <code>packages/gitsheets/src/</code> freely without notice. The package-root surface is the only stable API.</p>
 <h2 id="factories">Factories<a class="headerlink" href="#factories" title="Permanent link"> ¶</a></h2>
 <h3 id="openrepoopts-promiserepository"><code>openRepo(opts?)</code> → <code>Promise&lt;Repository&gt;</code><a class="headerlink" href="#openrepoopts-promiserepository" title="Permanent link"> ¶</a></h3>
 <p>Open a <code>Repository</code> against a git directory. Discovers from cwd upward when <code>gitDir</code> is omitted. Fresh-but-initialized repositories (no commits yet) are supported.</p>
