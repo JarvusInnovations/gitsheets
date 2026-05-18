@@ -109,7 +109,7 @@ const store = await openStore(repo, {
 | --- | --- |
 | `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for content-typed sheets |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachments |
-| `sheet.patch(query, partial)` | RFC 7396 merge patch over an existing record |
+| `sheet.patch(query, partial)` | RFC 7396 merge patch over an existing record. For content-typed sheets with `[gitsheet.format].title` configured (v1.3): a title-only patch rewrites the body's H1; a body-only patch re-derives the title |
 | `sheet.willChange(record, opts?)` | Pre-flight idempotency check — returns `{ changed, path, currentBlobHash?, nextText }` without mutating the tree (v1.3) |
 | `sheet.clear()` | Remove every record from the sheet's tree |
 | `sheet.clone()` | Clone the Sheet for staging tentative state |
