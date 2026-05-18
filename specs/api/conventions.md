@@ -42,7 +42,7 @@ above. The full list: `OpenRepoOptions`, `OpenSheetOptions`, `OpenSheetsOptions`
 `ValidationIssue`, `RecordLike`,
 `PathTemplateBlob`, `PathTemplateTree`, `PathTemplateQueryResult`.
 
-No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely.
+No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `packages/gitsheets/src/` freely.
 
 ## TypeScript posture
 

@@ -1,7 +1,7 @@
 .DS_Store
 node_modules
-/dist
-/coverage
+/packages/*/dist
+/packages/*/coverage
 
 # Skill eval workspace (output of skills/gitsheets-workspace/grade.mjs +
 # skills/gitsheets-workspace/aggregate.mjs runs). Iteration artifacts;

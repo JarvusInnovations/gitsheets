@@ -165,7 +165,7 @@ gitsheets query posts --filter status=published --no-body --format=csv
 
 ## Pluggable formats
 
-The format dispatch lives in `src/format/`. Three implementations ship: `toml` (default), `markdown`, and `mdx` (markdown with `.mdx` extension). Additional formats (AsciiDoc, code-commented frontmatter, sidecar files) are future work — frontmatter conventions aren't universal across formats and each needs its own design.
+The format dispatch lives in `packages/gitsheets/src/format/`. Three implementations ship: `toml` (default), `markdown`, and `mdx` (markdown with `.mdx` extension). Additional formats (AsciiDoc, code-commented frontmatter, sidecar files) are future work — frontmatter conventions aren't universal across formats and each needs its own design.
 
 ## Coordinates with
 

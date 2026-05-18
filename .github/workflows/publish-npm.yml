@@ -23,7 +23,7 @@ jobs:
         run: |
           set -e
           SOURCE_TAG="${GITHUB_REF#refs/tags/}"
-          npm version --no-git-tag-version "${SOURCE_TAG#v}"
+          npm version --no-git-tag-version -w gitsheets "${SOURCE_TAG#v}"
 
       - run: npm ci
 
@@ -36,4 +36,4 @@ jobs:
       - name: Build
         run: npm run build
 
-      - run: npm publish --provenance --access public
+      - run: npm publish --provenance --access public -w gitsheets
