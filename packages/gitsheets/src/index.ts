@@ -66,6 +66,8 @@ export type {
   TransactionHandler,
 } from './transaction.js';
 
+export { parseToml, parseConfigToml, stringifyRecord } from './toml.js';
+
 export { Template } from './path-template/index.js';
 export type {
   RecordLike,
