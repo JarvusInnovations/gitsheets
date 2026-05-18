@@ -1730,7 +1730,7 @@
 </tr>
 <tr>
 <td><code>sheet.patch(query, partial)</code></td>
-<td>RFC 7396 merge patch over an existing record</td>
+<td>RFC 7396 merge patch over an existing record. For content-typed sheets with <code>[gitsheet.format].title</code> configured (v1.3): a title-only patch rewrites the body&rsquo;s H1; a body-only patch re-derives the title</td>
 </tr>
 <tr>
 <td><code>sheet.willChange(record, opts?)</code></td>

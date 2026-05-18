@@ -920,6 +920,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#title-from-bodys-h1-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Title from body&rsquo;s H1 (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#authoring" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1116,6 +1127,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#title-from-bodys-h1-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Title from body&rsquo;s H1 (recommended)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#authoring" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1280,6 +1302,48 @@ title = &quot;Hello, world&quot;
 
 This is the first post. Body content here.
 </code></pre></div>
+<h2 id="title-from-bodys-h1-recommended">Title from body&rsquo;s H1 (recommended)<a class="headerlink" href="#title-from-bodys-h1-recommended" title="Permanent link"> ¶</a></h2>
+<p>The on-disk file above has the title duplicated: once in frontmatter, once as the body&rsquo;s H1. Without help, an author has to keep those in sync — and gets ugly diffs when one drifts.</p>
+<p>Opt into title-from-H1 extraction with <code>[gitsheet.format].title</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet.format]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;markdown&#39;</span>
+<span class="n">body</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;body&#39;</span>
+<span class="n">title</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;title&#39;</span><span class="w">        </span><span class="c1"># ← the body&#39;s first H1 is denormalized into this field</span>
+</code></pre></div>
+<p>Now the body is the source of truth for the title. The library:</p>
+<ul>
+<li><strong>Extracts</strong> the title from the body&rsquo;s first <code># Heading</code> line on every write.</li>
+<li><strong>Writes</strong> the extracted value into frontmatter (so body-less reads see the title at no I/O cost).</li>
+<li><strong>Enforces</strong> the invariant <code>record.title === &lt;body's first H1, or undefined&gt;</code> — disagreement on <code>upsert</code> throws <code>ValidationError</code>.</li>
+<li><strong>Auto-enables</strong> markdownlint&rsquo;s <code>MD041</code> (first-line-must-be-H1) so bodies that start with prose fail loud.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1">// Set or rename the title via the body — title is derived on write</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span>
+<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;# Hello, world\n\nFirst post body.&#39;</span><span class="p">,</span>
+<span class="p">});</span>
+
+<span class="c1">// Rename via `patch({title})` — the library rewrites the body&#39;s H1 for you</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">patch</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;A new title&#39;</span><span class="w"> </span><span class="p">});</span>
+<span class="c1">// → body becomes &#39;# A new title\n\nFirst post body.&#39;</span>
+
+<span class="c1">// Rename via `patch({body})` — title is re-derived from the new H1</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">patch</span><span class="p">(</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;# Re-titled\n\nDifferent body.&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="p">);</span>
+<span class="c1">// → record.title === &#39;Re-titled&#39;</span>
+
+<span class="c1">// upsert with disagreeing title + body throws — the consumer&#39;s assertion is</span>
+<span class="c1">// self-inconsistent.</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span>
+<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;A&#39;</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;# B\n\nbody&#39;</span><span class="p">,</span>
+<span class="p">});</span><span class="w"> </span><span class="c1">// throws ValidationError</span>
+</code></pre></div>
+<p>The asymmetry between <code>upsert</code> and <code>patch</code> on <code>{title: 'X'}</code> mirrors PUT vs PATCH: <code>upsert</code> is a state assertion (must be self-consistent), <code>patch</code> is a reconciled delta (the operation figures out the rest).</p>
+<p>When you don&rsquo;t want this — say the title field exists but isn&rsquo;t tied to the H1 — just leave <code>title</code> out of <code>[gitsheet.format]</code>. The sheet behaves exactly as it did pre-v1.3.</p>
 <h2 id="authoring">Authoring<a class="headerlink" href="#authoring" title="Permanent link"> ¶</a></h2>
 <p>Three workflows pair well with the format:</p>
 <p><strong>1. Editor on disk + commit.</strong> Authors edit <code>posts/*.md</code> directly in
