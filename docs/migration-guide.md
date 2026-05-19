@@ -214,7 +214,7 @@ Patch release. Two fixes in service of snapshot-importer-style workflows.
 
 ### Dependency
 
-- `hologit` bumped to a version that ships `TreeObject.clearChildren()` (the O(1) primitive — added in hologit 0.50.1, with the corresponding `index.d.ts` declaration in 0.50.2).
+- `hologit` bumped from `^0.49.1` to `^0.50.2` to pick up `TreeObject.clearChildren()` (the O(1) primitive backing the new `Sheet#clear()`).
 
 ## Going forward
 

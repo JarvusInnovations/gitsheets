@@ -9,15 +9,6 @@ import type { Readable } from 'node:stream';
 import type { BlobObject, TreeObject, Workspace } from 'hologit';
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
-// TODO: remove once hologit ships >=0.50.2 with this in its index.d.ts.
-// JS method was added in hologit#455 (shipped in 0.50.1); the type
-// declaration was a follow-up in hologit#457.
-declare module 'hologit' {
-  interface TreeObject {
-    clearChildren(): void;
-  }
-}
-
 import {
   ConfigError,
   IndexError,
