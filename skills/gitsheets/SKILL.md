@@ -11,15 +11,18 @@ This skill helps you assist a developer who consumes the published `gitsheets` p
 
 ## Routing
 
-Three reference files cover the surface. Read the relevant one(s) for the user's question:
+Four reference files cover the surface. Read the relevant one(s) for the user's question:
 
 | User is asking about… | Read |
 |---|---|
 | The `gitsheets` / `git sheet` CLI (commands, flags, exit codes) | `references/cli.md` |
 | The TypeScript API (`openRepo`, `Sheet`, `Transaction`, `Store`, push daemon, errors) | `references/api.md` |
 | Authoring `.gitsheets/<name>.toml` configs (path template, schema, fields, format, indices) | `references/sheet-config.md` |
+| The **agent-facing** `gitsheets-axi` CLI (TOON output, idempotent mutations, session hooks) | `references/axi.md` |
 
-If unsure or the question spans multiple surfaces, read all three. They're sized to fit comfortably in context together.
+If unsure or the question spans multiple surfaces, read all four. They're sized to fit comfortably in context together.
+
+If the user is working *inside an agent session* and wants to read/mutate gitsheets data via shell, prefer `gitsheets-axi` (`references/axi.md`). If they're writing application code, prefer the library API. If they're authoring configs or asking conceptual questions, sheet-config or api references are right.
 
 ## Always-true facts
 

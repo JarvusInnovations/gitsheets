@@ -178,6 +178,29 @@ Fully additive minor release. Existing v1.1 code keeps working.
 
 - **`skills/gitsheets/`** — bundled Claude Code skill for developers consuming gitsheets. Reference material covering the CLI, the TypeScript API, and the sheet config syntax. Install it in your `.claude/skills/` (or via plugin) to give Claude focused gitsheets context.
 
+## v1.2 → v1.3
+
+Fully additive minor release. Existing v1.2 code keeps working.
+
+### Library
+
+- **`Sheet.willChange(record, opts?)`** — new. Pre-flight idempotency check that runs upsert's full validation + normalization + serialization pipeline and compares the resulting bytes to the existing blob at the rendered path — without mutating the tree. Returns `{ changed, path, currentBlobHash?, nextText }`. Consumers that want commit-skipping semantics ("only commit if something actually changed") can pre-flight + skip when `changed: false`. Throws the same errors `upsert` would.
+- **Title from body's H1.** Content-typed sheets can opt into `[gitsheet.format].title = '<field>'` to denormalize the body's first H1 into a frontmatter field. The library enforces `record.title === <body's first H1, or undefined>` on every write — `upsert` with disagreeing values throws `ValidationError`; `Sheet.patch({title: 'X'})` rewrites the body's H1 for you, `Sheet.patch({body: '# Y\n…'})` re-derives the title. Markdownlint's `MD041` auto-enables to fail loud on bodies that start with prose. Fully backward-compatible — sheets without `[gitsheet.format].title` behave exactly as v1.2. See [`behaviors/content-types.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/content-types.md#title-from-h1) and the [Markdown CMS recipe](recipes/markdown-cms.md#title-from-bodys-h1-recommended).
+- **New utility exports**: `parseToml`, `parseConfigToml`, `stringifyRecord` (TOML round-tripping), `getFormat`, `hasFormat`, `registerFormat`, `resolveFormatConfig` (format dispatch). All were already in the package's internal modules; v1.3 surfaces them at the package root for consumers who need raw-bytes round-tripping or custom format registration.
+- **New public type**: `WillChangeResult`.
+
+### Tooling
+
+- **`gitsheets-axi`** — new sibling npm package. Agent-facing CLI with TOON output, idempotent mutations, self-installing session hooks (Claude Code + Codex), format-aware default schemas. Lockstep-versioned with the library on minor. See [`docs/axi.md`](axi.md). Install with `npm install -g gitsheets-axi`.
+
+### Repository layout (no consumer impact)
+
+- The repository was promoted to an npm workspaces monorepo. The published `gitsheets` package now lives at `packages/gitsheets/`; the agent-facing companion at `packages/gitsheets-axi/`. Consumer code is unaffected — `import { ... } from 'gitsheets'` resolves the same surface as before, and the published tarball has the same shape.
+
+### CLI
+
+No new commands on the human `gitsheets` CLI in v1.3. The agent-facing operations (TOON output, idempotent mutations) live in `gitsheets-axi` rather than as flags on the human CLI — the two contracts disagree on too many defaults to coexist in one binary.
+
 ## Going forward
 
 Once migrated, the recipes are the fastest path to common patterns:

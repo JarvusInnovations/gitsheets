@@ -20,7 +20,7 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 | Canonical key sort | **`sort-keys`** | Deep alphabetical key sorting on every write for byte-stable normalization. |
 | JSON Schema validation | **`ajv`** + **`ajv-formats`** | Industry-standard, well-maintained, fast. Used for the persisted shape contract per [behaviors/validation.md](behaviors/validation.md). `ajv-formats` carries `date-time`, `email`, etc. |
 | Runtime validator (consumer-supplied) | Any **[Standard Schema](https://standardschema.dev)** implementation | Consumer chooses Zod / Valibot / ArkType / Effect Schema. Gitsheets calls `~standard.validate`. |
-| JSON Merge Patch | **inline** in `src/patch.ts` (~40 lines) | RFC 7396 semantics — see [behaviors/patch-semantics.md](behaviors/patch-semantics.md). No external dependency; the `json-merge-patch` package was removed during the v1.0 substrate purge. |
+| JSON Merge Patch | **inline** in `packages/gitsheets/src/patch.ts` (~40 lines) | RFC 7396 semantics — see [behaviors/patch-semantics.md](behaviors/patch-semantics.md). No external dependency; the `json-merge-patch` package was removed during the v1.0 substrate purge. |
 | JSON Patch (RFC 6902) | **`rfc6902`** | Generates RFC 6902 ops for `Sheet.diffFrom({ patches: true })` (v1.1). |
 | Markdown normalization | **`markdownlint`** (pinned `^0.40`) | Body normalization on write for content-typed sheets (v1.2). See [behaviors/content-types.md](behaviors/content-types.md). |
 | CSV / TSV I/O | **`csv-parse`** + **`csv-stringify`** | CLI `--format=csv\|tsv` on `upsert` / `query` / `read` (v1.1). |
@@ -37,7 +37,8 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 
 ## Packaging
 
-- **Single npm package: `gitsheets`** — library + CLI in one. Single `package.json`, single set of dependencies. Splitting into `@gitsheets/core` + `@gitsheets/cli` is deferred until there's a reason.
+- **Single published package: `gitsheets`** — library + CLI in one. One `package.json`, one set of dependencies. Splitting into `@gitsheets/core` + `@gitsheets/cli` is deferred until there's a reason.
+- **npm workspaces monorepo.** The repo root is a private workspaces shell (`{"workspaces": ["packages/*"], "private": true}`); the published package lives at `packages/gitsheets/`. This layout is what makes room for sibling packages (e.g., the agent-facing CLI tracked in [#170](https://github.com/JarvusInnovations/gitsheets/issues/170)) without churning the published surface — `gitsheets@1.x` keeps its name, contents, and import paths.
 - **Entry points:**
   - `import { ... } from 'gitsheets'` → public library exports
   - `bin/gitsheets` (also installed as `git-sheet` for the `git sheet <cmd>` invocation)
@@ -47,27 +48,38 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 
 ```text
 gitsheets/
-├── src/                      # TypeScript library
-│   ├── cli/                  # CLI entry + command modules
-│   ├── path-template/        # path template parser + query traversal
-│   ├── errors.ts             # exported error classes
-│   ├── repository.ts         # Repository class
-│   ├── sheet.ts              # Sheet class
-│   ├── transaction.ts        # Transaction class
-│   ├── store.ts              # openStore + Store type
-│   ├── *.test.ts             # Vitest specs co-located with the units they cover
-│   └── index.ts              # public re-exports
-├── docs/                     # User-facing documentation (mkdocs)
-├── specs/                    # ← source of truth, this directory
+├── packages/
+│   └── gitsheets/                # the published npm package
+│       ├── src/                  # TypeScript library
+│       │   ├── cli/              # CLI entry + command modules
+│       │   ├── format/           # pluggable record formats (toml/markdown/mdx)
+│       │   ├── path-template/    # path template parser + query traversal
+│       │   ├── errors.ts         # exported error classes
+│       │   ├── repository.ts     # Repository class
+│       │   ├── sheet.ts          # Sheet class
+│       │   ├── transaction.ts    # Transaction class
+│       │   ├── store.ts          # openStore + Store type
+│       │   ├── *.test.ts         # Vitest specs co-located with the units they cover
+│       │   └── index.ts          # public re-exports
+│       ├── bin/                  # CLI entry shim
+│       ├── package.json
+│       ├── tsconfig.json
+│       └── vitest.config.ts
+├── docs/                         # User-facing documentation (mkdocs)
+├── specs/                        # ← source of truth, this directory
+├── skills/                       # bundled Claude Code skill (skills/gitsheets/)
 ├── .claude/
-│   ├── agents/               # spec-drift-auditor
-│   └── commands/             # /audit-spec-drift
-├── .github/workflows/        # CI
+│   ├── agents/                   # spec-drift-auditor
+│   └── commands/                 # /audit-spec-drift
+├── .github/workflows/            # CI
 ├── CLAUDE.md
-├── package.json
-├── tsconfig.json
+├── package.json                  # workspaces shell (private, not published)
+├── package-lock.json             # single lockfile for the whole monorepo
+├── mkdocs.yml
 └── README.md
 ```
+
+Root scripts (`npm run build`, `npm test`, `npm run type-check`) proxy to the `gitsheets` workspace via `-w gitsheets`, so a fresh clone's `npm install && npm test` works without first cd'ing into the package.
 
 The pre-v1.0 layout (`backend/lib/`, `backend/commands/`, `src/` Vue frontend, `cypress.json`, `vue.config.js`, etc.) is removed during the purge ([issue #128](https://github.com/JarvusInnovations/gitsheets/issues/128)).
 

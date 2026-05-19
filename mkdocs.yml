@@ -26,6 +26,7 @@ nav:
       - Validation: validation.md
       - CLI: cli.md
       - API reference: api.md
+      - gitsheets-axi (agent CLI): axi.md
   - Recipes:
       - Typed sheet with Zod: recipes/typed-sheet-with-zod.md
       - Request-bound transactions: recipes/request-bound-transactions.md

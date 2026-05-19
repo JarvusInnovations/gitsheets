@@ -29,6 +29,7 @@ import {
   type StandardSchemaV1,
 } from './validation.js';
 import { getFormat, resolveFormatConfig, type Format, type FormatConfig } from './format/index.js';
+import { extractFirstH1, rewriteLeadingH1 } from './format/markdown.js';
 
 const exec = promisify(execFile);
 
@@ -63,6 +64,24 @@ export interface SheetConfig {
 export interface UpsertResult {
   readonly blob: BlobObject;
   readonly path: string;
+}
+
+/**
+ * Result of `Sheet.willChange` — the pre-flight idempotency check for upsert.
+ *
+ * `changed` is `false` when the canonical bytes for the supplied record
+ * match the current blob byte-for-byte. Consumers use this to skip
+ * commits that would produce empty diffs.
+ */
+export interface WillChangeResult {
+  /** Would `upsert(record)` write different bytes than what's already at `path`? */
+  readonly changed: boolean;
+  /** Sheet-relative path the record renders to (per the path template). */
+  readonly path: string;
+  /** Hash of the existing blob at `path`. `undefined` when the record doesn't exist on disk yet. */
+  readonly currentBlobHash?: string;
+  /** Serialized bytes (UTF-8 text) that `upsert` would write. */
+  readonly nextText: string;
 }
 
 /**
@@ -1008,6 +1027,51 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (typeof existingPath === 'string') {
       (merged as Record<symbol, unknown>)[RECORD_PATH_KEY] = existingPath;
     }
+
+    // Title↔body H1 reconciliation for content-typed sheets with title
+    // extraction enabled. `upsert` enforces `record[title] === <body's first
+    // H1>`. patch's job is to keep the invariant satisfied when the consumer
+    // supplies only one side of the delta.
+    //
+    //   {title: 'X'} only        → rewrite body's first H1 to `# X`
+    //   {body: '# Y\n...'} only  → re-derive title from new body's H1
+    //   {title, body} both       → pass through; upsert validates consistency
+    //   neither in partial       → invariant trivially preserved
+    const config = await this.readConfig();
+    const titleField = config.format.title;
+    const bodyField = config.format.body;
+    if (titleField !== undefined && bodyField !== undefined) {
+      const partialFields = partial as Record<string, unknown>;
+      const titleInPatch = titleField in partialFields;
+      const bodyInPatch = bodyField in partialFields;
+      const mergedAny = merged as Record<string, unknown>;
+
+      if (titleInPatch && !bodyInPatch) {
+        // Consumer set the title; rewrite the body's first H1 to match.
+        const titleValue = mergedAny[titleField];
+        const currentBody = typeof mergedAny[bodyField] === 'string'
+          ? (mergedAny[bodyField] as string)
+          : '';
+        if (typeof titleValue === 'string') {
+          mergedAny[bodyField] = rewriteLeadingH1(currentBody, titleValue);
+        }
+      } else if (bodyInPatch && !titleInPatch) {
+        // Consumer set the body; re-derive the title from the new H1. If the
+        // new body has no H1, the title becomes undefined (the serializer
+        // will drop the frontmatter field).
+        const newBody = typeof mergedAny[bodyField] === 'string'
+          ? (mergedAny[bodyField] as string)
+          : '';
+        const derivedTitle = extractFirstH1(newBody);
+        if (derivedTitle !== undefined) {
+          mergedAny[titleField] = derivedTitle;
+        } else {
+          delete mergedAny[titleField];
+        }
+      }
+      // Both supplied or neither — upsert handles validation / no-op.
+    }
+
     // patch may produce a record missing the body field (e.g., `{body: null}`
     // deletes per RFC 7396). The consumer's intent is explicit at the patch
     // call site, so we don't trip the upsert allowMissingBody guard here.
@@ -1291,6 +1355,47 @@ export class Sheet<T extends RecordLike = RecordLike> {
     record: T,
     opts: UpsertOptions = {},
   ): Promise<UpsertResult> {
+    const { config, format, normalized, recordPath, previousPath, text } =
+      await this.#prepareUpsert(record, opts);
+
+    // Rename: if the source record was loaded from a different path, delete the old one.
+    if (previousPath !== undefined && previousPath !== recordPath) {
+      try {
+        await this.#dataTree.deleteChild(
+          joinTreePath(this.#effectiveRoot(config), `${previousPath}${format.extension}`),
+        );
+      } catch {
+        // Old path may not exist — ignore.
+      }
+    }
+
+    const blob = await this.#dataTree.writeChild(
+      joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`),
+      text,
+    );
+    tx.markMutated();
+    this.#invalidateIndexes();
+    void normalized; // referenced in prepare for unique-index check
+    return { blob, path: recordPath };
+  }
+
+  /**
+   * Shared pipeline used by `upsert` and `willChange`. Runs validation,
+   * normalization, path rendering, body-presence guard, unique-index check,
+   * and format serialization — every check `upsert` would perform — but
+   * stops short of writing to the tree.
+   */
+  async #prepareUpsert(
+    record: T,
+    opts: UpsertOptions,
+  ): Promise<{
+    config: SheetConfig;
+    format: Format;
+    normalized: T;
+    recordPath: string;
+    previousPath: string | undefined;
+    text: string;
+  }> {
     const config = await this.readConfig();
     const template = Template.fromString(config.path);
 
@@ -1310,7 +1415,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     // Validate before normalizing — per specs/behaviors/validation.md order:
     // JSON Schema → Standard Schema (may transform) → normalize → render → write.
-    let validated = (await validateRecord({
+    const validated = (await validateRecord({
       record: stripSymbols(record as RecordLike),
       schema: config.schema,
       schemaSourcePath: this.#configPath,
@@ -1318,9 +1423,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
     })) as T;
     // Standard Schema may have transformed; re-attach annotations if the
     // caller supplied them (for rename detection below).
-    const existing = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
-    if (typeof existing === 'string') {
-      (validated as Record<symbol, unknown>)[RECORD_PATH_KEY] = existing;
+    const previousPath = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    if (typeof previousPath === 'string') {
+      (validated as Record<symbol, unknown>)[RECORD_PATH_KEY] = previousPath;
     }
 
     const normalized = await this.normalizeRecord(validated);
@@ -1353,26 +1458,52 @@ export class Sheet<T extends RecordLike = RecordLike> {
     }
 
     const format = this.#getFormat(config);
+    const text = await format.serialize(
+      stripSymbols(normalized as RecordLike),
+      config.format,
+    );
 
-    // Rename: if the source record was loaded from a different path, delete the old one.
-    if (typeof existing === 'string' && existing !== recordPath) {
-      try {
-        await this.#dataTree.deleteChild(
-          joinTreePath(this.#effectiveRoot(config), `${existing}${format.extension}`),
-        );
-      } catch {
-        // Old path may not exist — ignore.
-      }
+    return {
+      config,
+      format,
+      normalized,
+      recordPath,
+      previousPath: typeof previousPath === 'string' ? previousPath : undefined,
+      text,
+    };
+  }
+
+  /**
+   * Pre-flight idempotency check for `upsert`. Runs validation, normalization,
+   * and serialization but does NOT mutate the tree. Compares the resulting
+   * bytes to the current blob at the rendered path.
+   *
+   * Returns `{ changed: false, ... }` when the canonical serialization matches
+   * the existing blob — consumers can skip the commit. Throws the same errors
+   * `upsert` would on the same input (`ValidationError`, `IndexError`,
+   * `PathTemplateError`).
+   */
+  async willChange(record: T, opts: UpsertOptions = {}): Promise<WillChangeResult> {
+    const { config, format, recordPath, text } = await this.#prepareUpsert(record, opts);
+
+    const fullPath = joinTreePath(
+      this.#effectiveRoot(config),
+      `${recordPath}${format.extension}`,
+    );
+    const existing = await this.#dataTree.getChild(fullPath);
+
+    if (!existing || !isBlob(existing)) {
+      return { changed: true, path: recordPath, nextText: text };
     }
 
-    const text = await format.serialize(stripSymbols(normalized as RecordLike), config.format);
-    const blob = await this.#dataTree.writeChild(
-      joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`),
-      text,
-    );
-    tx.markMutated();
-    this.#invalidateIndexes();
-    return { blob, path: recordPath };
+    const currentText = await readBlobTextCached(existing);
+    const changed = currentText !== text;
+    return {
+      changed,
+      path: recordPath,
+      currentBlobHash: existing.hash,
+      nextText: text,
+    };
   }
 
   async #deleteInTx(tx: Transaction, target: T | string): Promise<void> {

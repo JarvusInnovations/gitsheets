@@ -72,6 +72,57 @@ title = "Hello, world"
 This is the first post. Body content here.
 ```
 
+## Title from body's H1 (recommended)
+
+The on-disk file above has the title duplicated: once in frontmatter, once as the body's H1. Without help, an author has to keep those in sync — and gets ugly diffs when one drifts.
+
+Opt into title-from-H1 extraction with `[gitsheet.format].title`:
+
+```toml
+[gitsheet.format]
+type = 'markdown'
+body = 'body'
+title = 'title'        # ← the body's first H1 is denormalized into this field
+```
+
+Now the body is the source of truth for the title. The library:
+
+- **Extracts** the title from the body's first `# Heading` line on every write.
+- **Writes** the extracted value into frontmatter (so body-less reads see the title at no I/O cost).
+- **Enforces** the invariant `record.title === <body's first H1, or undefined>` — disagreement on `upsert` throws `ValidationError`.
+- **Auto-enables** markdownlint's `MD041` (first-line-must-be-H1) so bodies that start with prose fail loud.
+
+```typescript
+// Set or rename the title via the body — title is derived on write
+await sheet.upsert({
+  slug: 'hello-world',
+  body: '# Hello, world\n\nFirst post body.',
+});
+
+// Rename via `patch({title})` — the library rewrites the body's H1 for you
+await sheet.patch({ slug: 'hello-world' }, { title: 'A new title' });
+// → body becomes '# A new title\n\nFirst post body.'
+
+// Rename via `patch({body})` — title is re-derived from the new H1
+await sheet.patch(
+  { slug: 'hello-world' },
+  { body: '# Re-titled\n\nDifferent body.' },
+);
+// → record.title === 'Re-titled'
+
+// upsert with disagreeing title + body throws — the consumer's assertion is
+// self-inconsistent.
+await sheet.upsert({
+  slug: 'hello-world',
+  title: 'A',
+  body: '# B\n\nbody',
+}); // throws ValidationError
+```
+
+The asymmetry between `upsert` and `patch` on `{title: 'X'}` mirrors PUT vs PATCH: `upsert` is a state assertion (must be self-consistent), `patch` is a reconciled delta (the operation figures out the rest).
+
+When you don't want this — say the title field exists but isn't tied to the H1 — just leave `title` out of `[gitsheet.format]`. The sheet behaves exactly as it did pre-v1.3.
+
 ## Authoring
 
 Three workflows pair well with the format:

@@ -19,6 +19,7 @@ Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and 
 
 - **[CLI reference](cli.md)** — `git sheet <command>`, global flags, exit codes.
 - **[API reference](api.md)** — public exports + pointers into the per-symbol spec.
+- **[`gitsheets-axi`](axi.md)** — the agent-facing companion CLI (TOON output, idempotent mutations, session hooks).
 - **[Path templates](path-templates.md)** — syntax, recursive fields, query pruning, invalid-char handling.
 - **[Validation](validation.md)** — JSON Schema in `.gitsheets/<sheet>.toml`, optional Standard Schema layering.
 

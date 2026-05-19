@@ -75,6 +75,32 @@ const { blob, path } = await sheet.upsert({
 
 Throws `ValidationError` on invalid input. Throws `PathTemplateError` if the template can't render against the record.
 
+### `sheet.willChange(record, opts?)`
+
+Pre-flight idempotency check for `upsert`. Returns the canonical bytes the upsert would write and whether they differ from the current blob at the rendered path. Does NOT mutate the tree.
+
+```typescript
+const { changed, path, currentBlobHash, nextText } = await sheet.willChange({
+  slug: 'janedoe',
+  email: 'jane@x.org',
+});
+if (changed) {
+  await sheet.upsert({ slug: 'janedoe', email: 'jane@x.org' });
+}
+```
+
+- Runs the same pipeline as `upsert` (body-presence guard, JSON Schema + Standard Schema validation, canonical normalization, path rendering, unique-index conflict check, format serialization) — throws the same errors `upsert` would on the same input.
+- Compares the serialized bytes to the existing blob at the rendered path.
+- Returns `{ changed, path, currentBlobHash, nextText }`:
+  - `changed: boolean` — `true` if the bytes differ, `false` for a logical no-op.
+  - `path: string` — sheet-relative path the record renders to.
+  - `currentBlobHash?: string` — hash of the existing blob, or `undefined` when the record doesn't exist on disk yet.
+  - `nextText: string` — the UTF-8 serialized bytes that `upsert` would write.
+
+`opts` matches `upsert` — `allowMissingBody` behaves the same way.
+
+Intended for consumers that want commit-skipping idempotency semantics: "only commit when something actually changed." The agent-facing CLI (`gitsheets-axi`) uses this to make mutations idempotent — an `upsert` of unchanged content exits 0 with `(no-op)` rather than producing an empty commit.
+
 ### `sheet.delete(recordOrPath)`
 
 ```typescript

@@ -44,7 +44,7 @@ See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 
 ## Authorship conventions
 
-- TypeScript everywhere. `strict: true`. No `.js` in `src/`.
+- TypeScript everywhere. `strict: true`. No `.js` in `packages/gitsheets/src/`.
 - Field naming: `camelCase` in code, in TOML records, and on `Sheet.<field>` config — no casing translation.
 - IDs: consumer's choice (gitsheets doesn't impose UUID/string/numeric). Path templates render whatever the field holds.
 - Timestamps: TOML datetime types preserved by `@iarna/toml`; consumers can also use ISO 8601 strings.
@@ -69,13 +69,16 @@ See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 
 ## Commands (post-1.0)
 
+The repo is an npm workspaces monorepo — the published package lives at `packages/gitsheets/`. Run scripts from the repo root; root proxies (`npm test`, `npm run build`, `npm run type-check`) forward to the `gitsheets` workspace via `-w gitsheets`.
+
 ```bash
 npm install
-npm run build         # tsc → dist/
-npm test              # vitest (or node --test)
+npm run build         # tsc → packages/gitsheets/dist/
+npm test              # vitest
 npm run type-check
-npm run lint
 ```
+
+Single-workspace operations also work directly: `npm install -w gitsheets <pkg>`, `npm test -w gitsheets`.
 
 CLI usage:
 

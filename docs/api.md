@@ -20,6 +20,8 @@ import {
 
   // utilities
   mergePatch, validateRecord,
+  parseToml, parseConfigToml, stringifyRecord,
+  getFormat, hasFormat, registerFormat, resolveFormatConfig,
 
   // record annotation symbols
   RECORD_SHEET_KEY, RECORD_PATH_KEY,
@@ -32,7 +34,7 @@ Type-only exports (selected highlights):
 import type {
   OpenRepoOptions, OpenSheetOptions, OpenSheetsOptions,
   TransactionOptions, TransactionResult, TransactionHandler, Author,
-  SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions,
+  SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions, WillChangeResult,
   SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, QueryOptions,
   DiffStatus, DiffOptions, DiffChange,
   AttachmentBlobHandle, AttachmentEntry,
@@ -44,7 +46,7 @@ import type {
 } from 'gitsheets';
 ```
 
-No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `src/` freely without notice. The package-root surface is the only stable API.
+No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `packages/gitsheets/src/` freely without notice. The package-root surface is the only stable API.
 
 ## Factories
 
@@ -107,11 +109,14 @@ const store = await openStore(repo, {
 | --- | --- |
 | `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for content-typed sheets |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachments |
-| `sheet.patch(query, partial)` | RFC 7396 merge patch over an existing record |
+| `sheet.patch(query, partial)` | RFC 7396 merge patch over an existing record. For content-typed sheets with `[gitsheet.format].title` configured (v1.3): a title-only patch rewrites the body's H1; a body-only patch re-derives the title |
+| `sheet.willChange(record, opts?)` | Pre-flight idempotency check — returns `{ changed, path, currentBlobHash?, nextText }` without mutating the tree (v1.3) |
 | `sheet.clear()` | Remove every record from the sheet's tree |
 | `sheet.clone()` | Clone the Sheet for staging tentative state |
 
 All write methods route through a transaction — permissive mode auto-opens one; strict mode requires `repo.transact`.
+
+`willChange` runs upsert's full validation + normalization + serialization pipeline and compares the resulting bytes to the existing blob at the rendered path. Useful for consumers that want commit-skipping idempotency semantics — "only commit if something actually changed." Throws the same errors upsert would on the same input (`ValidationError`, `IndexError`, `PathTemplateError`).
 
 ### Attachments
 
@@ -244,6 +249,27 @@ RFC 7396 JSON Merge Patch as a pure function. Useful when you want the patch sem
 ### `validateRecord({ record, schema, validator? })`
 
 Run the same validation pipeline `Sheet.upsert` uses without going through a Sheet. Useful for pre-flight (UI form submission, CSV ingest, audit passes against legacy records). Returns the possibly-transformed record on success, throws `ValidationError` on failure. See [`specs/behaviors/validation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md).
+
+### TOML round-tripping
+
+| Symbol | Use |
+| --- | --- |
+| `parseToml(text)` | Parse TOML to a plain object; preserves `@iarna/toml` date types |
+| `parseConfigToml(text, sourcePath)` | Same parse with config-aware error messages — for `.gitsheets/<sheet>.toml` |
+| `stringifyRecord(record)` | Serialize an object to canonical TOML (deep-sorted keys) |
+
+Used by the AXI tool's config-scaffolding commands; available to consumers that need raw config-text round-tripping.
+
+### Format dispatch
+
+| Symbol | Use |
+| --- | --- |
+| `getFormat(type)` | Resolve a format implementation by name (`'toml'`, `'markdown'`, `'mdx'`) |
+| `hasFormat(type)` | Probe whether a format is registered |
+| `registerFormat(type, impl)` | Register a custom format implementation |
+| `resolveFormatConfig(raw)` | Validate and normalize a `[gitsheet.format]` block |
+
+Available for consumers who want to render records through a sheet's configured format without going through a `Sheet` instance.
 
 ## Conventions
 

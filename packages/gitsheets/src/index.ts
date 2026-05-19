@@ -17,6 +17,7 @@ export type {
   SortRule,
   UpsertResult,
   UpsertOptions,
+  WillChangeResult,
   SheetConstructorOptions,
   IndexKeyFn,
   DefineIndexOptions,
@@ -29,6 +30,12 @@ export type {
   AttachmentEntry,
 } from './sheet.js';
 
+export {
+  getFormat,
+  hasFormat,
+  registerFormat,
+  resolveFormatConfig,
+} from './format/index.js';
 export type { Format, FormatConfig } from './format/index.js';
 
 export { mergePatch } from './patch.js';
@@ -58,6 +65,8 @@ export type {
   TransactionResult,
   TransactionHandler,
 } from './transaction.js';
+
+export { parseToml, parseConfigToml, stringifyRecord } from './toml.js';
 
 export { Template } from './path-template/index.js';
 export type {
