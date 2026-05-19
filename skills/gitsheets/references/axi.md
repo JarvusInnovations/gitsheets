@@ -159,6 +159,29 @@ Outputs:
 - `CONFIG_INVALID` when the file fails to parse as the sheet's format
 - `NOT_FOUND` when the target file doesn't exist
 
+#### Claude Code post-edit hook
+
+Add to `.claude/settings.json` (project) or `~/.claude/settings.json` (user-wide):
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "command": "gitsheets-axi check ${SHEET} \"$FILE\" --fix"
+      }
+    ]
+  }
+}
+```
+
+Substitute `${SHEET}` with the sheet name. For multi-sheet repos, point the hook at a wrapper script that infers the sheet from `$FILE`'s path (e.g. `users/jane.toml` → `users`).
+
+#### Pre-commit verification
+
+Drop `--fix` for a non-destructive verification — exits non-zero (with structured `NOT_CANONICAL` / `VALIDATION_FAILED` on stdout) when the file isn't already canonical. Suitable for a git pre-commit hook or a CI step that runs over staged record files.
+
 ### `gitsheets-axi diff <sheet> [<src-ref>] [--patches]`
 
 TOON change summary between a source ref and the current tree. With no `<src-ref>`, compares against the empty tree — every current record shows as `added`, useful for one-shot snapshots.
