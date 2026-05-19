@@ -184,7 +184,7 @@ Fully additive minor release. Existing v1.2 code keeps working.
 
 ### Library
 
-- **`Sheet.willChange(record, opts?)`** — new. Pre-flight idempotency check that runs upsert's full validation + normalization + serialization pipeline and compares the resulting bytes to the existing blob at the rendered path — without mutating the tree. Returns `{ changed, path, currentBlobHash?, nextText }`. Consumers that want commit-skipping semantics ("only commit if something actually changed") can pre-flight + skip when `changed: false`. Throws the same errors `upsert` would.
+- **`Sheet.willChange(record, opts?)`** — new in v1.3.0. Pre-flight idempotency check that runs upsert's full validation + normalization + serialization pipeline and compares the resulting bytes to the existing blob at the rendered path — without mutating the tree. Returns `{ changed, path, currentBlobHash?, nextText }`. Consumers that want commit-skipping semantics ("only commit if something actually changed") can pre-flight + skip when `changed: false`. Throws the same errors `upsert` would.
 - **Title from body's H1.** Content-typed sheets can opt into `[gitsheet.format].title = '<field>'` to denormalize the body's first H1 into a frontmatter field. The library enforces `record.title === <body's first H1, or undefined>` on every write — `upsert` with disagreeing values throws `ValidationError`; `Sheet.patch({title: 'X'})` rewrites the body's H1 for you, `Sheet.patch({body: '# Y\n…'})` re-derives the title. Markdownlint's `MD041` auto-enables to fail loud on bodies that start with prose. Fully backward-compatible — sheets without `[gitsheet.format].title` behave exactly as v1.2. See [`behaviors/content-types.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/content-types.md#title-from-h1) and the [Markdown CMS recipe](recipes/markdown-cms.md#title-from-bodys-h1-recommended).
 - **New utility exports**: `parseToml`, `parseConfigToml`, `stringifyRecord` (TOML round-tripping), `getFormat`, `hasFormat`, `registerFormat`, `resolveFormatConfig` (format dispatch). All were already in the package's internal modules; v1.3 surfaces them at the package root for consumers who need raw-bytes round-tripping or custom format registration.
 - **New public type**: `WillChangeResult`.
@@ -200,6 +200,21 @@ Fully additive minor release. Existing v1.2 code keeps working.
 ### CLI
 
 No new commands on the human `gitsheets` CLI in v1.3. The agent-facing operations (TOON output, idempotent mutations) live in `gitsheets-axi` rather than as flags on the human CLI — the two contracts disagree on too many defaults to coexist in one binary.
+
+## v1.3.0 → v1.3.1
+
+Patch release. Two fixes in service of snapshot-importer-style workflows.
+
+### Library
+
+- **`Sheet.clear()` is now O(1).** Previously walked the sheet's subtree and called `deleteChild` for every entry — fine at sheet sizes of a few hundred records, problematic at tens of thousands. The new implementation uses hologit's `TreeObject.clearChildren()` (added in hologit 0.50.2) to point the subtree at git's empty-tree hash in constant time. Same observable behavior; existing code unchanged.
+- **No-op transactions no longer produce empty commits.** `Transaction#finalize` now compares the resulting tree-hash to the parent commit's tree-hash; equality means the staged state matches the parent and no commit is created. Concretely, **every "clear + re-upsert from snapshot" pattern against unchanged upstream data is now a clean no-op** (`commitHash === null`). Same goes for `upsert(record)` where the record's canonical bytes match what's on disk, and `delete` + re-`upsert` of an identical record.
+
+  **Subtle behavior change:** an explicit `tx.markMutated()` call that isn't paired with a real tree mutation no longer produces a commit. Internal callers (upsert/delete/setAttachments/etc.) always pair `markMutated` with an actual mutation, so this shouldn't affect any real consumer. Consumers who genuinely want empty commits should use `git commit --allow-empty` outside the library.
+
+### Dependency
+
+- `hologit` bumped to a version that ships `TreeObject.clearChildren()` (the O(1) primitive — added in hologit 0.50.1, with the corresponding `index.d.ts` declaration in 0.50.2).
 
 ## Going forward
 
