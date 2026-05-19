@@ -134,7 +134,11 @@ Returns `Promise<{ blob, path }>` matching `upsert`.
 
 ### `sheet.clear()`
 
-Removes every record from the sheet's tree. Used during full-replace imports.
+Removes every record from the sheet's tree. Used during full-replace imports (snapshot importers, full re-syncs).
+
+**O(1)** regardless of record count — internally points the sheet's subtree at git's canonical empty-tree hash (`4b825dc642cb6eb9a060e54bf8d69288fbee4904`) via hologit's `TreeObject.clearChildren()`. Invalidates the sheet's in-memory indexes. The resulting empty subtree is omitted from the committed tree (hologit's `write()` skips empty subtrees), so consumers querying the committed sheet root after a clear see no entries.
+
+Pairs naturally with `Transaction#finalize`'s no-op detection (see [transaction.md](transaction.md)) — a `clear()` + re-upsert of byte-identical data produces no commit.
 
 ### `sheet.clone()`
 

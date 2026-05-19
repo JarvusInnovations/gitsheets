@@ -9,6 +9,15 @@ import type { Readable } from 'node:stream';
 import type { BlobObject, TreeObject, Workspace } from 'hologit';
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
+// TODO: remove once hologit ships >=0.50.2 with this in its index.d.ts.
+// JS method was added in hologit#455 (shipped in 0.50.1); the type
+// declaration was a follow-up in hologit#457.
+declare module 'hologit' {
+  interface TreeObject {
+    clearChildren(): void;
+  }
+}
+
 import {
   ConfigError,
   IndexError,
@@ -946,14 +955,14 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const config = await this.readConfig();
     const sheetTree = await this.#dataTree.getSubtree(this.#effectiveRoot(config), true);
     if (sheetTree) {
-      const children = await sheetTree.getChildren();
-      const names: string[] = [];
-      for (const k in children) names.push(k);
-      for (const childName of names) {
-        await sheetTree.deleteChild(childName);
-      }
+      // O(1) — drops both pending and base children in-place. The
+      // serialized subtree becomes git's empty-tree hash, which hologit's
+      // tree write() already skips when emitting parent entries.
+      // See specs/api/sheet.md#clear.
+      sheetTree.clearChildren();
     }
     this.#transaction.markMutated();
+    this.#invalidateIndexes();
   }
 
   async clone(): Promise<Sheet<T>> {
