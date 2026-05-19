@@ -58,9 +58,11 @@ If the user is heading toward one of these, gently steer them back:
 
 ## Editing record files directly (post-edit hook)
 
-If you're going to edit gitsheets record files (`.toml` or `.md`) directly on disk rather than through the API, install a post-edit hook that runs `gitsheets check <sheet> $FILE --fix` after each edit. This re-canonicalizes the file (deep-sorted keys, normalized markdown body) and validates against the sheet's schema, catching mistakes immediately rather than at the next git commit. Hook examples in `references/cli.md` under the `check` command.
+If you're going to edit gitsheets record files (`.toml` or `.md`) directly on disk rather than through the API, install a post-edit hook that runs `gitsheets-axi check <sheet> $FILE --fix` after each edit. This re-canonicalizes the file (deep-sorted keys, normalized markdown body) and validates against the sheet's schema, catching mistakes immediately rather than at the next git commit. Hook examples in `references/axi.md`.
 
-For CI / pre-commit verification, drop the `--fix`: `gitsheets check <sheet> $FILE` exits non-zero if the file isn't already canonical, without touching it.
+`gitsheets-axi` is preferred for hook use because its output is TOON on stdout with stable error codes (`VALIDATION_FAILED`, `CONFIG_INVALID`, `NOT_CANONICAL`, etc.) — an agent reading the hook's stdout can switch on the outcome. The human `gitsheets check` works too and is documented in `references/cli.md`; pick it when `gitsheets-axi` isn't installed in the environment.
+
+For CI / pre-commit verification, drop the `--fix`: `gitsheets-axi check <sheet> $FILE` exits non-zero if the file isn't already canonical, without touching it.
 
 ## When you genuinely don't know
 
