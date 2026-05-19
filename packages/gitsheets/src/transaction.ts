@@ -243,6 +243,34 @@ export class Transaction {
 
     const gitDir = this.#hologitRepo.gitDir;
     const treeHash = await this.#workspace.root.write();
+
+    // No-op detection: if the resulting tree-hash matches the parent
+    // commit's tree-hash, nothing actually changed. Skip the commit-tree
+    // spawn + ref update — same return shape as the `!#anyMutation` path
+    // above. The `#anyMutation` flag tracks "a mutating method was
+    // called," which over-approximates: clear() on an already-empty
+    // sheet, upsert() of byte-identical content, and bulk reimport-with-
+    // unchanged-data patterns all set the flag without changing the
+    // tree. Tree-hash equality is the canonical git-native truth.
+    // See specs/api/transaction.md#no-op-detection.
+    if (this.#parentCommitHash !== null) {
+      const { stdout: parentTreeStdout } = await exec(
+        'git',
+        ['rev-parse', `${this.#parentCommitHash}^{tree}`],
+        { cwd: gitDir },
+      );
+      const parentTreeHash = parentTreeStdout.trim();
+      if (parentTreeHash === treeHash) {
+        return {
+          value,
+          commitHash: null,
+          treeHash: null,
+          ref: null,
+          parentCommitHash: this.#parentCommitHash,
+        };
+      }
+    }
+
     const message = formatCommitMessage(this.#message, this.#trailers);
 
     let commitHash: string;

@@ -82,6 +82,32 @@ In **strict mode** (`repo.requireExplicitTransactions()`), mutations outside `re
 
 If the parent ref moves between transaction open and commit (a separate process committed), the transaction throws `TransactionError` (`parent_moved`). The handler's tree changes are discarded.
 
+## No-op detection
+
+`finalize` skips the commit entirely when the resulting tree-hash matches the parent commit's tree-hash:
+
+```text
+new_tree_hash := await workspace.root.write()
+if parentCommitHash !== null and (parentCommitHash^{tree}) === new_tree_hash:
+    return { value, commitHash: null, treeHash: null, ref: null, parentCommitHash }
+```
+
+Two conditions must both hold to detect the no-op:
+
+1. **A parent commit exists.** On a fresh repo (`parentCommitHash === null`), an initial commit IS produced even if the tree is empty — there's no parent tree to compare against. This is intentional: an initial commit is a meaningful event the consumer asked for.
+2. **The resulting tree hash equals the parent's tree hash.** This is the canonical git-native "did anything actually change?" check, computed in O(tree-depth) by `git rev-parse <commit>^{tree}`.
+
+When both conditions hold, the return shape matches the existing `!anyMutation` short-circuit (`commitHash: null`, `treeHash: null`, `ref: null`). Consumers detect a no-op via `result.commitHash === null`.
+
+**This means the following all produce no commit:**
+
+- `upsert(record)` where the record's canonical bytes match the existing blob
+- `clear()` + re-`upsert` from a snapshot whose data is unchanged from the parent's
+- `delete(path)` + `upsert` of an identical record at the same path
+- An explicit `tx.markMutated()` call that isn't accompanied by an actual tree mutation
+
+The last bullet is a behavior change from v1.3.0, where `markMutated()` alone forced a commit. Real consumers of `markMutated` (internal callers like `upsert`/`delete`/`setAttachments`) always pair it with an actual mutation, so this isn't expected to break anyone. Consumers who genuinely want empty commits should use `git commit --allow-empty` outside the library.
+
 ## Permissive mode
 
 Standalone mutations (mutations called without an enclosing `repo.transact`) auto-open a transaction with a generated message:

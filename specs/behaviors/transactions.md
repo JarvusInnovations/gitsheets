@@ -26,13 +26,17 @@ Multi-process / multi-host writers are explicitly out of scope. If another proce
 ## Commit-on-success-only
 
 ```text
-handler resolves successfully + tree has at least one staged change
-  → finalize: validate the staged tree, commit, update ref
+handler resolves successfully + resulting tree differs from parent's tree
+  → finalize: write tree, commit, update ref
   → resolve { value, commitHash, treeHash, ref, parentCommitHash }
 
-handler resolves successfully but no mutations occurred
-  → permissive mode: no commit, resolves with { value, commitHash: null, ... }
-  → explicit `repo.transact`: same — empty transactions don't commit
+handler resolves successfully but resulting tree matches parent's tree
+  → no commit produced (tree-hash equality check)
+  → resolve { value, commitHash: null, treeHash: null, ref: null, parentCommitHash }
+
+handler resolves successfully but no mutating methods were called
+  → no commit produced (anyMutation flag short-circuit)
+  → resolve { value, commitHash: null, treeHash: null, ref: null, parentCommitHash }
 
 handler throws
   → tree discarded, no commit, no ref movement
@@ -41,6 +45,8 @@ handler throws
 ```
 
 This differs from the [pre-v1.0 PR #38 prototype](https://github.com/JarvusInnovations/gitsheets/pull/38), which committed unconditionally when `save()` was called. The commit-on-success-only rule is a hard requirement for production use — a half-applied mutation in the log is worse than no log entry.
+
+**Two short-circuit paths, same return shape.** The library tracks an `anyMutation` flag as a cheap heuristic (set by `upsert`/`delete`/`clear`/etc.), but that flag is an over-approximation. The authoritative no-op signal is tree-hash equality with the parent: after `workspace.root.write()` produces the resulting tree hash, it's compared to `parentCommitHash^{tree}`. A match means semantically nothing changed, and the same `{ commitHash: null, ... }` return path fires. See [api/transaction.md#no-op-detection](../api/transaction.md#no-op-detection) for examples (re-upsert of byte-identical record; `clear()` + re-upsert of unchanged snapshot data; etc.). On a fresh repo (no parent), no tree-hash comparison is possible — an initial commit IS produced even when the tree is empty.
 
 ## Commit message format
 
