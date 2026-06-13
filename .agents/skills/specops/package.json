@@ -19,7 +19,7 @@
     "@toon-format/toon": "2.3.0",
     "@types/node": "^22.0.0",
     "axi-sdk-js": "0.1.7",
-    "esbuild": "0.28.0",
+    "esbuild": "0.28.1",
     "typescript": "^5.6.0"
   }
 }
