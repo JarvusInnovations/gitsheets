@@ -1,6 +1,6 @@
 # gitsheets-axi
 
-`gitsheets-axi` is the agent-facing companion to `gitsheets`. Same library underneath, different ergonomics: TOON output by default, errors on stdout, idempotent mutations, format-aware schemas, self-installing session hooks.
+`gitsheets-axi` is the agent-facing companion to `gitsheets`. Same library underneath, different ergonomics: TOON output by default, errors on stdout, idempotent mutations, format-aware schemas, and opt-in session hooks installed via `gitsheets-axi setup hooks`.
 
 ```bash
 npm install -g gitsheets-axi
@@ -36,7 +36,7 @@ Every difference is in service of agents talking to the CLI through shell execut
 | Default output | JSON / pretty per `--format` | **TOON** (~40% fewer tokens), `--format=json` opt-out |
 | Default schema | every field a human might want | **minimal**, `--fields` opts in to more |
 | `--help` | full manual per command | concise reference + 2-3 examples |
-| Session-hook install | doesn't touch agent config | **self-installs** SessionStart hooks |
+| Session-hook install | doesn't touch agent config | **opt-in** SessionStart hooks via `setup hooks` |
 
 ## Output: TOON
 
@@ -77,14 +77,19 @@ Under the hood, mutations use the library's [`Sheet.willChange()`](api.md) (adde
 
 ## Session hooks
 
-On first invocation, `gitsheets-axi` self-installs `SessionStart` hooks into:
+Hooks are **opt-in** (AXI principle 7 — explicit consent, never implicit). Nothing is installed until you run the explicit installer:
+
+```bash
+gitsheets-axi setup hooks
+```
+
+This installs `SessionStart` hooks into:
 
 - **Claude Code** — `~/.claude/settings.json`
 - **Codex** — `~/.codex/hooks.json` + `[features].hooks = true` in `config.toml`
+- **OpenCode**
 
-The hook runs the bare home view at every session start, so the agent's initial context already includes a compact view of the current repo's sheets. The install is **self-healing** — every invocation re-checks the hook's binary path and updates it if the executable moved (reinstall, asdf version change, etc.).
-
-Set `GITSHEETS_AXI_DISABLE_HOOKS=1` to suppress installation.
+The hook runs the bare home view at every session start, so the agent's initial context already includes a compact view of the current repo's sheets. `setup hooks` is **idempotent and self-repairing** — re-running re-checks each hook's binary path and updates it if the executable moved (reinstall, asdf version change, etc.). Restart your agent session afterward to pick up the ambient context.
 
 ## Commands
 
@@ -104,6 +109,7 @@ gitsheets-axi infer <sheet>              # observe records → schema
 gitsheets-axi migrate-config <sheet>     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
 gitsheets-axi push                       # one-shot git push
+gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 ```
 
 Every command supports `--help` with its specific flags and 2-3 examples.

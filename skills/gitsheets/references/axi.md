@@ -1,6 +1,6 @@
 # gitsheets-axi reference
 
-`gitsheets-axi` is the **agent-facing** companion to `gitsheets`. Same underlying library, different ergonomics: TOON output by default, errors on stdout, idempotent mutations, format-aware schemas, self-installing session hooks.
+`gitsheets-axi` is the **agent-facing** companion to `gitsheets`. Same underlying library, different ergonomics: TOON output by default, errors on stdout, idempotent mutations, format-aware schemas, and opt-in session hooks installed via `gitsheets-axi setup hooks`.
 
 **Use `gitsheets-axi` when an agent is reading or mutating gitsheets data via shell execution.** Use the `gitsheets` library (TypeScript imports) when authoring code that runs inside an application.
 
@@ -9,7 +9,7 @@ npm install -g gitsheets-axi    # one-time global install
 gitsheets-axi                   # session-aware home view
 ```
 
-`gitsheets-axi` shares the gitsheets minor version (1.3.x ↔ 1.3.x). Major and minor stay in lockstep; patch versions are independent. The binary self-installs `SessionStart` hooks for Claude Code and Codex on first invocation — once installed, every new agent session sees a TOON home view of the current repo's sheets.
+`gitsheets-axi` shares the gitsheets minor version (1.3.x ↔ 1.3.x). Major and minor stay in lockstep; patch versions are independent. Run `gitsheets-axi setup hooks` once to install opt-in `SessionStart` hooks for Claude Code, Codex, and OpenCode — once installed, every new agent session sees a TOON home view of the current repo's sheets.
 
 ## Output: TOON
 
@@ -228,6 +228,10 @@ Errors map to:
 
 This is **not** a daemon lifecycle command — for retry-with-backoff semantics in a long-running consumer, use `Repository.startPushDaemon` from the library.
 
+### `gitsheets-axi setup hooks`
+
+Explicit, opt-in installer for the agent `SessionStart` hooks (see [Hook installation](#hook-installation)). Installs into Claude Code, Codex, and OpenCode. Idempotent and self-repairing — re-running repairs a stale executable path. `--help` prints usage; any action other than `hooks` exits non-zero with a `VALIDATION_ERROR`. Restart the agent session afterward to pick up the ambient context.
+
 ## When to use `gitsheets-axi` vs `gitsheets`
 
 | Scenario | Use |
@@ -243,14 +247,19 @@ When in doubt: `gitsheets-axi` for agent shell invocations; `gitsheets` for ever
 
 ## Hook installation
 
-`gitsheets-axi` self-installs SessionStart hooks on first invocation:
+Hooks are **opt-in** (AXI principle 7 — explicit consent, never implicit). Nothing is installed until you run the explicit installer:
+
+```bash
+gitsheets-axi setup hooks
+```
+
+This installs SessionStart hooks into:
 
 - **Claude Code** — `~/.claude/settings.json` SessionStart entry
 - **Codex** — `~/.codex/hooks.json` SessionStart entry + `[features].hooks = true` in `config.toml`
+- **OpenCode**
 
-The hook runs `gitsheets-axi` (the bare home view), so every new session opens with a compact view of the current repo's sheets already in context. The install is **self-healing**: every invocation re-checks the hook's binary path and updates it if the executable moved (reinstall, asdf version change).
-
-Disable hooks for the current invocation with `GITSHEETS_AXI_DISABLE_HOOKS=1`.
+The hook runs `gitsheets-axi` (the bare home view), so every new session opens with a compact view of the current repo's sheets already in context. `setup hooks` is **idempotent and self-repairing**: re-running re-checks each hook's binary path and updates it if the executable moved (reinstall, asdf version change). Restart the agent session afterward to pick up the ambient context.
 
 ## See also
 
