@@ -1196,7 +1196,7 @@
 
 
 <h1 id="gitsheets-axi">gitsheets-axi<a class="headerlink" href="#gitsheets-axi" title="Permanent link"> ¶</a></h1>
-<p><code>gitsheets-axi</code> is the agent-facing companion to <code>gitsheets</code>. Same library underneath, different ergonomics: TOON output by default, errors on stdout, idempotent mutations, format-aware schemas, self-installing session hooks.</p>
+<p><code>gitsheets-axi</code> is the agent-facing companion to <code>gitsheets</code>. Same library underneath, different ergonomics: TOON output by default, errors on stdout, idempotent mutations, format-aware schemas, and opt-in session hooks installed via <code>gitsheets-axi setup hooks</code>.</p>
 <div class="highlight"><pre><span></span><code>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>gitsheets-axi
 gitsheets-axi<span class="w">              </span><span class="c1"># session-aware home view in a gitsheets-managed repo</span>
 </code></pre></div>
@@ -1282,7 +1282,7 @@ gitsheets-axi<span class="w">              </span><span class="c1"># session-awa
 <tr>
 <td>Session-hook install</td>
 <td>doesn&rsquo;t touch agent config</td>
-<td><strong>self-installs</strong> SessionStart hooks</td>
+<td><strong>opt-in</strong> SessionStart hooks via <code>setup hooks</code></td>
 </tr>
 </tbody>
 </table>
@@ -1312,13 +1312,16 @@ path: jane
 <p>Same goes for <code>patch</code>, <code>delete</code>, <code>check --fix</code>, <code>normalize</code>, <code>init</code>, <code>infer</code>, <code>migrate-config</code>, <code>attachment set</code>, <code>attachment delete</code>, and <code>push</code> — re-runs with unchanged input produce no commit.</p>
 <p>Under the hood, mutations use the library&rsquo;s <a href="../api/"><code>Sheet.willChange()</code></a> (added in v1.3) to check whether the canonical bytes would differ from what&rsquo;s already at the rendered path. Re-runnable workflows can safely retry on disconnects without bookkeeping.</p>
 <h2 id="session-hooks">Session hooks<a class="headerlink" href="#session-hooks" title="Permanent link"> ¶</a></h2>
-<p>On first invocation, <code>gitsheets-axi</code> self-installs <code>SessionStart</code> hooks into:</p>
+<p>Hooks are <strong>opt-in</strong> (AXI principle 7 — explicit consent, never implicit). Nothing is installed until you run the explicit installer:</p>
+<div class="highlight"><pre><span></span><code>gitsheets-axi<span class="w"> </span>setup<span class="w"> </span>hooks
+</code></pre></div>
+<p>This installs <code>SessionStart</code> hooks into:</p>
 <ul>
 <li><strong>Claude Code</strong> — <code>~/.claude/settings.json</code></li>
 <li><strong>Codex</strong> — <code>~/.codex/hooks.json</code> + <code>[features].hooks = true</code> in <code>config.toml</code></li>
+<li><strong>OpenCode</strong></li>
 </ul>
-<p>The hook runs the bare home view at every session start, so the agent&rsquo;s initial context already includes a compact view of the current repo&rsquo;s sheets. The install is <strong>self-healing</strong> — every invocation re-checks the hook&rsquo;s binary path and updates it if the executable moved (reinstall, asdf version change, etc.).</p>
-<p>Set <code>GITSHEETS_AXI_DISABLE_HOOKS=1</code> to suppress installation.</p>
+<p>The hook runs the bare home view at every session start, so the agent&rsquo;s initial context already includes a compact view of the current repo&rsquo;s sheets. <code>setup hooks</code> is <strong>idempotent and self-repairing</strong> — re-running re-checks each hook&rsquo;s binary path and updates it if the executable moved (reinstall, asdf version change, etc.). Restart your agent session afterward to pick up the ambient context.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code>gitsheets-axi                            # home view (bare invocation)
 gitsheets-axi sheets [list|view &lt;name&gt;]  # sheets in this repo
@@ -1335,6 +1338,7 @@ gitsheets-axi infer &lt;sheet&gt;              # observe records → schema
 gitsheets-axi migrate-config &lt;sheet&gt;     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment &lt;list|get|set|delete&gt; &lt;sheet&gt; &lt;path&gt; [&lt;name&gt;]
 gitsheets-axi push                       # one-shot git push
+gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 </code></pre></div>
 <p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link"> ¶</a></h2>
