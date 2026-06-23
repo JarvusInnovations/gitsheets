@@ -7,7 +7,7 @@ Same underlying library as the human `gitsheets` CLI, different ergonomics:
 - **TOON output** by default — ~40% fewer tokens than equivalent JSON
 - **Idempotent mutations** — re-running with unchanged state returns `result: "no-op"`, no commit
 - **Errors on stdout** with stable codes and actionable hints
-- **Self-installing session hooks** for Claude Code and Codex
+- **Opt-in session hooks** for Claude Code, Codex, and OpenCode (`gitsheets-axi setup hooks`)
 
 ```bash
 npm install -g gitsheets-axi
@@ -44,6 +44,7 @@ gitsheets-axi infer <sheet>
 gitsheets-axi migrate-config <sheet>
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
 gitsheets-axi push [--remote r] [--branch b]
+gitsheets-axi setup hooks
 ```
 
 Run any command with `--help` for its flags + examples. Every command runs `--help` against itself, not the top-level manual.
@@ -67,14 +68,19 @@ path: jane
 
 ## Session hooks
 
-On first invocation, `gitsheets-axi` installs `SessionStart` hooks into:
+Hooks are **opt-in** — nothing is installed implicitly. Run the explicit installer once:
+
+```bash
+gitsheets-axi setup hooks
+```
+
+This installs `SessionStart` hooks into:
 
 - **Claude Code** — `~/.claude/settings.json`
 - **Codex** — `~/.codex/hooks.json` + `[features].hooks = true` in `config.toml`
+- **OpenCode**
 
-The hook runs the bare home view at every session start, so the agent sees the current repo's sheets in its initial context. The install **self-heals** — every invocation re-checks the hook's binary path and updates it if the executable moved.
-
-Set `GITSHEETS_AXI_DISABLE_HOOKS=1` to suppress installation.
+The hook runs the bare home view at every session start, so the agent sees the current repo's sheets in its initial context. `setup hooks` is **idempotent and self-repairing** — re-running re-checks each hook's binary path and updates it if the executable moved (reinstall, asdf version change, etc.). Restart your agent session after installing to pick up the ambient context.
 
 ## Output: TOON
 

@@ -25,6 +25,7 @@ import {
 } from '../src/commands/migrate-config.js';
 import { attachmentCommand, ATTACHMENT_HELP } from '../src/commands/attachment.js';
 import { pushCommand, PUSH_HELP } from '../src/commands/push.js';
+import { setupCommand, SETUP_HELP } from '../src/commands/setup.js';
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
@@ -41,6 +42,7 @@ const COMMAND_HELP: Record<string, string> = {
   'migrate-config': MIGRATE_CONFIG_HELP,
   attachment: ATTACHMENT_HELP,
   push: PUSH_HELP,
+  setup: SETUP_HELP,
 };
 
 const COMMANDS = {
@@ -58,6 +60,7 @@ const COMMANDS = {
   'migrate-config': migrateConfigCommand,
   attachment: attachmentCommand,
   push: pushCommand,
+  setup: setupCommand,
 } as Record<
   string,
   (args: string[], ctx: GitsheetsContext | undefined) => Promise<string | Record<string, unknown>>

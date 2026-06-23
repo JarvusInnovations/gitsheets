@@ -19,6 +19,7 @@ import { inferCommand, INFER_HELP } from './commands/infer.js';
 import { migrateConfigCommand, MIGRATE_CONFIG_HELP } from './commands/migrate-config.js';
 import { attachmentCommand, ATTACHMENT_HELP } from './commands/attachment.js';
 import { pushCommand, PUSH_HELP } from './commands/push.js';
+import { setupCommand, SETUP_HELP } from './commands/setup.js';
 
 const DESCRIPTION =
   'gitsheets — agent-facing interface for the git-backed document store. ' +
@@ -27,12 +28,12 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[15]:
+commands[16]:
   (none)=home, sheets, query, read,
   upsert, patch, delete,
   check, diff, normalize,
   init, infer, migrate-config,
-  attachment, push
+  attachment, push, setup
 flags[2]:
   --help, -v/-V/--version
 examples:
@@ -47,6 +48,7 @@ examples:
   gitsheets-axi infer users
   gitsheets-axi attachment list users jane
   gitsheets-axi push
+  gitsheets-axi setup hooks
 `;
 
 const COMMAND_HELP: Record<string, string> = {
@@ -64,6 +66,7 @@ const COMMAND_HELP: Record<string, string> = {
   'migrate-config': MIGRATE_CONFIG_HELP,
   attachment: ATTACHMENT_HELP,
   push: PUSH_HELP,
+  setup: SETUP_HELP,
 };
 
 type CommandFn = (args: string[], ctx: GitsheetsContext) => Promise<string | Record<string, unknown>>;
@@ -83,6 +86,7 @@ const COMMANDS: Record<string, CommandFn> = {
   'migrate-config': migrateConfigCommand,
   attachment: attachmentCommand,
   push: pushCommand,
+  setup: setupCommand,
 };
 
 export async function main(): Promise<void> {
@@ -90,7 +94,6 @@ export async function main(): Promise<void> {
     description: DESCRIPTION,
     version: VERSION,
     topLevelHelp: TOP_HELP,
-    ...(process.env.GITSHEETS_AXI_DISABLE_HOOKS === '1' ? { hooks: false as const } : {}),
     resolveContext: () => createContext(),
     home: (_args, ctx) => homeCommand(ctx as GitsheetsContext),
     commands: COMMANDS as Record<
