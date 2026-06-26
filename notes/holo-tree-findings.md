@@ -111,6 +111,33 @@ expected-old-value would let the substrate enforce it natively.
 
 ---
 
+## Benchmark — substrate-level, real data
+
+`packages/gitsheets/bench/holo-tree-bench.mjs` against the codeforphilly-data
+`published` tree (the `people` sheet: **18,203 records in one flat directory**).
+Both sides do identical work — load the people tree, insert record(s), rebuild,
+commit, advance a ref — differing only in substrate. **release** binding build.
+
+| Workload | JS (hologit + git subprocess) | holo (gix, in-process) | speedup |
+| --- | --- | --- | --- |
+| single upsert → commit | ~100 ms median | ~25 ms median | **~4×** |
+| bulk: 500 upserts → 1 commit | ~186 ms median | ~41 ms median | **~4.6×** |
+
+Tree-hash parity confirmed on the real 18k tree (not just unit fixtures).
+
+Notes:
+
+- **Build mode matters enormously.** A *debug* binding measured ~2.4× *slower*
+  than JS; the same code in *release* is ~4–5× *faster*. Any consumer benchmark
+  must use `napi build --release`.
+- This is **conservative**: the binding still calls `to_thread_local()` on every
+  method (finding #5) and gix's object cache is default-disabled — both leave
+  speedup on the table.
+- Not the "~100x" from #127 — that figure is for micro tree-ops / the projection
+  hot loop, not a single big-tree commit. ~4–5× is the honest number for
+  gitsheets' commit-a-change-to-a-large-sheet workload, and it grows with sheet
+  size (the JS in-memory rebuild of an 18k-entry tree dominates its time).
+
 ## What worked well
 
 - **Tree-build parity is byte-identical.** For single and bulk upserts, holo-tree
