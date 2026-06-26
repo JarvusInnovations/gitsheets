@@ -169,6 +169,15 @@ When the awaited thing happens, delete the matching entry from `awaits:`. Git hi
 
 `specops dag` styles nodes with non-empty `awaits:` distinctly (dashed border) so the external dependency is visible in the rendered graph.
 
+## Proposal plans
+
+Sometimes the deliverable is a *decision*, not code: a spec or contract authored for a downstream or cross-team consumer to implement, or a design that needs sign-off before anyone builds against it. These are first-class plans — the proposal artifact (a `specs/api/*.md` contract, an ADR, a data-model sketch) is the thing that ships and goes on the record — but they are deliberately scoped-not-built.
+
+- **Status + `awaits:`.** A proposal that cannot be built until an external party acts is `status: blocked` with a non-empty `awaits:` naming what's awaited (the downstream team's implementation, a partner sign-off, an upstream release). If part of the scope can proceed now, `status: planned`/`in-progress` + `awaits:` is fine. Either way `awaits:` must be present — `status: blocked` with an empty `awaits:` is the smell the scripts flag (see [Relationship to `status`](#relationship-to-status)).
+- **Body.** Keep the section headings, but a proposal legitimately has a thin Approach (there's no implementation yet) and folds most of its substance into Scope, Implements, and Risks. Don't delete the headings — an explicit `## Approach` reading "n/a until <blocker> clears" is clearer than a missing one.
+- **Shipping it.** The proposal lands as a record so the contract is versioned and shareable; merging the plan/spec does **not** imply the work is built — the plan stays `blocked`. Signal intent on the PR: open it as a draft and title it so reviewers see it's a proposal, e.g. `docs(specs): PROPOSAL — <feature>`. Cross-team agreement gates *implementation*, not the merge of the record.
+- **Closing the loop.** When the awaited thing lands, clear the matching `awaits:` entry and either flip the plan to `in-progress`, or spawn the implementation plan(s) with `depends:` on the now-merged contract and let the proposal freeze as the historical record of the decision.
+
 ## The closeout commit
 
 The last commit on the implementation branch, before merge, does **five things in one shot** under the message `chore(plans): mark <slug> done (PR #<n>)`:
@@ -243,6 +252,7 @@ Plans implement specs. Concretely:
 
 - **A plan's `specs:` field lists what it implements.** The implementation must match those specs — the spec-drift auditor will hold it accountable.
 - **Specs come first.** If you realize a spec needs to change mid-plan, the spec change is its own PR before the plan continues. Don't quietly drift the spec to match what you ended up coding.
+- **A spec change ripples to its plans.** When a spec changes, the plans that list it in `specs:` may no longer describe correct motion. Review them and update those affected — revise a `planned` plan in place; flag the owner of an `in-progress` one rather than rewriting under them. Find them with `grep -l '<spec-path>' plans/*.md`.
 - **Plans don't propose specs.** Specs are decided through their own review process. A plan's job is execution against an already-agreed-on state.
 - **The spec-drift auditor reads `specs/`, never `plans/`.** Plans rot fast and are expected to. Specs are the auditable source of truth.
 - **Durable judgment belongs in specs, not frozen in plan Notes.** Closeout Notes capture decisions and gotchas — but a plan freezes, and a *governing principle* buried in a frozen plan is invisible to the next agent, who will re-litigate it. If a decision made during the plan will shape *future* work (not just record what happened in this one), promote it to the relevant spec or `principles.md` through the spec's own PR (per "Specs come first" above), and let the plan Note just point to it. This is the plans-side of the standing vigilance in [specops: ALWAYS watch for decisions and principles that belong in a spec](../SKILL.md#always-watch-for-decisions-and-principles-that-belong-in-a-spec).

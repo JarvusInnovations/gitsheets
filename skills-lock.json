@@ -4,8 +4,8 @@
     "specops": {
       "source": "JarvusInnovations/specops",
       "sourceType": "github",
-      "skillPath": "SKILL.md",
-      "computedHash": "9d6cb1c896ae42426e0252b790cd16dfd1e23d8c71c541d9f2ead79ebfa0ab6b"
+      "skillPath": "skills/specops/SKILL.md",
+      "computedHash": "54500128a9406575f8f007b1899c1918186f4dc71df93aac6cab06ff3bf1a10c"
     }
   }
 }
