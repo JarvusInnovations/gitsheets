@@ -125,6 +125,30 @@ describe('holo-tree parity (#127)', () => {
     expect(onDisk).toContain('name = "widget one"');
   });
 
+  it('attributes the holo commit to the transaction’s explicit author', async () => {
+    const fixture = await seedRepo();
+    // git config identity is "gitsheets test" — an explicit author distinct
+    // from it proves the identity threads through the binding (holo-tree's
+    // commit_tree now takes explicit signatures) rather than falling back to
+    // git config.
+    const author = { name: 'Spike Author', email: 'spike@example.com' };
+
+    const holo = await openRepo({ gitDir: fixture.gitDir });
+    holo.enableHoloTree();
+    const result = await holo.transact(
+      { branch: 'main', message: 'authored via holo-tree', author },
+      async (tx) => {
+        await tx.sheet('widgets').upsert({ id: '1', name: 'widget one' });
+      },
+    );
+
+    expect(result.commitHash).not.toBeNull();
+    const an = (await fixture.git('show', '-s', '--format=%an', result.commitHash!)).stdout.trim();
+    const ae = (await fixture.git('show', '-s', '--format=%ae', result.commitHash!)).stdout.trim();
+    expect(an).toBe('Spike Author');
+    expect(ae).toBe('spike@example.com');
+  });
+
   it('preserves no-op detection under the holo-tree path', async () => {
     const fixture = await seedRepo();
     const holo = await openRepo({ gitDir: fixture.gitDir });

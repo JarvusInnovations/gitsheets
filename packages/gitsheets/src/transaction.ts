@@ -26,10 +26,22 @@ interface HoloTreeHandle {
   deleteChildDeep(path: string): boolean;
   write(): string;
 }
+interface HoloSignature {
+  name: string;
+  email: string;
+  timeSeconds?: number;
+  offsetMinutes?: number;
+}
 interface HoloRepoHandle {
   createTreeFromRef(gitRef: string): HoloTreeHandle;
   createTree(): HoloTreeHandle;
-  commitTree(treeHash: string, parents: string[], message: string): string;
+  commitTree(
+    treeHash: string,
+    parents: string[],
+    message: string,
+    author?: HoloSignature,
+    committer?: HoloSignature,
+  ): string;
   updateRef(refname: string, hash: string): void;
 }
 interface HoloBinding {
@@ -387,17 +399,23 @@ export class Transaction {
    * holo-tree spike (#127): create the commit + advance the ref through the
    * binding, retiring the `git commit-tree` / `update-ref` subprocesses.
    *
-   * FINDING (notes/holo-tree-findings.md): holo-tree's `commit_tree` derives
-   * author/committer from git config + the current time; it does not accept the
-   * explicit identity/time this transaction resolved. So the commit honors
-   * git-config identity here, and commit-hash parity with the JS path is not
-   * yet achievable — fix is an upstream `commit_tree` that takes identity+time.
+   * Passes this transaction's resolved author/committer identity to the
+   * binding (holo-tree's `commit_tree` now accepts explicit signatures), so the
+   * holo path attributes commits the same way the JS path does. Time is left
+   * unset → the binding stamps the current time, matching `git commit-tree`'s
+   * default; pinning a time on both paths yields bit-identical commit hashes.
    */
   #holoCommit(holoRepo: HoloRepoHandle, treeHash: string, message: string): string {
     let commitHash: string;
     try {
       const parents = this.#parentCommitHash ? [this.#parentCommitHash] : [];
-      commitHash = holoRepo.commitTree(treeHash, parents, message);
+      commitHash = holoRepo.commitTree(
+        treeHash,
+        parents,
+        message,
+        { name: this.#author.name, email: this.#author.email },
+        { name: this.#committer.name, email: this.#committer.email },
+      );
     } catch (err) {
       throw new TransactionError(
         'commit_failed',

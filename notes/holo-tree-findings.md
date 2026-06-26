@@ -45,21 +45,26 @@ lowercase name ("Standalone references must be all uppercased"). gitsheets'
 Fix (hologit `96d710b7`): `update_ref` qualifies a bare name to
 `refs/heads/<name>`; qualified names and all-caps pseudo-refs pass through.
 
-## 3. `commit_tree` can't take explicit author/committer/time — **Open**
+## 3. `commit_tree` can't take explicit author/committer/time — **Fixed**
 
 **Severity: high** (correctness + blocks commit-hash parity).
 
-`holo_tree::repo::commit_tree(repo, tree, parents, message)` derives identity
-from git config and stamps `SystemTime::now()`. gitsheets resolves an explicit
-author/committer per transaction (constructor opts, or a documented anonymous
-fallback) and the JS path sets `GIT_AUTHOR_*`/`GIT_COMMITTER_*` per commit. Via
-holo-tree the commit silently gets git-config identity instead, and the
-uncontrollable timestamp means **commit-hash parity with the JS path is not
-achievable** — so the spike asserts tree-hash parity only.
+`holo_tree::repo::commit_tree` used to derive identity from git config and stamp
+`SystemTime::now()`. gitsheets resolves an explicit author/committer per
+transaction (constructor opts, or a documented anonymous fallback) and the JS
+path sets `GIT_AUTHOR_*`/`GIT_COMMITTER_*` per commit. Via holo-tree the commit
+silently got git-config identity instead, and the uncontrollable timestamp meant
+commit-hash parity with the JS path was unachievable.
 
-Recommendation: `commit_tree` should accept explicit author + committer
-signatures (name/email/time), e.g. an options struct, falling back to config as
-today. This is the last gap to a true drop-in commit path.
+Fix (hologit branch): `commit_tree` now takes
+`author: Option<Signature>, committer: Option<Signature>` (explicit → config →
+default), and the binding's `commitTree` takes optional `{ name, email,
+timeSeconds?, offsetMinutes? }`. gitsheets `#holoCommit` passes the transaction's
+resolved identity, so holo commits are attributed correctly (verified: a commit
+made via the holo path carries the explicit `opts.author`, not git config).
+With identity + time pinned, the binding's commit now **hash-matches `git
+commit-tree` bit-for-bit** (binding smoke test). Time is left unset in the
+gitsheets path → the binding stamps now(), matching `git commit-tree`'s default.
 
 ## 4. `holo_tree::Error` flattens to a string across FFI — **Open**
 
