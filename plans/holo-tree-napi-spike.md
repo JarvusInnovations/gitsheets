@@ -41,8 +41,8 @@ while we're the first real integrated consumer.
   follow-up **full-migration plan** once the slice validates the substrate.
 - `singer-target.js` empty-tree usage, holo-projector, any public-API change
   (the migration's governing constraint is **no public-API impact** — see
-  [`specs/architecture.md`](../specs/architecture.md) "Holo-tree migration" and
-  [`specs/deferred.md`](../specs/deferred.md) #127).
+  [`specs/architecture.md`](../specs/architecture.md) "Holo-tree migration",
+  issue #127).
 - Publishing `holo-tree-napi` to npm. The spike consumes it locally.
 
 ## Implements
