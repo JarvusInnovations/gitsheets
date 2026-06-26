@@ -1360,19 +1360,24 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     // Rename: if the source record was loaded from a different path, delete the old one.
     if (previousPath !== undefined && previousPath !== recordPath) {
+      const oldPath = joinTreePath(
+        this.#effectiveRoot(config),
+        `${previousPath}${format.extension}`,
+      );
       try {
-        await this.#dataTree.deleteChild(
-          joinTreePath(this.#effectiveRoot(config), `${previousPath}${format.extension}`),
-        );
+        await this.#dataTree.deleteChild(oldPath);
       } catch {
         // Old path may not exist — ignore.
       }
+      tx.recordHoloDelete(oldPath);
     }
 
-    const blob = await this.#dataTree.writeChild(
-      joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`),
-      text,
+    const fullPath = joinTreePath(
+      this.#effectiveRoot(config),
+      `${recordPath}${format.extension}`,
     );
+    const blob = await this.#dataTree.writeChild(fullPath, text);
+    tx.recordHoloWrite(fullPath, text);
     tx.markMutated();
     this.#invalidateIndexes();
     void normalized; // referenced in prepare for unique-index check

@@ -63,6 +63,10 @@ export class Repository {
   readonly #postCommitHooks: Array<(commitHash: string) => void> = [];
   #strictMode = false;
   #pushDaemon: PushDaemon | null = null;
+  // Experimental holo-tree substrate spike (#127). When on, transactions
+  // build their tree + commit through the Rust holo-tree binding behind a
+  // parity gate. Off by default; opt in per-instance or via env.
+  #holoTree = process.env.GITSHEETS_HOLO_TREE === '1';
 
   constructor(hologitRepo: HologitRepo) {
     this.#hologitRepo = hologitRepo;
@@ -109,6 +113,16 @@ export class Repository {
   /** Switch to strict mode — mutations outside repo.transact throw. One-way. */
   requireExplicitTransactions(): void {
     this.#strictMode = true;
+  }
+
+  /**
+   * @internal — experimental holo-tree substrate spike ([#127]). Routes a
+   * transaction's tree build + commit through the Rust holo-tree binding,
+   * asserting byte-identical tree parity with the hologit path before
+   * committing. Off by default. Not part of the public API surface.
+   */
+  enableHoloTree(on = true): void {
+    this.#holoTree = on;
   }
 
   /** Resolve a ref or commit hash. Returns the full commit hash or null. */
@@ -218,6 +232,7 @@ export class Repository {
         committer,
         message: normalized.message,
         trailers: normalized.trailers,
+        holoTree: this.#holoTree,
         sheetFactory: <R extends RecordLike = RecordLike>(
           name: string,
           ws: Workspace,

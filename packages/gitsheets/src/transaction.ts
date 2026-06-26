@@ -14,6 +14,34 @@ import type { StandardSchemaV1 } from './validation.js';
 
 const exec = promisify(execFile);
 
+// --- holo-tree binding (experimental, #127) ---
+//
+// Minimal structural types for the `holo-tree-napi` binding, declared locally
+// so type-checking doesn't depend on the addon's generated `.d.ts` being built.
+// The module is dynamically imported via a non-literal specifier (so tsc treats
+// it as `any`) only when the holo-tree path is enabled.
+interface HoloTreeHandle {
+  writeChild(path: string, content: string): string;
+  writeChildBytes(path: string, content: Buffer): string;
+  deleteChildDeep(path: string): boolean;
+  write(): string;
+}
+interface HoloRepoHandle {
+  createTreeFromRef(gitRef: string): HoloTreeHandle;
+  createTree(): HoloTreeHandle;
+  commitTree(treeHash: string, parents: string[], message: string): string;
+  updateRef(refname: string, hash: string): void;
+}
+interface HoloBinding {
+  Repo: { open(gitDir: string): HoloRepoHandle };
+  emptyTreeHash(): string;
+}
+
+type HoloOp =
+  | { readonly kind: 'write'; readonly path: string; readonly content: string }
+  | { readonly kind: 'writeBytes'; readonly path: string; readonly content: Buffer }
+  | { readonly kind: 'delete'; readonly path: string };
+
 export interface Author {
   readonly name: string;
   readonly email: string;
@@ -117,6 +145,9 @@ export class Transaction {
   readonly #committer: Author;
   readonly #message: string;
   readonly #trailers: Readonly<Record<string, string>>;
+  /** Experimental holo-tree substrate spike (#127). */
+  readonly #holoTree: boolean;
+  readonly #holoOps: HoloOp[] = [];
   /** Function the Repository injects so Transaction.sheet() can build Sheet instances. */
   readonly #sheetFactory: <T extends RecordLike = RecordLike>(
     name: string,
@@ -144,6 +175,7 @@ export class Transaction {
     committer: Author;
     message: string;
     trailers: Readonly<Record<string, string>>;
+    holoTree?: boolean;
     sheetFactory: <T extends RecordLike = RecordLike>(
       name: string,
       workspace: Workspace,
@@ -161,6 +193,7 @@ export class Transaction {
     this.#committer = opts.committer;
     this.#message = opts.message;
     this.#trailers = opts.trailers;
+    this.#holoTree = opts.holoTree ?? false;
     this.#sheetFactory = opts.sheetFactory;
   }
 
@@ -183,6 +216,28 @@ export class Transaction {
   /** Marker used by Sheet to record that a mutation happened in this tx. */
   markMutated(): void {
     this.#anyMutation = true;
+  }
+
+  /** True when this transaction mirrors mutations onto the holo-tree binding. */
+  get holoTreeEnabled(): boolean {
+    return this.#holoTree;
+  }
+
+  /**
+   * @internal — holo-tree spike (#127). Sheet mirrors each tree mutation here
+   * (repo-root-relative path) so `finalize` can replay them through the Rust
+   * binding and assert tree parity. Cheap no-op when the flag is off.
+   */
+  recordHoloWrite(path: string, content: string): void {
+    if (this.#holoTree) this.#holoOps.push({ kind: 'write', path, content });
+  }
+
+  recordHoloWriteBytes(path: string, content: Buffer): void {
+    if (this.#holoTree) this.#holoOps.push({ kind: 'writeBytes', path, content });
+  }
+
+  recordHoloDelete(path: string): void {
+    if (this.#holoTree) this.#holoOps.push({ kind: 'delete', path });
   }
 
   /**
@@ -244,6 +299,15 @@ export class Transaction {
     const gitDir = this.#hologitRepo.gitDir;
     const treeHash = await this.#workspace.root.write();
 
+    // holo-tree spike (#127): rebuild the same tree through the Rust binding
+    // and assert byte-identical parity before committing through it. Trees are
+    // content-addressed, so an identical tree hash proves the binding's blob
+    // hashing + tree serialization match git exactly.
+    let holoRepo: HoloRepoHandle | null = null;
+    if (this.#holoTree) {
+      holoRepo = await this.#buildHoloParityTree(gitDir, treeHash);
+    }
+
     // No-op detection: if the resulting tree-hash matches the parent
     // commit's tree-hash, nothing actually changed. Skip the commit-tree
     // spawn + ref update — same return shape as the `!#anyMutation` path
@@ -273,6 +337,90 @@ export class Transaction {
 
     const message = formatCommitMessage(this.#message, this.#trailers);
 
+    const commitHash = holoRepo
+      ? this.#holoCommit(holoRepo, treeHash, message)
+      : await this.#gitCommit(gitDir, treeHash, message);
+
+    return {
+      value,
+      commitHash,
+      treeHash,
+      ref: this.#branchRef,
+      parentCommitHash: this.#parentCommitHash,
+    };
+  }
+
+  /**
+   * holo-tree spike (#127): replay this transaction's recorded mutations onto a
+   * fresh holo-tree built from the parent commit, and assert its tree hash
+   * matches what hologit produced. Returns the open holo Repo handle so
+   * `finalize` can reuse it to create the commit + update the ref.
+   */
+  async #buildHoloParityTree(gitDir: string, expectedTreeHash: string): Promise<HoloRepoHandle> {
+    // Non-literal specifier: tsc treats the module as `any`, so type-checking
+    // doesn't require the binding's generated `.d.ts`. Loaded only when enabled.
+    const specifier = 'holo-tree-napi';
+    const binding = (await import(specifier)) as unknown as HoloBinding;
+
+    const repo = binding.Repo.open(gitDir);
+    const tree = this.#parentCommitHash
+      ? repo.createTreeFromRef(this.#parentCommitHash)
+      : repo.createTree();
+
+    for (const op of this.#holoOps) {
+      if (op.kind === 'write') tree.writeChild(op.path, op.content);
+      else if (op.kind === 'writeBytes') tree.writeChildBytes(op.path, op.content);
+      else tree.deleteChildDeep(op.path);
+    }
+
+    const holoTreeHash = tree.write();
+    if (holoTreeHash !== expectedTreeHash) {
+      throw new TransactionError(
+        'commit_failed',
+        `holo-tree parity mismatch: holo-tree built ${holoTreeHash}, hologit built ${expectedTreeHash}`,
+      );
+    }
+    return repo;
+  }
+
+  /**
+   * holo-tree spike (#127): create the commit + advance the ref through the
+   * binding, retiring the `git commit-tree` / `update-ref` subprocesses.
+   *
+   * FINDING (notes/holo-tree-findings.md): holo-tree's `commit_tree` derives
+   * author/committer from git config + the current time; it does not accept the
+   * explicit identity/time this transaction resolved. So the commit honors
+   * git-config identity here, and commit-hash parity with the JS path is not
+   * yet achievable — fix is an upstream `commit_tree` that takes identity+time.
+   */
+  #holoCommit(holoRepo: HoloRepoHandle, treeHash: string, message: string): string {
+    let commitHash: string;
+    try {
+      const parents = this.#parentCommitHash ? [this.#parentCommitHash] : [];
+      commitHash = holoRepo.commitTree(treeHash, parents, message);
+    } catch (err) {
+      throw new TransactionError(
+        'commit_failed',
+        `holo-tree commitTree failed: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    if (this.#branchRef !== null) {
+      try {
+        holoRepo.updateRef(this.#branchRef, commitHash);
+      } catch (err) {
+        throw new TransactionError(
+          'commit_failed',
+          `holo-tree updateRef ${this.#branchRef} failed: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
+    }
+    return commitHash;
+  }
+
+  /** The hologit-JS commit path: `git commit-tree` + `git update-ref`. */
+  async #gitCommit(gitDir: string, treeHash: string, message: string): Promise<string> {
     let commitHash: string;
     try {
       const args = ['commit-tree', treeHash, '-m', message];
@@ -311,14 +459,7 @@ export class Transaction {
         );
       }
     }
-
-    return {
-      value,
-      commitHash,
-      treeHash,
-      ref: this.#branchRef,
-      parentCommitHash: this.#parentCommitHash,
-    };
+    return commitHash;
   }
 
   /** Called by Repository on handler throw. Marks the transaction closed. */
