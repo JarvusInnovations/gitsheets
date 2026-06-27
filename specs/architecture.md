@@ -99,8 +99,8 @@ These belong to the library and are not consumer concerns:
 - **Versioning:** semver. v1.0.0 is the cut after all `[1.0]`-tagged issues in the [1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1) close. Patch releases inside 1.x preserve the documented API.
 - **Breaking changes** — only at major boundaries. The library's pre-1.0 API does not constrain v1.0 (the legacy `GitSheets` class is purged outright; no migration shim).
 
-## Holo-tree migration (deferred post-v1.2)
+## Holo-tree migration (deferred)
 
-[Issue #127](https://github.com/JarvusInnovations/gitsheets/issues/127) tracks the swap to a Rust `holo-tree` crate via `napi-rs`. **This is an internal-engine change with no public-API impact** — consumers should not see any difference, only ~100x faster tree operations.
+[Issue #127](https://github.com/JarvusInnovations/gitsheets/issues/127) tracks swapping the hologit JS dependency for a Rust `holo-tree` crate via `napi-rs`, for ~100x faster tree operations on the hot path. **This is an internal-engine change with no public-API impact** — consumers see no difference, only performance. That constraint is load-bearing: the migration must sit entirely behind the existing `Repository` / `Sheet` / `Transaction` surface, with no consumer-visible change.
 
-v1.0, v1.1, and v1.2 all shipped on the current JS hologit substrate. The holo-tree migration remains deferred; it's a substantial substrate swap that needs its own focused release. Tracked in [`deferred.md`](deferred.md).
+It stays deferred because the substrate swap is its own substantial track — it touches every tree-mutation site and benefits from a dedicated review cycle. v1.0, v1.1, and v1.2 all shipped on the JS hologit substrate; the migration targets a future minor when scheduled. The work is tracked as plans in [`plans/`](../plans/) — beginning with the [`holo-tree-napi-spike`](../plans/holo-tree-napi-spike.md) validation spike, which hardens the upstream Rust libs before any full swap — rather than as a backlog note.
