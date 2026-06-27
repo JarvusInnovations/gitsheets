@@ -6,8 +6,7 @@ specs:
 upstream-specs:
   - hologit:holo-tree/README.md
 awaits:
-  - "JarvusInnovations/hologit#465 — holo-tree fixes + the holo-tree-napi binding must merge first"
-  - "holo-tree-napi published (npm, or a pinned git dep) with per-platform prebuilds — a release can't carry a local file: dep to a sibling repo"
+  - "holo-tree-napi published (npm, or a pinned git dep) with per-platform prebuilds — a release can't carry a local file: dep to a sibling repo. (hologit#465 merged to develop 2026-06-27; binding now lives on hologit develop.)"
 issues: [127]
 ---
 
