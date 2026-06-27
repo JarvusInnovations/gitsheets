@@ -91,7 +91,7 @@ Run `/audit-spec-drift` (the Claude Code command at `.claude/commands/audit-spec
 
 ## Versioning relative to specs
 
-These specs describe the **current shipped surface** of gitsheets. v1.0 sets the API contract; v1.1 adds the full CLI flag/command surface plus library additions (`diffFrom`, attachment iterator + deletes, query AbortSignal, push-daemon hardening, `--prefix`). v1.2 adds content-typed records (markdown/mdx with TOML frontmatter), lazy body loading, and the `check` CLI command. Items intentionally deferred to later releases (e.g., [holo-tree migration](https://github.com/JarvusInnovations/gitsheets/issues/127), [`--working`](https://github.com/JarvusInnovations/gitsheets/issues/165), watch mode, field-level encryption) live in [`deferred.md`](deferred.md).
+These specs describe the **current shipped surface** of gitsheets. v1.0 sets the API contract; v1.1 adds the full CLI flag/command surface plus library additions (`diffFrom`, attachment iterator + deletes, query AbortSignal, push-daemon hardening, `--prefix`). v1.2 adds content-typed records (markdown/mdx with TOML frontmatter), lazy body loading, and the `check` CLI command. Items intentionally deferred to later releases (e.g., [`--working`](https://github.com/JarvusInnovations/gitsheets/issues/165), watch mode, field-level encryption) live in [`deferred.md`](deferred.md). The [holo-tree migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is now carried by [`architecture.md`](architecture.md#holo-tree-migration-deferred) and tracked as plans in [`plans/`](../plans/).
 
 When work begins on a deferred item, the entry is promoted out of `deferred.md` into the active specs in the same PR that closes the issue; the spec authoring rules above apply.
 
