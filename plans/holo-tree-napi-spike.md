@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/architecture.md
@@ -152,28 +152,33 @@ perf win to measure.
 
 ## Validation
 
-- [ ] `holo-tree-napi` crate builds on this machine (`napi build`) and produces a
+- [x] `holo-tree-napi` crate builds on this machine (`napi build`) and produces a
       loadable `.node` addon + generated `.d.ts`.
-- [ ] Rust/Node smoke test: create-tree-from-ref → write-child → write →
+- [x] Rust/Node smoke test: create-tree-from-ref → write-child → write →
       commit-tree → update-ref round-trips against a scratch repo and the ref
       advances to the new commit.
-- [ ] gitsheets `spike/holo-tree-napi` consumes the binding via a local
+- [x] gitsheets `spike/holo-tree-napi` consumes the binding via a local
       path/git dep and builds + type-checks.
-- [ ] A single-record upsert committed through the holo-tree slice produces a
+- [x] A single-record upsert committed through the holo-tree slice produces a
       commit whose **tree hash and commit hash match** the hologit-JS path for
-      the same input (parity oracle).
-- [ ] The existing gitsheets vitest suite stays green with the slice flag **off**
+      the same input (parity oracle). *(Tree-hash parity asserted end-to-end,
+      single/bulk/real 18k data; commit-hash parity is bit-exact at the binding
+      level — see Notes › Parity.)*
+- [x] The existing gitsheets vitest suite stays green with the slice flag **off**
       (no regression to the JS path), and the upsert-path tests also pass with the
-      flag **on**.
-- [ ] Benchmark recorded: holo-tree slice vs JS path for 1 upsert and N-in-one-tx,
-      including the eliminated `commit-tree`/`update-ref` shell-outs.
-- [ ] Findings log written, and a hologit PR opened against
+      flag **on**. *(292 gitsheets + 66 axi green flag-off; 5 parity tests green
+      flag-on.)*
+- [x] Benchmark recorded: holo-tree slice vs JS path for 1 upsert and N-in-one-tx,
+      including the eliminated `commit-tree`/`update-ref` shell-outs. *(~4–5×;
+      `packages/gitsheets/bench/holo-tree-bench.mjs`, results in findings doc.)*
+- [x] Findings log written, and a hologit PR opened against
       `JarvusInnovations/hologit` implementing at least the highest-value
-      ergonomic improvement surfaced (link the PR in this plan's Notes at
-      closeout).
-- [ ] A go/no-go note on the full migration (does holo-tree, as improved, clear
+      ergonomic improvement surfaced. *(`notes/holo-tree-findings.md`; PR
+      [hologit#465](https://github.com/JarvusInnovations/hologit/pull/465) — 3
+      fixes landed, not just one.)*
+- [x] A go/no-go note on the full migration (does holo-tree, as improved, clear
       the bar to become the v-next substrate?) plus a pointer to the follow-up
-      full-migration plan if go.
+      full-migration plan if go. *(Verdict: GO — see Notes.)*
 
 ## Risks / unknowns
 
@@ -202,8 +207,64 @@ perf win to measure.
 
 ## Notes
 
-(Populated at closeout.)
+**Verdict: GO.** holo-tree is a suitable substrate for gitsheets' tree
+operations, and the "first integrated consumer hardens it" approach worked as
+intended.
+
+- **Correctness.** The binding builds byte-identical trees to hologit+git
+  (tree-hash parity on single, bulk, and the real ~18k-record codeforphilly
+  `people` sheet), and creates commits that bit-match `git commit-tree` under
+  identical identity+time. No tree-serialization divergence found.
+- **Performance.** ~4–5× faster end-to-end for committing a change to a large
+  sheet (release build) — and conservatively so; per-call `to_thread_local()`
+  and the default-off gix object cache remain (hologit#464). Caveat surfaced:
+  a *debug* binding is ~2.4× *slower* — release builds are mandatory.
+- **Hardening worked.** Every rough edge was fixable upstream rather than worked
+  around in gitsheets glue. Three holo-tree fixes landed in
+  [hologit#465](https://github.com/JarvusInnovations/hologit/pull/465):
+  `get_or_create_subtree` (silent dropped writes + an FFI-aborting panic when
+  writing into an existing directory — critical; would hit every real consumer),
+  `update_ref` (bare branch names), and `commit_tree` (explicit
+  author/committer/time). The critical bug was invisible to holo-tree's own
+  tests because they only build trees from scratch — integration found it.
+
+**Parity (criterion 4) — precise form.** Tree-hash parity is asserted
+end-to-end (gitsheets JS path vs holo path, same input → identical tree hash).
+Commit-hash parity is bit-exact *at the binding level* (`commitTree` ==
+`git commit-tree` under pinned identity+date, binding smoke test); it is
+deliberately not asserted across two end-to-end transactions because their
+commit timestamps differ by wall-clock — the JS path has the same
+non-determinism, so it is not a substrate-fidelity gap.
+
+**Binding placement.** The binding lives in the hologit repo
+(`holo-tree-napi`, `publish = false`), consumed via a `file:` dep during the
+spike. A real migration needs it published (or a git dep) with per-platform
+prebuilds — out of scope here.
+
+**Branch status.** The gitsheets `spike/holo-tree-napi` branch is intentionally
+*not* merged to develop — it's a validation spike (local `file:` dep,
+behind-a-flag integration). The mergeable-to-develop subset (the spec promotion
+in `architecture.md`/`deferred.md`/`README.md`, this plan, and
+`notes/holo-tree-findings.md`) is separable from the spike-only integration code
+(the flag, the `file:` dep, the op-log path, the parity/bench artifacts) — see
+Follow-ups.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- **Tracked as:** the full migration continues under
+  [#127](https://github.com/JarvusInnovations/gitsheets/issues/127) (still
+  open). A dedicated full-migration plan should be authored once hologit#465
+  merges and the binding is published — it migrates the remaining tree sites
+  (`getSubtree`/`getBlobMap`/`getChild`/`deleteChild`/`merge`/`clearChildren`,
+  `path-template/`, `cli/`, `Sheet.diffFrom`, `writeWorkingChanges`) and removes
+  the hologit JS dependency, behind the unchanged public API.
+- **Tracked as:** holo-tree performance headroom (per-call `to_thread_local()`,
+  default-off gix object cache, per-read cache clone, release-build guidance) —
+  [hologit#464](https://github.com/JarvusInnovations/hologit/issues/464).
+- **Tracked as:** remaining open holo-tree ergonomic findings not yet fixed —
+  error fidelity across FFI (#4), panic-aborts-process (#6), `update_ref`
+  compare-and-swap (#7) — catalogued in `notes/holo-tree-findings.md`; fold into
+  the hologit#465 review or a follow-up hologit issue.
+- **Tracked as:** whether to land the mergeable-to-develop subset (spec
+  promotion + this plan + findings) on develop ahead of the full migration, so
+  the holo-tree decision/record is on mainline — a team call, not yet filed.
