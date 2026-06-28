@@ -49,6 +49,7 @@
     "hologit": "^0.50.2",
     "markdownlint": "^0.40.0",
     "rfc6902": "^5.2.0",
+    "smol-toml": "^1.7.0",
     "sort-keys": "^6.0.0",
     "yargs": "^18.0.0"
   },
