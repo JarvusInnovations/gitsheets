@@ -48,7 +48,7 @@ The active work scope is [the 1.0.0 milestone](https://github.com/JarvusInnovati
 - **Language** — TypeScript (strict). ESM-only.
 - **Runtime** — Node.js ≥ 20 or Bun ≥ 1.
 - **Tree primitives** — hologit (JS) for v1.0; holo-tree (Rust via napi-rs) for v1.1.
-- **TOML** — `@iarna/toml` (preserves Date types).
+- **TOML** — `smol-toml` for parse (lean memory), `@iarna/toml` for serialize (byte-stable canonical form). Date types preserved (`instanceof Date`). See [specs/architecture.md](specs/architecture.md).
 - **JSON Schema validation** — `ajv`.
 - **Runtime consumer-validator interface** — [Standard Schema](https://standardschema.dev) (any compliant validator: Zod, Valibot, ArkType, Effect Schema).
 - **JSON Merge Patch** — RFC 7396 via `json-merge-patch`.
@@ -61,7 +61,7 @@ See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 - TypeScript everywhere. `strict: true`. No `.js` in `packages/gitsheets/src/`.
 - Field naming: `camelCase` in code, in TOML records, and on `Sheet.<field>` config — no casing translation.
 - IDs: consumer's choice (gitsheets doesn't impose UUID/string/numeric). Path templates render whatever the field holds.
-- Timestamps: TOML datetime types preserved by `@iarna/toml`; consumers can also use ISO 8601 strings.
+- Timestamps: TOML datetime types preserved across parse (`smol-toml` → `instanceof Date`) and serialize (`@iarna/toml`); consumers can also use ISO 8601 strings.
 - Use the typed error classes from [specs/api/errors.md](specs/api/errors.md) — never throw plain `Error` from public surfaces.
 - Mutations go through `repo.transact` or via the permissive Sheet methods documented in [specs/behaviors/transactions.md](specs/behaviors/transactions.md).
 

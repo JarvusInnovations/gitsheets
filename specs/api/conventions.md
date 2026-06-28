@@ -128,5 +128,5 @@ When a root isn't specified:
 ## I/O
 
 - All file paths inside the data repo are POSIX-style (`/` separators) regardless of host OS.
-- TOML reads use `@iarna/toml` to preserve Date types.
-- TOML writes serialize sorted keys (deep) for byte-stable normalization.
+- TOML reads use `smol-toml` (lean parse — see [architecture.md](../architecture.md)); Date types still read back as `instanceof Date`.
+- TOML writes serialize via `@iarna/toml` with sorted keys (deep) for byte-stable normalization.

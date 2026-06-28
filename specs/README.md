@@ -83,7 +83,7 @@ Specs declare *what* must be true, not *how* to implement it.
 > "Patch updates a record by merging in changes."
 
 **Too detailed** — duplicates the code:
-> "Open the record blob, parse with `iarna/toml`, deepclone the object, walk the patch tree with a recursive merge function, then…"
+> "Open the record blob, parse with `smol-toml`, deepclone the object, walk the patch tree with a recursive merge function, then…"
 
 ## Spec drift auditing
 
