@@ -12,14 +12,6 @@ Every deferred item that's a viable future feature links to a tracking GitHub is
 
 When in doubt about whether an entry belongs in `deferred.md`, the litmus test is: "if someone reads the spec for X and notices it's missing from the code, will this file explain why?"
 
-## Deferred — substantial internal-engine swap
-
-### Holo-tree migration (Rust substrate) — [#127](https://github.com/JarvusInnovations/gitsheets/issues/127)
-
-- **What:** Swap the current hologit JS dependency for a Rust `holo-tree` crate via `napi-rs`. ~100x faster tree operations on the hot path.
-- **Why deferred:** Originally targeted at v1.1; slipped past v1.1 and v1.2 because the substrate swap is its own substantial track (touches every tree-mutation site) and benefits from a dedicated review cycle. Currently unmilestoned — targeting a future minor when scheduled.
-- **Constraint:** Must not change the public API. Consumers see no difference, only performance.
-
 ## Deferred (no scheduled release)
 
 ### Watch mode — [#135](https://github.com/JarvusInnovations/gitsheets/issues/135)

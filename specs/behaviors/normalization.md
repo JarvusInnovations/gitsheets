@@ -100,8 +100,8 @@ Sorts an array of strings using locale-aware comparison (`localeCompare` with `s
 
 ### TOML serialization details
 
-- The library uses `@iarna/toml` for serialization. Dates, datetimes, and date-times round-trip correctly (a Date in the record becomes the matching TOML date type).
-- Multi-line string formatting follows `@iarna/toml`'s defaults — strings with newlines emit as triple-quoted; the library doesn't impose its own length threshold.
+- The library **parses** with `smol-toml` and **serializes** with `@iarna/toml` (see [architecture.md](../architecture.md) for why the two directions use different libraries). Dates, datetimes, and date-times round-trip correctly: `smol-toml` parses them to `TomlDate` (an `instanceof Date` subclass) and `@iarna/toml` serializes those back to the matching TOML date type, byte-identically.
+- Multi-line string formatting follows `@iarna/toml`'s serializer defaults — strings with newlines emit as triple-quoted; the library doesn't impose its own length threshold.
 - Null values are *omitted* from the output. TOML can't represent `null`; absent fields read back as `undefined` and are treated as null by validation.
 - Empty arrays and empty objects are preserved (they have semantic meaning distinct from absent).
 

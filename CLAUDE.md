@@ -2,18 +2,34 @@
 
 A git-backed document store for low-volume, high-touch, human-scale data. Library + CLI.
 
-## Spec-driven
+## Spec-driven development (specops)
 
-**`specs/` is the source of truth.** Before writing or changing code, read the relevant spec; if the spec doesn't cover what you're about to do, update the spec first.
+This project uses spec-driven development. `specs/` is the source of truth for what
+*should be true*; `plans/` is the work-in-flight DAG that bridges specs to merged code.
+The **specops** skill carries the full methodology — invoke it (the skill triggers on
+"spec", "plan", starting a feature, etc.) before writing specs, planning, or building.
 
-Workflow:
+- **Specs lead.** Before changing behavior, change the spec; bring code into conformance
+  after. Spec↔code drift is a bug, not debt. If the spec doesn't cover what you're about
+  to do, update the spec first.
+- **`plans/` is the planning system — not your built-in plan mode.** Every chunk of work
+  lands as a file in `plans/` that freezes to `done` as the durable record of what got
+  built. Don't let an ephemeral plan substitute for it, and don't skip it for "small"
+  changes. (Classic trap: an ad-hoc plan of "write spec X, then build it" that ends with
+  neither a reviewed spec nor a plan file — split those into the two real artifacts.)
+- **When to author a plan depends on intent:** mapping out a batch of specs → finish the
+  batch first, then propose a *set* of plans; speccing one bounded feature in a mature
+  project → draft the spec change and its plan in tandem; intent unclear → ask. The skill
+  details each mode.
+- **A spec change ripples to its plans.** After editing a spec, review the plans that
+  implement it (`grep -l '<spec-path>' plans/*.md`) and offer to update them.
 
-1. Spec change → propose what should be true
-2. Reviewer agrees on desired state
-3. Implement to match the spec
-4. Verify running software matches the spec
+Query the DAG: `.claude/skills/specops/scripts/specops next` (what to work on next) and
+`.claude/skills/specops/scripts/specops dag` (graph). Run `/audit-spec-drift` to compare
+specs against the implementation (before major work, after large refactors, and as part
+of the release checklist).
 
-Start at [specs/README.md](specs/README.md). The index of what's where:
+Start at [specs/README.md](specs/README.md). The spec index:
 
 - [specs/architecture.md](specs/architecture.md) — stack, packaging, foundational decisions
 - [specs/concepts.md](specs/concepts.md) — vocabulary: Repository, Sheet, Record, Transaction, Store, Index
@@ -21,9 +37,7 @@ Start at [specs/README.md](specs/README.md). The index of what's where:
 - [specs/api/](specs/api/) — per-symbol API contracts (Repository, Sheet, Transaction, Store, Errors, CLI)
 - [specs/behaviors/](specs/behaviors/) — cross-cutting rules (path templates, validation, normalization, transactions, indexing, push sync, attachments, patch semantics)
 
-## Spec drift auditing
-
-Run `/audit-spec-drift` to launch a comprehensive audit comparing `specs/` against the implementation. Use it before starting major work, after large refactors, and as part of the release checklist.
+Plans live in [plans/](plans/) — see [plans/README.md](plans/README.md).
 
 ## v1.0 milestone
 
@@ -34,7 +48,7 @@ The active work scope is [the 1.0.0 milestone](https://github.com/JarvusInnovati
 - **Language** — TypeScript (strict). ESM-only.
 - **Runtime** — Node.js ≥ 20 or Bun ≥ 1.
 - **Tree primitives** — hologit (JS) for v1.0; holo-tree (Rust via napi-rs) for v1.1.
-- **TOML** — `@iarna/toml` (preserves Date types).
+- **TOML** — `smol-toml` for parse (lean memory), `@iarna/toml` for serialize (byte-stable canonical form). Date types preserved (`instanceof Date`). See [specs/architecture.md](specs/architecture.md).
 - **JSON Schema validation** — `ajv`.
 - **Runtime consumer-validator interface** — [Standard Schema](https://standardschema.dev) (any compliant validator: Zod, Valibot, ArkType, Effect Schema).
 - **JSON Merge Patch** — RFC 7396 via `json-merge-patch`.
@@ -47,7 +61,7 @@ See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 - TypeScript everywhere. `strict: true`. No `.js` in `packages/gitsheets/src/`.
 - Field naming: `camelCase` in code, in TOML records, and on `Sheet.<field>` config — no casing translation.
 - IDs: consumer's choice (gitsheets doesn't impose UUID/string/numeric). Path templates render whatever the field holds.
-- Timestamps: TOML datetime types preserved by `@iarna/toml`; consumers can also use ISO 8601 strings.
+- Timestamps: TOML datetime types preserved across parse (`smol-toml` → `instanceof Date`) and serialize (`@iarna/toml`); consumers can also use ISO 8601 strings.
 - Use the typed error classes from [specs/api/errors.md](specs/api/errors.md) — never throw plain `Error` from public surfaces.
 - Mutations go through `repo.transact` or via the permissive Sheet methods documented in [specs/behaviors/transactions.md](specs/behaviors/transactions.md).
 
