@@ -16,7 +16,8 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 | Module format | **ESM-only** | Modern Node + Bun + edge runtimes all handle ESM. Dual CJS/ESM build deferred until a concrete consumer needs it. |
 | Runtime | **Node.js ≥ 20**, **Bun ≥ 1** | Both have native ESM, both can host the CLI. No Deno target in v1.0. |
 | Tree primitives | **hologit (JS)** | Provides `TreeObject`, `BlobObject`, repo discovery, in-memory mutable trees, packfile access via the `git` CLI. v1.0–v1.2 stay on the JS substrate; the Rust [holo-tree migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is deferred. |
-| TOML | **`@iarna/toml`** | Preserves date types; canonical-sorted keys for byte-stable normalization. |
+| TOML parse | **`smol-toml`** | Reads — the hot, memory-sensitive path. `@iarna/toml`'s parser pins large parser buffers in each value (~12× source retained per record); `smol-toml` produces flat strings (~2× retained), eliminating a ~5–6× heap blowup for in-memory consumers. Actively maintained, full TOML 1.0. Date types stay `instanceof Date`. |
+| TOML serialize | **`@iarna/toml`** | Writes — preserves the byte-stable canonical form: human-readable triple-quoted multiline strings and literal-quoted strings. (`smol-toml` would escape both to single-line — cosmetic churn, no data change.) Serialization isn't memory-sensitive. |
 | Canonical key sort | **`sort-keys`** | Deep alphabetical key sorting on every write for byte-stable normalization. |
 | JSON Schema validation | **`ajv`** + **`ajv-formats`** | Industry-standard, well-maintained, fast. Used for the persisted shape contract per [behaviors/validation.md](behaviors/validation.md). `ajv-formats` carries `date-time`, `email`, etc. |
 | Runtime validator (consumer-supplied) | Any **[Standard Schema](https://standardschema.dev)** implementation | Consumer chooses Zod / Valibot / ArkType / Effect Schema. Gitsheets calls `~standard.validate`. |
