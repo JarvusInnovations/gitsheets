@@ -309,16 +309,19 @@ pub fn delete_records(
     Ok(DeleteOutcome { tree_hash, existed })
 }
 
-/// List every record under `base`: enumerate the subtree's blobs, keep those
-/// ending in `extension`, strip the extension, and parse each into a [`Value`].
-/// Paths are relative to `base` and returned in sorted (git-canonical) order. An
-/// unparseable record blob is `config_invalid`.
-pub fn list_records(
+/// List every record under `base` as its raw on-disk **text**: enumerate the
+/// subtree's blobs, keep those ending in `extension`, strip the extension, and
+/// decode each as UTF-8. Paths are relative to `base` and returned in sorted
+/// (git-canonical) order. The format-aware decode (canonical TOML vs the
+/// markdown frontmatter codec, with/without body) is the caller's job — see
+/// [`crate::codec`] and [`crate::sheet::Sheet`]. A non-UTF-8 blob is
+/// `config_invalid`.
+pub fn list_record_texts(
     repo: &gix::Repository,
     tree: &mut MutableTree,
     base: &str,
     extension: &str,
-) -> Result<Vec<(String, Value)>> {
+) -> Result<Vec<(String, String)>> {
     let barg = base_arg(base);
     let subtree = match tree.get_subtree(repo, &barg).map_err(map_ht)? {
         Some(t) => t,
@@ -341,9 +344,26 @@ pub fn list_records(
         let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
             message: format!("record at {path} is not valid UTF-8: {e}"),
         })?;
-        out.push((record_path, canonical::parse(&text)?));
+        out.push((record_path, text));
     }
     Ok(out)
+}
+
+/// List every record under `base`, parsing each as canonical TOML. Paths are
+/// relative to `base` in sorted (git-canonical) order. An unparseable record
+/// blob is `config_invalid`. (Markdown sheets list through [`crate::codec`] at
+/// the `Sheet` layer; this primitive stays TOML-only for the thin record-CRUD
+/// binding surface.)
+pub fn list_records(
+    repo: &gix::Repository,
+    tree: &mut MutableTree,
+    base: &str,
+    extension: &str,
+) -> Result<Vec<(String, Value)>> {
+    list_record_texts(repo, tree, base, extension)?
+        .into_iter()
+        .map(|(path, text)| Ok((path, canonical::parse(&text)?)))
+        .collect()
 }
 
 // ── record-level diff (replacing git diff-tree) ──────────────────────────────
