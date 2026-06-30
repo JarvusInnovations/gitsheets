@@ -28,6 +28,7 @@ PRs that change runtime behavior should include a spec change. If they don't, th
 specs/
 ├── README.md             # This file — workflow + layout
 ├── architecture.md       # Tech stack, packaging, foundational decisions
+├── rust-core.md          # v-next target: Rust core + thin language bindings (forward-looking)
 ├── concepts.md           # Vocabulary: Repository, Sheet, Record, Transaction, Store, Index
 ├── deferred.md           # Features intentionally not in scope for v1.0
 ├── api/                  # Per-symbol API contracts
