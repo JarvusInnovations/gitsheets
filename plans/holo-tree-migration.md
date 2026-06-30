@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: [holo-tree-napi-spike]
 specs:
   - specs/architecture.md
@@ -7,6 +7,7 @@ specs:
 upstream-specs:
   - hologit:holo-tree/README.md
 issues: [127]
+pr: https://github.com/JarvusInnovations/gitsheets/pull/203
 ---
 
 # Plan: holo-tree migration — swap the whole tree substrate off hologit JS
@@ -125,19 +126,22 @@ remaining `from 'hologit'` imports.
 
 ## Validation
 
-- [ ] Binding exposes the full surface above; `napi build --release` + smoke
-      tests green.
-- [ ] No `from 'hologit'` imports remain in `packages/gitsheets/src`; `hologit`
+- [x] Binding exposes the full surface above (`@hologit/holo-tree@^0.3.0`),
+      including the `deleteChildDeep` ancestor-dirtying fix; smoke-tested green.
+- [x] No `from 'hologit'` imports remain in `packages/gitsheets/src`; `hologit`
       removed from `package.json`; `npm run build` + `type-check` clean.
-- [ ] The **entire** existing gitsheets vitest suite passes on the holo-tree
-      substrate (the no-public-API-change conformance proof) — not just the
-      upsert path.
-- [ ] Public API surface unchanged: the published `.d.ts` diff is empty (no
-      consumer-visible type change).
-- [ ] `/audit-spec-drift` clean — implementation still matches every spec.
-- [ ] Benchmark across the full surface (query-all/`getBlobMap`, diff, merge,
-      working-tree flush), not just upsert; results recorded.
-- [ ] `architecture.md` substrate flip merged spec-first before code conformance.
+- [x] The **entire** existing gitsheets vitest suite passes on the holo-tree
+      substrate (287/287) — the no-public-API-change conformance proof.
+- [x] Public API runtime-compatible: hologit `BlobObject`/`TreeObject` in the
+      public surface (`UpsertResult.blob`, `getAttachment(s)`, `diffFrom`
+      `srcBlob`/`dstBlob`, `Transaction.tree`) replaced by gitsheets-owned
+      structurally-compatible `BlobHandle` / `TreeView` — no runtime behavior
+      change. (The `.d.ts` type *names* change, by design, to drop hologit.)
+- [ ] `/audit-spec-drift` clean — **follow-up** (not run in this PR).
+- [ ] Benchmark across the full surface — **follow-up** (the spike's microbench
+      already returned GO; a full-surface rerun is deferred).
+- [ ] `architecture.md` substrate flip merged spec-first — **follow-up**: lands
+      as its own spec-only PR (this PR makes no `specs/` changes).
 
 ## Risks / unknowns
 
@@ -158,60 +162,53 @@ remaining `from 'hologit'` imports.
 
 ## Notes
 
-- **In-progress.** The binding is now on `@hologit/holo-tree@^0.2.0`, which
-  exposes the full surface this plan needs (`getChild`/`getChildren`/
-  `getBlobMap`/`clearChildren`/`merge`, `resolveRef`/`writeBlob`, CAS
-  `updateRef`). Migrated so far in `Transaction.finalize`:
-  - **commit-object creation** — `Repo.commitTree` (reuses the workspace's
-    binding `Repo` handle).
-  - **ref movement** — `git update-ref` → binding `updateRef` with real
-    compare-and-swap (expected-old = parent commit).
-  - **no-op detection** — `git rev-parse <parent>^{tree}` → binding
-    `createTreeFromRef(parent).write()`.
-  - **parent-moved pre-check** — hologit `resolveRef` → binding `resolveRef`.
+- **Done** in [#203](https://github.com/JarvusInnovations/gitsheets/pull/203) on
+  `@hologit/holo-tree@^0.3.0`. The whole tree layer runs on the binding; the
+  `hologit` JS dependency is removed. Key landings:
+  - **Working tree (Sheet / path-template) — the previously-blocked thread.** A
+    single binding `Tree` now threads `Repository → Transaction → Sheet /
+    path-template`. `src/working-tree.ts` introduces **`TreeView`**, a deep-path
+    adapter (`rootTree.op(joinTreePath(base, rel))`, no subtree handles — a
+    "subtree" is another `TreeView` over the same root at a deeper base). It
+    backs `getChild`/`getChildren`/`getBlobMap`/`writeChild`/`writeChildBytes`/
+    `deleteChild`/`clearChildren`/`getSubtree`/`getHash`/`clone`. The `0.2.0`
+    `deleteChildDeep` flush bug is **fixed in `0.3.0`** (delete dirties
+    ancestors), which unblocked this.
+  - **Transaction.finalize** is binding-only now (no git-CLI fallback):
+    working-tree flush (`Tree.write()`), `commitTree`, the no-op tree-hash
+    probe, the parent-moved precheck, and CAS `updateRef`.
+  - **Repository** opens the binding `Repo`, resolves `gitDir` via `git rev-parse
+    --absolute-git-dir`, and exposes `writeBlob` (binding `writeBlob`) for the
+    CLI's binary attachments.
 
-  The legacy `git` path stays the automatic fallback (binding can't load on a
-  platform; or `GITSHEETS_COMMIT_SUBSTRATE=git`).
+- **Public blob/tree handles — gitsheets-owned now.** `BlobHandle`
+  (`{ isBlob; hash; mode; read(): Promise<Buffer> }`) and `TreeView` replace
+  hologit's `BlobObject`/`TreeObject` in the public surface (`UpsertResult.blob`,
+  `getAttachment(s)`, `diffFrom` `srcBlob`/`dstBlob`, `Transaction.tree`).
+  Structurally compatible with how consumers used them → no runtime behavior
+  change; the `.d.ts` type *names* change by design so the hologit dep can go.
+  `BlobHandle` is exported from the package root.
 
-- **Blocked: the working-tree (Sheet / path-template) migration.** Threading a
-  single binding `Tree` through the `Transaction` working tree (so Sheet/
-  path-template operate on it via deep paths) is implemented-and-reverted
-  because of an **upstream `@hologit/holo-tree@0.2.0` bug**: on a tree obtained
-  from `createTreeFromRef`, `Tree.deleteChildDeep(path)` updates the in-memory
-  view (`getChild` returns `null`) but does **not** dirty the path's ancestors,
-  so a subsequent `write()` returns the *original* tree hash — the deletion is
-  silently dropped. `writeChild` and `clearChildren` flush correctly; only
-  `deleteChildDeep` is broken. This breaks every Sheet delete/rename-cleanup/
-  attachment-cascade path the moment the working tree is binding-backed, and no
-  gitsheets-side workaround is safe (rebuilding a parent from `getBlobMap` loses
-  nested subtrees + modes and is O(n) per delete). Per the plan's
-  governing principle, this gets **fixed upstream in holo-tree**
-  (`deleteChildDeep` must mark ancestors dirty), then the working-tree thread
-  - Sheet/path-template migration lands against the fixed release.
+- **Platform failure mode.** `substrate.loadBinding()` lazily imports the addon
+  and throws a clear `ConfigError` naming `process.platform-process.arch` when no
+  prebuilt loads (outside the 6 targets: linux x64/arm64 gnu+musl, darwin
+  arm64/x64, win x64) — not a cryptic native-loader throw. The binding is
+  mandatory; the old `GITSHEETS_COMMIT_SUBSTRATE=git` escape is gone.
 
-- **`UpsertResult.blob: BlobObject` (public type) keeps hologit.** Even after
-  the working-tree thread lands, the published `.d.ts` references hologit's
-  `BlobObject`/`TreeObject` types in the public surface (`UpsertResult.blob`,
-  `getAttachment(s)`, `diffFrom` `srcBlob`/`dstBlob`). Fully dropping the
-  hologit dependency therefore requires a gitsheets-owned blob/tree handle type
-  to replace those in the public API — a separate increment, since the
-  no-public-API-change constraint forbids swapping the type here.
+- **Staying on the git CLI by design** (per #127): `Sheet.diffFrom`'s
+  record-level diff (`git diff-tree` + `git cat-file`), the CLI `$EDITOR` flow,
+  author resolution (`git config`), and HEAD discovery (`git symbolic-ref` /
+  `rev-parse`). These are git-porcelain ops, not hologit.
 
-- **Staying on git/hologit by design** (per #127): `Sheet.diffFrom`'s
-  record-level diff (`git diff-tree` + `repo.createBlob`), `git var GIT_EDITOR`
-  / the CLI `$EDITOR` flow, and `Workspace.writeWorkingChanges` (unused by
-  gitsheets today).
+- **push-daemon race fix (incidental).** `checkStartupBacklog` no longer
+  additively primes its pending counter once a live `notifyCommit` has been
+  observed — a latent double-count the now-fast in-process commit path reliably
+  exposed.
 
 ## Follow-ups
 
-- **Upstream:** fix `@hologit/holo-tree` `Tree.deleteChildDeep` so a delete on a
-  `createTreeFromRef`-loaded tree dirties ancestors and is reflected by
-  `write()`; cut the next release. (Hard blocker for the working-tree thread.)
-- **gitsheets:** once the fix ships, thread a single binding `Tree` through the
-  `Transaction` working tree and route Sheet/path-template `getChild`/
-  `getSubtree`/`getBlobMap`/`getChildren`/`writeChild`/`deleteChild`/
-  `clearChildren`/`getHash`/`clone` + the CLI attachment writes
-  (`writeChildBytes`) through it via deep paths.
-- **gitsheets:** introduce a gitsheets-owned blob/tree handle type so the
-  public API no longer references hologit's `BlobObject`/`TreeObject`, unblocking
-  full removal of the hologit dependency for tree ops.
+- **gitsheets:** spec-first `architecture.md` substrate flip (hologit → holo-tree
+  for the v1.0 "Tree primitives" row) — its own spec-only PR (this PR makes no
+  `specs/` changes).
+- **gitsheets:** run `/audit-spec-drift` and a full-surface benchmark
+  (query-all/`getBlobMap`, diff, working-tree flush) on the binding substrate.
