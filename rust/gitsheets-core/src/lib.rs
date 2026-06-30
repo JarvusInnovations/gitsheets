@@ -18,14 +18,21 @@
 //! top of this substrate. See [`specs/rust-core.md`](../../../specs/rust-core.md).
 
 pub mod canonical;
+pub mod diff;
 pub mod engine;
 pub mod error;
 pub mod path_template;
+pub mod record;
 pub mod validation;
 pub mod value;
 
 pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};
+pub use diff::{apply_merge_patch, create_patch, MergePatch, PatchOp, PatchOpKind, PatchValue};
 pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
+pub use record::{
+    DeleteOutcome, RecordChange, RecordDiff, RecordStatus, WriteOutcome, EMPTY_TREE_HASH,
+    TOML_EXTENSION,
+};
 pub use value::{Datetime, DatetimeKind, Value};
 
 /// Identity over a batch of records — the minimal exercise of the value type

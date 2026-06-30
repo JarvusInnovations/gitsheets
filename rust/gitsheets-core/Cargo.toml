@@ -30,3 +30,21 @@ jsonschema = { version = "0.46.7", default-features = false }
 # JSON value type the `jsonschema` crate validates against; the core marshals
 # its `Value` to/from it for the shape-validation pass.
 serde_json = "1"
+
+# ── record-engine-core (the holo-tree substrate seam) ────────────────────────
+# Mutable in-memory git trees (read/write/delete blobs, commit, ref CAS). Not on
+# crates.io, so a git dependency on the hologit repo (the form decided in
+# gitsheets-core-foundation). `branch = "develop"`, NOT `master`: the merged
+# spike fixes this layer relies on — notably `delete_child_deep`'s
+# dirty-propagation (hologit#473) — live on develop and are not yet on master.
+# `Cargo.lock` is committed so the exact commit is pinned and reproducible.
+holo-tree = { git = "https://github.com/JarvusInnovations/hologit", branch = "develop" }
+# The git object layer holo-tree drives. Pinned to the SAME version holo-tree
+# depends on (0.83) so the `gix::Repository` handle this crate opens and passes
+# into holo-tree is one unified type. Default features (matching holo-tree) cover
+# rev-parse, object read/write, and repo open/init.
+gix = "0.83"
+
+[dev-dependencies]
+# Throwaway git repos for the record-CRUD + diff integration tests.
+tempfile = "3"

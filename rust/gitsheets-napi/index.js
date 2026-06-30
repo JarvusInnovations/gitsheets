@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, runComparator, CompiledDefinition, simulateCoreError } = nativeBinding
+const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, runComparator, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, createPatch, applyMergePatch, diffRecords, simulateCoreError } = nativeBinding
 
 module.exports.roundtrip = roundtrip
 module.exports.parseRecords = parseRecords
@@ -319,4 +319,11 @@ module.exports.renderPathsBatch = renderPathsBatch
 module.exports.validateBatch = validateBatch
 module.exports.runComparator = runComparator
 module.exports.CompiledDefinition = CompiledDefinition
+module.exports.recordRead = recordRead
+module.exports.recordWrite = recordWrite
+module.exports.recordDelete = recordDelete
+module.exports.recordList = recordList
+module.exports.createPatch = createPatch
+module.exports.applyMergePatch = applyMergePatch
+module.exports.diffRecords = diffRecords
 module.exports.simulateCoreError = simulateCoreError

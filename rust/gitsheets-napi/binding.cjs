@@ -117,6 +117,16 @@ module.exports = {
   // Stateful compiled definition (compile-once / reuse). Raw class — its
   // structured errors carry `gitsheetsClass`; map with `mapCoreError` if needed.
   CompiledDefinition: addon.CompiledDefinition,
+  // Record CRUD over the holo-tree substrate (batch-first). Substrate / record
+  // parse failures surface as typed core errors.
+  recordRead: wrap(addon.recordRead),
+  recordWrite: wrap(addon.recordWrite),
+  recordDelete: wrap(addon.recordDelete),
+  recordList: wrap(addon.recordList),
+  diffRecords: wrap(addon.diffRecords),
+  // Diff / patch primitives (RFC 6902 createPatch, RFC 7396 mergePatch).
+  createPatch: wrap(addon.createPatch),
+  applyMergePatch: wrap(addon.applyMergePatch),
   // Boundary-test entry: throws the typed class for a given stable code.
   simulateCoreError: wrap(addon.simulateCoreError),
   // Error machinery.

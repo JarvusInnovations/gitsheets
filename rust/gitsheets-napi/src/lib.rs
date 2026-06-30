@@ -24,10 +24,11 @@
 //! paths never bake in per-record FFI crossings.
 
 use chrono::{Datelike, Timelike};
+use gitsheets_core::diff::{MergePatch, PatchOp, PatchValue};
 use gitsheets_core::engine::Engine;
 use gitsheets_core::path_template::Template;
 use gitsheets_core::validation::CompiledSchema;
-use gitsheets_core::{Datetime, Value};
+use gitsheets_core::{record, Datetime, Value};
 use napi::bindgen_prelude::*;
 use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, ValueType};
 use napi_derive::napi;
@@ -438,6 +439,313 @@ impl CompiledDefinition {
     #[napi]
     pub fn snippet_count(&self) -> u32 {
         self.engine.snippet_count() as u32
+    }
+}
+
+// ── record CRUD + diff/patch over the holo-tree substrate ─────────────────────
+//
+// These prove the record engine's parity from JS. Each opens a repo at `gitDir`
+// and resolves a ref/hash to a tree in the core (the binding never touches a
+// `gix::Repository` or a holo-tree node — the seam stays Rust-side). All are
+// batch-first: a `Vec` of paths/records crosses the FFI once.
+
+const DEFAULT_EXTENSION: &str = ".toml";
+
+fn extension_of(extension: Option<String>) -> String {
+    extension.unwrap_or_else(|| DEFAULT_EXTENSION.to_string())
+}
+
+/// Read a batch of records by path. Each result is the record (a plain object
+/// with full TOML type fidelity) or `null` when no blob lives at that path.
+#[napi]
+pub fn record_read(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    base: String,
+    paths: Vec<String>,
+    extension: Option<String>,
+) -> Result<Vec<Option<JsValue>>> {
+    let ext = extension_of(extension);
+    match record::read_records_at_ref(&git_dir, &tree_ref, &base, &paths, &ext) {
+        Ok(values) => Ok(values.into_iter().map(|v| v.map(JsValue)).collect()),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// The result of a `record_write`/`record_delete`: the new root tree hash plus
+/// per-record output (`blobHashes` for writes, `existed` for deletes).
+#[napi(object)]
+pub struct JsWriteOutcome {
+    pub tree_hash: String,
+    pub blob_hashes: Vec<String>,
+}
+
+/// The result of a `record_delete`.
+#[napi(object)]
+pub struct JsDeleteOutcome {
+    pub tree_hash: String,
+    pub existed: Vec<bool>,
+}
+
+/// Write a batch of records (canonical TOML) under `base`, starting from the
+/// tree `baseRef`. `paths[i]` is written from `records[i]`. Returns the new root
+/// tree hash + each written blob hash. The bytes are produced by the core's
+/// bytes-authority, so two bindings writing the same record agree byte-for-byte.
+#[napi]
+pub fn record_write(
+    env: Env,
+    git_dir: String,
+    base_ref: String,
+    base: String,
+    paths: Vec<String>,
+    records: Vec<JsValue>,
+    extension: Option<String>,
+) -> Result<JsWriteOutcome> {
+    if paths.len() != records.len() {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+                "record_write: paths ({}) and records ({}) length mismatch",
+                paths.len(),
+                records.len()
+            ),
+        ));
+    }
+    let items: Vec<(String, Value)> = paths
+        .into_iter()
+        .zip(records.into_iter().map(|j| j.0))
+        .collect();
+    let ext = extension_of(extension);
+    match record::write_records_at_ref(&git_dir, &base_ref, &base, &items, &ext) {
+        Ok(outcome) => Ok(JsWriteOutcome {
+            tree_hash: outcome.tree_hash,
+            blob_hashes: outcome.blob_hashes,
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Delete a batch of records by path under `base`, starting from `baseRef`.
+/// `existed[i]` reports whether `paths[i]` was actually present.
+#[napi]
+pub fn record_delete(
+    env: Env,
+    git_dir: String,
+    base_ref: String,
+    base: String,
+    paths: Vec<String>,
+    extension: Option<String>,
+) -> Result<JsDeleteOutcome> {
+    let ext = extension_of(extension);
+    match record::delete_records_at_ref(&git_dir, &base_ref, &base, &paths, &ext) {
+        Ok(outcome) => Ok(JsDeleteOutcome {
+            tree_hash: outcome.tree_hash,
+            existed: outcome.existed,
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// One record from `record_list`: its path (relative to `base`, no extension)
+/// and parsed value.
+#[napi(object)]
+pub struct JsRecordEntry {
+    pub path: String,
+    pub record: JsValue,
+}
+
+/// List every record under `base` in the tree `treeRef`, in sorted
+/// (git-canonical) path order.
+#[napi]
+pub fn record_list(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    base: String,
+    extension: Option<String>,
+) -> Result<Vec<JsRecordEntry>> {
+    let ext = extension_of(extension);
+    match record::list_records_at_ref(&git_dir, &tree_ref, &base, &ext) {
+        Ok(entries) => Ok(entries
+            .into_iter()
+            .map(|(path, record)| JsRecordEntry {
+                path,
+                record: JsValue(record),
+            })
+            .collect()),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Build a JS array of RFC 6902 ops, shaping `value` exactly like the `rfc6902`
+/// package: a `remove` carries no `value` key, a null-replace carries
+/// `value: null`, everything else carries the marshalled value.
+fn build_patch_array(env: &Env, ops: &[PatchOp]) -> Result<JsObject> {
+    let mut arr = env.create_array_with_length(ops.len())?;
+    for (i, op) in ops.iter().enumerate() {
+        let mut obj = env.create_object()?;
+        obj.set_named_property("op", env.create_string(op.op.as_str())?)?;
+        obj.set_named_property("path", env.create_string(&op.path)?)?;
+        match &op.value {
+            PatchValue::Absent => {}
+            PatchValue::Null => {
+                obj.set_named_property("value", env.get_null()?)?;
+            }
+            PatchValue::Value(v) => {
+                let raw = unsafe { JsValue::to_napi_value(env.raw(), JsValue(v.clone()))? };
+                let val = unsafe { JsUnknown::from_napi_value(env.raw(), raw)? };
+                obj.set_named_property("value", val)?;
+            }
+        }
+        arr.set_element(i as u32, obj)?;
+    }
+    Ok(arr)
+}
+
+/// Generate an RFC 6902 JSON Patch transforming `src` into `dst` — the core's
+/// `createPatch`, matching the `rfc6902` package op-for-op. `null`/`undefined`
+/// on either side is the JSON null `Sheet.diffFrom` passes for an added
+/// (`src=null`) or deleted (`dst=null`) record.
+#[napi]
+pub fn create_patch(env: Env, src: Option<JsValue>, dst: Option<JsValue>) -> Result<JsObject> {
+    let src_val = src.map(|j| j.0);
+    let dst_val = dst.map(|j| j.0);
+    let ops = gitsheets_core::create_patch(src_val.as_ref(), dst_val.as_ref());
+    build_patch_array(&env, &ops)
+}
+
+/// Apply an RFC 7396 JSON Merge Patch to `target` (`null` ⇒ absent), returning
+/// the merged record — the core's `mergePatch` behind `Sheet.patch`. A `null`
+/// in the patch deletes that key; an object merges recursively; anything else
+/// replaces wholesale. Returns `null` only when the patch deletes the record
+/// outright.
+#[napi]
+pub fn apply_merge_patch(
+    target: Option<JsValue>,
+    patch: JsMergePatch,
+) -> Result<Option<JsValue>> {
+    let target_val = target.map(|j| j.0);
+    Ok(gitsheets_core::apply_merge_patch(target_val.as_ref(), &patch.0).map(JsValue))
+}
+
+/// Diff records between two trees (`srcRef` → `dstRef`) under `base`, returning
+/// one entry per change with status, src/dst blob hashes, the parsed src/dst
+/// records, and the RFC 6902 patch — the full `Sheet.diffFrom({records,
+/// patches})` payload, computed in the core. `srcRef` may be the empty-tree hash
+/// for a from-scratch diff.
+#[napi]
+pub fn diff_records(
+    env: Env,
+    git_dir: String,
+    src_ref: String,
+    dst_ref: String,
+    base: String,
+    extension: Option<String>,
+) -> Result<JsObject> {
+    let ext = extension_of(extension);
+    let diffs = match record::diff_records_at_refs(&git_dir, &src_ref, &dst_ref, &base, &ext) {
+        Ok(d) => d,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+    let mut arr = env.create_array_with_length(diffs.len())?;
+    for (i, d) in diffs.into_iter().enumerate() {
+        let mut obj = env.create_object()?;
+        obj.set_named_property("path", env.create_string(&d.change.path)?)?;
+        obj.set_named_property("status", env.create_string(d.change.status.as_str())?)?;
+        match &d.change.src_hash {
+            Some(h) => obj.set_named_property("srcHash", env.create_string(h)?)?,
+            None => obj.set_named_property("srcHash", env.get_null()?)?,
+        }
+        match &d.change.dst_hash {
+            Some(h) => obj.set_named_property("dstHash", env.create_string(h)?)?,
+            None => obj.set_named_property("dstHash", env.get_null()?)?,
+        }
+        set_optional_record(&env, &mut obj, "src", d.src)?;
+        set_optional_record(&env, &mut obj, "dst", d.dst)?;
+        let patch = build_patch_array(&env, &d.patch)?;
+        obj.set_named_property("patch", patch)?;
+        arr.set_element(i as u32, obj)?;
+    }
+    Ok(arr)
+}
+
+/// Set `key` on `obj` to the marshalled record, or `null` when absent.
+fn set_optional_record(
+    env: &Env,
+    obj: &mut JsObject,
+    key: &str,
+    value: Option<Value>,
+) -> Result<()> {
+    match value {
+        Some(v) => {
+            let raw = unsafe { JsValue::to_napi_value(env.raw(), JsValue(v))? };
+            let val = unsafe { JsUnknown::from_napi_value(env.raw(), raw)? };
+            obj.set_named_property(key, val)?;
+        }
+        None => obj.set_named_property(key, env.get_null()?)?,
+    }
+    Ok(())
+}
+
+/// An RFC 7396 merge patch crossing the FFI — the structured form of a host
+/// partial that *may* carry nulls (which the record `JsValue` rejects). A `null`
+/// marshals to [`MergePatch::Delete`], a plain object to a recursive
+/// [`MergePatch::Merge`], and everything else (scalar, array, `Date`) to a
+/// wholesale [`MergePatch::Replace`].
+pub struct JsMergePatch(pub MergePatch);
+
+impl TypeName for JsMergePatch {
+    fn type_name() -> &'static str {
+        "any"
+    }
+    fn value_type() -> ValueType {
+        ValueType::Unknown
+    }
+}
+
+impl ValidateNapiValue for JsMergePatch {
+    unsafe fn validate(
+        _env: napi::sys::napi_env,
+        _napi_val: napi::sys::napi_value,
+    ) -> Result<napi::sys::napi_value> {
+        Ok(std::ptr::null_mut())
+    }
+}
+
+impl FromNapiValue for JsMergePatch {
+    unsafe fn from_napi_value(
+        env: napi::sys::napi_env,
+        napi_val: napi::sys::napi_value,
+    ) -> Result<Self> {
+        let unknown = JsUnknown::from_napi_value(env, napi_val)?;
+        let patch = match unknown.get_type()? {
+            // The null delete-sentinel (RFC 7396). `undefined` is treated the
+            // same — a missing/cleared key.
+            ValueType::Null | ValueType::Undefined => MergePatch::Delete,
+            ValueType::Object if !unknown.is_array()? && !unknown.is_date()? => {
+                // A plain object merges recursively.
+                let obj = JsObject::from_napi_value(env, napi_val)?;
+                let names = obj.get_property_names()?;
+                let len = names.get_array_length()?;
+                let mut map = indexmap::IndexMap::new();
+                for i in 0..len {
+                    let key_js: JsString = names.get_element(i)?;
+                    let key = key_js.into_utf8()?.as_str()?.to_owned();
+                    let child: JsUnknown = obj.get_named_property(&key)?;
+                    let child = JsMergePatch::from_napi_value(env, child.raw())?;
+                    map.insert(key, child.0);
+                }
+                MergePatch::Merge(map)
+            }
+            // Scalars, arrays, and Dates replace wholesale — marshal through the
+            // record value type (which preserves int/float + the datetime kind).
+            _ => {
+                let value = JsValue::from_napi_value(env, napi_val)?;
+                MergePatch::Replace(value.0)
+            }
+        };
+        Ok(JsMergePatch(patch))
     }
 }
 
