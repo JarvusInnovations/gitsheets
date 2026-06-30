@@ -114,6 +114,9 @@ module.exports = {
   renderPathsBatch: wrap(addon.renderPathsBatch),
   validateBatch: wrap(addon.validateBatch),
   runComparator: wrap(addon.runComparator),
+  // Native locale array sort (declarative `sort = true`) — the ICU collator
+  // matching V8 `localeCompare`. Pure (no structured errors), so unwrapped.
+  collatorSort: addon.collatorSort,
   // Stateful compiled definition (compile-once / reuse). Raw class — its
   // structured errors carry `gitsheetsClass`; map with `mapCoreError` if needed.
   CompiledDefinition: addon.CompiledDefinition,

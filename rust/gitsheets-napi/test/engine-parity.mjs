@@ -7,8 +7,9 @@
 //   2. CompiledDefinition: compile-once-on-open / reuse-across-operations — the
 //      snippet count stays constant across many renderPath/compare calls.
 //   3. An Intl/locale PROBE (localeCompare) — characterizes boa's documented
-//      divergence boundary; reported, not asserted (gitsheets' declarative
-//      locale sort is native in the binding, not an embedded snippet).
+//      divergence boundary; reported, not asserted. gitsheets' declarative
+//      `sort = true` locale sort is native (the ICU collator in the core, NOT an
+//      embedded snippet) — its parity gate is `test/collator-parity.mjs`.
 //
 // Requires the addon built first (`npm run build:debug`). Run: `npm test`.
 
@@ -89,9 +90,10 @@ test('separate definitions hold independent persistent engines', () => {
 
 // PROBE (reported, not asserted): localeCompare is Intl-adjacent — exactly the
 // boa-vs-node:vm divergence boundary the spec flags. gitsheets' locale-aware
-// sort is the declarative `sort = true` path, evaluated NATIVELY in the binding,
-// not an embedded snippet — so a divergence here is not a gate failure. We
-// surface it so the boundary is documented honestly.
+// sort is the declarative `sort = true` path, evaluated NATIVELY by the core's
+// ICU collator (see test/collator-parity.mjs), not an embedded snippet — so a
+// divergence here is not a gate failure. We surface it so the boundary is
+// documented honestly (and motivates why locale sort does not use the engine).
 test('PROBE: localeCompare boundary (Intl) — reported, not gating', () => {
   const rule = 'return String(a).localeCompare(String(b));';
   const vm = vmComparator(rule);
