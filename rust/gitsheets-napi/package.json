@@ -39,6 +39,8 @@
     "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.4"
+    "@napi-rs/cli": "^2.18.4",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
   }
 }
