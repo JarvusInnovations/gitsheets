@@ -1,6 +1,6 @@
 ---
 status: done
-pr: https://github.com/JarvusInnovations/gitsheets/pull/PENDING
+pr: https://github.com/JarvusInnovations/gitsheets/pull/205
 depends: [gitsheets-core-foundation]
 specs:
   - specs/rust-core.md
