@@ -198,3 +198,10 @@ binding exists**, or Node and Python will disagree on bytes.
 - Parity passes are required wherever a Rust component replaces a JS one with
   observable output: the TOML serializer (#196), the JSON-Schema validator vs
   `ajv`, and the embedded engine vs `node:vm`.
+- **Markdown body normalization is native.** Content-typed (`markdown`/`mdx`)
+  sheets normalize the body on write with the embedded `dprint-plugin-markdown`
+  formatter rather than a host-side `markdownlint` pre-pass, so body bytes are
+  identical across bindings. Its **version + config are pinned** as a
+  canonical-behavior contract input (like the serializer, engine, validator, and
+  collator); switching off the JS `markdownlint` pass is a one-time documented
+  body re-baseline (see [`behaviors/content-types.md`](behaviors/content-types.md)).

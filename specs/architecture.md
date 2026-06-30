@@ -23,7 +23,7 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 | Runtime validator (consumer-supplied) | Any **[Standard Schema](https://standardschema.dev)** implementation | Consumer chooses Zod / Valibot / ArkType / Effect Schema. Gitsheets calls `~standard.validate`. |
 | JSON Merge Patch | **inline** in `packages/gitsheets/src/patch.ts` (~40 lines) | RFC 7396 semantics — see [behaviors/patch-semantics.md](behaviors/patch-semantics.md). No external dependency; the `json-merge-patch` package was removed during the v1.0 substrate purge. |
 | JSON Patch (RFC 6902) | **`rfc6902`** | Generates RFC 6902 ops for `Sheet.diffFrom({ patches: true })` (v1.1). |
-| Markdown normalization | **`markdownlint`** (pinned `^0.40`) | Body normalization on write for content-typed sheets (v1.2). See [behaviors/content-types.md](behaviors/content-types.md). |
+| Markdown normalization | **`dprint-plugin-markdown`** (Rust, pinned `=0.22.1` in `rust/gitsheets-core`) | Native body normalization on write for content-typed sheets — embedded in the bytes-authority core (`textWrap: never`, aggressive), so bodies are byte-identical across every binding. Replaced the host-side `markdownlint` pre-pass. See [behaviors/content-types.md](behaviors/content-types.md). |
 | CSV / TSV I/O | **`csv-parse`** + **`csv-stringify`** | CLI `--format=csv\|tsv` on `upsert` / `query` / `read` (v1.1). |
 | Tests | **Vitest** (v4) | TS-native, ESM-native. Replaces Jest + Cypress. |
 | CLI argument parsing | **`yargs`** | Clean TS types for command modules. |
