@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [record-query-index]
 specs:
   - specs/rust-core.md
