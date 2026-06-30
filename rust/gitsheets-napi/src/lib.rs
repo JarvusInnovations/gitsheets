@@ -124,10 +124,7 @@ impl FromNapiValue for JsValue {
 }
 
 impl ToNapiValue for JsValue {
-    unsafe fn to_napi_value(
-        env: napi::sys::napi_env,
-        val: Self,
-    ) -> Result<napi::sys::napi_value> {
+    unsafe fn to_napi_value(env: napi::sys::napi_env, val: Self) -> Result<napi::sys::napi_value> {
         match val.0 {
             Value::String(s) => String::to_napi_value(env, s),
             Value::Boolean(b) => bool::to_napi_value(env, b),
@@ -171,9 +168,8 @@ impl ToNapiValue for JsValue {
 /// milliseconds. A JS `Date` is an absolute instant, which is exactly an
 /// offset-datetime at UTC — matching `@iarna`'s treatment of JS Dates.
 fn unix_millis_to_datetime(ms: f64) -> Result<Datetime> {
-    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64).ok_or_else(|| {
-        Error::new(Status::InvalidArg, format!("date {ms} ms is out of range"))
-    })?;
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64)
+        .ok_or_else(|| Error::new(Status::InvalidArg, format!("date {ms} ms is out of range")))?;
     let toml_dt = TomlDatetime {
         date: Some(TomlDate {
             year: dt.year() as u16,
@@ -243,6 +239,39 @@ pub fn roundtrip(records: Vec<JsValue>) -> Vec<JsValue> {
         .collect()
 }
 
+/// Parse a **batch** of TOML documents into records, marshalled to JS with full
+/// type fidelity. The whole array crosses the FFI once (batch-first). A
+/// malformed document surfaces as a structured, typed core error (`config_invalid`).
+#[napi]
+pub fn parse_records(env: Env, documents: Vec<String>) -> Result<Vec<JsValue>> {
+    match gitsheets_core::parse_batch(documents) {
+        Ok(values) => Ok(values.into_iter().map(JsValue).collect()),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Serialize a **batch** of records to their canonical TOML bytes in one call
+/// (deep key sort + `toml`-crate default formatting; see `gitsheets_core::canonical`).
+/// A value TOML can't represent surfaces as a structured, typed core error.
+#[napi]
+pub fn serialize_records(env: Env, records: Vec<JsValue>) -> Result<Vec<String>> {
+    let values: Vec<Value> = records.into_iter().map(|j| j.0).collect();
+    match gitsheets_core::serialize_batch(&values) {
+        Ok(bytes) => Ok(bytes),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Set a structured JS exception pending for a core error and return the napi
+/// sentinel that tells napi not to overwrite it. Shared by the real entry
+/// points so a `gitsheets_core::Error` always crosses as its typed class.
+fn raise_core_error(env: &Env, err: &gitsheets_core::Error) -> Error {
+    if throw_structured_error(env, err).is_err() {
+        return Error::new(Status::GenericFailure, err.message().to_string());
+    }
+    Error::new(Status::PendingException, err.message().to_string())
+}
+
 /// Throw the core error for a given stable `code`, surfaced as a **structured,
 /// matchable** JS error (own `code`, `status`, `gitsheetsClass`, and any
 /// `issues`/`conflictingPaths`). Boundary-test entry point: it exercises the
@@ -254,7 +283,10 @@ pub fn simulate_core_error(env: Env, code: String) -> Result<()> {
             throw_structured_error(&env, &err)?;
             // The exception is already pending from `env.throw`; tell napi not
             // to overwrite it.
-            Err(Error::new(Status::PendingException, err.message().to_string()))
+            Err(Error::new(
+                Status::PendingException,
+                err.message().to_string(),
+            ))
         }
         None => Err(Error::new(
             Status::InvalidArg,

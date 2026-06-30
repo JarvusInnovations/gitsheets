@@ -310,7 +310,9 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { roundtrip, simulateCoreError } = nativeBinding
+const { roundtrip, parseRecords, serializeRecords, simulateCoreError } = nativeBinding
 
 module.exports.roundtrip = roundtrip
+module.exports.parseRecords = parseRecords
+module.exports.serializeRecords = serializeRecords
 module.exports.simulateCoreError = simulateCoreError
