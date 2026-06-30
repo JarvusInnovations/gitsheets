@@ -1,6 +1,6 @@
 ---
 status: planned
-depends: [sheet-store-core, canonical-rebaseline]
+depends: [sheet-store-core, canonical-rebaseline, markdown-codec-core, locale-collation-core]
 specs:
   - specs/rust-core.md
   - specs/api/conventions.md

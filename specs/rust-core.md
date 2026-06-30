@@ -116,7 +116,14 @@ The resolution is two-part:
    `{field: ASC}` sort directives, JSON-Schema validation, built-in partition
    derivations (date-parts, hashing, bucketing). This already mirrors how
    `Sheet`'s sorter treats `true`/`false`/array/`{field:dir}` declaratively and
-   reserves raw JS only as an escape hatch.
+   reserves raw JS only as an escape hatch. **Declarative `sort = true`
+   (locale-sensitive string-array sorting) is native — it does NOT go through the
+   embedded engine.** It uses a Rust ICU collator that matches V8's
+   `localeCompare`, so its order is byte-stable and identical across bindings.
+   Because boa is built without `Intl`, routing locale sorting through the engine
+   would diverge from `node:vm` for non-ASCII input; the engine is for *arbitrary*
+   raw-JS comparators only. The ICU collator is part of the canonical-behavior
+   contract — its **version is pinned** like the serializer and the engine.
 
 2. **JS escape-hatch via an embedded engine *in the core*.** When a definition
    genuinely needs arbitrary logic, it runs in a JS engine **embedded in the Rust
