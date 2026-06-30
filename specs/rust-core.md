@@ -126,9 +126,19 @@ The resolution is two-part:
    snippets are held **persistently** on the `Sheet`/`Store` handle (compile once
    on open, reuse across every operation; no per-op re-parse).
 
-**Engine choice** (decided when the plan is picked up): a small embeddable engine
-— `rquickjs` (QuickJS) for maturity, or `boa_engine` (pure-Rust, no C toolchain →
-trivial cross-platform prebuilds). Full V8 is overkill for snippet evaluation.
+**Engine choice: `boa_engine`** (pure-Rust). The escape-hatch snippet set is
+simple and deterministic (sort comparators, partition derivations), so QuickJS's
+spec-completeness edge buys little, while its C toolchain is permanent overhead
+that multiplies per binding/target. Pure-Rust boa keeps the *whole* core C-free →
+trivial cross-platform prebuilds across all six targets (incl. musl + windows),
+clean Python wheels, and a plausible WASM binding later. Full V8 is overkill.
+The accepted trade-off is boa's divergence risk vs the current `node:vm` baseline
+(concentrated in `Intl`/locale + exotic built-ins our snippets don't use); the
+**`node:vm` parity gate is a hard validation criterion** that catches any
+real divergence on actual snippets before adoption. Flip to `rquickjs` only if
+parity fails on real snippets or a use case needs `Intl`/advanced built-ins. As
+boa evolves quickly, its **version is pinned** (per the contract constraint
+below) and upgraded deliberately.
 
 **Two constraints this creates:**
 
