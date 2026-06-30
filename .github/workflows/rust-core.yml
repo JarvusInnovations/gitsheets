@@ -1,0 +1,72 @@
+# Rust core CI — builds and tests the gitsheets-core crate and its napi FFI
+# boundary. Kept SEPARATE from the main `ci.yml` (which runs the JS suite on
+# node 20 + 22 without a Rust toolchain): the Rust core is additive scaffolding
+# consumed by no JS code yet, so the main build must never depend on the built
+# `.node` addon. This workflow is the only place a Rust toolchain is required.
+#
+# Modeled on hologit's holo-tree-napi.yml (build + node --test round-trip), minus
+# the per-platform prebuild matrix and npm publish — this foundation only needs
+# to prove the boundary builds and round-trips on a native runner.
+name: rust-core
+
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-core.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  core:
+    name: gitsheets-core (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Core unit tests
+        run: cargo test -p gitsheets-core
+
+  napi:
+    name: gitsheets-napi boundary (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install binding dev deps (@napi-rs/cli)
+        working-directory: rust/gitsheets-napi
+        run: npm install
+
+      - name: Build the napi addon (release)
+        working-directory: rust/gitsheets-napi
+        run: npm run build
+
+      - name: Round-trip + error-mapping tests
+        working-directory: rust/gitsheets-napi
+        run: npm test

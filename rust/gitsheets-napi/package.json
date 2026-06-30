@@ -1,0 +1,44 @@
+{
+  "name": "@gitsheets/core-napi",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Node.js native binding for gitsheets-core — the FFI marshalling boundary.",
+  "main": "binding.cjs",
+  "types": "index.d.ts",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JarvusInnovations/gitsheets.git",
+    "directory": "rust/gitsheets-napi"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "napi": {
+    "name": "gitsheets-core",
+    "triples": {
+      "defaults": false,
+      "additional": [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
+  },
+  "files": [
+    "binding.cjs",
+    "index.js",
+    "index.d.ts"
+  ],
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "node --test test/roundtrip.mjs test/errors.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  }
+}

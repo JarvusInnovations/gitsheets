@@ -1,0 +1,10 @@
+# Rust build output
+/target/
+
+# npm (for the gitsheets-napi binding crate)
+node_modules/
+
+# Compiled native addons — built per-platform in CI, never committed. The
+# generated index.js / index.d.ts loader+types ARE committed; only the .node
+# binaries are ignored.
+*.node
