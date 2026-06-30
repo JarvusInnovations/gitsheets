@@ -70,6 +70,13 @@ impl UniqueIndex {
     pub fn lookup(&self, key: &str) -> Option<&Value> {
         self.map.get(key).map(|(_, record)| record)
     }
+
+    /// The storage path of the record owning `key`, if any — used by the
+    /// `Sheet` pre-write unique-conflict check to compare the candidate's
+    /// rendered path against the existing owner.
+    pub fn lookup_path(&self, key: &str) -> Option<&str> {
+        self.map.get(key).map(|(path, _)| path.as_str())
+    }
 }
 
 impl MultiIndex {
