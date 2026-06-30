@@ -36,7 +36,7 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs test/path-template.mjs test/validation-parity.mjs test/engine-parity.mjs test/record-crud.mjs test/record-query.mjs test/record-index.mjs",
+    "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs test/path-template.mjs test/validation-parity.mjs test/engine-parity.mjs test/record-crud.mjs test/record-query.mjs test/record-index.mjs test/sheet-store.mjs",
     "bench": "node bench/query-bench.mjs"
   },
   "devDependencies": {

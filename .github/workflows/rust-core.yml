@@ -31,6 +31,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The transaction tests commit to throwaway gix repos; gix's update_ref
+      # writes a reflog entry, which needs a committer identity from git config.
+      # CI runners have none configured, so without this the reflog write fails
+      # ("The reflog could not be created or updated"). Mirrors hologit's own
+      # holo-tree-napi.yml. (Upstream follow-up: holo-tree's update_ref should
+      # use the commit's identity for the reflog instead of ambient git config.)
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -68,6 +79,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Same reflog-identity requirement as the core job (the Sheet/Transaction
+      # boundary tests commit to scratch repos).
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
+
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
@@ -86,13 +104,14 @@ jobs:
         working-directory: rust/gitsheets-napi
         run: npm run build
 
-      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, record CRUD/diff/patch, query, index)
+      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, record CRUD/diff/patch, query, index, Sheet/Transaction/Store)
         # Explicit file paths (not a glob) so the suite runs identically on
         # node 20 and 22 — `node --test "test/*.mjs"` does NOT expand on node 20.
-        # record-crud/query/index.mjs use `git init` for their temp repos, so git
-        # must be on PATH (it is, on ubuntu-latest). record-query.mjs diffs the
-        # core's query/prune/getFieldNames against a transcribed host reference;
-        # record-index.mjs against a transcribed `Sheet` index build.
+        # The `test` npm script lists every .mjs explicitly (see package.json),
+        # including sheet-store.mjs, which drives the orchestration state machine
+        # (Transaction lifecycle + the two-phase consumer-validator protocol +
+        # Store discovery). record-crud/query/index/sheet-store.mjs use `git init`
+        # for their temp repos, so git must be on PATH (it is, on ubuntu-latest).
         working-directory: rust/gitsheets-napi
         run: npm test
 

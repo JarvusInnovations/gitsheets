@@ -183,6 +183,56 @@ export declare function diffRecords(gitDir: string, srcRef: string, dstRef: stri
  * error-variant → typed-class mapping without standing up real engine paths.
  */
 export declare function simulateCoreError(code: string): void
+/** Commit identity for the JS surface. */
+export interface JsAuthor {
+  name: string
+  email: string
+}
+/** One ordered commit trailer (`Key: value`). */
+export interface JsTrailer {
+  key: string
+  value: string
+}
+/**
+ * Options for opening a [`CoreTransaction`]. `timeSeconds` / `offsetMinutes`
+ * carry the host clock + local-timezone offset (a host concern), exactly as the
+ * JS `commitTreeWithRepo` computes them today.
+ */
+export interface JsTransactionOptions {
+  parent?: string
+  branch?: string
+  author?: JsAuthor
+  committer?: JsAuthor
+  message: string
+  trailers?: Array<JsTrailer>
+  timeSeconds: number
+  offsetMinutes: number
+}
+/**
+ * The outcome of [`CoreTransaction::finalize`]. A no-op (no mutation, or the
+ * resulting tree equals the parent's) returns `commitHash = null`.
+ */
+export interface JsTransactionResult {
+  commitHash?: string
+  treeHash?: string
+  refName?: string
+  parentCommitHash?: string
+}
+/** The outcome of [`CoreTransaction::stage_upsert`]. */
+export interface JsStageOutcome {
+  blobHash: string
+  path: string
+}
+/**
+ * Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
+ * `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
+ */
+export declare function coreDiscoverSheets(gitDir: string, treeRef: string, openRoot: string): Array<string>
+/**
+ * The `openStore` `config_missing` check: every validator must name a declared
+ * sheet. Throws `ConfigError(config_missing)` otherwise.
+ */
+export declare function coreCheckValidators(declared: Array<string>, validatorNames: Array<string>): void
 /**
  * A compiled sheet definition: the embedded engine plus the definition's
  * path template (and optional raw-JS sort comparator), **compiled once** at
@@ -211,4 +261,56 @@ export declare class CompiledDefinition {
    * not per `render_path` / `compare` call.
    */
   snippetCount(): number
+}
+/**
+ * A live transaction the JS boundary suite drives. Holds a `!Send`
+ * `Transaction` (repo + private tree) and the opened `Sheet`s, so it is
+ * constructed and used on its owning JS thread — the thread-confinement the
+ * spec requires.
+ */
+export declare class CoreTransaction {
+  /**
+   * Open a transaction against `gitDir`. Resolves the parent/branch, builds
+   * the private tree, and acquires the single-writer slot. A concurrent open
+   * on the same repo throws `TransactionError(transaction_in_progress)`.
+   */
+  static begin(gitDir: string, opts: JsTransactionOptions): CoreTransaction
+  /**
+   * Open a sheet against this transaction's tree (config read + template /
+   * schema / sort comparators compiled once).
+   */
+  openSheet(name: string, configPath: string, openRoot: string, prefix: string): void
+  /**
+   * Phase 1 of the two-phase protocol *(non-mutating)*. Returns the candidate
+   * (`path`, `nextText`, and the normalized `record`) for the host validator;
+   * the candidate is stashed for a subsequent `stageUpsert`. A JSON-Schema
+   * rejection throws `ValidationError` here, before any bytes are written.
+   */
+  prepareUpsert(name: string, record: JsValue, previousPath?: string | undefined | null): object
+  /**
+   * Phase 3 *(mutating)*: write the stashed candidate from the last
+   * `prepareUpsert` for `name`. Marks the transaction mutated.
+   */
+  stageUpsert(name: string): JsStageOutcome
+  /**
+   * Pre-flight idempotency check (`Sheet.willChange`) — same phase-1 pipeline,
+   * then a byte comparison to the existing blob. Non-mutating.
+   */
+  willChange(name: string, record: JsValue, previousPath?: string | undefined | null): object
+  /**
+   * Delete a record by its sheet-relative path *(mutating)*. Throws
+   * `NotFoundError(record_not_found)` when absent.
+   */
+  delete(name: string, recordPath: string): void
+  /** `Sheet.clear` *(mutating)* — empties the sheet's data subtree. */
+  clear(name: string): void
+  /** The parent commit hash captured at open (null on a fresh repo). */
+  parentCommitHash(): string | null
+  /**
+   * Finalize: commit-on-success-only with no-op detection + `parent_moved`
+   * re-check + CAS ref movement. Consumes the transaction.
+   */
+  finalize(): JsTransactionResult
+  /** Discard without committing (handler threw). Releases the writer slot. */
+  discard(): void
 }
