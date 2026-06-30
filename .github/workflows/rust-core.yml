@@ -86,13 +86,14 @@ jobs:
         working-directory: rust/gitsheets-napi
         run: npm run build
 
-      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, record CRUD/diff/patch, query, index)
+      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, record CRUD/diff/patch, query, index, Sheet/Transaction/Store)
         # Explicit file paths (not a glob) so the suite runs identically on
         # node 20 and 22 — `node --test "test/*.mjs"` does NOT expand on node 20.
-        # record-crud/query/index.mjs use `git init` for their temp repos, so git
-        # must be on PATH (it is, on ubuntu-latest). record-query.mjs diffs the
-        # core's query/prune/getFieldNames against a transcribed host reference;
-        # record-index.mjs against a transcribed `Sheet` index build.
+        # The `test` npm script lists every .mjs explicitly (see package.json),
+        # including sheet-store.mjs, which drives the orchestration state machine
+        # (Transaction lifecycle + the two-phase consumer-validator protocol +
+        # Store discovery). record-crud/query/index/sheet-store.mjs use `git init`
+        # for their temp repos, so git must be on PATH (it is, on ubuntu-latest).
         working-directory: rust/gitsheets-napi
         run: npm test
 

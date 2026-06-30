@@ -1052,3 +1052,349 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
     env.throw(obj)?;
     Ok(())
 }
+
+// ── orchestration: Sheet / Transaction / Store (sheet-store-core) ──────────────
+//
+// A stateful `CoreTransaction` exposes the core's state machine to a `node
+// --test` boundary suite. It demonstrates the lifecycle (commit / no-op /
+// parent_moved / transaction_in_progress) and the **two-phase consumer-validator
+// protocol**: `prepareUpsert` runs phase 1 (shape-validate → normalize → render →
+// unique-check → serialize) and hands the candidate back to JS; the host runs its
+// validator; `stageUpsert` runs phase 3 (write). No core lock is held across the
+// host callback — `prepareUpsert` and `stageUpsert` are separate FFI calls.
+
+use std::collections::HashMap;
+
+use gitsheets_core::sheet::Sheet as CoreSheet;
+use gitsheets_core::sheet::UpsertCandidate;
+use gitsheets_core::store;
+use gitsheets_core::transaction::{Author as CoreAuthor, Transaction, TransactionOptions};
+
+/// Commit identity for the JS surface.
+#[napi(object)]
+pub struct JsAuthor {
+    pub name: String,
+    pub email: String,
+}
+
+/// One ordered commit trailer (`Key: value`).
+#[napi(object)]
+pub struct JsTrailer {
+    pub key: String,
+    pub value: String,
+}
+
+/// Options for opening a [`CoreTransaction`]. `timeSeconds` / `offsetMinutes`
+/// carry the host clock + local-timezone offset (a host concern), exactly as the
+/// JS `commitTreeWithRepo` computes them today.
+#[napi(object)]
+pub struct JsTransactionOptions {
+    pub parent: Option<String>,
+    pub branch: Option<String>,
+    pub author: Option<JsAuthor>,
+    pub committer: Option<JsAuthor>,
+    pub message: String,
+    pub trailers: Option<Vec<JsTrailer>>,
+    pub time_seconds: i64,
+    pub offset_minutes: i32,
+}
+
+/// The outcome of [`CoreTransaction::finalize`]. A no-op (no mutation, or the
+/// resulting tree equals the parent's) returns `commitHash = null`.
+#[napi(object)]
+pub struct JsTransactionResult {
+    pub commit_hash: Option<String>,
+    pub tree_hash: Option<String>,
+    pub ref_name: Option<String>,
+    pub parent_commit_hash: Option<String>,
+}
+
+/// The outcome of [`CoreTransaction::stage_upsert`].
+#[napi(object)]
+pub struct JsStageOutcome {
+    pub blob_hash: String,
+    pub path: String,
+}
+
+/// A live transaction the JS boundary suite drives. Holds a `!Send`
+/// `Transaction` (repo + private tree) and the opened `Sheet`s, so it is
+/// constructed and used on its owning JS thread — the thread-confinement the
+/// spec requires.
+#[napi]
+pub struct CoreTransaction {
+    inner: Option<Transaction>,
+    sheets: HashMap<String, CoreSheet>,
+    pending: HashMap<String, UpsertCandidate>,
+}
+
+#[napi]
+impl CoreTransaction {
+    /// Open a transaction against `gitDir`. Resolves the parent/branch, builds
+    /// the private tree, and acquires the single-writer slot. A concurrent open
+    /// on the same repo throws `TransactionError(transaction_in_progress)`.
+    #[napi(factory)]
+    pub fn begin(env: Env, git_dir: String, opts: JsTransactionOptions) -> Result<Self> {
+        let core_opts = TransactionOptions {
+            parent: opts.parent,
+            branch: opts.branch,
+            author: opts.author.map(|a| CoreAuthor {
+                name: a.name,
+                email: a.email,
+            }),
+            committer: opts.committer.map(|a| CoreAuthor {
+                name: a.name,
+                email: a.email,
+            }),
+            message: opts.message,
+            trailers: opts
+                .trailers
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| (t.key, t.value))
+                .collect(),
+            time_seconds: opts.time_seconds,
+            offset_minutes: opts.offset_minutes,
+        };
+        match Transaction::begin(&git_dir, core_opts) {
+            Ok(tx) => Ok(CoreTransaction {
+                inner: Some(tx),
+                sheets: HashMap::new(),
+                pending: HashMap::new(),
+            }),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// Open a sheet against this transaction's tree (config read + template /
+    /// schema / sort comparators compiled once).
+    #[napi]
+    pub fn open_sheet(
+        &mut self,
+        env: Env,
+        name: String,
+        config_path: String,
+        open_root: String,
+        prefix: String,
+    ) -> Result<()> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        match CoreSheet::open(repo, tree, &name, &config_path, &open_root, &prefix) {
+            Ok(sheet) => {
+                sheets.insert(name, sheet);
+                Ok(())
+            }
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// Phase 1 of the two-phase protocol *(non-mutating)*. Returns the candidate
+    /// (`path`, `nextText`, and the normalized `record`) for the host validator;
+    /// the candidate is stashed for a subsequent `stageUpsert`. A JSON-Schema
+    /// rejection throws `ValidationError` here, before any bytes are written.
+    #[napi]
+    pub fn prepare_upsert(
+        &mut self,
+        env: Env,
+        name: String,
+        record: JsValue,
+        previous_path: Option<String>,
+    ) -> Result<JsObject> {
+        let Self {
+            inner,
+            sheets,
+            pending,
+        } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get_mut(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        let candidate = match sheet.prepare_upsert(repo, tree, &record.0, previous_path, false) {
+            Ok(c) => c,
+            Err(err) => return Err(raise_core_error(&env, &err)),
+        };
+
+        let mut obj = env.create_object()?;
+        obj.set_named_property("path", env.create_string(&candidate.record_path)?)?;
+        obj.set_named_property("nextText", env.create_string(&candidate.next_text)?)?;
+        let rec_raw =
+            unsafe { JsValue::to_napi_value(env.raw(), JsValue(candidate.normalized.clone()))? };
+        let rec = unsafe { JsUnknown::from_napi_value(env.raw(), rec_raw)? };
+        obj.set_named_property("record", rec)?;
+
+        pending.insert(name, candidate);
+        Ok(obj)
+    }
+
+    /// Phase 3 *(mutating)*: write the stashed candidate from the last
+    /// `prepareUpsert` for `name`. Marks the transaction mutated.
+    #[napi]
+    pub fn stage_upsert(&mut self, env: Env, name: String) -> Result<JsStageOutcome> {
+        let Self {
+            inner,
+            sheets,
+            pending,
+        } = self;
+        let candidate = pending.remove(&name).ok_or_else(|| {
+            Error::new(
+                Status::InvalidArg,
+                format!("no prepared candidate for sheet {name:?}"),
+            )
+        })?;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let outcome = {
+            let (repo, tree) = tx.split();
+            let sheet = sheets.get_mut(&name).ok_or_else(|| {
+                Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
+            })?;
+            match sheet.stage_upsert(repo, tree, &candidate) {
+                Ok(o) => o,
+                Err(err) => return Err(raise_core_error(&env, &err)),
+            }
+        };
+        tx.mark_mutated();
+        Ok(JsStageOutcome {
+            blob_hash: outcome.blob_hash,
+            path: outcome.path,
+        })
+    }
+
+    /// Pre-flight idempotency check (`Sheet.willChange`) — same phase-1 pipeline,
+    /// then a byte comparison to the existing blob. Non-mutating.
+    #[napi]
+    pub fn will_change(
+        &mut self,
+        env: Env,
+        name: String,
+        record: JsValue,
+        previous_path: Option<String>,
+    ) -> Result<JsObject> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get_mut(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        let wc = match sheet.will_change(repo, tree, &record.0, previous_path, false) {
+            Ok(w) => w,
+            Err(err) => return Err(raise_core_error(&env, &err)),
+        };
+        let mut obj = env.create_object()?;
+        obj.set_named_property("changed", env.get_boolean(wc.changed)?)?;
+        obj.set_named_property("path", env.create_string(&wc.path)?)?;
+        match &wc.current_blob_hash {
+            Some(h) => obj.set_named_property("currentBlobHash", env.create_string(h)?)?,
+            None => obj.set_named_property("currentBlobHash", env.get_null()?)?,
+        }
+        obj.set_named_property("nextText", env.create_string(&wc.next_text)?)?;
+        Ok(obj)
+    }
+
+    /// Delete a record by its sheet-relative path *(mutating)*. Throws
+    /// `NotFoundError(record_not_found)` when absent.
+    #[napi]
+    pub fn delete(&mut self, env: Env, name: String, record_path: String) -> Result<()> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        {
+            let (repo, tree) = tx.split();
+            let sheet = sheets.get_mut(&name).ok_or_else(|| {
+                Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
+            })?;
+            if let Err(err) = sheet.delete_at_path(repo, tree, &record_path) {
+                return Err(raise_core_error(&env, &err));
+            }
+        }
+        tx.mark_mutated();
+        Ok(())
+    }
+
+    /// `Sheet.clear` *(mutating)* — empties the sheet's data subtree.
+    #[napi]
+    pub fn clear(&mut self, env: Env, name: String) -> Result<()> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        {
+            let (repo, tree) = tx.split();
+            let sheet = sheets.get_mut(&name).ok_or_else(|| {
+                Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
+            })?;
+            if let Err(err) = sheet.clear(repo, tree) {
+                return Err(raise_core_error(&env, &err));
+            }
+        }
+        tx.mark_mutated();
+        Ok(())
+    }
+
+    /// The parent commit hash captured at open (null on a fresh repo).
+    #[napi]
+    pub fn parent_commit_hash(&self) -> Option<String> {
+        self.inner.as_ref().and_then(|t| t.parent_commit_hash())
+    }
+
+    /// Finalize: commit-on-success-only with no-op detection + `parent_moved`
+    /// re-check + CAS ref movement. Consumes the transaction.
+    #[napi]
+    pub fn finalize(&mut self, env: Env) -> Result<JsTransactionResult> {
+        let tx = self.inner.take().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        match tx.finalize() {
+            Ok(r) => Ok(JsTransactionResult {
+                commit_hash: r.commit_hash,
+                tree_hash: r.tree_hash,
+                ref_name: r.ref_name,
+                parent_commit_hash: r.parent_commit_hash,
+            }),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// Discard without committing (handler threw). Releases the writer slot.
+    #[napi]
+    pub fn discard(&mut self) {
+        if let Some(tx) = self.inner.take() {
+            tx.discard();
+        }
+    }
+}
+
+/// Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
+/// `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
+#[napi]
+pub fn core_discover_sheets(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    open_root: String,
+) -> Result<Vec<String>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree =
+        record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    store::discover_sheets(&repo, &mut tree, &open_root).map_err(|err| raise_core_error(&env, &err))
+}
+
+/// The `openStore` `config_missing` check: every validator must name a declared
+/// sheet. Throws `ConfigError(config_missing)` otherwise.
+#[napi]
+pub fn core_check_validators(
+    env: Env,
+    declared: Vec<String>,
+    validator_names: Vec<String>,
+) -> Result<()> {
+    store::check_validators(&declared, &validator_names).map_err(|err| raise_core_error(&env, &err))
+}

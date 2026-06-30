@@ -139,6 +139,13 @@ module.exports = {
   // Diff / patch primitives (RFC 6902 createPatch, RFC 7396 mergePatch).
   createPatch: wrap(addon.createPatch),
   applyMergePatch: wrap(addon.applyMergePatch),
+  // Orchestration: Sheet / Transaction / Store state machine (sheet-store-core).
+  // CoreTransaction is the stateful two-phase-protocol driver. Raw class — its
+  // methods throw structured errors carrying `gitsheetsClass`/`code`; map with
+  // `mapCoreError` where a typed instance is wanted.
+  CoreTransaction: addon.CoreTransaction,
+  coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
+  coreCheckValidators: wrap(addon.coreCheckValidators),
   // Boundary-test entry: throws the typed class for a given stable code.
   simulateCoreError: wrap(addon.simulateCoreError),
   // Error machinery.
