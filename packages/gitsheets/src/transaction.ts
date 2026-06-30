@@ -9,7 +9,7 @@ import type { Repo as HologitRepo, TreeObject, Workspace } from 'hologit';
 
 import { RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
-import { commitTreeViaHoloTree, loadHoloTree } from './substrate.js';
+import { commitTreeWithRepo, loadHoloTree, openBindingRepo } from './substrate.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
 
@@ -221,19 +221,38 @@ export class Transaction {
   async finalize<T>(value: T): Promise<TransactionResult<T>> {
     this.#closed = true;
 
+    const noChange: TransactionResult<T> = {
+      value,
+      commitHash: null,
+      treeHash: null,
+      ref: null,
+      parentCommitHash: this.#parentCommitHash,
+    };
+
     if (!this.#anyMutation) {
-      return {
-        value,
-        commitHash: null,
-        treeHash: null,
-        ref: null,
-        parentCommitHash: this.#parentCommitHash,
-      };
+      return noChange;
     }
 
-    // Optimistic concurrency: re-check the parent ref hasn't moved.
+    const gitDir = this.#hologitRepo.gitDir;
+
+    // The holo-tree binding (#127) backs commit-object creation, the no-op
+    // tree-hash probe, the parent-moved check, and compare-and-swap ref
+    // movement. The working tree itself (`workspace.root`) stays on hologit
+    // for now — only the commit/ref tail of finalize is migrated. When the
+    // binding can't load on this platform (or GITSHEETS_COMMIT_SUBSTRATE=git),
+    // `binding` is null and the legacy `git` shell-out path runs end-to-end.
+    // See plans/holo-tree-migration.md.
+    const holo = await loadHoloTree();
+    const binding = holo ? openBindingRepo(holo, gitDir) : null;
+
+    // Optimistic concurrency: re-check the parent ref hasn't moved. The CAS
+    // `updateRef` below is the actual race guard; this pre-check just surfaces
+    // the friendlier `parent_moved` error (and an early exit) before we bother
+    // writing a commit object.
     if (this.#parentRef !== null) {
-      const current = await this.#hologitRepo.resolveRef(this.#parentRef);
+      const current = binding
+        ? binding.resolveRef(this.#parentRef)
+        : await this.#hologitRepo.resolveRef(this.#parentRef);
       if (current !== this.#parentCommitHash) {
         throw new TransactionError(
           'parent_moved',
@@ -242,53 +261,33 @@ export class Transaction {
       }
     }
 
-    const gitDir = this.#hologitRepo.gitDir;
     const treeHash = await this.#workspace.root.write();
 
     // No-op detection: if the resulting tree-hash matches the parent
-    // commit's tree-hash, nothing actually changed. Skip the commit-tree
-    // spawn + ref update — same return shape as the `!#anyMutation` path
-    // above. The `#anyMutation` flag tracks "a mutating method was
-    // called," which over-approximates: clear() on an already-empty
-    // sheet, upsert() of byte-identical content, and bulk reimport-with-
-    // unchanged-data patterns all set the flag without changing the
-    // tree. Tree-hash equality is the canonical git-native truth.
-    // See specs/api/transaction.md#no-op-detection.
+    // commit's tree-hash, nothing actually changed. Skip the commit + ref
+    // update — same return shape as the `!#anyMutation` path above. The
+    // `#anyMutation` flag tracks "a mutating method was called," which
+    // over-approximates: clear() on an already-empty sheet, upsert() of
+    // byte-identical content, and bulk reimport-with-unchanged-data patterns
+    // all set the flag without changing the tree. Tree-hash equality is the
+    // canonical git-native truth. See specs/api/transaction.md#no-op-detection.
     if (this.#parentCommitHash !== null) {
-      const { stdout: parentTreeStdout } = await exec(
-        'git',
-        ['rev-parse', `${this.#parentCommitHash}^{tree}`],
-        { cwd: gitDir },
-      );
-      const parentTreeHash = parentTreeStdout.trim();
+      const parentTreeHash = binding
+        ? binding.createTreeFromRef(this.#parentCommitHash).write()
+        : (
+            await exec('git', ['rev-parse', `${this.#parentCommitHash}^{tree}`], { cwd: gitDir })
+          ).stdout.trim();
       if (parentTreeHash === treeHash) {
-        return {
-          value,
-          commitHash: null,
-          treeHash: null,
-          ref: null,
-          parentCommitHash: this.#parentCommitHash,
-        };
+        return noChange;
       }
     }
 
     const message = formatCommitMessage(this.#message, this.#trailers);
 
-    // Commit-object creation is migrated onto the @hologit/holo-tree binding
-    // (#127): the tree was just flushed to the ODB by `write()`, and the
-    // binding's `commitTree` writes the commit object against the same gitDir.
-    // The legacy `git commit-tree` shell-out stays reachable via
-    // GITSHEETS_COMMIT_SUBSTRATE=git, and is also the automatic fallback when
-    // the binding can't load on this platform (loadHoloTree() → null). Ref
-    // movement (next block) stays on `git update-ref` because it needs
-    // compare-and-swap, which the binding's `updateRef` does not yet expose.
-    // See plans/holo-tree-migration.md.
     let commitHash: string;
-    const holo = await loadHoloTree();
-    if (holo) {
+    if (binding) {
       try {
-        commitHash = commitTreeViaHoloTree(holo, {
-          gitDir,
+        commitHash = commitTreeWithRepo(binding, {
           treeHash,
           parents: this.#parentCommitHash ? [this.#parentCommitHash] : [],
           message,
@@ -327,18 +326,37 @@ export class Transaction {
     }
 
     if (this.#branchRef !== null) {
-      try {
-        const args = ['update-ref', this.#branchRef, commitHash];
-        if (this.#parentCommitHash) {
-          args.push(this.#parentCommitHash);
+      if (binding) {
+        try {
+          // CAS: only advance the ref if it still points at the parent commit
+          // (undefined expected-old → unconditional, for a fresh branch) —
+          // matching `git update-ref <ref> <new> [<old>]`.
+          binding.updateRef(
+            this.#branchRef,
+            commitHash,
+            this.#parentCommitHash ?? undefined,
+          );
+        } catch (err) {
+          throw new TransactionError(
+            'commit_failed',
+            `holo-tree updateRef ${this.#branchRef} failed: ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err },
+          );
         }
-        await exec('git', args, { cwd: gitDir });
-      } catch (err) {
-        throw new TransactionError(
-          'commit_failed',
-          `git update-ref ${this.#branchRef} failed: ${err instanceof Error ? err.message : String(err)}`,
-          { cause: err },
-        );
+      } else {
+        try {
+          const args = ['update-ref', this.#branchRef, commitHash];
+          if (this.#parentCommitHash) {
+            args.push(this.#parentCommitHash);
+          }
+          await exec('git', args, { cwd: gitDir });
+        } catch (err) {
+          throw new TransactionError(
+            'commit_failed',
+            `git update-ref ${this.#branchRef} failed: ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err },
+          );
+        }
       }
     }
 
