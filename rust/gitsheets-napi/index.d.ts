@@ -61,6 +61,72 @@ export declare function validateBatch(schema: JsValue, records: Array<JsValue>):
  */
 export declare function runComparator(rule: string, a: JsValue, b: JsValue): number
 /**
+ * Read a batch of records by path. Each result is the record (a plain object
+ * with full TOML type fidelity) or `null` when no blob lives at that path.
+ */
+export declare function recordRead(gitDir: string, treeRef: string, base: string, paths: Array<string>, extension?: string | undefined | null): Array<JsValue | undefined | null>
+/**
+ * The result of a `record_write`/`record_delete`: the new root tree hash plus
+ * per-record output (`blobHashes` for writes, `existed` for deletes).
+ */
+export interface JsWriteOutcome {
+  treeHash: string
+  blobHashes: Array<string>
+}
+/** The result of a `record_delete`. */
+export interface JsDeleteOutcome {
+  treeHash: string
+  existed: Array<boolean>
+}
+/**
+ * Write a batch of records (canonical TOML) under `base`, starting from the
+ * tree `baseRef`. `paths[i]` is written from `records[i]`. Returns the new root
+ * tree hash + each written blob hash. The bytes are produced by the core's
+ * bytes-authority, so two bindings writing the same record agree byte-for-byte.
+ */
+export declare function recordWrite(gitDir: string, baseRef: string, base: string, paths: Array<string>, records: Array<JsValue>, extension?: string | undefined | null): JsWriteOutcome
+/**
+ * Delete a batch of records by path under `base`, starting from `baseRef`.
+ * `existed[i]` reports whether `paths[i]` was actually present.
+ */
+export declare function recordDelete(gitDir: string, baseRef: string, base: string, paths: Array<string>, extension?: string | undefined | null): JsDeleteOutcome
+/**
+ * One record from `record_list`: its path (relative to `base`, no extension)
+ * and parsed value.
+ */
+export interface JsRecordEntry {
+  path: string
+  record: JsValue
+}
+/**
+ * List every record under `base` in the tree `treeRef`, in sorted
+ * (git-canonical) path order.
+ */
+export declare function recordList(gitDir: string, treeRef: string, base: string, extension?: string | undefined | null): Array<JsRecordEntry>
+/**
+ * Generate an RFC 6902 JSON Patch transforming `src` into `dst` — the core's
+ * `createPatch`, matching the `rfc6902` package op-for-op. `null`/`undefined`
+ * on either side is the JSON null `Sheet.diffFrom` passes for an added
+ * (`src=null`) or deleted (`dst=null`) record.
+ */
+export declare function createPatch(src?: JsValue | undefined | null, dst?: JsValue | undefined | null): object
+/**
+ * Apply an RFC 7396 JSON Merge Patch to `target` (`null` ⇒ absent), returning
+ * the merged record — the core's `mergePatch` behind `Sheet.patch`. A `null`
+ * in the patch deletes that key; an object merges recursively; anything else
+ * replaces wholesale. Returns `null` only when the patch deletes the record
+ * outright.
+ */
+export declare function applyMergePatch(target: JsValue | undefined | null, patch: JsMergePatch): JsValue | null
+/**
+ * Diff records between two trees (`srcRef` → `dstRef`) under `base`, returning
+ * one entry per change with status, src/dst blob hashes, the parsed src/dst
+ * records, and the RFC 6902 patch — the full `Sheet.diffFrom({records,
+ * patches})` payload, computed in the core. `srcRef` may be the empty-tree hash
+ * for a from-scratch diff.
+ */
+export declare function diffRecords(gitDir: string, srcRef: string, dstRef: string, base: string, extension?: string | undefined | null): object
+/**
  * Throw the core error for a given stable `code`, surfaced as a **structured,
  * matchable** JS error (own `code`, `status`, `gitsheetsClass`, and any
  * `issues`/`conflictingPaths`). Boundary-test entry point: it exercises the

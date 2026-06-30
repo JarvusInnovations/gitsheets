@@ -462,6 +462,84 @@ fn read_one(
     }
 }
 
+// ── ref-string wrappers (the thin-binding surface) ───────────────────────────
+//
+// These open the repo + resolve a ref/hash to a tree and run a batch primitive,
+// so a binding crosses the FFI once with strings + a `Vec<Value>` and never
+// handles a `gix::Repository` or `MutableTree` itself. Each opens its own repo
+// handle (cheap relative to the batch it drives), keeping the thread-confinement
+// contract trivially satisfied: the handle and its trees never outlive the call.
+
+/// Open the repo, resolve `tree_ref`, and read a batch of records. See
+/// [`read_records`].
+pub fn read_records_at_ref(
+    git_dir: &str,
+    tree_ref: &str,
+    base: &str,
+    paths: &[String],
+    extension: &str,
+) -> Result<Vec<Option<Value>>> {
+    let repo = open_repo(git_dir)?;
+    let mut tree = resolve_tree(&repo, tree_ref)?;
+    read_records(&repo, &mut tree, base, paths, extension)
+}
+
+/// Open the repo, resolve `base_ref` to a starting tree, write a batch, and
+/// flush — returning the new root tree hash + blob hashes. See [`write_records`].
+pub fn write_records_at_ref(
+    git_dir: &str,
+    base_ref: &str,
+    base: &str,
+    items: &[(String, Value)],
+    extension: &str,
+) -> Result<WriteOutcome> {
+    let repo = open_repo(git_dir)?;
+    let mut tree = resolve_tree(&repo, base_ref)?;
+    write_records(&repo, &mut tree, base, items, extension)
+}
+
+/// Open the repo, resolve `base_ref`, delete a batch, and flush. See
+/// [`delete_records`].
+pub fn delete_records_at_ref(
+    git_dir: &str,
+    base_ref: &str,
+    base: &str,
+    paths: &[String],
+    extension: &str,
+) -> Result<DeleteOutcome> {
+    let repo = open_repo(git_dir)?;
+    let mut tree = resolve_tree(&repo, base_ref)?;
+    delete_records(&repo, &mut tree, base, paths, extension)
+}
+
+/// Open the repo, resolve `tree_ref`, and list every record under `base`. See
+/// [`list_records`].
+pub fn list_records_at_ref(
+    git_dir: &str,
+    tree_ref: &str,
+    base: &str,
+    extension: &str,
+) -> Result<Vec<(String, Value)>> {
+    let repo = open_repo(git_dir)?;
+    let mut tree = resolve_tree(&repo, tree_ref)?;
+    list_records(&repo, &mut tree, base, extension)
+}
+
+/// Open the repo, resolve both refs, and diff records (with parsed src/dst +
+/// RFC 6902 patches). See [`diff_records`].
+pub fn diff_records_at_refs(
+    git_dir: &str,
+    src_ref: &str,
+    dst_ref: &str,
+    base: &str,
+    extension: &str,
+) -> Result<Vec<RecordDiff>> {
+    let repo = open_repo(git_dir)?;
+    let mut src = resolve_tree(&repo, src_ref)?;
+    let mut dst = resolve_tree(&repo, dst_ref)?;
+    diff_records(&repo, &mut src, &mut dst, base, extension)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
