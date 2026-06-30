@@ -41,13 +41,13 @@ Plans live in [plans/](plans/) — see [plans/README.md](plans/README.md).
 
 ## v1.0 milestone
 
-The active work scope is [the 1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1) — see issues #128 through #141 (excluding the few backlog ones). The [holo-tree (Rust) migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is v1.1; v1.0 stays on the JS hologit substrate.
+The active work scope is [the 1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1) — see issues #128 through #141 (excluding the few backlog ones). The [holo-tree (Rust) migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is **done** ([#203](https://github.com/JarvusInnovations/gitsheets/pull/203)): tree ops now run on the Rust `@hologit/holo-tree` binding and hologit JS is dropped. It's phase 1 of the Rust-core evolution specced in [specs/rust-core.md](specs/rust-core.md) and built out via the [`plans/`](plans/) DAG.
 
 ## Stack
 
 - **Language** — TypeScript (strict). ESM-only.
 - **Runtime** — Node.js ≥ 20 or Bun ≥ 1.
-- **Tree primitives** — hologit (JS) for v1.0; holo-tree (Rust via napi-rs) for v1.1.
+- **Tree primitives** — `@hologit/holo-tree` (Rust via napi-rs); hologit JS dropped in [#203](https://github.com/JarvusInnovations/gitsheets/pull/203).
 - **TOML** — `smol-toml` for parse (lean memory), `@iarna/toml` for serialize (byte-stable canonical form). Date types preserved (`instanceof Date`). See [specs/architecture.md](specs/architecture.md).
 - **JSON Schema validation** — `ajv`.
 - **Runtime consumer-validator interface** — [Standard Schema](https://standardschema.dev) (any compliant validator: Zod, Valibot, ArkType, Effect Schema).

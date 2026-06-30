@@ -135,8 +135,9 @@ The DAG in [`plans/`](../plans/) realizes this in dependency order. The
 load-bearing sequencing rule: **the bytes-authority must land before a second
 binding exists**, or Node and Python will disagree on bytes.
 
-1. **Tree ops in Rust** — `@hologit/holo-tree` binding; tree/blob/commit move off
-   hologit JS, TOML stays JS, behind the unchanged public API.
+1. **Tree ops in Rust** *(done — [#203](https://github.com/JarvusInnovations/gitsheets/pull/203))* —
+   `@hologit/holo-tree` binding; tree/blob/commit moved off hologit JS, TOML stays
+   JS, behind the unchanged public API.
    (`holo-tree-napi-spike` → `holo-tree-migration`.)
 2. **Bytes-authority core** — establish `gitsheets-core`; move TOML +
    normalization, path templates, shape validation, and definition-embedded logic
