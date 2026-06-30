@@ -785,6 +785,7 @@ dependencies = [
  "holo-tree",
  "indexmap",
  "jsonschema",
+ "regex",
  "serde_json",
  "tempfile",
  "toml",

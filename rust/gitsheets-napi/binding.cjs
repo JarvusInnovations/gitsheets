@@ -146,6 +146,16 @@ module.exports = {
   CoreTransaction: addon.CoreTransaction,
   coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
   coreCheckValidators: wrap(addon.coreCheckValidators),
+  // Markdown / mdx content-type codec (markdown-codec-core). serialize/parse can
+  // raise a typed ValidationError/ConfigError; the H1 + lint-config helpers are
+  // pure. The body markdownlint NORMALIZATION is a host-side pre-pass — the core
+  // frames the body verbatim (see the gitsheets_core::codec module docs).
+  markdownSerialize: wrap(addon.markdownSerialize),
+  markdownParse: wrap(addon.markdownParse),
+  markdownParseHeaderOnly: wrap(addon.markdownParseHeaderOnly),
+  markdownExtractH1: addon.markdownExtractH1,
+  markdownRewriteH1: addon.markdownRewriteH1,
+  markdownResolveLintConfig: addon.markdownResolveLintConfig,
   // Boundary-test entry: throws the typed class for a given stable code.
   simulateCoreError: wrap(addon.simulateCoreError),
   // Error machinery.

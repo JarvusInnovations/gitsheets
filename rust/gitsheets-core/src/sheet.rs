@@ -38,7 +38,8 @@ use holo_tree::MutableTree;
 use indexmap::IndexMap;
 
 use crate::canonical;
-use crate::config::{self, FormatKind, SheetConfig, SortRule};
+use crate::codec;
+use crate::config::{self, SheetConfig, SortRule};
 use crate::engine::{Engine, SnippetError, SnippetHandle};
 use crate::error::{Error, Result};
 use crate::index::{MultiIndex, UniqueIndex};
@@ -209,20 +210,28 @@ impl Sheet {
         self.config.format.extension()
     }
 
-    /// Guard: the core's TOML pipeline is the v1.0 bytes-authority. Markdown/mdx
-    /// records (frontmatter codec) are deferred to a follow-up — see the plan
-    /// Notes — so a markdown sheet's record operations fail loudly rather than
-    /// writing the wrong bytes.
-    fn require_toml(&self) -> Result<()> {
-        if self.config.format.kind != FormatKind::Toml {
-            return Err(Error::ConfigInvalid {
-                message: format!(
-                    "sheet {:?}: the markdown/mdx record codec is not yet implemented in the Rust core (deferred — see plans/sheet-store-core.md)",
-                    self.name
-                ),
-            });
+    /// Read every record under the sheet's base, decoding each through the
+    /// format codec ([`crate::codec`]). `with_body` is the lazy-body switch: a
+    /// markdown record read with `with_body = false` omits the (potentially
+    /// large) body field, matching `Format.parseHeaderOnly`. No-op distinction
+    /// for TOML sheets. Returns sheet-relative paths in sorted order.
+    fn read_all(
+        &self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        with_body: bool,
+    ) -> Result<Vec<(String, Value)>> {
+        let texts = record::list_record_texts(repo, tree, &self.base, self.extension())?;
+        let mut out = Vec::with_capacity(texts.len());
+        for (path, text) in texts {
+            let record = if with_body {
+                codec::parse(&text, &self.config.format)?
+            } else {
+                codec::parse_header_only(&text, &self.config.format)?
+            };
+            out.push((path, record));
         }
-        Ok(())
+        Ok(out)
     }
 
     /// Render the path a record maps to (raw record, not normalized) — matches
@@ -264,8 +273,22 @@ impl Sheet {
         previous_path: Option<String>,
         allow_missing_body: bool,
     ) -> Result<UpsertCandidate> {
-        self.require_toml()?;
-        let _ = allow_missing_body; // body guard only applies to markdown (deferred)
+        // Body-presence guard (markdown/mdx only): an upsert is a full-record
+        // replace, so a record that omits the body field would silently erase
+        // the on-disk body. Require explicit opt-in. Mirrors `Sheet.#prepareUpsert`
+        // (the JS guard throws `TypeError`; the core surfaces it through the
+        // typed taxonomy as `validation_failed` — see the plan Notes).
+        if let Some(body_field) = &self.config.format.body {
+            let present = matches!(record, Value::Table(t) if t.get(body_field).is_some());
+            if !present && !allow_missing_body {
+                return Err(Error::ValidationFailed {
+                    message: format!(
+                        "upsert: record is missing the body field {body_field:?}. Pass allowMissingBody: true to opt in, or use Sheet.patch for body-preserving frontmatter updates."
+                    ),
+                    issues: Vec::new(),
+                });
+            }
+        }
 
         // JSON-Schema shape validation (the core's persisted-shape pass). The
         // consumer Standard Schema validator runs host-side between phases.
@@ -288,7 +311,9 @@ impl Sheet {
         // current tree) — throws before any mutation.
         self.check_unique_conflicts(repo, tree, &normalized, &record_path)?;
 
-        let next_text = canonical::serialize(&normalized)?;
+        // Serialize through the format codec: TOML records → canonical TOML;
+        // markdown/mdx → frontmatter + body (with title-from-H1 enforcement).
+        let next_text = codec::serialize(&normalized, &self.config.format)?;
 
         Ok(UpsertCandidate {
             record_path,
@@ -363,7 +388,6 @@ impl Sheet {
         tree: &mut MutableTree,
         record_path: &str,
     ) -> Result<()> {
-        self.require_toml()?;
         let full = join_record_path(&self.base, record_path, self.extension());
         let existed = tree
             .read_blob(repo, &full)
@@ -391,13 +415,17 @@ impl Sheet {
         Ok(())
     }
 
-    /// List every record under the sheet's base, in sorted path order.
+    /// List every record under the sheet's base, in sorted path order, decoded
+    /// through the format codec. `with_body` is the lazy-body switch for
+    /// markdown sheets (`false` omits the body field — the `withBody: false`
+    /// path); it is a no-op for TOML sheets.
     pub fn list(
         &self,
         repo: &gix::Repository,
         tree: &mut MutableTree,
+        with_body: bool,
     ) -> Result<Vec<(String, Value)>> {
-        record::list_records(repo, tree, &self.base, self.extension())
+        self.read_all(repo, tree, with_body)
     }
 
     // ── indexing ─────────────────────────────────────────────────────────────
@@ -461,7 +489,11 @@ impl Sheet {
                 return Ok(());
             }
         }
-        let records = record::list_records(repo, tree, &self.base, self.extension())?;
+        // Index builds always use body-less reads (the body isn't a record
+        // identifier): a keyFn referencing the body field sees it absent and the
+        // record degenerates out of the index. Matches the JS contract in
+        // specs/behaviors/content-types.md#indexes.
+        let records = self.read_all(repo, tree, false)?;
         let mut unique = HashMap::new();
         let mut multi = HashMap::new();
         for def in &self.indexes {
@@ -790,7 +822,7 @@ mod tests {
             .prepare_upsert(&repo, &mut tree, &r2, Some("jane".into()), false)
             .unwrap();
         sheet.stage_upsert(&repo, &mut tree, &c2).unwrap();
-        let listed = sheet.list(&repo, &mut tree).unwrap();
+        let listed = sheet.list(&repo, &mut tree, true).unwrap();
         let paths: Vec<&str> = listed.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["jane-doe"]);
     }
@@ -813,7 +845,7 @@ mod tests {
         let c = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
         sheet.stage_upsert(&repo, &mut tree, &c).unwrap();
         sheet.delete_at_path(&repo, &mut tree, "jane").unwrap();
-        assert!(sheet.list(&repo, &mut tree).unwrap().is_empty());
+        assert!(sheet.list(&repo, &mut tree, true).unwrap().is_empty());
     }
 
     #[test]
@@ -826,9 +858,9 @@ mod tests {
             let c = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
             sheet.stage_upsert(&repo, &mut tree, &c).unwrap();
         }
-        assert_eq!(sheet.list(&repo, &mut tree).unwrap().len(), 3);
+        assert_eq!(sheet.list(&repo, &mut tree, true).unwrap().len(), 3);
         sheet.clear(&repo, &mut tree).unwrap();
-        assert!(sheet.list(&repo, &mut tree).unwrap().is_empty());
+        assert!(sheet.list(&repo, &mut tree, true).unwrap().is_empty());
     }
 
     #[test]
@@ -913,26 +945,122 @@ mod tests {
         assert_eq!(err.code(), "index_not_defined");
     }
 
-    #[test]
-    fn markdown_record_ops_are_deferred() {
+    // ── markdown / content-typed sheets ──────────────────────────────────────
+
+    /// A tree pre-loaded with a markdown `posts` sheet config.
+    fn markdown_tree(repo: &gix::Repository, title: bool) -> MutableTree {
         let mut gs = IndexMap::new();
         gs.insert("path".to_string(), s("${{ slug }}"));
         gs.insert("root".to_string(), s("posts"));
         let mut fmt = IndexMap::new();
         fmt.insert("type".to_string(), s("markdown"));
-        fmt.insert("body".to_string(), s("content"));
+        fmt.insert("body".to_string(), s("body"));
+        if title {
+            fmt.insert("title".to_string(), s("title"));
+        }
         gs.insert("format".to_string(), Value::Table(fmt));
         let mut top = IndexMap::new();
         top.insert("gitsheet".to_string(), Value::Table(gs));
-
-        let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        write_records(&repo, &mut tree, ".gitsheets", &[("people".into(), Value::Table(top))], TOML_EXTENSION).unwrap();
-        tree.write(&repo).unwrap();
+        write_records(repo, &mut tree, ".gitsheets", &[("people".into(), Value::Table(top))], TOML_EXTENSION).unwrap();
+        tree.write(repo).unwrap();
+        tree
+    }
+
+    #[test]
+    fn markdown_upsert_writes_md_and_round_trips() {
+        let (_d, repo) = temp_repo();
+        let mut tree = markdown_tree(&repo, false);
         let mut sheet = open(&repo, &mut tree);
-        let r = rec(&[("slug", s("hi")), ("content", s("# Hi"))]);
+        let r = rec(&[("slug", s("hello")), ("title", s("Hello")), ("body", s("# Hello\n\nFirst post.\n"))]);
+        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        assert_eq!(cand.record_path, "hello");
+        assert!(cand.next_text.starts_with("+++\n"));
+        assert!(cand.next_text.contains("+++\n\n# Hello\n\nFirst post.\n"));
+        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+
+        // Stored at posts/hello.md (not .toml).
+        let listed = sheet.list(&repo, &mut tree, true).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "hello");
+        let Value::Table(m) = &listed[0].1 else { panic!() };
+        assert_eq!(m.get("body"), Some(&s("# Hello\n\nFirst post.")));
+        assert_eq!(m.get("title"), Some(&s("Hello")));
+    }
+
+    #[test]
+    fn markdown_list_without_body_omits_body() {
+        let (_d, repo) = temp_repo();
+        let mut tree = markdown_tree(&repo, false);
+        let mut sheet = open(&repo, &mut tree);
+        let r = rec(&[("slug", s("a")), ("title", s("A")), ("body", s("HUGE BODY"))]);
+        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+
+        let with = sheet.list(&repo, &mut tree, true).unwrap();
+        assert_eq!(with[0].1.type_name(), "table");
+        let Value::Table(m) = &with[0].1 else { panic!() };
+        assert_eq!(m.get("body"), Some(&s("HUGE BODY")));
+
+        let without = sheet.list(&repo, &mut tree, false).unwrap();
+        let Value::Table(m2) = &without[0].1 else { panic!() };
+        assert_eq!(m2.get("body"), None);
+        assert_eq!(m2.get("title"), Some(&s("A")));
+    }
+
+    #[test]
+    fn markdown_missing_body_guard_and_opt_in() {
+        let (_d, repo) = temp_repo();
+        let mut tree = markdown_tree(&repo, false);
+        let mut sheet = open(&repo, &mut tree);
+
+        // Missing body without opt-in → validation_failed.
+        let r = rec(&[("slug", s("a")), ("title", s("A"))]);
         let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
-        assert_eq!(err.code(), "config_invalid");
-        assert!(err.message().contains("not yet implemented"));
+        assert_eq!(err.code(), "validation_failed");
+        assert!(err.message().contains("missing the body field"));
+
+        // With allow_missing_body → writes an empty body.
+        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, true).unwrap();
+        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+        let listed = sheet.list(&repo, &mut tree, true).unwrap();
+        let Value::Table(m) = &listed[0].1 else { panic!() };
+        assert_eq!(m.get("body"), Some(&s("")));
+    }
+
+    #[test]
+    fn markdown_title_from_h1_derivation_and_disagreement() {
+        let (_d, repo) = temp_repo();
+        let mut tree = markdown_tree(&repo, true);
+        let mut sheet = open(&repo, &mut tree);
+
+        // Derives title from the body H1 when omitted.
+        let r = rec(&[("slug", s("hello")), ("body", s("# Hello, world\n\nA post."))]);
+        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+        let listed = sheet.list(&repo, &mut tree, false).unwrap(); // body-less still has title
+        let Value::Table(m) = &listed[0].1 else { panic!() };
+        assert_eq!(m.get("title"), Some(&s("Hello, world")));
+        assert_eq!(m.get("body"), None);
+
+        // Disagreeing supplied title throws.
+        let bad = rec(&[("slug", s("x")), ("title", s("X")), ("body", s("# Y\n\nbody"))]);
+        let err = sheet.prepare_upsert(&repo, &mut tree, &bad, None, false).err().unwrap();
+        assert_eq!(err.code(), "validation_failed");
+    }
+
+    #[test]
+    fn markdown_reupsert_is_idempotent() {
+        let (_d, repo) = temp_repo();
+        let mut tree = markdown_tree(&repo, false);
+        let mut sheet = open(&repo, &mut tree);
+        let r = rec(&[("slug", s("a")), ("title", s("A")), ("body", s("body bytes"))]);
+        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+
+        // Read back the full record and re-upsert it → no byte change.
+        let listed = sheet.list(&repo, &mut tree, true).unwrap();
+        let wc = sheet.will_change(&repo, &mut tree, &listed[0].1, None, false).unwrap();
+        assert!(!wc.changed, "byte-identical markdown re-upsert is a no-op");
     }
 }

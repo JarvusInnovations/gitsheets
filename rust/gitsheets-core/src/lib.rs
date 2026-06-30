@@ -18,6 +18,7 @@
 //! top of this substrate. See [`specs/rust-core.md`](../../../specs/rust-core.md).
 
 pub mod canonical;
+pub mod codec;
 pub mod config;
 pub mod diff;
 pub mod engine;
@@ -33,7 +34,10 @@ pub mod validation;
 pub mod value;
 
 pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};
-pub use config::{FieldConfig, FormatConfig, FormatKind, SheetConfig, SortDir, SortRule};
+pub use codec::{extract_first_h1, rewrite_leading_h1};
+pub use config::{
+    FieldConfig, FormatConfig, FormatKind, Markdownlint, SheetConfig, SortDir, SortRule,
+};
 pub use diff::{apply_merge_patch, create_patch, MergePatch, PatchOp, PatchOpKind, PatchValue};
 pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
 pub use index::{MultiIndex, UniqueIndex};

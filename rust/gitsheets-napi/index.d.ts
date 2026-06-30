@@ -234,6 +234,42 @@ export declare function coreDiscoverSheets(gitDir: string, treeRef: string, open
  */
 export declare function coreCheckValidators(declared: Array<string>, validatorNames: Array<string>): void
 /**
+ * Serialize a record to its on-disk markdown bytes (`+++` frontmatter + body),
+ * enforcing the title-from-H1 invariant when `titleField` is set. The body is
+ * framed verbatim — markdownlint normalization is the host's pre-pass. A
+ * non-string body or a title that disagrees with the body's H1 throws a typed
+ * `ValidationError`.
+ */
+export declare function markdownSerialize(record: JsValue, bodyField: string, titleField?: string | undefined | null): string
+/**
+ * Parse on-disk markdown bytes into a full record (frontmatter fields + the
+ * body under `bodyField`). Mirrors `markdownFormat.parse`.
+ */
+export declare function markdownParse(text: string, bodyField: string, titleField?: string | undefined | null): JsValue
+/**
+ * Parse only the frontmatter — the lazy-body path. The body field is absent in
+ * the returned record. Mirrors `markdownFormat.parseHeaderOnly`.
+ */
+export declare function markdownParseHeaderOnly(text: string, bodyField: string): JsValue
+/**
+ * Extract the first ATX-style H1 from a markdown body, or `null` if absent.
+ * Mirrors `extractFirstH1`.
+ */
+export declare function markdownExtractH1(body: string): string | null
+/**
+ * Rewrite (or prepend) the first ATX H1 of a markdown body to `title`. Mirrors
+ * `rewriteLeadingH1` — the `Sheet.patch` title-reconciliation helper.
+ */
+export declare function markdownRewriteH1(body: string, title: string): string
+/**
+ * The effective markdownlint config the host's normalization pre-pass should
+ * apply, or `null` when disabled. The defaults (`default: true`, `MD013:
+ * false`, `MD041: false`) layered with any `[gitsheet.format.markdownlint]`
+ * overrides, plus the `MD041` auto-enable when title-from-H1 is on. The core
+ * computes the ruleset but does NOT apply it (see the codec module docs).
+ */
+export declare function markdownResolveLintConfig(markdownlint: JsValue, titleIsSet: boolean): JsValue | null
+/**
  * A compiled sheet definition: the embedded engine plus the definition's
  * path template (and optional raw-JS sort comparator), **compiled once** at
  * construction and reused across every method call. Holds a `!Send` boa
@@ -286,7 +322,7 @@ export declare class CoreTransaction {
    * the candidate is stashed for a subsequent `stageUpsert`. A JSON-Schema
    * rejection throws `ValidationError` here, before any bytes are written.
    */
-  prepareUpsert(name: string, record: JsValue, previousPath?: string | undefined | null): object
+  prepareUpsert(name: string, record: JsValue, previousPath?: string | undefined | null, allowMissingBody?: boolean | undefined | null): object
   /**
    * Phase 3 *(mutating)*: write the stashed candidate from the last
    * `prepareUpsert` for `name`. Marks the transaction mutated.
@@ -296,7 +332,7 @@ export declare class CoreTransaction {
    * Pre-flight idempotency check (`Sheet.willChange`) — same phase-1 pipeline,
    * then a byte comparison to the existing blob. Non-mutating.
    */
-  willChange(name: string, record: JsValue, previousPath?: string | undefined | null): object
+  willChange(name: string, record: JsValue, previousPath?: string | undefined | null, allowMissingBody?: boolean | undefined | null): object
   /**
    * Delete a record by its sheet-relative path *(mutating)*. Throws
    * `NotFoundError(record_not_found)` when absent.
@@ -304,6 +340,13 @@ export declare class CoreTransaction {
   delete(name: string, recordPath: string): void
   /** `Sheet.clear` *(mutating)* — empties the sheet's data subtree. */
   clear(name: string): void
+  /**
+   * List every record under the sheet's base, decoded through the format
+   * codec, in sorted path order. `withBody` is the lazy-body switch for
+   * markdown sheets (`false` omits the body field); a no-op for TOML sheets.
+   * Read-only — does not mark the transaction mutated.
+   */
+  list(name: string, withBody: boolean): Array<JsRecordEntry>
   /** The parent commit hash captured at open (null on a fresh repo). */
   parentCommitHash(): string | null
   /**
