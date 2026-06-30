@@ -104,10 +104,14 @@ jobs:
         working-directory: rust/gitsheets-napi
         run: npm run build
 
-      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, record CRUD/diff/patch, query, index, Sheet/Transaction/Store, markdown codec)
+      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, ICU locale collation, record CRUD/diff/patch, query, index, Sheet/Transaction/Store, markdown codec)
         # Explicit file paths (not a glob) so the suite runs identically on
         # node 20 and 22 — `node --test "test/*.mjs"` does NOT expand on node 20.
         # The `test` npm script lists every .mjs explicitly (see package.json),
+        # including collator-parity.mjs, which asserts the native ICU collator for
+        # declarative `sort = true` matches this node's `localeCompare` byte-exactly
+        # (the boa-vs-V8 divergence locale-collation-core fixes — it needs Node for
+        # the reference, which this job has), and
         # including sheet-store.mjs, which drives the orchestration state machine
         # (Transaction lifecycle + the two-phase consumer-validator protocol +
         # Store discovery), and sheet-markdown.mjs, which drives the markdown/mdx
