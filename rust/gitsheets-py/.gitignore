@@ -1,0 +1,8 @@
+# Python virtualenvs + build/test artifacts (built per-platform in CI).
+.venv/
+dist/
+build/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+*.so
