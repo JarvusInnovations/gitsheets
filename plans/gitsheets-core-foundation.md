@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [holo-tree-migration]
 specs:
   - specs/rust-core.md
