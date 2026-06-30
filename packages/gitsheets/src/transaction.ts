@@ -9,7 +9,7 @@ import type { Repo as HologitRepo, TreeObject, Workspace } from 'hologit';
 
 import { RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
-import { commitTreeViaHoloTree, useHoloTreeCommit } from './substrate.js';
+import { commitTreeViaHoloTree, loadHoloTree } from './substrate.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
 
@@ -278,14 +278,16 @@ export class Transaction {
     // (#127): the tree was just flushed to the ODB by `write()`, and the
     // binding's `commitTree` writes the commit object against the same gitDir.
     // The legacy `git commit-tree` shell-out stays reachable via
-    // GITSHEETS_COMMIT_SUBSTRATE=git so both paths remain exercisable during
-    // the migration. Ref movement (next block) stays on `git update-ref`
-    // because it needs compare-and-swap, which the binding's `updateRef` does
-    // not yet expose. See plans/holo-tree-migration.md.
+    // GITSHEETS_COMMIT_SUBSTRATE=git, and is also the automatic fallback when
+    // the binding can't load on this platform (loadHoloTree() → null). Ref
+    // movement (next block) stays on `git update-ref` because it needs
+    // compare-and-swap, which the binding's `updateRef` does not yet expose.
+    // See plans/holo-tree-migration.md.
     let commitHash: string;
-    if (useHoloTreeCommit()) {
+    const holo = await loadHoloTree();
+    if (holo) {
       try {
-        commitHash = commitTreeViaHoloTree({
+        commitHash = commitTreeViaHoloTree(holo, {
           gitDir,
           treeHash,
           parents: this.#parentCommitHash ? [this.#parentCommitHash] : [],

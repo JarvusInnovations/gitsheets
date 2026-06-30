@@ -6,23 +6,47 @@
 // (`Repo.open`/`createTreeFromRef`/`createTree`/`commitTree`/`updateRef` +
 // `Tree.writeChild`/`writeChildBytes`/`readBlob`/`deleteChildDeep`/`write` +
 // `emptyTreeHash`), so the migration proceeds site by site. This module owns
-// the binding import and the operations migrated so far; everything not yet
+// the binding load and the operations migrated so far; everything not yet
 // covered stays on hologit / git shell-outs in its original site.
 //
 // See plans/holo-tree-migration.md and specs/rust-core.md.
 
-import { Repo as HoloRepo, type Signature } from '@hologit/holo-tree';
+// Type-only import: erased at compile time, so merely importing gitsheets never
+// loads the native addon. The runtime load is the dynamic import in
+// `loadHoloTree()` below.
+import type { Signature } from '@hologit/holo-tree';
 
 import type { Author } from './transaction.js';
 
+type HoloModule = typeof import('@hologit/holo-tree');
+
+let cached: HoloModule | null | undefined;
+
 /**
- * Substrate selector. The holo-tree binding is the default path for the
- * operations migrated so far; setting `GITSHEETS_COMMIT_SUBSTRATE=git` forces
- * the legacy git shell-out path, keeping both paths exercisable during the
- * migration. Any value other than `git` (including unset) selects holo-tree.
+ * Lazily load the holo-tree binding, or return `null` to signal "use the legacy
+ * git path". Returns `null` when:
+ *
+ * - `GITSHEETS_COMMIT_SUBSTRATE=git` forces the legacy shell-out, or
+ * - the native addon can't load on this platform. `@hologit/holo-tree` ships
+ *   prebuilds only for linux-x64-gnu / darwin-arm64 / win32-x64-msvc; on any
+ *   other platform (Alpine/musl, linux-arm64, …) the load fails and gitsheets
+ *   **gracefully falls back to git** rather than becoming unimportable.
+ *
+ * The result is cached (including the `null` outcome) so the probe happens once.
  */
-export function useHoloTreeCommit(): boolean {
-  return process.env['GITSHEETS_COMMIT_SUBSTRATE'] !== 'git';
+export async function loadHoloTree(): Promise<HoloModule | null> {
+  if (cached !== undefined) return cached;
+  if (process.env['GITSHEETS_COMMIT_SUBSTRATE'] === 'git') {
+    cached = null;
+    return cached;
+  }
+  try {
+    cached = await import('@hologit/holo-tree');
+  } catch {
+    // Unsupported platform / missing prebuilt — fall back to git.
+    cached = null;
+  }
+  return cached;
 }
 
 /**
@@ -42,7 +66,8 @@ export function toSignature(author: Author, timeSeconds: number, offsetMinutes: 
 }
 
 /**
- * Create a commit object via the holo-tree binding and return its hash.
+ * Create a commit object via the holo-tree binding (already loaded by the
+ * caller via {@link loadHoloTree}) and return its hash.
  *
  * `treeHash` must already exist in the repo's object database (gitsheets writes
  * it via the existing tree `write()` before calling this). The binding opens
@@ -52,19 +77,22 @@ export function toSignature(author: Author, timeSeconds: number, offsetMinutes: 
  * transaction) and a fresh handle sidesteps any object-cache staleness against
  * loose objects written since a cached handle was opened.
  */
-export function commitTreeViaHoloTree(opts: {
-  gitDir: string;
-  treeHash: string;
-  parents: readonly string[];
-  message: string;
-  author: Author;
-  committer: Author;
-}): string {
+export function commitTreeViaHoloTree(
+  holo: HoloModule,
+  opts: {
+    gitDir: string;
+    treeHash: string;
+    parents: readonly string[];
+    message: string;
+    author: Author;
+    committer: Author;
+  },
+): string {
   const now = Math.floor(Date.now() / 1000);
   // getTimezoneOffset returns minutes that local is *behind* UTC (UTC - local),
   // so negate to get git's "+HHMM"-style offset (minutes ahead of UTC).
   const offsetMinutes = -new Date().getTimezoneOffset();
-  const repo = HoloRepo.open(opts.gitDir);
+  const repo = holo.Repo.open(opts.gitDir);
   return repo.commitTree(
     opts.treeHash,
     [...opts.parents],
