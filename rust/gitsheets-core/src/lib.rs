@@ -1,23 +1,27 @@
 //! `gitsheets-core` — the pure-Rust core for gitsheets.
 //!
-//! **Status: foundation skeleton.** This crate currently establishes the
-//! *boundary*, not the engine. It owns:
+//! **Status: foundation + bytes-authority.** This crate owns:
 //!
 //! - [`Value`] — the TOML-faithful core value type every binding marshals to
 //!   and from (see [`value`]).
 //! - [`Error`] — the typed, matchable error surface a binding maps onto its
 //!   host's idiomatic exception classes (see [`error`]).
-//! - Batch-first API shape — even the skeleton echo ([`echo_batch`]) takes and
-//!   returns a `Vec`, so bulk paths never bake in per-record FFI crossings.
+//! - **The bytes-authority** — TOML [`parse`]/[`serialize`] and canonical
+//!   [`normalize`] (deep key sort → byte-stable canonical form), plus their
+//!   batch variants (see [`canonical`]). This is what makes the on-disk form a
+//!   contract every binding agrees on byte-for-byte.
+//! - Batch-first API shape — every entry point takes and returns a `Vec`, so
+//!   bulk paths never bake in per-record FFI crossings.
 //!
-//! The actual engine — TOML parse/serialize, normalization, path-template
-//! rendering, validation, query, and the `Sheet`/`Transaction`/`Store` state
-//! machine — lands in downstream plans on top of this substrate. See
-//! [`specs/rust-core.md`](../../../specs/rust-core.md).
+//! The rest of the engine — path-template rendering, validation, query, and the
+//! `Sheet`/`Transaction`/`Store` state machine — lands in downstream plans on
+//! top of this substrate. See [`specs/rust-core.md`](../../../specs/rust-core.md).
 
+pub mod canonical;
 pub mod error;
 pub mod value;
 
+pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};
 pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
 pub use value::{Datetime, DatetimeKind, Value};
 
