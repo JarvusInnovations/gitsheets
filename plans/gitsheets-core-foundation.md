@@ -124,5 +124,12 @@ least-lossy idiomatic surface).
   Harmless — the binding's public surface is `binding.cjs`, and this crate is not
   in the npm workspace nor type-checked by the main build. Revisit if/when the
   binding is re-thinned and published with hand-authored types.
+- **Deferred to plan (node-binding-thin):** `binding.cjs` currently *redefines*
+  the seven typed error classes locally so the standalone crate is
+  self-contained. At integration the binding MUST instead use the canonical
+  classes from `packages/gitsheets/src/errors.ts` (re-export or extend them) —
+  otherwise a consumer's `instanceof ValidationError` against the `gitsheets`
+  package would be `false` for a binding-raised error. The `gitsheetsClass`
+  discriminant-mapping mechanism stays; only the class identities must unify.
 - **None** otherwise — engine behavior (validation, query, Sheet/Transaction)
   is out of scope by design and lives in downstream plans.
