@@ -1,6 +1,6 @@
 ---
 status: planned
-depends: [record-engine-core]
+depends: [record-query-index]
 specs:
   - specs/rust-core.md
   - specs/api/sheet.md
