@@ -1,0 +1,120 @@
+'use strict';
+
+// Thin JS surface over the napi addon. The addon (./index.js) marshals records
+// with full type fidelity and throws *structured* errors (own `code`, `status`,
+// `gitsheetsClass`, and `issues`/`conflictingPaths` payloads). This wrapper owns
+// the one genuinely host-specific concern the Rust side can't: constructing real
+// instances of the typed `GitsheetsError` subclasses from `specs/api/errors.md`
+// so consumers can `instanceof` and switch on `err.code`.
+
+const addon = require('./index.js');
+
+class GitsheetsError extends Error {
+  constructor(message, { code, status, cause } = {}) {
+    super(message);
+    this.name = 'GitsheetsError';
+    this.code = code;
+    this.status = status;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+class ConfigError extends GitsheetsError {
+  constructor(message, opts) {
+    super(message, opts);
+    this.name = 'ConfigError';
+  }
+}
+
+class ValidationError extends GitsheetsError {
+  constructor(message, opts = {}) {
+    super(message, opts);
+    this.name = 'ValidationError';
+    this.issues = opts.issues ?? [];
+  }
+}
+
+class TransactionError extends GitsheetsError {
+  constructor(message, opts) {
+    super(message, opts);
+    this.name = 'TransactionError';
+  }
+}
+
+class IndexError extends GitsheetsError {
+  constructor(message, opts = {}) {
+    super(message, opts);
+    this.name = 'IndexError';
+    if (opts.conflictingPaths !== undefined) this.conflictingPaths = opts.conflictingPaths;
+  }
+}
+
+class RefError extends GitsheetsError {
+  constructor(message, opts) {
+    super(message, opts);
+    this.name = 'RefError';
+  }
+}
+
+class PathTemplateError extends GitsheetsError {
+  constructor(message, opts) {
+    super(message, opts);
+    this.name = 'PathTemplateError';
+  }
+}
+
+class NotFoundError extends GitsheetsError {
+  constructor(message, opts) {
+    super(message, opts);
+    this.name = 'NotFoundError';
+  }
+}
+
+const CLASS_BY_NAME = {
+  ConfigError,
+  ValidationError,
+  TransactionError,
+  IndexError,
+  RefError,
+  PathTemplateError,
+  NotFoundError,
+};
+
+// Map a structured error raised by the addon onto its typed class. The mapping
+// keys off the `gitsheetsClass` discriminant the core sets — never the message.
+function mapCoreError(raw) {
+  const Cls = CLASS_BY_NAME[raw && raw.gitsheetsClass] ?? GitsheetsError;
+  const opts = { code: raw.code, status: raw.status, cause: raw };
+  if (raw.issues !== undefined) opts.issues = raw.issues;
+  if (raw.conflictingPaths !== undefined) opts.conflictingPaths = raw.conflictingPaths;
+  return new Cls(raw.message, opts);
+}
+
+// Wrap an addon call so any structured core error surfaces as its typed class.
+function wrap(fn) {
+  return (...args) => {
+    try {
+      return fn(...args);
+    } catch (raw) {
+      if (raw && typeof raw.gitsheetsClass === 'string') throw mapCoreError(raw);
+      throw raw;
+    }
+  };
+}
+
+module.exports = {
+  // Marshalling entry points (batch-first).
+  roundtrip: addon.roundtrip,
+  // Boundary-test entry: throws the typed class for a given stable code.
+  simulateCoreError: wrap(addon.simulateCoreError),
+  // Error machinery.
+  mapCoreError,
+  GitsheetsError,
+  ConfigError,
+  ValidationError,
+  TransactionError,
+  IndexError,
+  RefError,
+  PathTemplateError,
+  NotFoundError,
+};
