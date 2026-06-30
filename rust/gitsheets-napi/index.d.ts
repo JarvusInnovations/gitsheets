@@ -23,9 +23,76 @@ export declare function parseRecords(documents: Array<string>): Array<JsValue>
  */
 export declare function serializeRecords(records: Array<JsValue>): Array<string>
 /**
+ * One JSON-Schema validation failure, marshalled to the `ValidationIssue`
+ * shape the host surface uses (`source`/`schemaPath`/`code`, with snake fields
+ * rendered camelCase by napi). Returned by [`validate_batch`].
+ */
+export interface JsValidationIssue {
+  path: Array<string>
+  message: string
+  source: string
+  schemaPath?: string
+  code?: string
+}
+/**
+ * Render a path template against a **batch** of records, returning one path per
+ * record (no file extension; the caller appends `.toml`/`.md`). The template is
+ * parsed and its expression components compiled into the embedded engine
+ * **once**, then reused across the whole batch — the bulk path crosses the FFI
+ * a single time. A render failure surfaces as a structured, typed
+ * `PathTemplateError` (`path_render_failed` / `path_invalid_chars`). This is the
+ * path-template half of the `node:vm` parity gate.
+ */
+export declare function renderPathsBatch(template: string, records: Array<JsValue>): Array<string>
+/**
+ * Validate a **batch** of records against a JSON Schema, returning the issues
+ * for each record (an empty inner array ⇒ that record is valid). The schema is
+ * compiled **once**, then reused across the batch. Unlike the host's throwing
+ * `validateRecord`, this returns issues per record so a parity harness can diff
+ * the full pass/fail + path/keyword picture against `ajv`. A schema that won't
+ * compile surfaces as a structured, typed `ConfigError` (`config_invalid`).
+ */
+export declare function validateBatch(schema: JsValue, records: Array<JsValue>): Array<Array<JsValidationIssue>>
+/**
+ * Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
+ * run it once against `a`/`b`, returning its numeric result. The direct
+ * comparator-parity entry point: a harness asserts this equals the same rule
+ * run through `node:vm` for identical inputs.
+ */
+export declare function runComparator(rule: string, a: JsValue, b: JsValue): number
+/**
  * Throw the core error for a given stable `code`, surfaced as a **structured,
  * matchable** JS error (own `code`, `status`, `gitsheetsClass`, and any
  * `issues`/`conflictingPaths`). Boundary-test entry point: it exercises the
  * error-variant → typed-class mapping without standing up real engine paths.
  */
 export declare function simulateCoreError(code: string): void
+/**
+ * A compiled sheet definition: the embedded engine plus the definition's
+ * path template (and optional raw-JS sort comparator), **compiled once** at
+ * construction and reused across every method call. Holds a `!Send` boa
+ * context, so it is constructed and used on its owning JS thread — the
+ * thread-confinement the spec requires. Exists to demonstrate the
+ * compile-once-per-open / reuse-across-operations contract from JS.
+ */
+export declare class CompiledDefinition {
+  /**
+   * Compile a definition once: parse the path template (compiling its
+   * expression snippets into the engine) and, if given, compile a raw-JS sort
+   * comparator. All snippet compilation happens here — never per operation.
+   */
+  constructor(pathTemplate: string, sortRule?: string | undefined | null)
+  /** Render one record's path using the already-compiled template. */
+  renderPath(record: JsValue): string
+  /**
+   * Run the compiled sort comparator on two values, returning its numeric
+   * result. Errors if the definition was built without a sort rule.
+   */
+  compare(a: JsValue, b: JsValue): number
+  /**
+   * How many snippets were compiled into this definition's engine. Constant
+   * across operations — proof that compilation happened once at construction,
+   * not per `render_path` / `compare` call.
+   */
+  snippetCount(): number
+}

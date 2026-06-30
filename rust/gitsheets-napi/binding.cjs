@@ -109,6 +109,14 @@ module.exports = {
   // structured core error (`config_invalid`), surfaced as its typed class.
   parseRecords: wrap(addon.parseRecords),
   serializeRecords: wrap(addon.serializeRecords),
+  // Definition logic (batch-first). Path rendering raises a typed
+  // PathTemplateError; schema compilation raises a typed ConfigError.
+  renderPathsBatch: wrap(addon.renderPathsBatch),
+  validateBatch: wrap(addon.validateBatch),
+  runComparator: wrap(addon.runComparator),
+  // Stateful compiled definition (compile-once / reuse). Raw class — its
+  // structured errors carry `gitsheetsClass`; map with `mapCoreError` if needed.
+  CompiledDefinition: addon.CompiledDefinition,
   // Boundary-test entry: throws the typed class for a given stable code.
   simulateCoreError: wrap(addon.simulateCoreError),
   // Error machinery.

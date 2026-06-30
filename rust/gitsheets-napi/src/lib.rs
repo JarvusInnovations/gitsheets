@@ -24,6 +24,9 @@
 //! paths never bake in per-record FFI crossings.
 
 use chrono::{Datelike, Timelike};
+use gitsheets_core::engine::Engine;
+use gitsheets_core::path_template::Template;
+use gitsheets_core::validation::CompiledSchema;
 use gitsheets_core::{Datetime, Value};
 use napi::bindgen_prelude::*;
 use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, ValueType};
@@ -259,6 +262,182 @@ pub fn serialize_records(env: Env, records: Vec<JsValue>) -> Result<Vec<String>>
     match gitsheets_core::serialize_batch(&values) {
         Ok(bytes) => Ok(bytes),
         Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+// ── definition logic: path templates, validation, embedded engine ────────────
+
+/// One JSON-Schema validation failure, marshalled to the `ValidationIssue`
+/// shape the host surface uses (`source`/`schemaPath`/`code`, with snake fields
+/// rendered camelCase by napi). Returned by [`validate_batch`].
+#[napi(object)]
+pub struct JsValidationIssue {
+    pub path: Vec<String>,
+    pub message: String,
+    pub source: String,
+    pub schema_path: Option<String>,
+    pub code: Option<String>,
+}
+
+/// Render a path template against a **batch** of records, returning one path per
+/// record (no file extension; the caller appends `.toml`/`.md`). The template is
+/// parsed and its expression components compiled into the embedded engine
+/// **once**, then reused across the whole batch — the bulk path crosses the FFI
+/// a single time. A render failure surfaces as a structured, typed
+/// `PathTemplateError` (`path_render_failed` / `path_invalid_chars`). This is the
+/// path-template half of the `node:vm` parity gate.
+#[napi]
+pub fn render_paths_batch(env: Env, template: String, records: Vec<JsValue>) -> Result<Vec<String>> {
+    let mut engine = match Engine::new() {
+        Ok(e) => e,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+    let compiled = match Template::compile(&template, &mut engine) {
+        Ok(t) => t,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+    let mut out = Vec::with_capacity(records.len());
+    for record in records {
+        match compiled.render(&record.0, &mut engine) {
+            Ok(path) => out.push(path),
+            Err(err) => return Err(raise_core_error(&env, &err)),
+        }
+    }
+    Ok(out)
+}
+
+/// Validate a **batch** of records against a JSON Schema, returning the issues
+/// for each record (an empty inner array ⇒ that record is valid). The schema is
+/// compiled **once**, then reused across the batch. Unlike the host's throwing
+/// `validateRecord`, this returns issues per record so a parity harness can diff
+/// the full pass/fail + path/keyword picture against `ajv`. A schema that won't
+/// compile surfaces as a structured, typed `ConfigError` (`config_invalid`).
+#[napi]
+pub fn validate_batch(
+    env: Env,
+    schema: JsValue,
+    records: Vec<JsValue>,
+) -> Result<Vec<Vec<JsValidationIssue>>> {
+    let compiled = match CompiledSchema::compile(&schema.0) {
+        Ok(c) => c,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+    let mut out = Vec::with_capacity(records.len());
+    for record in records {
+        let issues = compiled
+            .validate(&record.0)
+            .into_iter()
+            .map(|issue| JsValidationIssue {
+                path: issue.path,
+                message: issue.message,
+                source: issue.source.as_str().to_string(),
+                schema_path: issue.schema_path,
+                code: issue.code,
+            })
+            .collect();
+        out.push(issues);
+    }
+    Ok(out)
+}
+
+/// Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
+/// run it once against `a`/`b`, returning its numeric result. The direct
+/// comparator-parity entry point: a harness asserts this equals the same rule
+/// run through `node:vm` for identical inputs.
+#[napi]
+pub fn run_comparator(env: Env, rule: String, a: JsValue, b: JsValue) -> Result<f64> {
+    let mut engine = match Engine::new() {
+        Ok(e) => e,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+    let wrapped = format!("(a, b) => {{ {rule} }}");
+    let handle = match engine.compile(&wrapped) {
+        Ok(h) => h,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+    let result = engine
+        .call(handle, &[a.0, b.0])
+        .map_err(|e| Error::new(Status::GenericFailure, format!("{e:?}")))?;
+    engine
+        .to_number(&result)
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// A compiled sheet definition: the embedded engine plus the definition's
+/// path template (and optional raw-JS sort comparator), **compiled once** at
+/// construction and reused across every method call. Holds a `!Send` boa
+/// context, so it is constructed and used on its owning JS thread — the
+/// thread-confinement the spec requires. Exists to demonstrate the
+/// compile-once-per-open / reuse-across-operations contract from JS.
+#[napi]
+pub struct CompiledDefinition {
+    engine: Engine,
+    template: Template,
+    sort_handle: Option<usize>,
+}
+
+#[napi]
+impl CompiledDefinition {
+    /// Compile a definition once: parse the path template (compiling its
+    /// expression snippets into the engine) and, if given, compile a raw-JS sort
+    /// comparator. All snippet compilation happens here — never per operation.
+    #[napi(constructor)]
+    pub fn new(env: Env, path_template: String, sort_rule: Option<String>) -> Result<Self> {
+        let mut engine = match Engine::new() {
+            Ok(e) => e,
+            Err(err) => return Err(raise_core_error(&env, &err)),
+        };
+        let template = match Template::compile(&path_template, &mut engine) {
+            Ok(t) => t,
+            Err(err) => return Err(raise_core_error(&env, &err)),
+        };
+        let sort_handle = match sort_rule {
+            Some(rule) => {
+                let wrapped = format!("(a, b) => {{ {rule} }}");
+                match engine.compile(&wrapped) {
+                    Ok(h) => Some(h),
+                    Err(err) => return Err(raise_core_error(&env, &err)),
+                }
+            }
+            None => None,
+        };
+        Ok(CompiledDefinition {
+            engine,
+            template,
+            sort_handle,
+        })
+    }
+
+    /// Render one record's path using the already-compiled template.
+    #[napi]
+    pub fn render_path(&mut self, env: Env, record: JsValue) -> Result<String> {
+        self.template
+            .render(&record.0, &mut self.engine)
+            .map_err(|err| raise_core_error(&env, &err))
+    }
+
+    /// Run the compiled sort comparator on two values, returning its numeric
+    /// result. Errors if the definition was built without a sort rule.
+    #[napi]
+    pub fn compare(&mut self, a: JsValue, b: JsValue) -> Result<f64> {
+        let handle = self
+            .sort_handle
+            .ok_or_else(|| Error::new(Status::InvalidArg, "definition has no sort rule"))?;
+        let result = self
+            .engine
+            .call(handle, &[a.0, b.0])
+            .map_err(|e| Error::new(Status::GenericFailure, format!("{e:?}")))?;
+        self.engine
+            .to_number(&result)
+            .map_err(|e| Error::new(Status::GenericFailure, e.message().to_string()))
+    }
+
+    /// How many snippets were compiled into this definition's engine. Constant
+    /// across operations — proof that compilation happened once at construction,
+    /// not per `render_path` / `compare` call.
+    #[napi]
+    pub fn snippet_count(&self) -> u32 {
+        self.engine.snippet_count() as u32
     }
 }
 

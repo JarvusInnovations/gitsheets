@@ -114,6 +114,13 @@ impl Engine {
         Ok(self.snippets.len() - 1)
     }
 
+    /// How many snippets have been compiled into this engine. Bindings expose
+    /// this to prove snippets are compiled **once on open** and never per call:
+    /// the count is set at compile time and never grows as operations run.
+    pub fn snippet_count(&self) -> usize {
+        self.snippets.len()
+    }
+
     /// Call a compiled snippet with `args` (marshalled from core values), and
     /// return the raw boa result for the caller to interpret (stringify for a
     /// path component; coerce to a number for a comparator).
