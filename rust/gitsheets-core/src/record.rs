@@ -48,7 +48,7 @@ pub const TOML_EXTENSION: &str = ".toml";
 /// the canonical layer's own mapping — see this plan's inbound-deferral note); a
 /// navigation miss is `record_not_found`; other substrate failures surface as
 /// `commit_failed`, the closest substrate-op bucket in `errors.md`.
-fn map_ht(e: holo_tree::Error) -> Error {
+pub(crate) fn map_ht(e: holo_tree::Error) -> Error {
     match e {
         holo_tree::Error::Toml { path, message } => Error::ConfigInvalid {
             message: format!("TOML parse error in {path}: {message}"),
@@ -63,6 +63,42 @@ fn map_ht(e: holo_tree::Error) -> Error {
             message: format!("holo-tree substrate error: {other}"),
         },
     }
+}
+
+// ── substrate (holo-tree) read/write counters ────────────────────────────────
+
+/// A snapshot of holo-tree's process-wide tree/blob counters — the read-side
+/// instrumentation behind the bulk benchmark and the hologit#464 perf finding
+/// (per-call `to_thread_local`, the tree object-cache, per-read blob clone).
+/// `cache_hits`/`misses` count the thread-local parsed-tree cache; `blobs_read`
+/// counts ODB blob fetches.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SubstrateStats {
+    pub trees_read: u64,
+    pub trees_written: u64,
+    pub trees_skipped_clean: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub blobs_read: u64,
+}
+
+/// Snapshot the current substrate counters.
+pub fn substrate_stats() -> SubstrateStats {
+    let s = holo_tree::stats();
+    SubstrateStats {
+        trees_read: s.trees_read,
+        trees_written: s.trees_written,
+        trees_skipped_clean: s.trees_skipped_clean,
+        cache_hits: s.cache_hits,
+        cache_misses: s.cache_misses,
+        blobs_read: s.blobs_read,
+    }
+}
+
+/// Reset the substrate counters and the thread-local tree cache — call before a
+/// timed benchmark phase for a clean read-amplification measurement.
+pub fn substrate_reset() {
+    holo_tree::reset();
 }
 
 // ── repo + tree handles ──────────────────────────────────────────────────────
@@ -134,6 +170,25 @@ fn hex(id: ObjectId) -> String {
     id.to_string()
 }
 
+/// Read and parse a record blob by its object id — the shared primitive the
+/// query walk and index build use after pruning/listing has handed them a set
+/// of blob hashes (avoids re-navigating the tree per candidate). A blob that
+/// isn't valid UTF-8 / canonical TOML is `config_invalid`, matching the host's
+/// `#readRecordFromBlob`.
+pub(crate) fn read_blob_value(repo: &gix::Repository, hash: ObjectId) -> Result<Value> {
+    let bytes = repo
+        .find_object(hash)
+        .map_err(|e| Error::CommitFailed {
+            message: format!("could not read blob {hash}: {e}"),
+        })?
+        .data
+        .to_vec();
+    let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
+        message: format!("record blob {hash} is not valid UTF-8: {e}"),
+    })?;
+    canonical::parse(&text)
+}
+
 // ── join / path helpers ──────────────────────────────────────────────────────
 
 /// Join a base subtree path with a record path + extension into the deep path
@@ -152,7 +207,7 @@ fn full_path(base: &str, record_path: &str, extension: &str) -> String {
     format!("{joined}{extension}")
 }
 
-fn base_arg(base: &str) -> String {
+pub(crate) fn base_arg(base: &str) -> String {
     let cleaned: Vec<&str> = base
         .split('/')
         .map(|p| p.trim_matches('/'))

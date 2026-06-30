@@ -36,8 +36,26 @@ struct Component {
 #[derive(Debug)]
 enum Part {
     Literal(String),
-    Field { name: String, recursive: bool },
-    Expression { handle: SnippetHandle },
+    Field {
+        name: String,
+        recursive: bool,
+    },
+    Expression {
+        handle: SnippetHandle,
+        /// The raw expression source (inside `${{ … }}`), retained for
+        /// [`Template::get_field_names`]'s best-effort identifier scan.
+        source: String,
+    },
+}
+
+/// One component's contribution to a query-tree walk: the value it renders to
+/// against the (partial) query — `None` when un-renderable, in which case the
+/// walk must expand across all subtrees at that level — plus whether it is the
+/// recursive (`field/**`) component. See [`Template::plan_query`].
+#[derive(Clone, Debug)]
+pub struct QueryComponentPlan {
+    pub rendered: Option<String>,
+    pub recursive: bool,
 }
 
 /// A parsed, compiled path template. Built once per template string (with its
@@ -112,7 +130,7 @@ impl Template {
             let piece = match part {
                 Part::Literal(text) => Some(text.clone()),
                 Part::Field { name, .. } => field_to_string(record, name),
-                Part::Expression { handle } => match engine.call(*handle, std::slice::from_ref(record)) {
+                Part::Expression { handle, .. } => match engine.call(*handle, std::slice::from_ref(record)) {
                     Ok(value) => engine.to_path_string(&value),
                     // An undefined identifier is "un-renderable", not fatal —
                     // lets a partial query walk the tree fully (host parity).
@@ -134,6 +152,115 @@ impl Template {
         }
         Ok(Some(out))
     }
+
+    /// Names of record fields that contribute to rendering this template — the
+    /// query auto-derivation set consumers use to identify a record by its
+    /// rendered path (e.g. `Sheet.patch`'s query derivation in the CLI). A
+    /// behavior-preserving port of the host `Template.getFieldNames`:
+    ///
+    /// - `field` components contribute the field name directly;
+    /// - `expression` components contribute a best-effort scan of the bare
+    ///   identifiers in their source, minus JS keywords/globals. False positives
+    ///   (e.g. `(slug || legacyId)` yields both) are fine — the caller passes
+    ///   only known input fields downstream.
+    ///
+    /// Insertion-ordered and de-duplicated, matching the host's `Set` spread.
+    pub fn get_field_names(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for c in &self.components {
+            for p in &c.parts {
+                match p {
+                    Part::Field { name, .. } => {
+                        if seen.insert(name.clone()) {
+                            out.push(name.clone());
+                        }
+                    }
+                    Part::Expression { source, .. } => {
+                        for id in extract_identifiers(source) {
+                            if seen.insert(id.clone()) {
+                                out.push(id);
+                            }
+                        }
+                    }
+                    Part::Literal(_) => {}
+                }
+            }
+        }
+        out
+    }
+
+    /// Render each component against a (possibly partial) `query` for the
+    /// query-tree walk: the value the component renders to (`None` when a field
+    /// or expression it needs is absent → the walk expands across all subtrees
+    /// at that level), plus its recursive flag. This is the planning half of the
+    /// host renderer's query *pruning* — see [`crate::query`] for the walk that
+    /// consumes it. Invalid-char rejection is intentionally NOT applied here
+    /// (the host applies it only in `render`, not in `queryTree`).
+    pub fn plan_query(
+        &self,
+        query: &Value,
+        engine: &mut Engine,
+    ) -> Result<Vec<QueryComponentPlan>> {
+        let mut out = Vec::with_capacity(self.components.len());
+        for c in &self.components {
+            let rendered = self.render_component(c, query, engine)?;
+            out.push(QueryComponentPlan {
+                rendered,
+                recursive: c.recursive,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// JS keywords + globals excluded from the [`Template::get_field_names`]
+/// identifier scan — a verbatim port of `JS_RESERVED` in
+/// `packages/gitsheets/src/path-template/index.ts`.
+const JS_RESERVED: &[&str] = &[
+    "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
+    "else", "enum", "export", "extends", "false", "finally", "for", "function", "if", "import",
+    "in", "instanceof", "new", "null", "return", "super", "switch", "this", "throw", "true", "try",
+    "typeof", "undefined", "var", "void", "while", "with", "yield", "let", "static", "async",
+    "await", "of", "Array", "Boolean", "Date", "Number", "Object", "String", "Math", "JSON",
+    "RegExp", "Symbol", "Promise", "Map", "Set", "NaN", "Infinity", "globalThis",
+];
+
+/// Bare identifiers in an expression, matching the host regex
+/// `/(?<![.\w$])([a-zA-Z_$][a-zA-Z0-9_$]*)/g` then the `JS_RESERVED` filter.
+/// Members (`x.y`) contribute only `x` because the lookbehind rejects a start
+/// preceded by `.`/word-char/`$`. Implemented as a manual scan (Rust `regex`
+/// has no lookbehind).
+fn extract_identifiers(source: &str) -> Vec<String> {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_ascii_alphabetic() || c == '_' || c == '$' {
+            // Lookbehind: a start char is a match only if the previous char is
+            // not `.`, a word char, or `$`.
+            let prev_ok = i == 0 || {
+                let p = chars[i - 1];
+                !(p == '.' || is_word(p))
+            };
+            let mut j = i + 1;
+            while j < chars.len() && is_word(chars[j]) {
+                j += 1;
+            }
+            if prev_ok {
+                let id: String = chars[i..j].iter().collect();
+                if !JS_RESERVED.contains(&id.as_str()) {
+                    out.push(id);
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Native stringification of a field value, matching the host `stringifyValue`:
@@ -265,7 +392,10 @@ fn parse_template(source: &str, engine: &mut Engine) -> Result<Vec<Component>> {
                         e.message()
                     ),
                 })?;
-                segments.last_mut().unwrap().push(Part::Expression { handle });
+                segments
+                    .last_mut()
+                    .unwrap()
+                    .push(Part::Expression { handle, source: expr });
             }
         } else if chars[i] == '/' {
             flush_literal(&mut pending_literal, &mut segments);
@@ -463,6 +593,37 @@ mod tests {
     fn integer_and_boolean_fields_stringify_like_js() {
         let r = table(&[("n", Value::Integer(42)), ("b", Value::Boolean(true))]);
         assert_eq!(render("${{ n }}/${{ b }}", &r).unwrap(), "42/true");
+    }
+
+    fn field_names(template: &str) -> Vec<String> {
+        let mut eng = Engine::new().unwrap();
+        Template::compile(template, &mut eng).unwrap().get_field_names()
+    }
+
+    #[test]
+    fn get_field_names_collects_field_components() {
+        assert_eq!(field_names("${{ slug }}"), vec!["slug"]);
+        assert_eq!(field_names("${{ domain }}/${{ username }}"), vec!["domain", "username"]);
+        assert_eq!(
+            field_names("${{ year }}/${{ status }}--${{ id }}"),
+            vec!["year", "status", "id"]
+        );
+        assert_eq!(field_names("${{ contentPath/** }}"), vec!["contentPath"]);
+        // Literal-only template contributes no field names.
+        assert!(field_names("users/all").is_empty());
+    }
+
+    #[test]
+    fn get_field_names_scans_expression_identifiers_minus_members_and_keywords() {
+        // Member access contributes only the object identifier.
+        assert_eq!(
+            field_names("${{ publishedAt.getUTCFullYear() }}/${{ slug }}"),
+            vec!["publishedAt", "slug"]
+        );
+        // `||` expression: both operands; de-duped, insertion-ordered.
+        assert_eq!(field_names("${{ (slug || legacyId) }}"), vec!["slug", "legacyId"]);
+        // Reserved words / globals are excluded; `id` survives.
+        assert_eq!(field_names("shard-${{ id % 4 }}/${{ id }}"), vec!["id"]);
     }
 
     #[test]

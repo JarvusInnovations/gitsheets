@@ -182,6 +182,77 @@ impl Engine {
         None
     }
 
+    /// Call a query filter predicate `(value, record) => …` and reduce its
+    /// result to a boolean via ECMAScript `ToBoolean` — exactly the host's
+    /// `queryMatches` truthiness check (`if (!ok) return false`). `value` is the
+    /// record's field value, or JS `undefined` when the field is absent (host
+    /// parity: `record[key]` is `undefined`). A `ReferenceError` surfaces as
+    /// [`SnippetError::UndefinedReference`]; any other throw as
+    /// [`SnippetError::Other`] (the host would let it propagate).
+    pub fn call_filter(
+        &mut self,
+        handle: SnippetHandle,
+        value: Option<&Value>,
+        record: &Value,
+    ) -> std::result::Result<bool, SnippetError> {
+        let func = self
+            .snippets
+            .get(handle)
+            .cloned()
+            .ok_or_else(|| SnippetError::Other(format!("unknown snippet handle {handle}")))?;
+        let callable = func
+            .as_callable()
+            .ok_or_else(|| SnippetError::Other("snippet is not callable".into()))?;
+
+        let arg0 = match value {
+            Some(v) => self
+                .marshal_to_boa(v)
+                .map_err(|e| SnippetError::Other(e.message().to_string()))?,
+            None => BoaValue::undefined(),
+        };
+        let arg1 = self
+            .marshal_to_boa(record)
+            .map_err(|e| SnippetError::Other(e.message().to_string()))?;
+
+        match callable.call(&BoaValue::undefined(), &[arg0, arg1], &mut self.context) {
+            Ok(v) => Ok(v.to_boolean()),
+            Err(err) => {
+                let kind = err
+                    .try_native(&mut self.context)
+                    .map(|n| n.kind.clone())
+                    .ok();
+                let message = err.to_string();
+                match kind {
+                    Some(JsNativeErrorKind::Reference) => {
+                        Err(SnippetError::UndefinedReference(message))
+                    }
+                    _ => Err(SnippetError::Other(message)),
+                }
+            }
+        }
+    }
+
+    /// Call an index `keyFn` `(record) => string | undefined | null` and reduce
+    /// its result to an index key: `null`/`undefined` ⇒ `None` (the record is
+    /// excluded from the index, host parity), anything else ⇒ ECMAScript
+    /// `String(value)` — matching the host's `String(rawKey)` (so a number key
+    /// stringifies to its decimal form, etc.).
+    pub fn call_index_key(
+        &mut self,
+        handle: SnippetHandle,
+        record: &Value,
+    ) -> std::result::Result<Option<String>, SnippetError> {
+        let raw = self.call(handle, std::slice::from_ref(record))?;
+        if raw.is_null_or_undefined() {
+            return Ok(None);
+        }
+        let s = raw
+            .to_string(&mut self.context)
+            .map_err(|e| SnippetError::Other(e.to_string()))?
+            .to_std_string_escaped();
+        Ok(Some(s))
+    }
+
     /// Coerce a boa value to a number via ECMAScript `ToNumber` — what
     /// `Array.prototype.sort` does with a comparator's return value.
     pub fn to_number(&mut self, value: &BoaValue) -> Result<f64> {

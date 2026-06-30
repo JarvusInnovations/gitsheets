@@ -21,7 +21,9 @@ pub mod canonical;
 pub mod diff;
 pub mod engine;
 pub mod error;
+pub mod index;
 pub mod path_template;
+pub mod query;
 pub mod record;
 pub mod validation;
 pub mod value;
@@ -29,6 +31,8 @@ pub mod value;
 pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};
 pub use diff::{apply_merge_patch, create_patch, MergePatch, PatchOp, PatchOpKind, PatchValue};
 pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
+pub use index::{MultiIndex, UniqueIndex};
+pub use query::{matches as query_matches, query_candidate_paths, query_records, Filter, FilterPred};
 pub use record::{
     DeleteOutcome, RecordChange, RecordDiff, RecordStatus, WriteOutcome, EMPTY_TREE_HASH,
     TOML_EXTENSION,
