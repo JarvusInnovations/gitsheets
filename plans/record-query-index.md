@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [record-engine-core]
 specs:
   - specs/rust-core.md
