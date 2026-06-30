@@ -45,6 +45,17 @@ holo-tree = { git = "https://github.com/JarvusInnovations/hologit", branch = "de
 # rev-parse, object read/write, and repo open/init.
 gix = "0.83"
 
+# ── markdown-codec-core (the content-typed record format) ────────────────────
+# Faithful frontmatter-delimiter (`+++`) and first-H1 matching for the
+# markdown/mdx codec. The JS oracle (`format/markdown.ts`) matches these with
+# JS regexes (`/^\+\+\+\s*$/m`, `/^# (.+?)[ \t]*$/m`); the `regex` crate gives
+# byte-equivalent leftmost-first, multiline `^`/`$`, greedy `\s*` semantics, so
+# the delimiter/H1 parse parity is exact rather than a hand-rolled approximation
+# (the one class of parity bug a manual line scan would risk on trailing
+# whitespace / CRLF). The body-NORMALIZATION pass (markdownlint) is NOT done
+# here — see the codec module docs and plans/markdown-codec-core.md.
+regex = "1"
+
 [dev-dependencies]
 # Throwaway git repos for the record-CRUD + diff integration tests.
 tempfile = "3"
