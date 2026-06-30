@@ -35,10 +35,10 @@
 use std::collections::HashMap;
 
 use holo_tree::MutableTree;
-use indexmap::IndexMap;
 
 use crate::canonical;
 use crate::codec;
+use crate::collator;
 use crate::config::{self, SheetConfig, SortRule};
 use crate::engine::{Engine, SnippetError, SnippetHandle};
 use crate::error::{Error, Result};
@@ -94,6 +94,19 @@ pub struct StageOutcome {
     pub path: String,
 }
 
+/// How a field's array-sort rule is evaluated.
+enum SortKind {
+    /// Declarative `sort = true` — native ICU collation matching V8's
+    /// `localeCompare(b, undefined, { sensitivity: 'base', ignorePunctuation:
+    /// true, numeric: true })`. Evaluated in [`crate::collator`], NOT the engine.
+    Locale,
+    /// A raw-JS comparator string or a `{field: dir}` / `[field]` relational
+    /// directive, compiled to a boa snippet. The escape hatch genuinely needs the
+    /// engine; relational directives use JS `<`/`>` (code-unit, deterministic
+    /// across boa and V8) rather than locale collation.
+    Engine(SnippetHandle),
+}
+
 /// A compiled sheet handle.
 ///
 /// Holds a `!Send` boa [`Engine`] (path/sort/index snippets), so it is
@@ -108,9 +121,12 @@ pub struct Sheet {
     base: String,
     template: Template,
     schema: Option<CompiledSchema>,
-    /// Per-field array-sort comparators, keyed by field name. `All(false)` rules
-    /// have no entry (they are a no-op).
-    sort_handles: IndexMap<String, SnippetHandle>,
+    /// Per-field array-sort plan, in config-field order. `All(false)` rules have
+    /// no entry (a no-op). Declarative `sort = true` ([`SortKind::Locale`]) is the
+    /// **native ICU collator** ([`crate::collator`]) — it does NOT route through
+    /// the boa engine; only raw-JS / relational-directive comparators
+    /// ([`SortKind::Engine`]) do.
+    sort_plan: Vec<(String, SortKind)>,
     indexes: Vec<IndexDef>,
     index_cache: Option<IndexCache>,
     engine: Engine,
@@ -169,13 +185,21 @@ impl Sheet {
             None => None,
         };
 
-        // Compile array-field sort comparators once.
-        let mut sort_handles = IndexMap::new();
+        // Build the array-field sort plan once, in config-field order. `sort =
+        // true` is native ICU collation (no engine snippet); raw-JS and relational
+        // directives compile to a boa comparator; `sort = false` is a no-op.
+        let mut sort_plan: Vec<(String, SortKind)> = Vec::new();
         for (field, fcfg) in &config.fields {
-            if let Some(rule) = &fcfg.sort {
-                if let Some(src) = comparator_source(rule) {
-                    let handle = engine.compile(&src)?;
-                    sort_handles.insert(field.clone(), handle);
+            match &fcfg.sort {
+                Some(SortRule::All(true)) => {
+                    sort_plan.push((field.clone(), SortKind::Locale));
+                }
+                Some(SortRule::All(false)) | None => {}
+                Some(rule) => {
+                    if let Some(src) = comparator_source(rule) {
+                        let handle = engine.compile(&src)?;
+                        sort_plan.push((field.clone(), SortKind::Engine(handle)));
+                    }
                 }
             }
         }
@@ -186,7 +210,7 @@ impl Sheet {
             base,
             template,
             schema,
-            sort_handles,
+            sort_plan,
             indexes: Vec::new(),
             index_cache: None,
             engine,
@@ -245,9 +269,12 @@ impl Sheet {
     pub fn normalize_record(&mut self, record: &Value) -> Result<Value> {
         let mut out = record.clone();
         if let Value::Table(map) = &mut out {
-            for (field, handle) in &self.sort_handles {
+            for (field, kind) in &self.sort_plan {
                 if let Some(Value::Array(items)) = map.get_mut(field) {
-                    sort_array(&mut self.engine, *handle, items)?;
+                    match kind {
+                        SortKind::Locale => collator::sort_array(items),
+                        SortKind::Engine(handle) => sort_array(&mut self.engine, *handle, items)?,
+                    }
                 }
             }
         }
@@ -582,14 +609,19 @@ impl Sheet {
 
 // ── comparator source generation (matches the JS `buildSorter`) ───────────────
 
-/// Generate the comparator JS source for a sort rule, or `None` for `All(false)`
-/// (a no-op). Mirrors `buildSorter` in `sheet.ts` so the engine runs the same
-/// comparator the host's `node:vm` path would.
+/// Generate the comparator JS source for an **engine** sort rule (raw JS or a
+/// relational `{field: dir}` / `[field]` directive), or `None` for the rules that
+/// never reach the engine. `All(true)` (declarative locale sort) is native ICU
+/// collation ([`crate::collator`]), so it returns `None` here and must not be
+/// engine-compiled; `All(false)` is a no-op. Mirrors `buildSorter` in `sheet.ts`
+/// for the cases that *do* run JS, so the engine runs the same comparator the
+/// host's `node:vm` path would.
 fn comparator_source(rule: &SortRule) -> Option<String> {
     match rule {
-        SortRule::All(true) => Some(
-            "(a, b) => ( String(a).localeCompare(String(b), undefined, { sensitivity: 'base', ignorePunctuation: true, numeric: true }) )".to_string(),
-        ),
+        // Locale sort is native (handled in `Sheet::open` → `SortKind::Locale`);
+        // it must NOT route through boa, whose `Intl`-less `localeCompare`
+        // diverges from V8 on non-ASCII input.
+        SortRule::All(true) => None,
         SortRule::All(false) => None,
         SortRule::Raw(rule) => Some(format!("(a, b) => {{ {rule} }}")),
         SortRule::Fields(fields) => {

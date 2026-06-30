@@ -19,6 +19,7 @@
 
 pub mod canonical;
 pub mod codec;
+pub mod collator;
 pub mod config;
 pub mod diff;
 pub mod engine;
