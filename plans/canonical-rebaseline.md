@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: https://github.com/JarvusInnovations/gitsheets/pull/206
 depends: [toml-canonical-core]
 specs:
   - specs/rust-core.md
@@ -39,12 +40,18 @@ re-baseline this repo's own fixtures/corpora. **Out:** the serializer itself
 
 ## Validation
 
-- [ ] `normalization.md` describes the new canonical form; the change is its own
-      reviewable commit.
-- [ ] The re-normalize routine is idempotent (second run produces no diff).
-- [ ] After re-baseline, the core serializer is byte-identical to on-disk for the
-      whole corpus (0 diff — the churn is now absorbed).
-- [ ] Documented consumer recipe for re-baselining an existing repo in one commit.
+- [x] `normalization.md` describes the new canonical form **including all three
+      reformat classes**; the change is its own reviewable commit
+      (`docs(specs): rebaseline normalization.md to the Rust canonical form`).
+- [x] The re-normalize routine is idempotent (second run produces no diff —
+      demonstrated below).
+- [x] After re-baseline, the core serializer is byte-identical to on-disk for the
+      fixtures touched (the re-normalized inputs match the goldens exactly);
+      no live corpus exists in-repo to re-base (see Notes).
+- [x] Documented consumer recipe for re-baselining an existing repo in one commit
+      (in `normalization.md`).
+- [x] `cargo build --workspace` + `cargo test` green; `npm run type-check`,
+      `npm run build`, `npm test` green (gitsheets 287/287, gitsheets-axi 66/66).
 
 ## Risks / unknowns
 
@@ -58,8 +65,67 @@ re-baseline this repo's own fixtures/corpora. **Out:** the serializer itself
 
 ## Notes
 
-(Populated at closeout.)
+**Spec change (the headline deliverable).** `specs/behaviors/normalization.md` now
+defines the canonical bytes by the Rust core serializer
+(`gitsheets-core::canonical::serialize` — the `toml` crate's default formatting
+over a deep-key-sorted value) instead of `@iarna/toml`. It documents **all three**
+value-preserving reformat classes (#196 predicted only the first; the
+[PR #205](https://github.com/JarvusInnovations/gitsheets/pull/205) corpus run over
+all 29,556 records — 0 data-loss / 0 non-idempotent / 0 parse errors — proved that
+incomplete):
+
+1. **Integer digit-group underscores dropped** (`31_618` → `31618`) — dominant,
+   originally-predicted class.
+2. **String requote** — a string holding both `"` and `'` moves from `@iarna`'s
+   escaped single-line basic string to the `toml` crate's readable `"""…"""`.
+3. **Multiline trailing-quote layout** — a multiline string ending in `"` uses
+   adjacent quotes before the delimiter (`…UAE""""`) vs `@iarna`'s
+   `\`-line-continuation.
+
+The spec also gained a *v1.0 substrate note* (Node still emits `@iarna` bytes; the
+live cutover is `node-binding-thin`) and a one-command consumer re-normalize
+recipe. Committed alone, spec-first.
+
+**Re-normalize routine.** `rust/gitsheets-core/examples/normalize_tree.rs` — a
+minimal one-shot reusing only the existing public canonical API (no new workspace
+deps, no new `lib.rs` modules, no edits to `canonical.rs`/`value.rs`/`error.rs`),
+so it merges cleanly alongside the sibling `definition-logic-core` work. It walks a
+directory, re-serializes every `.toml` in place, and guards against data loss
+(refuses to write if the fresh bytes don't re-parse to the same value).
+
+**Idempotence demonstration.** Over copies of the committed parity fixtures:
+
+- Pass 1 over the OLD `@iarna` `*.input.toml` bytes → re-normalized exactly the 3
+  divergent fixtures (one per class) and left the 2 already-canonical ones; the
+  results were **byte-identical to the `*.expected.toml` goldens**.
+- Pass 2 over the same dir → **0 files re-normalized** (idempotent fixpoint).
+- A pass over the already-canonical `*.expected.toml` copies → **0 changes**.
+
+**Re-baselined vs deferred.**
+
+- *Re-baselined in-repo: nothing* — the repo holds **no gitsheets-record corpora**
+  to re-base. The only on-disk `.toml` are `.holo/*` (hologit holomapping config,
+  not gitsheets records, not under the canonical-serialization regime) and the
+  rust parity fixtures.
+- *Deferred (with reason):*
+  - `rust/gitsheets-core/tests/fixtures/*.input.toml` — intentionally hold the OLD
+    `@iarna` bytes as parity input; the paired `*.expected.toml` goldens are
+    already the new canonical form. Re-basing the inputs would defeat the harness.
+  - The **main JS suite's** inline TOML expectations — the v1.0 Node substrate
+    still serializes via `@iarna/toml`, so its round-trip expectations remain
+    correct against `@iarna`. Re-baselining anything the JS suite compares against
+    `@iarna` output now would break the green suite; that is the live cutover,
+    sequenced with `node-binding-thin`.
+
+**JS suite stayed green** — no JS test was weakened to accommodate a premature
+re-baseline (a hard requirement): gitsheets 287/287, gitsheets-axi 66/66.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- **Deferred to `node-binding-thin`:** the live-repo *cutover* re-baseline — swap
+  the Node serializer from `@iarna/toml` to the core serializer and run the
+  one-time `normalize_tree` commit over a real repo, then re-base the JS suite's
+  inline TOML expectations onto the new canonical bytes. That closes the bounded,
+  documented spec↔substrate drift this plan records.
+- **None** for the spec/routine themselves — the three reformat classes are
+  enumerated and proven, and the routine is idempotent.
