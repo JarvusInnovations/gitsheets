@@ -33,10 +33,15 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Build workspace
-        run: cargo build --workspace
+      - name: Build workspace (incl. examples / parity harness)
+        run: cargo build --workspace --all-targets
 
-      - name: Core unit tests
+      - name: Core unit + canonical-parity tests
+        # Runs the value/error/canonical unit tests AND the corpus_parity
+        # integration test. CI exercises the committed fixture subset (golden
+        # canonical bytes); the full ~29.5k-record corpus parity is run locally
+        # against CodeForPhilly origin/published via GITSHEETS_PARITY_CORPUS —
+        # see plans/toml-canonical-core.md Notes.
         run: cargo test -p gitsheets-core
 
   napi:
