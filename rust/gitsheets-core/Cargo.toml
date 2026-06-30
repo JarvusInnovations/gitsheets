@@ -15,3 +15,18 @@ indexmap = "2"
 # This is the same crate the serializer will use, so the datetime kinds the
 # value type carries are exactly the ones that re-serialize.
 toml = "0.8"
+
+# ── definition-logic-core (path templates, validation, embedded engine) ──────
+# Embedded JS engine for definition escape-hatch snippets (path-template
+# expressions + raw-JS sort comparators). PURE-RUST, so the whole core stays
+# C-free for trivial cross-platform prebuilds. Its JS semantics are part of the
+# canonical-behavior contract, so the version is PINNED EXACTLY (`=`) and
+# upgraded deliberately — see specs/rust-core.md "Embedded code execution".
+boa_engine = "=0.21.1"
+# JSON-Schema validation of the persisted record shape (the `[gitsheet.schema]`
+# block), replacing `ajv`. default-features off drops the reqwest/TLS remote-ref
+# resolver the core doesn't use (inline schemas only for v1.0).
+jsonschema = { version = "0.46.7", default-features = false }
+# JSON value type the `jsonschema` crate validates against; the core marshals
+# its `Value` to/from it for the shape-validation pass.
+serde_json = "1"
