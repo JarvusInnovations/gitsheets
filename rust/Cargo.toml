@@ -1,5 +1,5 @@
 [workspace]
-members = ["gitsheets-core", "gitsheets-napi"]
+members = ["gitsheets-core", "gitsheets-napi", "gitsheets-py"]
 resolver = "2"
 
 [workspace.package]
