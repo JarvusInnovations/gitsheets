@@ -422,10 +422,8 @@ export class Template {
           : await currentTree.getChildren();
 
         let attachmentPrefix: string | undefined;
-        // `for...in` walks own + inherited enumerable keys. hologit's
-        // getChildren() exposes loaded entries on the object's prototype
-        // and only stages local mutations as own properties — Object.keys
-        // would miss the loaded entries.
+        // `getChildren()` returns a plain object of own enumerable entries
+        // (the binding hands back plain data, not prototype-loaded handles).
         const allKeys: string[] = [];
         for (const k in children) allKeys.push(k);
         const sortedKeys = allKeys.sort();
@@ -454,7 +452,6 @@ export class Template {
 
       // Unrenderable intermediate component: expand across all subtree children.
       const children = await currentTree.getChildren();
-      // for...in to include hologit's prototype-loaded entries (see comment above).
       for (const name in children) {
         const child = children[name];
         if (!child || !isTree(child)) continue;
