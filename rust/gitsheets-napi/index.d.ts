@@ -61,6 +61,18 @@ export declare function validateBatch(schema: JsValue, records: Array<JsValue>):
  */
 export declare function runComparator(rule: string, a: JsValue, b: JsValue): number
 /**
+ * Native locale array sort — the declarative `sort = true` path. Sorts the
+ * strings with the ICU collator that matches V8's `localeCompare(b, undefined,
+ * { sensitivity: 'base', ignorePunctuation: true, numeric: true })`. This is the
+ * exact function `Sheet::normalize_record` applies for a `sort = true` field, and
+ * it does **NOT** route through the boa engine (boa lacks `Intl`, so its
+ * `localeCompare` falls back to code-unit order and diverges from `node:vm` on
+ * non-ASCII / mixed-case input). Exposed so a `node --test` harness asserts
+ * byte-exact parity against `node`'s `localeCompare` — see
+ * `test/collator-parity.mjs`.
+ */
+export declare function collatorSort(strings: Array<string>): Array<string>
+/**
  * Read a batch of records by path. Each result is the record (a plain object
  * with full TOML type fidelity) or `null` when no blob lives at that path.
  */

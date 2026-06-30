@@ -366,6 +366,28 @@ pub fn run_comparator(env: Env, rule: String, a: JsValue, b: JsValue) -> Result<
         .map_err(|err| raise_core_error(&env, &err))
 }
 
+/// Native locale array sort — the declarative `sort = true` path. Sorts the
+/// strings with the ICU collator that matches V8's `localeCompare(b, undefined,
+/// { sensitivity: 'base', ignorePunctuation: true, numeric: true })`. This is the
+/// exact function `Sheet::normalize_record` applies for a `sort = true` field, and
+/// it does **NOT** route through the boa engine (boa lacks `Intl`, so its
+/// `localeCompare` falls back to code-unit order and diverges from `node:vm` on
+/// non-ASCII / mixed-case input). Exposed so a `node --test` harness asserts
+/// byte-exact parity against `node`'s `localeCompare` — see
+/// `test/collator-parity.mjs`.
+#[napi]
+pub fn collator_sort(strings: Vec<String>) -> Vec<String> {
+    let mut items: Vec<Value> = strings.into_iter().map(Value::String).collect();
+    gitsheets_core::collator::sort_array(&mut items);
+    items
+        .into_iter()
+        .map(|v| match v {
+            Value::String(s) => s,
+            _ => unreachable!("collator_sort is constructed from String values only"),
+        })
+        .collect()
+}
+
 /// A compiled sheet definition: the embedded engine plus the definition's
 /// path template (and optional raw-JS sort comparator), **compiled once** at
 /// construction and reused across every method call. Holds a `!Send` boa
