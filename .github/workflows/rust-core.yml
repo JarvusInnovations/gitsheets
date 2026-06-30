@@ -31,6 +31,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The transaction tests commit to throwaway gix repos; gix's update_ref
+      # writes a reflog entry, which needs a committer identity from git config.
+      # CI runners have none configured, so without this the reflog write fails
+      # ("The reflog could not be created or updated"). Mirrors hologit's own
+      # holo-tree-napi.yml. (Upstream follow-up: holo-tree's update_ref should
+      # use the commit's identity for the reflog instead of ambient git config.)
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -67,6 +78,13 @@ jobs:
         node: ['20', '22']
     steps:
       - uses: actions/checkout@v7
+
+      # Same reflog-identity requirement as the core job (the Sheet/Transaction
+      # boundary tests commit to scratch repos).
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
 
       - uses: actions/setup-node@v6
         with:
