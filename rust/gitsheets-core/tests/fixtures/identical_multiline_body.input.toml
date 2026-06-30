@@ -1,0 +1,15 @@
+chatChannel = "laddr"
+createdAt = "2013-01-03T23:55:11.000Z"
+developersUrl = "https://github.com/CfABrigadePhiladelphia/laddr"
+featured = false
+id = "019e4021-2d09-7e80-a14a-d38e8c039ec4"
+legacyId = 10
+maintainerId = "019e4021-294f-70b0-ae9f-6f59029c820d"
+overview = """
+# A collaborative space for Philadelphia's civic developers\r
+\r
+The site you're looking at right now!"""
+slug = "laddr"
+stage = "hibernating"
+title = "laddr (powers codeforphilly.org)"
+updatedAt = "2023-06-20T20:13:14.000Z"
