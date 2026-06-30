@@ -38,11 +38,16 @@ jobs:
 
       - name: Core unit + canonical-parity tests
         # Runs the value/error/canonical unit tests AND the corpus_parity
-        # integration test. CI exercises the committed fixture subset (golden
-        # canonical bytes); the full ~29.5k-record corpus parity is run locally
-        # against CodeForPhilly origin/published via GITSHEETS_PARITY_CORPUS —
-        # see plans/toml-canonical-core.md Notes.
+        # integration test, PLUS the definition-logic unit tests (path_template,
+        # validation, engine) added by plans/definition-logic-core.md. CI
+        # exercises the committed fixture subset (golden canonical bytes); the
+        # full ~29.5k-record corpus parity is run locally against CodeForPhilly
+        # origin/published via GITSHEETS_PARITY_CORPUS — see
+        # plans/toml-canonical-core.md Notes.
         run: cargo test -p gitsheets-core
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -p gitsheets-core -- -D warnings
 
   napi:
     name: gitsheets-napi boundary (node ${{ matrix.node }})
@@ -64,7 +69,7 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Install binding dev deps (@napi-rs/cli)
+      - name: Install binding dev deps (@napi-rs/cli, ajv for parity)
         working-directory: rust/gitsheets-napi
         run: npm install
 
@@ -72,6 +77,8 @@ jobs:
         working-directory: rust/gitsheets-napi
         run: npm run build
 
-      - name: Round-trip + error-mapping tests
+      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine)
+        # Explicit file paths (not a glob) so the suite runs identically on
+        # node 20 and 22 — `node --test "test/*.mjs"` does NOT expand on node 20.
         working-directory: rust/gitsheets-napi
         run: npm test
