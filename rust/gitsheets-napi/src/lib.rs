@@ -1201,6 +1201,7 @@ impl CoreTransaction {
         name: String,
         record: JsValue,
         previous_path: Option<String>,
+        allow_missing_body: Option<bool>,
     ) -> Result<JsObject> {
         let Self {
             inner,
@@ -1214,7 +1215,13 @@ impl CoreTransaction {
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        let candidate = match sheet.prepare_upsert(repo, tree, &record.0, previous_path, false) {
+        let candidate = match sheet.prepare_upsert(
+            repo,
+            tree,
+            &record.0,
+            previous_path,
+            allow_missing_body.unwrap_or(false),
+        ) {
             Ok(c) => c,
             Err(err) => return Err(raise_core_error(&env, &err)),
         };
@@ -1275,6 +1282,7 @@ impl CoreTransaction {
         name: String,
         record: JsValue,
         previous_path: Option<String>,
+        allow_missing_body: Option<bool>,
     ) -> Result<JsObject> {
         let Self { inner, sheets, .. } = self;
         let tx = inner.as_mut().ok_or_else(|| {
@@ -1284,7 +1292,13 @@ impl CoreTransaction {
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        let wc = match sheet.will_change(repo, tree, &record.0, previous_path, false) {
+        let wc = match sheet.will_change(
+            repo,
+            tree,
+            &record.0,
+            previous_path,
+            allow_missing_body.unwrap_or(false),
+        ) {
             Ok(w) => w,
             Err(err) => return Err(raise_core_error(&env, &err)),
         };
@@ -1338,6 +1352,32 @@ impl CoreTransaction {
         }
         tx.mark_mutated();
         Ok(())
+    }
+
+    /// List every record under the sheet's base, decoded through the format
+    /// codec, in sorted path order. `withBody` is the lazy-body switch for
+    /// markdown sheets (`false` omits the body field); a no-op for TOML sheets.
+    /// Read-only — does not mark the transaction mutated.
+    #[napi]
+    pub fn list(&mut self, env: Env, name: String, with_body: bool) -> Result<Vec<JsRecordEntry>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        match sheet.list(repo, tree, with_body) {
+            Ok(rows) => Ok(rows
+                .into_iter()
+                .map(|(path, record)| JsRecordEntry {
+                    path,
+                    record: JsValue(record),
+                })
+                .collect()),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
     }
 
     /// The parent commit hash captured at open (null on a fresh repo).
@@ -1397,4 +1437,105 @@ pub fn core_check_validators(
     validator_names: Vec<String>,
 ) -> Result<()> {
     store::check_validators(&declared, &validator_names).map_err(|err| raise_core_error(&env, &err))
+}
+
+// ── markdown / mdx content-type codec (markdown-codec-core) ─────────────────────
+//
+// The frontmatter+body codec, exposed directly so the boundary suite can assert
+// byte-level parity with the JS oracle (`packages/gitsheets/src/format/markdown.ts`).
+// markdownlint body-NORMALIZATION is NOT applied here — it is a host-side pre-pass
+// (see gitsheets_core::codec module docs); these surface the byte-deterministic
+// framing, title-from-H1, and lazy-body parts of the format.
+
+use gitsheets_core::codec;
+use gitsheets_core::config::{FormatConfig, FormatKind, Markdownlint};
+
+/// Build a markdown `FormatConfig` for the direct codec entry points. The
+/// markdownlint setting is irrelevant to these (the core never applies it).
+fn markdown_format(body_field: String, title_field: Option<String>) -> FormatConfig {
+    FormatConfig {
+        kind: FormatKind::Markdown,
+        body: Some(body_field),
+        title: title_field,
+        markdownlint: Markdownlint::Default,
+    }
+}
+
+/// Serialize a record to its on-disk markdown bytes (`+++` frontmatter + body),
+/// enforcing the title-from-H1 invariant when `titleField` is set. The body is
+/// framed verbatim — markdownlint normalization is the host's pre-pass. A
+/// non-string body or a title that disagrees with the body's H1 throws a typed
+/// `ValidationError`.
+#[napi]
+pub fn markdown_serialize(
+    env: Env,
+    record: JsValue,
+    body_field: String,
+    title_field: Option<String>,
+) -> Result<String> {
+    let cfg = markdown_format(body_field, title_field);
+    codec::serialize(&record.0, &cfg).map_err(|err| raise_core_error(&env, &err))
+}
+
+/// Parse on-disk markdown bytes into a full record (frontmatter fields + the
+/// body under `bodyField`). Mirrors `markdownFormat.parse`.
+#[napi]
+pub fn markdown_parse(
+    env: Env,
+    text: String,
+    body_field: String,
+    title_field: Option<String>,
+) -> Result<JsValue> {
+    let cfg = markdown_format(body_field, title_field);
+    codec::parse(&text, &cfg)
+        .map(JsValue)
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// Parse only the frontmatter — the lazy-body path. The body field is absent in
+/// the returned record. Mirrors `markdownFormat.parseHeaderOnly`.
+#[napi]
+pub fn markdown_parse_header_only(
+    env: Env,
+    text: String,
+    body_field: String,
+) -> Result<JsValue> {
+    let cfg = markdown_format(body_field, None);
+    codec::parse_header_only(&text, &cfg)
+        .map(JsValue)
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// Extract the first ATX-style H1 from a markdown body, or `null` if absent.
+/// Mirrors `extractFirstH1`.
+#[napi]
+pub fn markdown_extract_h1(body: String) -> Option<String> {
+    codec::extract_first_h1(&body)
+}
+
+/// Rewrite (or prepend) the first ATX H1 of a markdown body to `title`. Mirrors
+/// `rewriteLeadingH1` — the `Sheet.patch` title-reconciliation helper.
+#[napi]
+pub fn markdown_rewrite_h1(body: String, title: String) -> String {
+    codec::rewrite_leading_h1(&body, &title)
+}
+
+/// The effective markdownlint config the host's normalization pre-pass should
+/// apply, or `null` when disabled. The defaults (`default: true`, `MD013:
+/// false`, `MD041: false`) layered with any `[gitsheet.format.markdownlint]`
+/// overrides, plus the `MD041` auto-enable when title-from-H1 is on. The core
+/// computes the ruleset but does NOT apply it (see the codec module docs).
+#[napi]
+pub fn markdown_resolve_lint_config(
+    markdownlint: JsValue,
+    title_is_set: bool,
+) -> Option<JsValue> {
+    // Marshal the raw `[gitsheet.format].markdownlint` value: `false` → disabled,
+    // a table → user rules, anything else → defaults.
+    let setting = match &markdownlint.0 {
+        Value::Boolean(false) => Markdownlint::Disabled,
+        Value::Table(t) => Markdownlint::Rules(t.clone()),
+        _ => Markdownlint::Default,
+    };
+    setting.resolve(title_is_set).map(JsValue)
 }
