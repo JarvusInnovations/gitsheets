@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [sheet-store-core]
 specs:
   - specs/rust-core.md
