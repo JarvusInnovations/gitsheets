@@ -124,6 +124,18 @@ module.exports = {
   recordDelete: wrap(addon.recordDelete),
   recordList: wrap(addon.recordList),
   diffRecords: wrap(addon.diffRecords),
+  // Query traversal + filtering (batch-first): the template prunes the walk and
+  // the filter (equality / nested / `$pred` engine snippets) runs in the core.
+  recordQuery: wrap(addon.recordQuery),
+  recordQueryCandidates: wrap(addon.recordQueryCandidates),
+  templateFieldNames: wrap(addon.templateFieldNames),
+  // Secondary indexing (lazy, in-memory). A unique conflict surfaces as a typed
+  // IndexError(index_unique_conflict).
+  recordIndexUnique: wrap(addon.recordIndexUnique),
+  recordIndexMulti: wrap(addon.recordIndexMulti),
+  // Substrate (holo-tree) read/write counters — bulk benchmark instrumentation.
+  substrateStats: addon.substrateStats,
+  substrateReset: addon.substrateReset,
   // Diff / patch primitives (RFC 6902 createPatch, RFC 7396 mergePatch).
   createPatch: wrap(addon.createPatch),
   applyMergePatch: wrap(addon.applyMergePatch),
