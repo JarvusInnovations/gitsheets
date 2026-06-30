@@ -11,6 +11,18 @@
  */
 export declare function roundtrip(records: Array<JsValue>): Array<JsValue>
 /**
+ * Parse a **batch** of TOML documents into records, marshalled to JS with full
+ * type fidelity. The whole array crosses the FFI once (batch-first). A
+ * malformed document surfaces as a structured, typed core error (`config_invalid`).
+ */
+export declare function parseRecords(documents: Array<string>): Array<JsValue>
+/**
+ * Serialize a **batch** of records to their canonical TOML bytes in one call
+ * (deep key sort + `toml`-crate default formatting; see `gitsheets_core::canonical`).
+ * A value TOML can't represent surfaces as a structured, typed core error.
+ */
+export declare function serializeRecords(records: Array<JsValue>): Array<string>
+/**
  * Throw the core error for a given stable `code`, surfaced as a **structured,
  * matchable** JS error (own `code`, `status`, `gitsheetsClass`, and any
  * `issues`/`conflictingPaths`). Boundary-test entry point: it exercises the

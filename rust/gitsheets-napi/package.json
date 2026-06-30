@@ -36,7 +36,7 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "node --test test/roundtrip.mjs test/errors.mjs"
+    "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4"

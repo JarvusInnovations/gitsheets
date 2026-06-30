@@ -105,6 +105,10 @@ function wrap(fn) {
 module.exports = {
   // Marshalling entry points (batch-first).
   roundtrip: addon.roundtrip,
+  // Canonical TOML bytes-authority (batch-first). Parse/serialize can raise a
+  // structured core error (`config_invalid`), surfaced as its typed class.
+  parseRecords: wrap(addon.parseRecords),
+  serializeRecords: wrap(addon.serializeRecords),
   // Boundary-test entry: throws the typed class for a given stable code.
   simulateCoreError: wrap(addon.simulateCoreError),
   // Error machinery.
