@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [toml-canonical-core]
 specs:
   - specs/rust-core.md

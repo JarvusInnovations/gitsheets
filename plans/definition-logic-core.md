@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [gitsheets-core-foundation]
 specs:
   - specs/rust-core.md
