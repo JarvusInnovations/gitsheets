@@ -6,7 +6,6 @@ import { runInNewContext } from 'node:vm';
 import { promisify } from 'node:util';
 import type { Readable } from 'node:stream';
 
-import type { BlobObject, TreeObject, Workspace } from 'hologit';
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
 import {
@@ -20,6 +19,13 @@ import {
 import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
+import {
+  EMPTY_TREE_HASH,
+  makeBlobHandle,
+  type BlobHandle,
+  type BlobView,
+  type TreeView,
+} from './working-tree.js';
 import { stringifyRecord, parseConfigToml } from './toml.js';
 import sortKeys from 'sort-keys';
 import { Transaction, transactionContext } from './transaction.js';
@@ -62,7 +68,7 @@ export interface SheetConfig {
 // --- Result types ---
 
 export interface UpsertResult {
-  readonly blob: BlobObject;
+  readonly blob: BlobHandle;
   readonly path: string;
 }
 
@@ -98,11 +104,11 @@ export interface UpsertOptions {
 
 // --- Helpers ---
 
-function isBlob(node: unknown): node is BlobObject {
+function isBlob(node: unknown): node is BlobView {
   return typeof node === 'object' && node !== null && (node as { isBlob?: boolean }).isBlob === true;
 }
 
-function isTree(node: unknown): node is TreeObject {
+function isTree(node: unknown): node is TreeView {
   return typeof node === 'object' && node !== null && (node as { isTree?: boolean }).isTree === true;
 }
 
@@ -182,8 +188,8 @@ function queryMatches(filter: RecordLike, record: RecordLike): boolean {
 
 const CONFIG_CACHE = new Map<string, SheetConfig>();
 
-async function loadConfig(workspace: Workspace, configPath: string): Promise<SheetConfig> {
-  const node = await workspace.root.getChild(configPath);
+async function loadConfig(rootView: TreeView, configPath: string): Promise<SheetConfig> {
+  const node = await rootView.getChild(configPath);
   if (!node || !isBlob(node)) {
     throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
   }
@@ -317,7 +323,7 @@ function validateSortRule(sort: unknown, configPath: string, field: string): voi
 // issue without leaking mutable shared state.
 
 const RECORD_TEXT_CACHE = new Map<string, string>();
-async function readBlobTextCached(blob: BlobObject): Promise<string> {
+async function readBlobTextCached(blob: BlobView): Promise<string> {
   const cached = RECORD_TEXT_CACHE.get(blob.hash);
   if (cached !== undefined) return cached;
   const text = await blob.read();
@@ -468,7 +474,7 @@ export type DiffStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
 /** Options for `Sheet.diffFrom`. */
 export interface DiffOptions {
-  /** Attach BlobObject handles for the src/dst blob hashes when set. */
+  /** Attach BlobHandle handles for the src/dst blob hashes when set. */
   readonly blobs?: boolean;
   /** Parse src/dst TOML into records when set. */
   readonly records?: boolean;
@@ -481,7 +487,7 @@ export interface DiffOptions {
  * added records; `dstMode`/`dstHash` are null for deleted records.
  *
  * The optional fields populate based on the `opts` flag passed to diffFrom:
- * - `blobs: true` → `srcBlob`/`dstBlob` (hologit `BlobObject` handles)
+ * - `blobs: true` → `srcBlob`/`dstBlob` (gitsheets `BlobHandle` handles)
  * - `records: true` → `src`/`dst` (parsed records)
  * - `patches: true` → `patch` (RFC 6902 array; null/empty array on no-op)
  */
@@ -493,8 +499,8 @@ export interface DiffChange<T extends RecordLike = RecordLike> {
   readonly dstMode: string | null;
   readonly srcHash: string | null;
   readonly dstHash: string | null;
-  readonly srcBlob?: BlobObject;
-  readonly dstBlob?: BlobObject;
+  readonly srcBlob?: BlobHandle;
+  readonly dstBlob?: BlobHandle;
   readonly src?: T;
   readonly dst?: T;
   readonly patch?: readonly JsonPatchOp[];
@@ -633,8 +639,10 @@ interface IndexState<T extends RecordLike = RecordLike> {
 
 export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
   readonly repo: Repository;
-  readonly workspace: Workspace;
-  readonly dataTree: TreeObject;
+  /** Root tree view (base `''`) — config files are read from here. */
+  readonly rootView: TreeView;
+  /** Data tree view — records read/written relative to its base. */
+  readonly dataTree: TreeView;
   readonly name: string;
   readonly configPath: string;
   readonly transaction?: Transaction;
@@ -650,8 +658,8 @@ export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
 
 export class Sheet<T extends RecordLike = RecordLike> {
   readonly #repo: Repository;
-  readonly #workspace: Workspace;
-  readonly #dataTree: TreeObject;
+  readonly #rootView: TreeView;
+  readonly #dataTree: TreeView;
   readonly #name: string;
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
@@ -661,7 +669,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
   constructor(opts: SheetConstructorOptions<T>) {
     this.#repo = opts.repo;
-    this.#workspace = opts.workspace;
+    this.#rootView = opts.rootView;
     this.#dataTree = opts.dataTree;
     this.#name = opts.name;
     this.#configPath = opts.configPath;
@@ -705,7 +713,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async readConfig(): Promise<SheetConfig> {
-    return loadConfig(this.#workspace, this.#configPath);
+    return loadConfig(this.#rootView, this.#configPath);
   }
 
   /** Same as readConfig — config is cached by config-blob hash anyway. */
@@ -740,8 +748,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
     }
 
-    // hologit's TreeObject/BlobObject are structurally compatible with the
-    // path-template tree interface; the casts bridge the type lattices.
+    // TreeView/BlobView are structurally compatible with the path-template
+    // tree interface; the casts bridge the type lattices.
     for await (const { blob, path: blobPath } of template.queryTree(
       sheetRoot as unknown as Parameters<typeof template.queryTree>[0],
       filter as RecordLike,
@@ -749,7 +757,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     )) {
       if (signal?.aborted) throwAborted(signal);
       const record = (await this.#readRecordFromBlob(
-        blob as unknown as BlobObject,
+        blob as unknown as BlobView,
         blobPath,
         config,
         { headerOnly: !withBody },
@@ -828,8 +836,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   ): AsyncGenerator<DiffChange<T>> {
     const config = await this.readConfig();
     const gitDir = this.#repo.gitDir;
-    const { TreeObject } = await import('hologit');
-    const srcRef = srcCommitHash ?? TreeObject.getEmptyTreeHash();
+    const srcRef = srcCommitHash ?? EMPTY_TREE_HASH;
     const dstTreeHash = await this.#dataTree.getHash();
 
     const args = ['diff-tree', '-z', '-r', '-M', '--no-commit-id', srcRef, dstTreeHash];
@@ -875,16 +882,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
       if (opts.blobs) {
         if (entry.srcHash) {
-          change['srcBlob'] = this.#repo.hologitRepo.createBlob({
-            hash: entry.srcHash,
-            mode: entry.srcMode ?? '100644',
-          });
+          change['srcBlob'] = makeBlobHandle(gitDir, entry.srcHash, entry.srcMode ?? '100644');
         }
         if (entry.dstHash) {
-          change['dstBlob'] = this.#repo.hologitRepo.createBlob({
-            hash: entry.dstHash,
-            mode: entry.dstMode ?? '100644',
-          });
+          change['dstBlob'] = makeBlobHandle(gitDir, entry.dstHash, entry.dstMode ?? '100644');
         }
       }
 
@@ -946,9 +947,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const config = await this.readConfig();
     const sheetTree = await this.#dataTree.getSubtree(this.#effectiveRoot(config), true);
     if (sheetTree) {
-      // O(1) — drops both pending and base children in-place. The
-      // serialized subtree becomes git's empty-tree hash, which hologit's
-      // tree write() already skips when emitting parent entries.
+      // O(1) — replaces the subtree with git's empty-tree hash in place. The
+      // binding's tree write() omits empty subtrees from the committed tree.
       // See specs/api/sheet.md#clear.
       sheetTree.clearChildren();
     }
@@ -957,9 +957,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async clone(): Promise<Sheet<T>> {
+    // Only the data tree is cloned (so staged mutations don't touch the
+    // original); config is immutable, so it keeps reading through the original
+    // root view.
     const opts: SheetConstructorOptions<T> = {
       repo: this.#repo,
-      workspace: this.#workspace,
+      rootView: this.#rootView,
       dataTree: await this.#dataTree.clone(),
       name: this.#name,
       configPath: this.#configPath,
@@ -1170,21 +1173,27 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return state.multiMap.get(key) ?? [];
   }
 
-  async getAttachment(record: T | string, name: string): Promise<BlobObject | null> {
+  async getAttachment(record: T | string, name: string): Promise<BlobHandle | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
     const node = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath, name));
-    return node && isBlob(node) ? node : null;
+    if (!node || !isBlob(node)) return null;
+    return makeBlobHandle(this.#repo.gitDir, node.hash, node.mode);
   }
 
   async getAttachments(
     record: T | string,
-  ): Promise<Record<string, BlobObject> | null> {
+  ): Promise<Record<string, BlobHandle> | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
     const dir = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath));
     if (!dir || !isTree(dir)) return null;
-    return dir.getBlobMap();
+    const blobMap = await dir.getBlobMap();
+    const out: Record<string, BlobHandle> = {};
+    for (const [name, blob] of Object.entries(blobMap)) {
+      out[name] = makeBlobHandle(this.#repo.gitDir, blob.hash, blob.mode);
+    }
+    return out;
   }
 
   /**
@@ -1215,14 +1224,14 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async setAttachment(
     record: T | string,
     name: string,
-    blob: string | BlobObject,
+    blob: string | BlobHandle,
   ): Promise<void> {
     await this.setAttachments(record, { [name]: blob });
   }
 
   async setAttachments(
     record: T | string,
-    attachments: Record<string, string | BlobObject>,
+    attachments: Record<string, string | BlobHandle>,
   ): Promise<void> {
     if (this.#transaction === undefined) {
       this.#checkStrictMode();
@@ -1529,7 +1538,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#invalidateIndexes();
   }
 
-  async #getSheetRoot(rootPath: string): Promise<TreeObject | null> {
+  async #getSheetRoot(rootPath: string): Promise<TreeView | null> {
     if (rootPath === '.' || rootPath === '') return this.#dataTree;
     const sub = await this.#dataTree.getSubtree(rootPath);
     return sub;
@@ -1587,7 +1596,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async #readRecordFromBlob(
-    blob: BlobObject,
+    blob: BlobView,
     path: string,
     config: SheetConfig,
     opts: { headerOnly?: boolean } = {},

@@ -1,54 +1,57 @@
 // Tree substrate — the seam between gitsheets and its git-object backend.
 //
-// gitsheets is migrating its tree/commit/ref operations off the hologit JS
-// dependency onto the published Rust binding `@hologit/holo-tree@^0.2.0`
-// (#127). The migration proceeds site by site. This module owns the binding
-// load and the commit-object + ref operations migrated so far; the working-tree
-// read/write/navigation surface (`Sheet` / `path-template`) still goes through
-// hologit's `Workspace`/`TreeObject` — see the migration plan for why it can't
-// move yet (the 0.2.0 `Tree.deleteChildDeep` flush bug).
+// gitsheets' entire tree / blob / commit / ref layer runs on the published
+// Rust binding `@hologit/holo-tree` (#127). The binding is the **sole** tree
+// substrate: there is no hologit JS fallback. This module owns the binding
+// load, the commit-object + CAS-ref operations, and the platform-failure
+// surface. The deep-path working-tree navigation lives in `working-tree.ts`.
 //
-// When the native addon can't load on a platform, `loadHoloTree()` returns
-// `null` and callers keep the legacy `git` shell-out path untouched.
+// The only remaining git **CLI** shell-outs are genuine git-porcelain ops the
+// binding doesn't cover: `Sheet.diffFrom`'s `git diff-tree`, `git var
+// GIT_EDITOR` / the `$EDITOR` flow, blob reads by hash (`git cat-file`), and
+// author resolution (`git config`).
 //
 // See plans/holo-tree-migration.md and specs/rust-core.md.
 
 // Type-only import: erased at compile time, so merely importing gitsheets never
 // loads the native addon. The runtime load is the dynamic import in
-// `loadHoloTree()` below.
-import type { Repo as BindingRepo, Signature } from '@hologit/holo-tree';
+// `loadBinding()` below.
+import type { Repo as BindingRepo, Tree as BindingTree, Signature } from '@hologit/holo-tree';
 
+import { ConfigError } from './errors.js';
 import type { Author } from './transaction.js';
 
 type HoloModule = typeof import('@hologit/holo-tree');
 
-export type { BindingRepo };
+export type { BindingRepo, BindingTree };
 
-let cached: HoloModule | null | undefined;
+let cached: HoloModule | undefined;
 
 /**
- * Lazily load the holo-tree binding, or return `null` to signal "use the legacy
- * git path". Returns `null` when:
+ * Lazily load the holo-tree native binding. Throws a clear gitsheets error
+ * naming the unsupported platform when the prebuilt addon can't load, rather
+ * than letting a cryptic native-loader exception escape.
  *
- * - `GITSHEETS_COMMIT_SUBSTRATE=git` forces the legacy shell-out, or
- * - the native addon can't load on this platform. `@hologit/holo-tree` ships
- *   prebuilds only for linux-x64-gnu / darwin-arm64 / win32-x64-msvc; on any
- *   other platform (Alpine/musl, linux-arm64, …) the load fails and gitsheets
- *   **gracefully falls back to git** rather than becoming unimportable.
+ * `@hologit/holo-tree@^0.3.0` ships prebuilds for linux x64/arm64 (gnu+musl),
+ * darwin arm64/x64, and win32 x64. On any other platform the import fails and
+ * gitsheets surfaces a `ConfigError` (exit code 64) explaining why — the
+ * binding is mandatory, since it is now the only tree substrate.
  *
- * The result is cached (including the `null` outcome) so the probe happens once.
+ * The module is cached so the (successful) load happens once.
  */
-export async function loadHoloTree(): Promise<HoloModule | null> {
-  if (cached !== undefined) return cached;
-  if (process.env['GITSHEETS_COMMIT_SUBSTRATE'] === 'git') {
-    cached = null;
-    return cached;
-  }
+export async function loadBinding(): Promise<HoloModule> {
+  if (cached) return cached;
   try {
     cached = await import('@hologit/holo-tree');
-  } catch {
-    // Unsupported platform / missing prebuilt — fall back to git.
-    cached = null;
+  } catch (err) {
+    throw new ConfigError(
+      'config_invalid',
+      `gitsheets requires the @hologit/holo-tree native binding, but no prebuilt could be ` +
+        `loaded for this platform (${process.platform}-${process.arch}). Supported targets: ` +
+        `linux x64/arm64 (gnu, musl), darwin arm64/x64, win32 x64. ` +
+        `Original load error: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
   }
   return cached;
 }

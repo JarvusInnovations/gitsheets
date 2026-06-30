@@ -1,4 +1,4 @@
-// Sheet.clear() — #178 fix: uses hologit TreeObject.clearChildren()
+// Sheet.clear() — #178 fix: uses the binding tree's clearChildren()
 // (O(1)) instead of walking + deleteChild per entry.
 //
 // The behavioral observable is the serialized hash of the sheet's subtree

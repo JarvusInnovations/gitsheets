@@ -225,10 +225,10 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   }
 
   // Resolve attachment source paths up front so a missing file fails before
-  // the transaction opens. We hand them to hologit's writeBlobFromFile so
-  // binary content is hashed correctly (git hash-object -w). For `-` (stdin),
-  // we buffer it to a tmp file first since stdin may already be consumed by
-  // the record input.
+  // the transaction opens. The bytes are later hashed into the ODB via the
+  // binding (`repo.writeBlob`) so binary content is hashed verbatim. For `-`
+  // (stdin), we buffer it to a tmp file first since stdin may already be
+  // consumed by the record input.
   const attachmentSources: Record<string, string> = {}; // name → absolute path
   const tmpDirs: string[] = []; // cleanup at end
   let stdinConsumed = argv.input === '-' || argv.input === undefined;
@@ -334,13 +334,14 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
       lastResult = result;
     }
     // Attach files alongside the (single) record. Already guarded above to
-    // run only when records.length === 1. Each source goes through
-    // hologit's writeBlobFromFile (git hash-object -w <path>) so binary
-    // content is hashed verbatim.
+    // run only when records.length === 1. Each source is read and hashed into
+    // the ODB via the binding (`repo.writeBlob`); binary content is hashed
+    // verbatim and placed in the tree with `writeChildBytes`.
     if (attachmentNames.length > 0 && lastResult) {
-      const blobMap: Record<string, import('hologit').BlobObject> = {};
+      const blobMap: Record<string, import('../working-tree.js').BlobHandle> = {};
       for (const [name, sourcePath] of Object.entries(attachmentSources)) {
-        blobMap[name] = await repo.hologitRepo.writeBlobFromFile(sourcePath);
+        const bytes = await readFile(sourcePath);
+        blobMap[name] = await repo.writeBlob(bytes);
       }
       await target.setAttachments(lastResult.path, blobMap);
       for (const name of attachmentNames) {
