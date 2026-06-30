@@ -1,0 +1,15 @@
+accountLevel = "user"
+bio = """
+A-1 Service Group is a comprehensive waste management provider in North Carolina. We offer a wide range of services including demolition, dumpster rentals, waste removal, recycling, material sales, and contract crushing, serving areas such as Greensboro, Burlington, Winston-Salem, Charlotte, Raleigh, Kernersville and Mebane. A-1 Service Group is a licensed demolition contractor, providing demolition services for home and business tear-downs throughout North Carolina, with a particular focus on Greensboro, Winston-Salem, and Raleigh. With a focus on reliable service and customer care, we combine modern technology with traditional values to handle waste management and demolition needs for both residential and commercial clients. Whether it's a small home project or a large-scale commercial job, A-1 Service Group's team of experts has the tools and experience to handle tasks of any size, always striving to deliver an exceptional customer experience. A-1 Service Group, 2091 Bishop Rd, Greensboro, NC 27406, (336) 855-8195\r
+\r
+\r
+[https://www.a-1servicegroup.com/](https://www.a-1servicegroup.com/)"""
+createdAt = "2024-09-25T00:50:06.000Z"
+firstName = "Ronnie"
+fullName = "Ronnie Petty"
+id = "019e4020-e4d3-7f8a-901c-f3b5d1d27700"
+lastName = "Petty"
+legacyId = 22_245
+slackSamlNameId = "a1servicegroup"
+slug = "a1servicegroup"
+updatedAt = "2024-09-25T04:34:28.000Z"

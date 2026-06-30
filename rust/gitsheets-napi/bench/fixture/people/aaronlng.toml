@@ -1,0 +1,20 @@
+accountLevel = "user"
+bio = """
+## Full Stack Developer - Front & Back End\r
+\r
+\r
+Full stack developer with strong interpersonal and communication skills stemming from a background in customer service. Effective at prioritizing multiple tasks to develop clean and efficient applications while adhering to deadlines. Provides a positive presence in groups and teamwork to bring an abundance of enthusiasm and creativity to the conversation.\r
+\r
+\r
+- Recent graduate of coding boot camp through University of Pennsylvania\r
+- Looking to network with like minded, motivated individuals\r
+- Learn and grow through collaboration and projects"""
+createdAt = "2019-09-04T19:04:02.000Z"
+firstName = "Aaron"
+fullName = "Aaron Long"
+id = "019e4021-204e-77e0-a3ad-04cb608f2937"
+lastName = "Long"
+legacyId = 3_756
+slackSamlNameId = "aaronlng"
+slug = "aaronlng"
+updatedAt = "2019-12-04T22:46:25.000Z"
