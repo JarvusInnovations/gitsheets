@@ -26,7 +26,9 @@
 use chrono::{Datelike, Timelike};
 use gitsheets_core::diff::{MergePatch, PatchOp, PatchValue};
 use gitsheets_core::engine::Engine;
+use gitsheets_core::index::{MultiIndex, UniqueIndex};
 use gitsheets_core::path_template::Template;
+use gitsheets_core::query::{self, Filter, FilterPred};
 use gitsheets_core::validation::CompiledSchema;
 use gitsheets_core::{record, Datetime, Value};
 use napi::bindgen_prelude::*;
@@ -576,6 +578,227 @@ pub fn record_list(
             .collect()),
         Err(err) => Err(raise_core_error(&env, &err)),
     }
+}
+
+// ── substrate read/write counters (bulk benchmark + hologit#464 finding) ──────
+
+/// A snapshot of holo-tree's process-wide tree/blob counters — read-side
+/// instrumentation for the bulk benchmark and the hologit#464 perf finding.
+#[napi(object)]
+pub struct JsSubstrateStats {
+    pub trees_read: i64,
+    pub trees_written: i64,
+    pub trees_skipped_clean: i64,
+    pub cache_hits: i64,
+    pub cache_misses: i64,
+    pub blobs_read: i64,
+}
+
+/// Snapshot the substrate (holo-tree) counters.
+#[napi]
+pub fn substrate_stats() -> JsSubstrateStats {
+    let s = record::substrate_stats();
+    JsSubstrateStats {
+        trees_read: s.trees_read as i64,
+        trees_written: s.trees_written as i64,
+        trees_skipped_clean: s.trees_skipped_clean as i64,
+        cache_hits: s.cache_hits as i64,
+        cache_misses: s.cache_misses as i64,
+        blobs_read: s.blobs_read as i64,
+    }
+}
+
+/// Reset the substrate counters + the thread-local tree cache.
+#[napi]
+pub fn substrate_reset() {
+    record::substrate_reset();
+}
+
+// ── query traversal + filtering ───────────────────────────────────────────────
+//
+// A query crosses the FFI once: the binding compiles the template + any
+// predicate snippets into a single engine, then the core prunes the tree by the
+// path template and applies the full filter natively (declarative equality /
+// nested predicates) with the embedded engine as the escape hatch.
+//
+// Filter marshalling convention (the binding's only query-specific shape):
+//   - a literal value          → equality predicate (native)
+//   - `{ "$pred": "<js src>" }` → engine predicate `(value, record) => ( <src> )`
+//   - a plain object           → nested filter (recurse)
+
+/// Parse a JS filter object into a core [`Filter`], compiling any predicate
+/// snippets into `engine`.
+fn parse_filter(env: &Env, obj: &JsObject, engine: &mut Engine) -> Result<Filter> {
+    let names = obj.get_property_names()?;
+    let len = names.get_array_length()?;
+    let mut filter = Filter::new();
+    for i in 0..len {
+        let key_js: JsString = names.get_element(i)?;
+        let key = key_js.into_utf8()?.as_str()?.to_owned();
+        let val: JsUnknown = obj.get_named_property(&key)?;
+        filter.push(key, parse_filter_pred(env, val, engine)?);
+    }
+    Ok(filter)
+}
+
+fn parse_filter_pred(env: &Env, val: JsUnknown, engine: &mut Engine) -> Result<FilterPred> {
+    if val.get_type()? == ValueType::Object && !val.is_array()? && !val.is_date()? {
+        let obj = unsafe { JsObject::from_napi_value(env.raw(), val.raw())? };
+        if obj.has_named_property("$pred")? {
+            let pred: JsUnknown = obj.get_named_property("$pred")?;
+            if pred.get_type()? == ValueType::String {
+                let src_js = unsafe { JsString::from_napi_value(env.raw(), pred.raw())? };
+                let src = src_js.into_utf8()?.as_str()?.to_owned();
+                let wrapped = format!("(value, record) => ( {src} )");
+                let handle = engine
+                    .compile(&wrapped)
+                    .map_err(|err| raise_core_error(env, &err))?;
+                return Ok(FilterPred::Predicate(handle));
+            }
+        }
+        // A plain object is a nested-table filter.
+        let nested = parse_filter(env, &obj, engine)?;
+        return Ok(FilterPred::Nested(nested));
+    }
+    // Everything else is an equality literal — marshal through the record value
+    // type (preserving int/float + the datetime kind).
+    let jv = unsafe { JsValue::from_napi_value(env.raw(), val.raw())? };
+    Ok(FilterPred::Equals(jv.0))
+}
+
+/// Query records under `base` in the tree `treeRef`, returning each matched
+/// `{ path, record }` in sorted path order. The template prunes the walk; the
+/// filter (equality / nested / `$pred` snippets) is applied to each candidate.
+/// Batch-first: the whole query crosses the FFI once.
+#[napi]
+pub fn record_query(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    base: String,
+    template: String,
+    filter: JsObject,
+    extension: Option<String>,
+) -> Result<Vec<JsRecordEntry>> {
+    let ext = extension_of(extension);
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
+    let parsed = parse_filter(&env, &filter, &mut engine)?;
+    match query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext) {
+        Ok(rows) => Ok(rows
+            .into_iter()
+            .map(|(path, record)| JsRecordEntry {
+                path,
+                record: JsValue(record),
+            })
+            .collect()),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// The pruning candidate set alone (no content filter applied) — the direct
+/// parity target for the host `Template.queryTree`. `query` is a (partial)
+/// record of the path-template input fields. Returns candidate record paths
+/// (relative to `base`, no extension) in sorted order.
+#[napi]
+pub fn record_query_candidates(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    base: String,
+    template: String,
+    query: JsValue,
+    extension: Option<String>,
+) -> Result<Vec<String>> {
+    let ext = extension_of(extension);
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
+    query::query_candidate_paths(&repo, &mut tree, &base, &compiled, &query.0, &mut engine, &ext)
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// The record fields that contribute to rendering `template` — the query
+/// auto-derivation set (`Template.getFieldNames` parity). Insertion-ordered,
+/// de-duplicated; expression components contribute a best-effort identifier
+/// scan minus JS keywords/globals.
+#[napi]
+pub fn template_field_names(env: Env, template: String) -> Result<Vec<String>> {
+    let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
+    Ok(compiled.get_field_names())
+}
+
+// ── secondary indexing ─────────────────────────────────────────────────────────
+//
+// Lazy, in-memory indices built over the records under `base`. The binding
+// lists once, builds the index in the core, and serves the lookups — the
+// `Sheet`-level build caching / ref-move invalidation is downstream
+// (`sheet-store-core`). `keySnippet` is the full keyFn source, e.g.
+// `(r) => r.email.toLowerCase()`.
+
+/// Build a **unique** index over the records under `base` and look up each key.
+/// `results[i]` is the record for `keys[i]`, or `null` when no record carries
+/// it. A duplicate key throws `IndexError(index_unique_conflict)` naming both
+/// paths.
+#[napi]
+pub fn record_index_unique(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    base: String,
+    key_snippet: String,
+    keys: Vec<String>,
+    extension: Option<String>,
+) -> Result<Vec<Option<JsValue>>> {
+    let ext = extension_of(extension);
+    let records = record::list_records_at_ref(&git_dir, &tree_ref, &base, &ext)
+        .map_err(|err| raise_core_error(&env, &err))?;
+    let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let handle = engine
+        .compile(&key_snippet)
+        .map_err(|err| raise_core_error(&env, &err))?;
+    let index = UniqueIndex::build(&records, handle, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
+    Ok(keys
+        .iter()
+        .map(|k| index.lookup(k).cloned().map(JsValue))
+        .collect())
+}
+
+/// Build a **non-unique** index over the records under `base` and look up each
+/// key. `results[i]` is every record carrying `keys[i]` (an empty array when
+/// none).
+#[napi]
+pub fn record_index_multi(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    base: String,
+    key_snippet: String,
+    keys: Vec<String>,
+    extension: Option<String>,
+) -> Result<Vec<Vec<JsValue>>> {
+    let ext = extension_of(extension);
+    let records = record::list_records_at_ref(&git_dir, &tree_ref, &base, &ext)
+        .map_err(|err| raise_core_error(&env, &err))?;
+    let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let handle = engine
+        .compile(&key_snippet)
+        .map_err(|err| raise_core_error(&env, &err))?;
+    let index = MultiIndex::build(&records, handle, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
+    Ok(keys
+        .iter()
+        .map(|k| {
+            index
+                .lookup(k)
+                .iter()
+                .map(|(_, record)| JsValue(record.clone()))
+                .collect()
+        })
+        .collect())
 }
 
 /// Build a JS array of RFC 6902 ops, shaping `value` exactly like the `rfc6902`

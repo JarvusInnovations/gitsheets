@@ -86,11 +86,22 @@ jobs:
         working-directory: rust/gitsheets-napi
         run: npm run build
 
-      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, record CRUD + diff/patch)
+      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, record CRUD/diff/patch, query, index)
         # Explicit file paths (not a glob) so the suite runs identically on
         # node 20 and 22 — `node --test "test/*.mjs"` does NOT expand on node 20.
-        # record-crud.mjs uses `git init` for its temp repos, so git must be on
-        # PATH (it is, on ubuntu-latest), and diffs the core's createPatch against
-        # the `rfc6902` package installed above.
+        # record-crud/query/index.mjs use `git init` for their temp repos, so git
+        # must be on PATH (it is, on ubuntu-latest). record-query.mjs diffs the
+        # core's query/prune/getFieldNames against a transcribed host reference;
+        # record-index.mjs against a transcribed `Sheet` index build.
         working-directory: rust/gitsheets-napi
         run: npm test
+
+      - name: Bulk read/query benchmark (SMOKE — committed fixture subset)
+        # Runs `bench/query-bench.mjs` with NO env, so it uses the committed
+        # ~60-record people fixture and just proves the bulk read/query path
+        # completes (timings are meaningless at that size — they're a smoke).
+        # The real ~18k-record numbers are a LOCAL/opt-in run against the
+        # CodeForPhilly corpus via GITSHEETS_BENCH_REPO/REF/BASE — see
+        # plans/record-query-index.md Notes.
+        working-directory: rust/gitsheets-napi
+        run: npm run bench

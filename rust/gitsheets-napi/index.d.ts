@@ -104,6 +104,56 @@ export interface JsRecordEntry {
  */
 export declare function recordList(gitDir: string, treeRef: string, base: string, extension?: string | undefined | null): Array<JsRecordEntry>
 /**
+ * A snapshot of holo-tree's process-wide tree/blob counters — read-side
+ * instrumentation for the bulk benchmark and the hologit#464 perf finding.
+ */
+export interface JsSubstrateStats {
+  treesRead: number
+  treesWritten: number
+  treesSkippedClean: number
+  cacheHits: number
+  cacheMisses: number
+  blobsRead: number
+}
+/** Snapshot the substrate (holo-tree) counters. */
+export declare function substrateStats(): JsSubstrateStats
+/** Reset the substrate counters + the thread-local tree cache. */
+export declare function substrateReset(): void
+/**
+ * Query records under `base` in the tree `treeRef`, returning each matched
+ * `{ path, record }` in sorted path order. The template prunes the walk; the
+ * filter (equality / nested / `$pred` snippets) is applied to each candidate.
+ * Batch-first: the whole query crosses the FFI once.
+ */
+export declare function recordQuery(gitDir: string, treeRef: string, base: string, template: string, filter: object, extension?: string | undefined | null): Array<JsRecordEntry>
+/**
+ * The pruning candidate set alone (no content filter applied) — the direct
+ * parity target for the host `Template.queryTree`. `query` is a (partial)
+ * record of the path-template input fields. Returns candidate record paths
+ * (relative to `base`, no extension) in sorted order.
+ */
+export declare function recordQueryCandidates(gitDir: string, treeRef: string, base: string, template: string, query: JsValue, extension?: string | undefined | null): Array<string>
+/**
+ * The record fields that contribute to rendering `template` — the query
+ * auto-derivation set (`Template.getFieldNames` parity). Insertion-ordered,
+ * de-duplicated; expression components contribute a best-effort identifier
+ * scan minus JS keywords/globals.
+ */
+export declare function templateFieldNames(template: string): Array<string>
+/**
+ * Build a **unique** index over the records under `base` and look up each key.
+ * `results[i]` is the record for `keys[i]`, or `null` when no record carries
+ * it. A duplicate key throws `IndexError(index_unique_conflict)` naming both
+ * paths.
+ */
+export declare function recordIndexUnique(gitDir: string, treeRef: string, base: string, keySnippet: string, keys: Array<string>, extension?: string | undefined | null): Array<JsValue | undefined | null>
+/**
+ * Build a **non-unique** index over the records under `base` and look up each
+ * key. `results[i]` is every record carrying `keys[i]` (an empty array when
+ * none).
+ */
+export declare function recordIndexMulti(gitDir: string, treeRef: string, base: string, keySnippet: string, keys: Array<string>, extension?: string | undefined | null): Array<Array<JsValue>>
+/**
  * Generate an RFC 6902 JSON Patch transforming `src` into `dst` — the core's
  * `createPatch`, matching the `rfc6902` package op-for-op. `null`/`undefined`
  * on either side is the JSON null `Sheet.diffFrom` passes for an added
