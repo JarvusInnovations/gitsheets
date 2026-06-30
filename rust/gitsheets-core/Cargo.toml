@@ -55,6 +55,22 @@ gix = "0.83"
 # whitespace / CRLF). The body-NORMALIZATION pass (markdownlint) is NOT done
 # here — see the codec module docs and plans/markdown-codec-core.md.
 regex = "1"
+# ── locale-collation-core (native ICU collation for declarative `sort = true`) ─
+# The ICU4X collator. Declarative `sort = true` (locale-sensitive string-array
+# sorting) is NATIVE — it does NOT route through the boa engine, because boa is
+# built without `Intl` and its `localeCompare` falls back to code-unit order,
+# diverging from V8/`node:vm` on non-ASCII / mixed-case input. ICU4X is the same
+# ICU/CLDR lineage V8 uses, configured (Strength::Primary + AlternateHandling::
+# Shifted + CollationNumericOrdering::True, root locale) to match V8's
+# `localeCompare(b, undefined, { sensitivity: 'base', ignorePunctuation: true,
+# numeric: true })` exactly — see src/collator.rs and specs/behaviors/
+# normalization.md. The collator + its baked CLDR data determine sort order, hence
+# the canonical bytes of sorted arrays, so this is part of the canonical-behavior
+# contract and is PINNED EXACTLY (`=`) like the serializer and the engine. The
+# `compiled_data` default feature bakes the CLDR collation data into the binary
+# (no runtime data load). Held to 2.0.x because boa_engine 0.21.1 pins
+# `icu_normalizer ~2.0`; a newer icu_collator would diverge that shared dep.
+icu_collator = "=2.0.0"
 
 [dev-dependencies]
 # Throwaway git repos for the record-CRUD + diff integration tests.
