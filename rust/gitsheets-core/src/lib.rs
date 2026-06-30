@@ -18,7 +18,10 @@
 //! top of this substrate. See [`specs/rust-core.md`](../../../specs/rust-core.md).
 
 pub mod canonical;
+pub mod engine;
 pub mod error;
+pub mod path_template;
+pub mod validation;
 pub mod value;
 
 pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};

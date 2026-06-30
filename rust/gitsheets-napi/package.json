@@ -36,9 +36,11 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs"
+    "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs test/path-template.mjs test/validation-parity.mjs test/engine-parity.mjs"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.4"
+    "@napi-rs/cli": "^2.18.4",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
   }
 }
