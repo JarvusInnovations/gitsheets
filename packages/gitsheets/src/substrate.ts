@@ -1,24 +1,28 @@
 // Tree substrate — the seam between gitsheets and its git-object backend.
 //
-// gitsheets is migrating its tree/commit operations off the hologit JS
-// dependency onto the published Rust binding `@hologit/holo-tree` (#127). The
-// binding currently exposes only a narrow surface
-// (`Repo.open`/`createTreeFromRef`/`createTree`/`commitTree`/`updateRef` +
-// `Tree.writeChild`/`writeChildBytes`/`readBlob`/`deleteChildDeep`/`write` +
-// `emptyTreeHash`), so the migration proceeds site by site. This module owns
-// the binding load and the operations migrated so far; everything not yet
-// covered stays on hologit / git shell-outs in its original site.
+// gitsheets is migrating its tree/commit/ref operations off the hologit JS
+// dependency onto the published Rust binding `@hologit/holo-tree@^0.2.0`
+// (#127). The migration proceeds site by site. This module owns the binding
+// load and the commit-object + ref operations migrated so far; the working-tree
+// read/write/navigation surface (`Sheet` / `path-template`) still goes through
+// hologit's `Workspace`/`TreeObject` — see the migration plan for why it can't
+// move yet (the 0.2.0 `Tree.deleteChildDeep` flush bug).
+//
+// When the native addon can't load on a platform, `loadHoloTree()` returns
+// `null` and callers keep the legacy `git` shell-out path untouched.
 //
 // See plans/holo-tree-migration.md and specs/rust-core.md.
 
 // Type-only import: erased at compile time, so merely importing gitsheets never
 // loads the native addon. The runtime load is the dynamic import in
 // `loadHoloTree()` below.
-import type { Signature } from '@hologit/holo-tree';
+import type { Repo as BindingRepo, Signature } from '@hologit/holo-tree';
 
 import type { Author } from './transaction.js';
 
 type HoloModule = typeof import('@hologit/holo-tree');
+
+export type { BindingRepo };
 
 let cached: HoloModule | null | undefined;
 
@@ -49,6 +53,11 @@ export async function loadHoloTree(): Promise<HoloModule | null> {
   return cached;
 }
 
+/** Open a binding `Repo` handle at `gitDir`. */
+export function openBindingRepo(holo: HoloModule, gitDir: string): BindingRepo {
+  return holo.Repo.open(gitDir);
+}
+
 /**
  * Build a holo-tree `Signature` from a gitsheets `Author`, capturing the
  * current wall-clock time in the machine's local timezone offset — matching
@@ -66,21 +75,16 @@ export function toSignature(author: Author, timeSeconds: number, offsetMinutes: 
 }
 
 /**
- * Create a commit object via the holo-tree binding (already loaded by the
- * caller via {@link loadHoloTree}) and return its hash.
+ * Create a commit object via the holo-tree binding and return its hash.
  *
  * `treeHash` must already exist in the repo's object database (gitsheets writes
- * it via the existing tree `write()` before calling this). The binding opens
- * the same `gitDir`, so the freshly written loose tree object is visible.
- *
- * A fresh `Repo` handle is opened per call: commits are infrequent (one per
- * transaction) and a fresh handle sidesteps any object-cache staleness against
- * loose objects written since a cached handle was opened.
+ * it via the existing tree `write()` before calling this); `repo` is the same
+ * binding handle gitsheets resolves the parent/ref through, so the freshly
+ * written loose tree object is visible.
  */
-export function commitTreeViaHoloTree(
-  holo: HoloModule,
+export function commitTreeWithRepo(
+  repo: BindingRepo,
   opts: {
-    gitDir: string;
     treeHash: string;
     parents: readonly string[];
     message: string;
@@ -92,7 +96,6 @@ export function commitTreeViaHoloTree(
   // getTimezoneOffset returns minutes that local is *behind* UTC (UTC - local),
   // so negate to get git's "+HHMM"-style offset (minutes ahead of UTC).
   const offsetMinutes = -new Date().getTimezoneOffset();
-  const repo = holo.Repo.open(opts.gitDir);
   return repo.commitTree(
     opts.treeHash,
     [...opts.parents],

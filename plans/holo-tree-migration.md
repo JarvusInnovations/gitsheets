@@ -158,17 +158,60 @@ remaining `from 'hologit'` imports.
 
 ## Notes
 
-- **In-progress:** commit-object creation (`Transaction.finalize`) migrated onto
-  the published `@hologit/holo-tree@^0.1.1` binding (`Repo.commitTree`); all
-  other sites stay on hologit/git pending binding-surface extensions. The
-  binding's narrow surface (`commitTree`/`updateRef` + `Tree.writeChild`/
-  `readBlob`/`deleteChildDeep`/`write`) cannot yet back the read-heavy Sheet
-  sites (`getChild`/`getSubtree`/`getBlobMap`/`getChildren`/`clearChildren`/
-  `getHash`/`clone`), the `BlobObject`-returning write path, the CAS
-  `updateRef`, `resolveRef`, or `createBlob`/`writeBlobFromFile`. See the PR's
-  "Binding gaps blocking full migration" for the precise op list to add
-  upstream before the remaining sites can move.
+- **In-progress.** The binding is now on `@hologit/holo-tree@^0.2.0`, which
+  exposes the full surface this plan needs (`getChild`/`getChildren`/
+  `getBlobMap`/`clearChildren`/`merge`, `resolveRef`/`writeBlob`, CAS
+  `updateRef`). Migrated so far in `Transaction.finalize`:
+  - **commit-object creation** — `Repo.commitTree` (reuses the workspace's
+    binding `Repo` handle).
+  - **ref movement** — `git update-ref` → binding `updateRef` with real
+    compare-and-swap (expected-old = parent commit).
+  - **no-op detection** — `git rev-parse <parent>^{tree}` → binding
+    `createTreeFromRef(parent).write()`.
+  - **parent-moved pre-check** — hologit `resolveRef` → binding `resolveRef`.
+
+  The legacy `git` path stays the automatic fallback (binding can't load on a
+  platform; or `GITSHEETS_COMMIT_SUBSTRATE=git`).
+
+- **Blocked: the working-tree (Sheet / path-template) migration.** Threading a
+  single binding `Tree` through the `Transaction` working tree (so Sheet/
+  path-template operate on it via deep paths) is implemented-and-reverted
+  because of an **upstream `@hologit/holo-tree@0.2.0` bug**: on a tree obtained
+  from `createTreeFromRef`, `Tree.deleteChildDeep(path)` updates the in-memory
+  view (`getChild` returns `null`) but does **not** dirty the path's ancestors,
+  so a subsequent `write()` returns the *original* tree hash — the deletion is
+  silently dropped. `writeChild` and `clearChildren` flush correctly; only
+  `deleteChildDeep` is broken. This breaks every Sheet delete/rename-cleanup/
+  attachment-cascade path the moment the working tree is binding-backed, and no
+  gitsheets-side workaround is safe (rebuilding a parent from `getBlobMap` loses
+  nested subtrees + modes and is O(n) per delete). Per the plan's
+  governing principle, this gets **fixed upstream in holo-tree**
+  (`deleteChildDeep` must mark ancestors dirty), then the working-tree thread
+  - Sheet/path-template migration lands against the fixed release.
+
+- **`UpsertResult.blob: BlobObject` (public type) keeps hologit.** Even after
+  the working-tree thread lands, the published `.d.ts` references hologit's
+  `BlobObject`/`TreeObject` types in the public surface (`UpsertResult.blob`,
+  `getAttachment(s)`, `diffFrom` `srcBlob`/`dstBlob`). Fully dropping the
+  hologit dependency therefore requires a gitsheets-owned blob/tree handle type
+  to replace those in the public API — a separate increment, since the
+  no-public-API-change constraint forbids swapping the type here.
+
+- **Staying on git/hologit by design** (per #127): `Sheet.diffFrom`'s
+  record-level diff (`git diff-tree` + `repo.createBlob`), `git var GIT_EDITOR`
+  / the CLI `$EDITOR` flow, and `Workspace.writeWorkingChanges` (unused by
+  gitsheets today).
 
 ## Follow-ups
 
-(Populated at closeout.)
+- **Upstream:** fix `@hologit/holo-tree` `Tree.deleteChildDeep` so a delete on a
+  `createTreeFromRef`-loaded tree dirties ancestors and is reflected by
+  `write()`; cut the next release. (Hard blocker for the working-tree thread.)
+- **gitsheets:** once the fix ships, thread a single binding `Tree` through the
+  `Transaction` working tree and route Sheet/path-template `getChild`/
+  `getSubtree`/`getBlobMap`/`getChildren`/`writeChild`/`deleteChild`/
+  `clearChildren`/`getHash`/`clone` + the CLI attachment writes
+  (`writeChildBytes`) through it via deep paths.
+- **gitsheets:** introduce a gitsheets-owned blob/tree handle type so the
+  public API no longer references hologit's `BlobObject`/`TreeObject`, unblocking
+  full removal of the hologit dependency for tree ops.
