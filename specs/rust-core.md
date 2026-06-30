@@ -75,6 +75,32 @@ normalize + serialize + write.
   natively in Rust. This is where the core most rewards bulk-write workloads —
   versus per-record marshalling + per-record tree writes.
 
+### Type-fidelity rules
+
+The core value type is the lingua franca; these mappings are the round-trip
+contract every binding implements and tests against. The rule of thumb: **the
+core preserves whatever determines on-disk bytes** (bytes-authority), even when a
+binding's host language can't represent the distinction natively — the binding
+then picks the least-lossy idiomatic surface and the core retains the precise
+kind for faithful re-serialization.
+
+- **Integers — `i64` in the core; adaptive on the Node surface.** The core stores
+  every integer as `i64` (TOML's full range). The Node binding marshals to a JS
+  `number` when the value fits in ±(2^53−1) and to `BigInt` above that, so common
+  small ids stay ergonomic numbers while large values never lose precision.
+  Inbound it accepts both `number` and `bigint`. (A future Python binding maps to
+  Python's arbitrary-precision `int` directly.)
+- **Floats — `f64`.** Kept distinct from integers; `1` and `1.0` are different
+  core values and serialize differently.
+- **Datetimes — all four TOML kinds preserved distinctly.** Offset-datetime,
+  local-datetime, local-date, and local-time serialize to *different bytes*, so
+  the core keeps them as distinct value kinds. The Node binding surfaces them as
+  JS `Date` to match the current `@iarna`-based v1.x behavior (no consumer-visible
+  change), with the precise TOML kind retained core-side for byte-faithful
+  re-serialization.
+- **Strings, booleans, arrays, tables** map to their obvious idiomatic
+  counterparts (table ↔ plain object / dict).
+
 ## Embedded code execution
 
 Some behavior is **embedded in the sheet definition** itself — today, raw-JS sort
