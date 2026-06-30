@@ -9,6 +9,7 @@ import type { Repo as HologitRepo, TreeObject, Workspace } from 'hologit';
 
 import { RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
+import { commitTreeViaHoloTree, loadHoloTree } from './substrate.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
 
@@ -273,27 +274,56 @@ export class Transaction {
 
     const message = formatCommitMessage(this.#message, this.#trailers);
 
+    // Commit-object creation is migrated onto the @hologit/holo-tree binding
+    // (#127): the tree was just flushed to the ODB by `write()`, and the
+    // binding's `commitTree` writes the commit object against the same gitDir.
+    // The legacy `git commit-tree` shell-out stays reachable via
+    // GITSHEETS_COMMIT_SUBSTRATE=git, and is also the automatic fallback when
+    // the binding can't load on this platform (loadHoloTree() → null). Ref
+    // movement (next block) stays on `git update-ref` because it needs
+    // compare-and-swap, which the binding's `updateRef` does not yet expose.
+    // See plans/holo-tree-migration.md.
     let commitHash: string;
-    try {
-      const args = ['commit-tree', treeHash, '-m', message];
-      if (this.#parentCommitHash) {
-        args.push('-p', this.#parentCommitHash);
+    const holo = await loadHoloTree();
+    if (holo) {
+      try {
+        commitHash = commitTreeViaHoloTree(holo, {
+          gitDir,
+          treeHash,
+          parents: this.#parentCommitHash ? [this.#parentCommitHash] : [],
+          message,
+          author: this.#author,
+          committer: this.#committer,
+        });
+      } catch (err) {
+        throw new TransactionError(
+          'commit_failed',
+          `holo-tree commitTree failed: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
       }
-      const env: NodeJS.ProcessEnv = {
-        ...process.env,
-        GIT_AUTHOR_NAME: this.#author.name,
-        GIT_AUTHOR_EMAIL: this.#author.email,
-        GIT_COMMITTER_NAME: this.#committer.name,
-        GIT_COMMITTER_EMAIL: this.#committer.email,
-      };
-      const { stdout } = await exec('git', args, { cwd: gitDir, env });
-      commitHash = stdout.trim();
-    } catch (err) {
-      throw new TransactionError(
-        'commit_failed',
-        `git commit-tree failed: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
+    } else {
+      try {
+        const args = ['commit-tree', treeHash, '-m', message];
+        if (this.#parentCommitHash) {
+          args.push('-p', this.#parentCommitHash);
+        }
+        const env: NodeJS.ProcessEnv = {
+          ...process.env,
+          GIT_AUTHOR_NAME: this.#author.name,
+          GIT_AUTHOR_EMAIL: this.#author.email,
+          GIT_COMMITTER_NAME: this.#committer.name,
+          GIT_COMMITTER_EMAIL: this.#committer.email,
+        };
+        const { stdout } = await exec('git', args, { cwd: gitDir, env });
+        commitHash = stdout.trim();
+      } catch (err) {
+        throw new TransactionError(
+          'commit_failed',
+          `git commit-tree failed: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
     }
 
     if (this.#branchRef !== null) {

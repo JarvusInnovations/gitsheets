@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [holo-tree-napi-spike]
 specs:
   - specs/architecture.md
@@ -158,7 +158,16 @@ remaining `from 'hologit'` imports.
 
 ## Notes
 
-(Populated at closeout.)
+- **In-progress:** commit-object creation (`Transaction.finalize`) migrated onto
+  the published `@hologit/holo-tree@^0.1.1` binding (`Repo.commitTree`); all
+  other sites stay on hologit/git pending binding-surface extensions. The
+  binding's narrow surface (`commitTree`/`updateRef` + `Tree.writeChild`/
+  `readBlob`/`deleteChildDeep`/`write`) cannot yet back the read-heavy Sheet
+  sites (`getChild`/`getSubtree`/`getBlobMap`/`getChildren`/`clearChildren`/
+  `getHash`/`clone`), the `BlobObject`-returning write path, the CAS
+  `updateRef`, `resolveRef`, or `createBlob`/`writeBlobFromFile`. See the PR's
+  "Binding gaps blocking full migration" for the precise op list to add
+  upstream before the remaining sites can move.
 
 ## Follow-ups
 
