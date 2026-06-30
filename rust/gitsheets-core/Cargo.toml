@@ -1,0 +1,17 @@
+[package]
+name = "gitsheets-core"
+description = "Pure-Rust core for gitsheets: the TOML-faithful value type, typed error surface, and (later) the bytes-authority engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Insertion-order-preserving map for table values (TOML key ordering is a
+# normalization concern handled later; the value type itself preserves order).
+indexmap = "2"
+# Backs the four distinct TOML datetime kinds and gives byte-faithful `Display`.
+# This is the same crate the serializer will use, so the datetime kinds the
+# value type carries are exactly the ones that re-serialize.
+toml = "0.8"

@@ -1,0 +1,111 @@
+//! `gitsheets-core` — the pure-Rust core for gitsheets.
+//!
+//! **Status: foundation skeleton.** This crate currently establishes the
+//! *boundary*, not the engine. It owns:
+//!
+//! - [`Value`] — the TOML-faithful core value type every binding marshals to
+//!   and from (see [`value`]).
+//! - [`Error`] — the typed, matchable error surface a binding maps onto its
+//!   host's idiomatic exception classes (see [`error`]).
+//! - Batch-first API shape — even the skeleton echo ([`echo_batch`]) takes and
+//!   returns a `Vec`, so bulk paths never bake in per-record FFI crossings.
+//!
+//! The actual engine — TOML parse/serialize, normalization, path-template
+//! rendering, validation, query, and the `Sheet`/`Transaction`/`Store` state
+//! machine — lands in downstream plans on top of this substrate. See
+//! [`specs/rust-core.md`](../../../specs/rust-core.md).
+
+pub mod error;
+pub mod value;
+
+pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
+pub use value::{Datetime, DatetimeKind, Value};
+
+/// Identity over a batch of records — the minimal exercise of the value type
+/// across a bulk boundary. Bindings call this to prove a whole array of records
+/// crosses the FFI in a single call with full type fidelity preserved. Later
+/// plans replace this skeleton with real engine entry points (`upsertMany`,
+/// `queryAll`, …) that keep the same batch-first signature.
+pub fn echo_batch(records: Vec<Value>) -> Vec<Value> {
+    records
+}
+
+/// Construct a representative [`Error`] for a given stable `code`. Bindings use
+/// this to exercise error-variant → typed-class mapping across the boundary
+/// without standing up real engine code paths. Returns `None` for an unknown
+/// code.
+pub fn example_error(code: &str) -> Option<Error> {
+    let msg = format!("example {code} error");
+    Some(match code {
+        "config_missing" => Error::ConfigMissing { message: msg },
+        "config_invalid" => Error::ConfigInvalid { message: msg },
+        "validation_failed" => Error::ValidationFailed {
+            message: msg,
+            issues: vec![ValidationIssue {
+                path: vec!["email".into()],
+                message: "must match pattern".into(),
+                source: IssueSource::JsonSchema,
+                schema_path: Some("#/properties/email/pattern".into()),
+                code: Some("pattern".into()),
+            }],
+        },
+        "transaction_in_progress" => Error::TransactionInProgress { message: msg },
+        "transaction_required" => Error::TransactionRequired { message: msg },
+        "parent_moved" => Error::ParentMoved { message: msg },
+        "commit_failed" => Error::CommitFailed { message: msg },
+        "push_daemon_running" => Error::PushDaemonRunning { message: msg },
+        "transaction_closed" => Error::TransactionClosed { message: msg },
+        "index_unique_conflict" => Error::IndexUniqueConflict {
+            message: msg,
+            conflicting_paths: vec!["people/by-email/a@b.com".into()],
+        },
+        "index_not_defined" => Error::IndexNotDefined { message: msg },
+        "ref_not_found" => Error::RefNotFound { message: msg },
+        "not_an_ancestor" => Error::NotAnAncestor { message: msg },
+        "path_render_failed" => Error::PathRenderFailed { message: msg },
+        "path_invalid_chars" => Error::PathInvalidChars { message: msg },
+        "record_not_found" => Error::RecordNotFound { message: msg },
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexMap;
+
+    #[test]
+    fn echo_batch_preserves_a_batch_of_records() {
+        let mut record = IndexMap::new();
+        record.insert("id".to_string(), Value::Integer(7));
+        record.insert("ratio".to_string(), Value::Float(1.5));
+        let batch = vec![Value::Table(record), Value::String("two".into())];
+        assert_eq!(echo_batch(batch.clone()), batch);
+    }
+
+    #[test]
+    fn example_error_covers_every_code_and_is_none_for_unknown() {
+        for code in [
+            "config_missing",
+            "config_invalid",
+            "validation_failed",
+            "transaction_in_progress",
+            "transaction_required",
+            "parent_moved",
+            "commit_failed",
+            "push_daemon_running",
+            "transaction_closed",
+            "index_unique_conflict",
+            "index_not_defined",
+            "ref_not_found",
+            "not_an_ancestor",
+            "path_render_failed",
+            "path_invalid_chars",
+            "record_not_found",
+        ] {
+            let err = example_error(code).expect("known code");
+            assert_eq!(err.code(), code);
+        }
+        assert!(example_error("nope").is_none());
+    }
+}
