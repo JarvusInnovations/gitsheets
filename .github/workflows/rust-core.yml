@@ -124,3 +124,54 @@ jobs:
         # plans/record-query-index.md Notes.
         working-directory: rust/gitsheets-napi
         run: npm run bench
+
+  python:
+    name: gitsheets-py (pyo3 wheel + parity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Sheet/Transaction commit tests + the cross-binding commit-parity test
+      # commit to scratch repos, whose update_ref writes a reflog needing a
+      # committer identity from git config (same requirement as the other jobs).
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v8.2.0
+
+      # Node is needed only for the cross-binding byte-identical proof: the
+      # Python parity suite drives the napi binding through _node_writer.mjs and
+      # asserts the resulting tree/blob/commit bytes match.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build the napi addon (release) — the cross-binding parity peer
+        working-directory: rust/gitsheets-napi
+        run: |
+          npm install
+          npm run build
+
+      - name: Build + install the gitsheets-py wheel (maturin/abi3)
+        working-directory: rust/gitsheets-py
+        run: |
+          uv venv
+          uv pip install maturin pytest pydantic
+          .venv/bin/maturin build --release --out dist
+          uv pip install --no-index --find-links dist gitsheets
+
+      - name: Smoke + cross-binding byte-identical parity tests
+        working-directory: rust/gitsheets-py
+        run: .venv/bin/pytest tests/ -v
