@@ -143,7 +143,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
 
       # Node is needed only for the cross-binding byte-identical proof: the
       # Python parity suite drives the napi binding through _node_writer.mjs and
