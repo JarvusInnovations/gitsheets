@@ -64,6 +64,35 @@ if (op === 'record-write') {
     tx.discard();
     throw err;
   }
+} else if (op === 'commit-attachment') {
+  // A record upsert + an attachment staged in the SAME transaction/commit. The
+  // attachment bytes are shared with the Python side (fixed binary content), so
+  // the resulting tree + commit must be byte-identical across bindings.
+  const gitDir = args[0];
+  const attachBytes = Buffer.from([0xde, 0xad, 0xbe, 0xef, 0x00, 0xff, 0x2a]);
+  const opts = {
+    parent: undefined,
+    branch: 'refs/heads/main',
+    author: { name: 'Jane Doe', email: 'jane@x.org' },
+    committer: undefined,
+    message: 'people: add jane + avatar',
+    trailers: [{ key: 'Action', value: 'person.create' }],
+    timeSeconds: 1_700_000_000,
+    offsetMinutes: -300,
+  };
+  const tx = binding.CoreTransaction.begin(gitDir, opts);
+  try {
+    tx.openSheet('people', '.gitsheets/people.toml', '.', '');
+    tx.prepareUpsert('people', { slug: 'jane', email: 'jane@x.org' });
+    tx.stageUpsert('people');
+    const hash = binding.writeBlob(gitDir, attachBytes);
+    tx.setAttachment('people', 'jane', 'avatar.bin', hash);
+    const r = tx.finalize();
+    out({ commitHash: r.commitHash, treeHash: r.treeHash, blobHash: hash });
+  } catch (err) {
+    tx.discard();
+    throw err;
+  }
 } else if (op === 'comparator') {
   const rule = args[0];
   const a = JSON.parse(args[1]);

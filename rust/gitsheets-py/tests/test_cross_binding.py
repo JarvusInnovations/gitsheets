@@ -149,6 +149,72 @@ def test_commit_bytes_identical_across_bindings():
         shutil.rmtree(seed, ignore_errors=True)
 
 
+def test_attachment_commit_bytes_identical_across_bindings():
+    """A record + an attachment staged in one transaction produces the same
+    commit from both bindings.
+
+    This is the attachment-staging analogue of the commit-parity proof: the
+    record upsert AND the attachment blob are placed into the SAME transaction
+    tree (atomic), and the fixed binary attachment content is shared with the
+    Node side, so the tree + commit bytes must be byte-identical. If they ever
+    diverge, either the blob hashing or the tree placement leaked something
+    binding-specific.
+    """
+    # Fixed binary attachment content — mirrored on the Node side in
+    # _node_writer.mjs (commit-attachment op).
+    attach_bytes = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0xFF, 0x2A])
+
+    seed = tempfile.mkdtemp(prefix="gs-seed-")
+    _git(["init", "-q", "-b", "main", seed])
+    _git(["config", "user.name", "Seed"], cwd=seed)
+    _git(["config", "user.email", "seed@x.org"], cwd=seed)
+    os.makedirs(os.path.join(seed, ".gitsheets"))
+    with open(os.path.join(seed, ".gitsheets", "people.toml"), "w") as fh:
+        fh.write("[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n")
+    _git(["add", ".gitsheets/people.toml"], cwd=seed)
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_DATE="2020-01-01T00:00:00Z",
+        GIT_COMMITTER_DATE="2020-01-01T00:00:00Z",
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "init"], cwd=seed, check=True, capture_output=True, env=env
+    )
+
+    py_dir = tempfile.mkdtemp(prefix="gs-py-") + "/repo"
+    node_dir = tempfile.mkdtemp(prefix="gs-node-") + "/repo"
+    try:
+        shutil.copytree(seed, py_dir)
+        shutil.copytree(seed, node_dir)
+
+        py_git_dir = os.path.join(py_dir, ".git")
+        with gitsheets.transact(
+            py_git_dir,
+            "people: add jane + avatar",
+            1_700_000_000,
+            offset_minutes=-300,
+            author=("Jane Doe", "jane@x.org"),
+            branch="refs/heads/main",
+            trailers=[("Action", "person.create")],
+        ) as tx:
+            tx.open_sheet("people", ".gitsheets/people.toml")
+            tx.upsert("people", {"slug": "jane", "email": "jane@x.org"})
+            py_blob = gitsheets.write_blob(py_git_dir, attach_bytes)
+            tx.set_attachment("people", "jane", "avatar.bin", py_blob)
+        py_result = tx.result
+
+        node = _run_node("commit-attachment", os.path.join(node_dir, ".git"))
+
+        assert py_result["commit_hash"] is not None
+        assert py_blob == node["blobHash"], "attachment blob bytes diverged across bindings"
+        assert py_result["tree_hash"] == node["treeHash"], "tree bytes diverged across bindings"
+        assert py_result["commit_hash"] == node["commitHash"], "commit bytes diverged across bindings"
+    finally:
+        shutil.rmtree(os.path.dirname(py_dir), ignore_errors=True)
+        shutil.rmtree(os.path.dirname(node_dir), ignore_errors=True)
+        shutil.rmtree(seed, ignore_errors=True)
+
+
 def test_embedded_engine_comparator_identical_across_bindings():
     """The same definition-embedded JS snippet yields identical results."""
     rule = "return (a.name > b.name) - (a.name < b.name)"
