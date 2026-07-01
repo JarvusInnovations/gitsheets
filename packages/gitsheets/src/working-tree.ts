@@ -133,6 +133,11 @@ export class TreeView {
     return this.#root;
   }
 
+  /** This view's base path (relative to the binding root; `''` for the root). */
+  get base(): string {
+    return this.#base;
+  }
+
   #full(path: string): string {
     return joinTreePath(this.#base, path);
   }

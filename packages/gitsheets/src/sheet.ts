@@ -8,6 +8,7 @@ import type { Readable } from 'node:stream';
 
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
+import { addon, callCore } from './core.js';
 import {
   ConfigError,
   IndexError,
@@ -174,7 +175,13 @@ function queryMatches(filter: RecordLike, record: RecordLike): boolean {
       if (!ok) return false;
       continue;
     }
-    if (qval !== null && typeof qval === 'object' && !Array.isArray(qval) && !(qval instanceof Date)) {
+    if (qval instanceof Date) {
+      // Datetime equality by value (the core compares datetimes by value, not
+      // by object identity). See specs/behaviors/normalization.md + the cutover.
+      if (!(rval instanceof Date) || rval.getTime() !== qval.getTime()) return false;
+      continue;
+    }
+    if (qval !== null && typeof qval === 'object' && !Array.isArray(qval)) {
       if (rval === null || typeof rval !== 'object') return false;
       if (!queryMatches(qval as RecordLike, rval as RecordLike)) return false;
       continue;
@@ -182,6 +189,47 @@ function queryMatches(filter: RecordLike, record: RecordLike): boolean {
     if (rval !== qval) return false;
   }
   return true;
+}
+
+/**
+ * Deep copy of a query filter with every function-valued predicate removed —
+ * the literal/nested-equality skeleton the core's `recordQuery` /
+ * `recordQueryCandidates` can apply (functions can't cross the FFI). The full
+ * filter (functions included) is re-applied host-side by {@link queryMatches}.
+ */
+function stripFilterFunctions(filter: RecordLike): RecordLike {
+  const out: RecordLike = {};
+  for (const [k, v] of Object.entries(filter)) {
+    if (typeof v === 'function') continue;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+      out[k] = stripFilterFunctions(v as RecordLike);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Read a blob's UTF-8 text by `<treeRef>:<path>` via `git cat-file` — the
+ * genuine git-porcelain blob read for the format-aware (markdown) query path,
+ * where the core's TOML-only ref reads can't parse the record. Returns `null`
+ * when the object doesn't exist.
+ */
+function readTreeBlobText(gitDir: string, treeRef: string, path: string): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      'git',
+      ['cat-file', 'blob', `${treeRef}:${path}`],
+      { cwd: gitDir, maxBuffer: 1024 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        resolve(String(stdout));
+      },
+    );
+    child.stdin?.end();
+    void reject;
+  });
 }
 
 // --- Sheet config cache (process-wide by blob hash of the config file) ---
@@ -732,10 +780,6 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (signal?.aborted) throwAborted(signal);
 
     const config = await this.readConfig();
-    const template = Template.fromString(config.path);
-    const sheetRoot = await this.#getSheetRoot(this.#effectiveRoot(config));
-    if (!sheetRoot) return;
-
     const format = this.#getFormat(config);
     const withBody = opts.withBody ?? true;
     const bodyField = config.format.body;
@@ -748,22 +792,47 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
     }
 
-    // TreeView/BlobView are structurally compatible with the path-template
-    // tree interface; the casts bridge the type lattices.
-    for await (const { blob, path: blobPath } of template.queryTree(
-      sheetRoot as unknown as Parameters<typeof template.queryTree>[0],
-      filter as RecordLike,
-      { extension: format.extension },
-    )) {
+    // Route the tree walk + record decode through the core. The core prunes by
+    // the path template and (for TOML) applies the literal filter; function
+    // predicates can't cross the FFI, so they're stripped from the core filter
+    // and re-applied host-side by queryMatches. `treeRef` is the materialized
+    // root tree hash of this Sheet's tree — the open-time snapshot for a
+    // standalone Sheet, or the flushed in-progress tree for a tx-bound one.
+    const gitDir = this.#repo.gitDir;
+    const treeRef = await this.#dataTree.write();
+    const base = joinTreePath(this.#dataTree.base, this.#effectiveRoot(config));
+    const coreFilter = stripFilterFunctions(filter as RecordLike);
+
+    let rows: Array<{ path: string; record: RecordLike }>;
+    if (config.format.type === 'toml') {
+      // TOML records: the core reads + parses + literal-filters in one call.
+      rows = callCore(() =>
+        addon.recordQuery(gitDir, treeRef, base, config.path, coreFilter, format.extension),
+      ) as Array<{ path: string; record: RecordLike }>;
+    } else {
+      // Format-aware (markdown/mdx): the core's ref reads are TOML-only, so use
+      // it only for the (format-agnostic) pruning walk, then read + decode each
+      // candidate blob through the host format codec (itself core-backed).
+      const candidates = callCore(() =>
+        addon.recordQueryCandidates(gitDir, treeRef, base, config.path, coreFilter, format.extension),
+      );
+      rows = [];
+      for (const p of candidates) {
+        const text = await readTreeBlobText(gitDir, treeRef, joinTreePath(base, `${p}${format.extension}`));
+        if (text === null) continue;
+        const record = withBody
+          ? format.parse(text, config.format)
+          : format.parseHeaderOnly(text, config.format);
+        rows.push({ path: p, record });
+      }
+    }
+
+    for (const { path: recordPath, record } of rows) {
       if (signal?.aborted) throwAborted(signal);
-      const record = (await this.#readRecordFromBlob(
-        blob as unknown as BlobView,
-        blobPath,
-        config,
-        { headerOnly: !withBody },
-      )) as T;
+      (record as Record<symbol, unknown>)[RECORD_SHEET_KEY] = this.#name;
+      (record as Record<symbol, unknown>)[RECORD_PATH_KEY] = recordPath;
       if (!queryMatches(filter as RecordLike, record as RecordLike)) continue;
-      yield record;
+      yield record as T;
     }
   }
 
@@ -835,6 +904,74 @@ export class Sheet<T extends RecordLike = RecordLike> {
     opts: DiffOptions = {},
   ): AsyncGenerator<DiffChange<T>> {
     const config = await this.readConfig();
+    // TOML sheets: the core computes the whole rename-aware diff from the
+    // canonical bytes — so datetime field changes and int-vs-float distinctions
+    // surface in the patch (they're lost once a record is parsed into a JS
+    // object, where every number is a float and Dates compare by identity).
+    // Format-aware sheets fall back to the git-porcelain tree diff, since the
+    // core's ref diff parses blobs as TOML.
+    if (config.format.type === 'toml') {
+      yield* this.#diffFromCore(config, srcCommitHash ?? EMPTY_TREE_HASH, opts);
+      return;
+    }
+    yield* this.#diffFromGit(config, srcCommitHash, opts);
+  }
+
+  /** TOML diff computed in the core (`diffRecords`) — rename-aware, byte-faithful. */
+  async *#diffFromCore(
+    config: SheetConfig,
+    srcRef: string,
+    opts: DiffOptions,
+  ): AsyncGenerator<DiffChange<T>> {
+    const gitDir = this.#repo.gitDir;
+    const format = this.#getFormat(config);
+    const base = joinTreePath(this.#dataTree.base, this.#effectiveRoot(config));
+    const dstTreeHash = await this.#dataTree.write();
+
+    const diffs = callCore(() =>
+      addon.diffRecords(gitDir, srcRef, dstTreeHash, base, format.extension),
+    ) as unknown as Array<{
+      path: string;
+      status: DiffStatus;
+      previousPath: string | null;
+      srcHash: string | null;
+      dstHash: string | null;
+      src: RecordLike | null;
+      dst: RecordLike | null;
+      patch: JsonPatchOp[];
+    }>;
+
+    for (const d of diffs) {
+      // Config blobs live under the sheet root when root = '.'; they're not records.
+      if (d.path.startsWith('.gitsheets/')) continue;
+      const change: Record<string, unknown> = {
+        path: d.path,
+        status: d.status,
+        srcMode: d.srcHash ? '100644' : null,
+        dstMode: d.dstHash ? '100644' : null,
+        srcHash: d.srcHash,
+        dstHash: d.dstHash,
+      };
+      if (opts.blobs) {
+        if (d.srcHash) change['srcBlob'] = makeBlobHandle(gitDir, d.srcHash, '100644');
+        if (d.dstHash) change['dstBlob'] = makeBlobHandle(gitDir, d.dstHash, '100644');
+      }
+      if (opts.records) {
+        if (d.src !== null) change['src'] = d.src;
+        if (d.dst !== null) change['dst'] = d.dst;
+      }
+      if (opts.patches) {
+        change['patch'] = d.patch;
+      }
+      yield change as unknown as DiffChange<T>;
+    }
+  }
+
+  async *#diffFromGit(
+    config: SheetConfig,
+    srcCommitHash: string | null | undefined,
+    opts: DiffOptions,
+  ): AsyncGenerator<DiffChange<T>> {
     const gitDir = this.#repo.gitDir;
     const srcRef = srcCommitHash ?? EMPTY_TREE_HASH;
     const dstTreeHash = await this.#dataTree.getHash();
