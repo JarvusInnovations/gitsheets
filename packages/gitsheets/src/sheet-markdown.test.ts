@@ -218,7 +218,7 @@ body = 'body'
     expect(stdout).toContain('docs/intro.mdx');
   });
 
-  it('disables markdownlint when [gitsheet.format.markdownlint] = false', async () => {
+  it('disables body normalization when [gitsheet.format].normalize = false', async () => {
     const fixture = await testRepo({ withInitialCommit: true });
     handles.push(fixture);
     await mkdir(join(fixture.path, '.gitsheets'), { recursive: true });
@@ -231,7 +231,7 @@ path = '\${{ slug }}'
 [gitsheet.format]
 type = 'markdown'
 body = 'body'
-markdownlint = false
+normalize = false
 `,
     );
     await fixture.git('add', '.gitsheets/');

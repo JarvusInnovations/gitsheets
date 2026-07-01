@@ -8,7 +8,7 @@ import type { Readable } from 'node:stream';
 
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
-import { addon, callCore } from './core.js';
+import { addon, callCore, CoreTransaction } from './core.js';
 import {
   ConfigError,
   IndexError,
@@ -24,10 +24,8 @@ import {
   EMPTY_TREE_HASH,
   makeBlobHandle,
   type BlobHandle,
-  type BlobView,
-  type TreeView,
 } from './working-tree.js';
-import { stringifyRecord, parseConfigToml } from './toml.js';
+import { parseConfigToml } from './toml.js';
 import sortKeys from 'sort-keys';
 import { Transaction, transactionContext } from './transaction.js';
 import {
@@ -104,14 +102,6 @@ export interface UpsertOptions {
 }
 
 // --- Helpers ---
-
-function isBlob(node: unknown): node is BlobView {
-  return typeof node === 'object' && node !== null && (node as { isBlob?: boolean }).isBlob === true;
-}
-
-function isTree(node: unknown): node is TreeView {
-  return typeof node === 'object' && node !== null && (node as { isTree?: boolean }).isTree === true;
-}
 
 function joinTreePath(...parts: string[]): string {
   return parts
@@ -217,7 +207,7 @@ function stripFilterFunctions(filter: RecordLike): RecordLike {
  * when the object doesn't exist.
  */
 function readTreeBlobText(gitDir: string, treeRef: string, path: string): Promise<string | null> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const child = execFile(
       'git',
       ['cat-file', 'blob', `${treeRef}:${path}`],
@@ -228,23 +218,75 @@ function readTreeBlobText(gitDir: string, treeRef: string, path: string): Promis
       },
     );
     child.stdin?.end();
-    void reject;
   });
+}
+
+/** Resolve `<rev>` to its object hash via `git rev-parse`; `null` when absent. */
+async function revParseObject(gitDir: string, rev: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', rev], { cwd: gitDir });
+    const hash = stdout.trim();
+    return hash || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The immediate blob children (`name → { hash, mode }`) of a tree path via
+ * `git ls-tree` — the non-transactional attachment read. Returns `null` when
+ * the path is not a tree (no attachment directory).
+ */
+async function lsTreeBlobs(
+  gitDir: string,
+  treeRef: string,
+  dirPath: string,
+): Promise<Record<string, { hash: string; mode: string }> | null> {
+  let stdout: string;
+  try {
+    // -z NUL-terminates entries; each line: "<mode> <type> <hash>\t<name>".
+    const res = await exec('git', ['ls-tree', '-z', `${treeRef}:${dirPath}`], {
+      cwd: gitDir,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    stdout = res.stdout;
+  } catch {
+    return null; // not a tree / missing
+  }
+  const out: Record<string, { hash: string; mode: string }> = {};
+  for (const entry of stdout.split('\0')) {
+    if (!entry) continue;
+    const tabIdx = entry.indexOf('\t');
+    if (tabIdx < 0) continue;
+    const meta = entry.slice(0, tabIdx).split(/\s+/);
+    const name = entry.slice(tabIdx + 1);
+    const [mode, type, hash] = meta;
+    if (type !== 'blob' || !hash || !mode) continue;
+    out[name] = { hash, mode };
+  }
+  return out;
 }
 
 // --- Sheet config cache (process-wide by blob hash of the config file) ---
 
 const CONFIG_CACHE = new Map<string, SheetConfig>();
 
-async function loadConfig(rootView: TreeView, configPath: string): Promise<SheetConfig> {
-  const node = await rootView.getChild(configPath);
-  if (!node || !isBlob(node)) {
+async function loadConfig(
+  gitDir: string,
+  treeRef: string,
+  configPath: string,
+): Promise<SheetConfig> {
+  const hash = await revParseObject(gitDir, `${treeRef}:${configPath}`);
+  if (hash === null) {
     throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
   }
-  const cached = CONFIG_CACHE.get(node.hash);
+  const cached = CONFIG_CACHE.get(hash);
   if (cached) return cached;
 
-  const tomlText = await node.read();
+  const tomlText = await readTreeBlobText(gitDir, treeRef, configPath);
+  if (tomlText === null) {
+    throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
+  }
   const raw = parseConfigToml(tomlText, configPath);
   const gitsheet = raw['gitsheet'];
   if (!gitsheet || typeof gitsheet !== 'object') {
@@ -328,7 +370,7 @@ async function loadConfig(rootView: TreeView, configPath: string): Promise<Sheet
   }
 
   const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };
-  CONFIG_CACHE.set(node.hash, config);
+  CONFIG_CACHE.set(hash, config);
   return config;
 }
 
@@ -360,23 +402,6 @@ function validateSortRule(sort: unknown, configPath: string, field: string): voi
     'config_invalid',
     `${configPath}: gitsheet.fields.${field}.sort has invalid shape`,
   );
-}
-
-// --- TOML record cache (closes #138 — keyed by blob hash) ---
-//
-// Per specs/behaviors/normalization.md, on-disk bytes are deterministic per
-// logical-record state, so the same blob hash is the same record content. We
-// cache the TOML *text* (not the parsed object) so each reader gets a fresh
-// parsed copy — avoiding the original cache's v8.serialize/Date-subclass
-// issue without leaking mutable shared state.
-
-const RECORD_TEXT_CACHE = new Map<string, string>();
-async function readBlobTextCached(blob: BlobView): Promise<string> {
-  const cached = RECORD_TEXT_CACHE.get(blob.hash);
-  if (cached !== undefined) return cached;
-  const text = await blob.read();
-  RECORD_TEXT_CACHE.set(blob.hash, text);
-  return text;
 }
 
 // --- Filter type ---
@@ -687,13 +712,20 @@ interface IndexState<T extends RecordLike = RecordLike> {
 
 export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
   readonly repo: Repository;
-  /** Root tree view (base `''`) — config files are read from here. */
-  readonly rootView: TreeView;
-  /** Data tree view — records read/written relative to its base. */
-  readonly dataTree: TreeView;
   readonly name: string;
   readonly configPath: string;
   readonly transaction?: Transaction;
+  /**
+   * Non-transactional snapshot: the tree hash reads (config, query, diff,
+   * attachments) resolve against. Captured at open time. Absent for tx-bound
+   * sheets, which read the in-progress tree through the core transaction.
+   */
+  readonly readRef?: string;
+  /**
+   * Non-transactional: the record base path relative to the repo root, sourced
+   * from the `openSheet({ root })` option. Combined with `config.root`/`prefix`.
+   */
+  readonly dataBase?: string;
   /** Consumer-supplied Standard Schema validator; runs after JSON Schema. */
   readonly validator?: StandardSchemaV1<unknown, T>;
   /**
@@ -706,24 +738,42 @@ export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
 
 export class Sheet<T extends RecordLike = RecordLike> {
   readonly #repo: Repository;
-  readonly #rootView: TreeView;
-  readonly #dataTree: TreeView;
   readonly #name: string;
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
+  readonly #readRef: string | undefined;
+  readonly #dataBase: string;
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
   readonly #prefix: string;
   readonly #indexes = new Map<string, IndexState<T>>();
 
   constructor(opts: SheetConstructorOptions<T>) {
     this.#repo = opts.repo;
-    this.#rootView = opts.rootView;
-    this.#dataTree = opts.dataTree;
     this.#name = opts.name;
     this.#configPath = opts.configPath;
     this.#transaction = opts.transaction;
+    this.#readRef = opts.readRef;
+    this.#dataBase = (opts.dataBase ?? '').replace(/^\/+|\/+$/g, '');
     this.#validator = opts.validator;
     this.#prefix = (opts.prefix ?? '').replace(/^\/+|\/+$/g, '');
+  }
+
+  /** The git dir this sheet reads/writes through. */
+  get #gitDir(): string {
+    return this.#repo.gitDir;
+  }
+
+  /** The tree ref config/reads resolve against (tx parent, or the open snapshot). */
+  #configTreeRef(): string {
+    if (this.#transaction !== undefined) {
+      return this.#transaction.parentCommitHash ?? 'HEAD';
+    }
+    return this.#readRef ?? EMPTY_TREE_HASH;
+  }
+
+  /** Open this sheet in the bound core transaction (idempotent). Tx-bound only. */
+  #ensureCoreSheetOpened(): void {
+    this.#transaction!.openCoreSheet(this.#name, this.#configPath, this.#prefix);
   }
 
   /**
@@ -761,7 +811,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async readConfig(): Promise<SheetConfig> {
-    return loadConfig(this.#rootView, this.#configPath);
+    return loadConfig(this.#gitDir, this.#configTreeRef(), this.#configPath);
   }
 
   /** Same as readConfig — config is cached by config-blob hash anyway. */
@@ -792,38 +842,46 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
     }
 
-    // Route the tree walk + record decode through the core. The core prunes by
-    // the path template and (for TOML) applies the literal filter; function
-    // predicates can't cross the FFI, so they're stripped from the core filter
-    // and re-applied host-side by queryMatches. `treeRef` is the materialized
-    // root tree hash of this Sheet's tree — the open-time snapshot for a
-    // standalone Sheet, or the flushed in-progress tree for a tx-bound one.
-    const gitDir = this.#repo.gitDir;
-    const treeRef = await this.#dataTree.write();
-    const base = joinTreePath(this.#dataTree.base, this.#effectiveRoot(config));
+    // Route the tree walk + record decode through the core. Function-valued
+    // filter predicates can't cross the FFI, so they're stripped from the core
+    // filter and re-applied host-side by queryMatches.
+    const gitDir = this.#gitDir;
     const coreFilter = stripFilterFunctions(filter as RecordLike);
 
     let rows: Array<{ path: string; record: RecordLike }>;
-    if (config.format.type === 'toml') {
-      // TOML records: the core reads + parses + literal-filters in one call.
+    if (this.#transaction !== undefined) {
+      // Tx-bound: read the in-progress private tree through the core (format-
+      // aware). The core lists every record under the sheet base; the full
+      // filter (including functions) is applied host-side below.
+      this.#ensureCoreSheetOpened();
       rows = callCore(() =>
-        addon.recordQuery(gitDir, treeRef, base, config.path, coreFilter, format.extension),
+        this.#transaction!.coreTx.list(this.#name, withBody),
       ) as Array<{ path: string; record: RecordLike }>;
     } else {
-      // Format-aware (markdown/mdx): the core's ref reads are TOML-only, so use
-      // it only for the (format-agnostic) pruning walk, then read + decode each
-      // candidate blob through the host format codec (itself core-backed).
-      const candidates = callCore(() =>
-        addon.recordQueryCandidates(gitDir, treeRef, base, config.path, coreFilter, format.extension),
-      );
-      rows = [];
-      for (const p of candidates) {
-        const text = await readTreeBlobText(gitDir, treeRef, joinTreePath(base, `${p}${format.extension}`));
-        if (text === null) continue;
-        const record = withBody
-          ? format.parse(text, config.format)
-          : format.parseHeaderOnly(text, config.format);
-        rows.push({ path: p, record });
+      // Non-tx: resolve against the open-time snapshot ref.
+      const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
+      const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
+      if (config.format.type === 'toml') {
+        // TOML records: the core reads + parses + literal-filters in one call.
+        rows = callCore(() =>
+          addon.recordQuery(gitDir, treeRef, base, config.path, coreFilter, format.extension),
+        ) as Array<{ path: string; record: RecordLike }>;
+      } else {
+        // Format-aware (markdown/mdx): the core's ref reads are TOML-only, so
+        // use it only for the (format-agnostic) pruning walk, then read + decode
+        // each candidate blob through the host format codec (itself core-backed).
+        const candidates = callCore(() =>
+          addon.recordQueryCandidates(gitDir, treeRef, base, config.path, coreFilter, format.extension),
+        );
+        rows = [];
+        for (const p of candidates) {
+          const text = await readTreeBlobText(gitDir, treeRef, joinTreePath(base, `${p}${format.extension}`));
+          if (text === null) continue;
+          const record = withBody
+            ? format.parse(text, config.format)
+            : format.parseHeaderOnly(text, config.format);
+          rows.push({ path: p, record });
+        }
       }
     }
 
@@ -874,18 +932,20 @@ export class Sheet<T extends RecordLike = RecordLike> {
     }
     const config = await this.readConfig();
     const format = this.#getFormat(config);
+    const treeRef = this.#configTreeRef();
     const fullPath = joinTreePath(
+      this.#dataBase,
       this.#effectiveRoot(config),
       `${recordPath}${format.extension}`,
     );
-    const node = await this.#dataTree.getChild(fullPath);
-    if (!node || !isBlob(node)) {
+    const text = await readTreeBlobText(this.#gitDir, treeRef, fullPath);
+    if (text === null) {
       throw new NotFoundError(
         'record_not_found',
         `Sheet.loadBody: no record blob at ${fullPath}`,
       );
     }
-    return (await this.#readRecordFromBlob(node, recordPath, config)) as T;
+    return (await this.#readRecordFromText(text, recordPath, config)) as T;
   }
 
   /**
@@ -923,10 +983,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
     srcRef: string,
     opts: DiffOptions,
   ): AsyncGenerator<DiffChange<T>> {
-    const gitDir = this.#repo.gitDir;
+    const gitDir = this.#gitDir;
     const format = this.#getFormat(config);
-    const base = joinTreePath(this.#dataTree.base, this.#effectiveRoot(config));
-    const dstTreeHash = await this.#dataTree.write();
+    const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
+    const dstTreeHash = this.#configTreeRef();
 
     const diffs = callCore(() =>
       addon.diffRecords(gitDir, srcRef, dstTreeHash, base, format.extension),
@@ -972,12 +1032,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
     srcCommitHash: string | null | undefined,
     opts: DiffOptions,
   ): AsyncGenerator<DiffChange<T>> {
-    const gitDir = this.#repo.gitDir;
+    const gitDir = this.#gitDir;
     const srcRef = srcCommitHash ?? EMPTY_TREE_HASH;
-    const dstTreeHash = await this.#dataTree.getHash();
+    const dstTreeHash = this.#configTreeRef();
 
     const args = ['diff-tree', '-z', '-r', '-M', '--no-commit-id', srcRef, dstTreeHash];
-    const effectiveRoot = this.#effectiveRoot(config);
+    const effectiveRoot = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
     if (effectiveRoot && effectiveRoot !== '.') {
       args.push('--', effectiveRoot);
     }
@@ -1006,7 +1066,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
       if (!entry.canonicalPath.endsWith(format.extension)) continue;
       if (entry.canonicalPath.startsWith('.gitsheets/')) continue;
 
-      const recordPath = stripRecordPath(entry.canonicalPath, this.#effectiveRoot(config), format.extension);
+      const recordPath = stripRecordPath(
+        entry.canonicalPath,
+        joinTreePath(this.#dataBase, this.#effectiveRoot(config)),
+        format.extension,
+      );
 
       const change: Record<string, unknown> = {
         path: recordPath,
@@ -1081,38 +1145,30 @@ export class Sheet<T extends RecordLike = RecordLike> {
       });
       return;
     }
-    const config = await this.readConfig();
-    const sheetTree = await this.#dataTree.getSubtree(this.#effectiveRoot(config), true);
-    if (sheetTree) {
-      // O(1) — replaces the subtree with git's empty-tree hash in place. The
-      // binding's tree write() omits empty subtrees from the committed tree.
-      // See specs/api/sheet.md#clear.
-      sheetTree.clearChildren();
-    }
-    this.#transaction.markMutated();
+    this.#ensureCoreSheetOpened();
+    callCore(() => this.#transaction!.coreTx.clear(this.#name));
     this.#invalidateIndexes();
   }
 
   async clone(): Promise<Sheet<T>> {
-    // Only the data tree is cloned (so staged mutations don't touch the
-    // original); config is immutable, so it keeps reading through the original
-    // root view.
+    // Config + data are immutable snapshots for a non-tx sheet; the clone reads
+    // the same ref. (Kept for API compatibility; the tree is no longer mutable
+    // host-side, so the clone shares the same read snapshot.)
     const opts: SheetConstructorOptions<T> = {
       repo: this.#repo,
-      rootView: this.#rootView,
-      dataTree: await this.#dataTree.clone(),
       name: this.#name,
       configPath: this.#configPath,
     };
-    if (this.#validator !== undefined) {
-      Object.assign(opts, { validator: this.#validator });
-    }
+    if (this.#readRef !== undefined) Object.assign(opts, { readRef: this.#readRef });
+    if (this.#dataBase) Object.assign(opts, { dataBase: this.#dataBase });
+    if (this.#validator !== undefined) Object.assign(opts, { validator: this.#validator });
+    if (this.#prefix) Object.assign(opts, { prefix: this.#prefix });
     return new Sheet<T>(opts);
   }
 
   async upsert(record: T, opts: UpsertOptions = {}): Promise<UpsertResult> {
     if (this.#transaction !== undefined) {
-      return this.#upsertInTx(this.#transaction, record, opts);
+      return this.#upsertInTx(record, opts);
     }
     this.#checkStrictMode();
 
@@ -1220,7 +1276,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
   async delete(target: T | string): Promise<void> {
     if (this.#transaction !== undefined) {
-      await this.#deleteInTx(this.#transaction, target);
+      await this.#deleteInTx(target);
       return;
     }
     this.#checkStrictMode();
@@ -1313,9 +1369,15 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async getAttachment(record: T | string, name: string): Promise<BlobHandle | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const node = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath, name));
-    if (!node || !isBlob(node)) return null;
-    return makeBlobHandle(this.#repo.gitDir, node.hash, node.mode);
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      const hash = callCore(() => this.#transaction!.coreTx.getAttachment(this.#name, recordPath, name));
+      return hash === null ? null : makeBlobHandle(this.#gitDir, hash, '100644');
+    }
+    const full = joinTreePath(this.#dataBase, this.#effectiveRoot(config), recordPath, name);
+    const hash = await revParseObject(this.#gitDir, `${this.#configTreeRef()}:${full}`);
+    if (hash === null) return null;
+    return makeBlobHandle(this.#gitDir, hash, '100644');
   }
 
   async getAttachments(
@@ -1323,12 +1385,22 @@ export class Sheet<T extends RecordLike = RecordLike> {
   ): Promise<Record<string, BlobHandle> | null> {
     const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const dir = await this.#dataTree.getChild(joinTreePath(this.#effectiveRoot(config), recordPath));
-    if (!dir || !isTree(dir)) return null;
-    const blobMap = await dir.getBlobMap();
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      const entries = callCore(() => this.#transaction!.coreTx.getAttachments(this.#name, recordPath));
+      if (entries === null) return null;
+      const out: Record<string, BlobHandle> = {};
+      for (const e of entries) {
+        out[e.name] = makeBlobHandle(this.#gitDir, e.hash, '100644');
+      }
+      return out;
+    }
+    const dirPath = joinTreePath(this.#dataBase, this.#effectiveRoot(config), recordPath);
+    const blobs = await lsTreeBlobs(this.#gitDir, this.#configTreeRef(), dirPath);
+    if (blobs === null) return null;
     const out: Record<string, BlobHandle> = {};
-    for (const [name, blob] of Object.entries(blobMap)) {
-      out[name] = makeBlobHandle(this.#repo.gitDir, blob.hash, blob.mode);
+    for (const [name, { hash, mode }] of Object.entries(blobs)) {
+      out[name] = makeBlobHandle(this.#gitDir, hash, mode);
     }
     return out;
   }
@@ -1385,12 +1457,18 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
       return;
     }
-    const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
+    this.#ensureCoreSheetOpened();
+    const map: Record<string, string> = {};
     for (const [aName, content] of Object.entries(attachments)) {
-      await this.#dataTree.writeChild(joinTreePath(this.#effectiveRoot(config), recordPath, aName), content);
+      // A string is hashed as its UTF-8 bytes; a BlobHandle already names an
+      // ODB blob (from repo.writeBlob or a diff), so reuse its hash directly.
+      map[aName] =
+        typeof content === 'string'
+          ? callCore(() => addon.writeBlob(this.#gitDir, Buffer.from(content, 'utf8')))
+          : content.hash;
     }
-    this.#transaction.markMutated();
+    callCore(() => this.#transaction!.coreTx.setAttachments(this.#name, recordPath, map));
   }
 
   /**
@@ -1414,18 +1492,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
       return;
     }
-    const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const fullPath = joinTreePath(this.#effectiveRoot(config), recordPath, name);
-    const existing = await this.#dataTree.getChild(fullPath);
-    if (!existing || !isBlob(existing)) {
-      throw new NotFoundError(
-        'record_not_found',
-        `${this.#name}: no attachment at ${joinTreePath(recordPath, name)}`,
-      );
-    }
-    await this.#dataTree.deleteChild(fullPath);
-    this.#transaction.markMutated();
+    this.#ensureCoreSheetOpened();
+    // The core is strict: a missing attachment throws NotFoundError(record_not_found).
+    callCore(() => this.#transaction!.coreTx.deleteAttachment(this.#name, recordPath, name));
   }
 
   /**
@@ -1449,16 +1519,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
       return;
     }
-    const config = await this.readConfig();
     const recordPath = typeof record === 'string' ? record : await this.pathForRecord(record);
-    const fullPath = joinTreePath(this.#effectiveRoot(config), recordPath);
-    const existing = await this.#dataTree.getChild(fullPath);
-    if (!existing || !isTree(existing)) {
-      // No attachment dir — true no-op, don't even mark the tx mutated.
-      return;
-    }
-    await this.#dataTree.deleteChild(fullPath);
-    this.#transaction.markMutated();
+    this.#ensureCoreSheetOpened();
+    // No attachment dir → the core removes nothing and leaves the tx unmutated.
+    callCore(() => this.#transaction!.coreTx.deleteAttachments(this.#name, recordPath));
   }
 
   // --- Private helpers ---
@@ -1496,58 +1560,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return staged;
   }
 
-  async #upsertInTx(
-    tx: Transaction,
-    record: T,
-    opts: UpsertOptions = {},
-  ): Promise<UpsertResult> {
-    const { config, format, normalized, recordPath, previousPath, text } =
-      await this.#prepareUpsert(record, opts);
-
-    // Rename: if the source record was loaded from a different path, delete the old one.
-    if (previousPath !== undefined && previousPath !== recordPath) {
-      try {
-        await this.#dataTree.deleteChild(
-          joinTreePath(this.#effectiveRoot(config), `${previousPath}${format.extension}`),
-        );
-      } catch {
-        // Old path may not exist — ignore.
-      }
-    }
-
-    const blob = await this.#dataTree.writeChild(
-      joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`),
-      text,
-    );
-    tx.markMutated();
-    this.#invalidateIndexes();
-    void normalized; // referenced in prepare for unique-index check
-    return { blob, path: recordPath };
-  }
-
-  /**
-   * Shared pipeline used by `upsert` and `willChange`. Runs validation,
-   * normalization, path rendering, body-presence guard, unique-index check,
-   * and format serialization — every check `upsert` would perform — but
-   * stops short of writing to the tree.
-   */
-  async #prepareUpsert(
-    record: T,
-    opts: UpsertOptions,
-  ): Promise<{
-    config: SheetConfig;
-    format: Format;
-    normalized: T;
-    recordPath: string;
-    previousPath: string | undefined;
-    text: string;
-  }> {
+  async #upsertInTx(record: T, opts: UpsertOptions = {}): Promise<UpsertResult> {
+    const tx = this.#transaction!;
+    this.#ensureCoreSheetOpened();
     const config = await this.readConfig();
-    const template = Template.fromString(config.path);
 
-    // Body presence guard: upsert is a full-record replace. A markdown sheet
-    // whose record omits the body field would silently erase the on-disk
-    // body. Require explicit opt-in to make the trade visible.
+    // Body-presence guard (markdown/mdx) — kept as a host-side TypeError shim.
     const bodyField = config.format.body;
     if (
       bodyField !== undefined &&
@@ -1559,36 +1577,49 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
     }
 
-    // Validate before normalizing — per specs/behaviors/validation.md order:
-    // JSON Schema → Standard Schema (may transform) → normalize → render → write.
-    const validated = (await validateRecord({
-      record: stripSymbols(record as RecordLike),
-      schema: config.schema,
-      schemaSourcePath: this.#configPath,
-      validator: this.#validator,
-    })) as T;
-    // Standard Schema may have transformed; re-attach annotations if the
-    // caller supplied them (for rename detection below).
-    const previousPath = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
-    if (typeof previousPath === 'string') {
-      (validated as Record<symbol, unknown>)[RECORD_PATH_KEY] = previousPath;
+    // Standard Schema validator (host-side; may transform). JSON Schema +
+    // normalization + path rendering happen in the core's prepareUpsert (which
+    // re-runs JSON Schema on the transformed value — cheap, idempotent).
+    let input: RecordLike = stripSymbols(record as RecordLike);
+    if (this.#validator !== undefined) {
+      input = await validateRecord({
+        record: input,
+        schema: config.schema,
+        schemaSourcePath: this.#configPath,
+        validator: this.#validator,
+      });
     }
 
-    const normalized = await this.normalizeRecord(validated);
-    const recordPath = template.render(normalized as RecordLike);
-    if (!recordPath) {
-      throw new PathTemplateError(
-        'path_render_failed',
-        `could not generate any path for record in sheet "${this.#name}"`,
-      );
-    }
+    const previous = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    const prevArg = typeof previous === 'string' ? previous : undefined;
 
-    // Pre-write unique-index check — throws before any tree mutation
-    // per specs/behaviors/indexing.md so the tree is never left in a state
-    // that contradicts a unique constraint.
+    // Phase 1 (non-mutating): JSON Schema + normalize + render, in the core.
+    const candidate = callCore(() =>
+      tx.coreTx.prepareUpsert(this.#name, input, prevArg, opts.allowMissingBody ?? false),
+    ) as unknown as { path: string; nextText: string; record: RecordLike };
+
+    // Pre-write unique-index check — throws before staging any bytes.
+    this.#uniqueIndexPrecheck(candidate.record, candidate.path);
+
+    // Phase 3 (mutating): write the prepared candidate (deletes the old path on
+    // rename, cascading through the core).
+    const outcome = callCore(() => tx.coreTx.stageUpsert(this.#name)) as unknown as {
+      blobHash: string;
+      path: string;
+    };
+    this.#invalidateIndexes();
+    return { blob: makeBlobHandle(this.#gitDir, outcome.blobHash, '100644'), path: outcome.path };
+  }
+
+  /**
+   * Pre-write unique-index check — throws `IndexError(index_unique_conflict)`
+   * before staging any bytes (specs/behaviors/indexing.md) so the tree is never
+   * left contradicting a unique constraint.
+   */
+  #uniqueIndexPrecheck(normalized: RecordLike, recordPath: string): void {
     for (const state of this.#indexes.values()) {
       if (!state.built || !state.unique) continue;
-      const rawKey = state.keyFn(normalized);
+      const rawKey = state.keyFn(normalized as T);
       if (rawKey === undefined || rawKey === null) continue;
       const key = String(rawKey);
       const owner = state.uniqueMap.get(key);
@@ -1602,83 +1633,86 @@ export class Sheet<T extends RecordLike = RecordLike> {
         );
       }
     }
-
-    const format = this.#getFormat(config);
-    const text = await format.serialize(
-      stripSymbols(normalized as RecordLike),
-      config.format,
-    );
-
-    return {
-      config,
-      format,
-      normalized,
-      recordPath,
-      previousPath: typeof previousPath === 'string' ? previousPath : undefined,
-      text,
-    };
   }
 
   /**
-   * Pre-flight idempotency check for `upsert`. Runs validation, normalization,
-   * and serialization but does NOT mutate the tree. Compares the resulting
-   * bytes to the current blob at the rendered path.
-   *
-   * Returns `{ changed: false, ... }` when the canonical serialization matches
-   * the existing blob — consumers can skip the commit. Throws the same errors
-   * `upsert` would on the same input (`ValidationError`, `IndexError`,
-   * `PathTemplateError`).
+   * Pre-flight idempotency check for `upsert` — the core runs the prepare
+   * pipeline (validation, normalization, serialization) and compares the
+   * resulting bytes to the current blob, without mutating. Non-tx callers get a
+   * short-lived read-only core transaction.
    */
   async willChange(record: T, opts: UpsertOptions = {}): Promise<WillChangeResult> {
-    const { config, format, recordPath, text } = await this.#prepareUpsert(record, opts);
-
-    const fullPath = joinTreePath(
-      this.#effectiveRoot(config),
-      `${recordPath}${format.extension}`,
-    );
-    const existing = await this.#dataTree.getChild(fullPath);
-
-    if (!existing || !isBlob(existing)) {
-      return { changed: true, path: recordPath, nextText: text };
+    const config = await this.readConfig();
+    const bodyField = config.format.body;
+    if (
+      bodyField !== undefined &&
+      !opts.allowMissingBody &&
+      (record as Record<string, unknown>)[bodyField] === undefined
+    ) {
+      throw new TypeError(
+        `Sheet.upsert: record is missing the body field ${JSON.stringify(bodyField)}. Pass { allowMissingBody: true } to opt in, or use Sheet.patch for body-preserving frontmatter updates.`,
+      );
     }
+    let input: RecordLike = stripSymbols(record as RecordLike);
+    if (this.#validator !== undefined) {
+      input = await validateRecord({
+        record: input,
+        schema: config.schema,
+        schemaSourcePath: this.#configPath,
+        validator: this.#validator,
+      });
+    }
+    const previous = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
+    const prevArg = typeof previous === 'string' ? previous : undefined;
 
-    const currentText = await readBlobTextCached(existing);
-    const changed = currentText !== text;
-    return {
-      changed,
-      path: recordPath,
-      currentBlobHash: existing.hash,
-      nextText: text,
-    };
+    const wc = (await this.#withCoreTx((coreTx) =>
+      callCore(() => coreTx.willChange(this.#name, input, prevArg, opts.allowMissingBody ?? false)),
+    )) as unknown as { changed: boolean; path: string; currentBlobHash: string | null; nextText: string };
+
+    const out: WillChangeResult = { changed: wc.changed, path: wc.path, nextText: wc.nextText };
+    if (wc.currentBlobHash !== null) {
+      Object.assign(out, { currentBlobHash: wc.currentBlobHash });
+    }
+    return out;
   }
 
-  async #deleteInTx(tx: Transaction, target: T | string): Promise<void> {
-    const config = await this.readConfig();
-    const format = this.#getFormat(config);
+  /**
+   * Run `fn` against a core transaction with this sheet opened. Tx-bound sheets
+   * reuse their bound transaction; standalone sheets get a short-lived,
+   * read-only core transaction (opened at HEAD) that is discarded without
+   * committing — used by `willChange`'s prepare pipeline.
+   */
+  async #withCoreTx<R>(fn: (coreTx: CoreTransaction) => R): Promise<R> {
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      return fn(this.#transaction.coreTx);
+    }
+    const author = { name: 'gitsheets', email: 'gitsheets@local' };
+    const coreTx = callCore(() =>
+      CoreTransaction.begin(this.#gitDir, {
+        message: 'willChange',
+        author,
+        committer: author,
+        timeSeconds: Math.floor(Date.now() / 1000),
+        offsetMinutes: -new Date().getTimezoneOffset(),
+      }),
+    );
+    try {
+      callCore(() => coreTx.openSheet(this.#name, this.#configPath, '.', this.#prefix));
+      return fn(coreTx);
+    } finally {
+      callCore(() => coreTx.discard());
+    }
+  }
+
+  async #deleteInTx(target: T | string): Promise<void> {
+    this.#ensureCoreSheetOpened();
     const recordPath =
       typeof target === 'string' ? target : await this.pathForRecord(target);
-    const fullPath = joinTreePath(this.#effectiveRoot(config), `${recordPath}${format.extension}`);
-    const existing = await this.#dataTree.getChild(fullPath);
-    if (!existing) {
-      throw new NotFoundError('record_not_found', `${this.#name}: no record at ${recordPath}`);
-    }
-    await this.#dataTree.deleteChild(fullPath);
-    // Cascade-delete the attachment directory at <recordPath>/, if any.
-    // Per specs/behaviors/attachments.md the attachment dir is deleted in
-    // the same operation.
-    try {
-      await this.#dataTree.deleteChild(joinTreePath(this.#effectiveRoot(config), recordPath));
-    } catch {
-      // No attachment dir — that's fine.
-    }
-    tx.markMutated();
+    // The core deletes the record file and cascade-deletes its attachment dir;
+    // a missing record throws NotFoundError(record_not_found).
+    callCore(() => this.#transaction!.coreTx.delete(this.#name, recordPath));
     this.#invalidateIndexes();
-  }
-
-  async #getSheetRoot(rootPath: string): Promise<TreeView | null> {
-    if (rootPath === '.' || rootPath === '') return this.#dataTree;
-    const sub = await this.#dataTree.getSubtree(rootPath);
-    return sub;
   }
 
   #invalidateIndexes(): void {
@@ -1688,13 +1722,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async #ensureIndexBuilt(state: IndexState<T>): Promise<void> {
-    let currentHash: string | null = null;
-    try {
-      currentHash = await this.#dataTree.getHash();
-    } catch {
-      currentHash = null;
-    }
-    if (state.built && state.treeHashAtBuild === currentHash) return;
+    // Non-tx reads resolve against the stable open snapshot, so the index can be
+    // cached by it; a tx-bound sheet's tree mutates, so rebuild each time.
+    const currentHash: string | null =
+      this.#transaction !== undefined ? null : this.#readRef ?? null;
+    if (state.built && currentHash !== null && state.treeHashAtBuild === currentHash) return;
 
     state.uniqueMap.clear();
     state.multiMap.clear();
@@ -1732,13 +1764,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
     state.built = true;
   }
 
-  async #readRecordFromBlob(
-    blob: BlobView,
+  #readRecordFromText(
+    text: string,
     path: string,
     config: SheetConfig,
     opts: { headerOnly?: boolean } = {},
-  ): Promise<RecordLike> {
-    const text = await readBlobTextCached(blob);
+  ): RecordLike {
     const format = this.#getFormat(config);
     let parsed: RecordLike;
     try {

@@ -1,16 +1,23 @@
 // Transaction — scopes a set of sheet mutations to a single commit.
 // See specs/api/transaction.md + specs/behaviors/transactions.md.
+//
+// The transaction state machine (parent/branch resolution, the private tree,
+// commit-on-success with no-op detection + optimistic `parent_moved` re-check +
+// CAS ref movement, and commit-message/trailer formatting) all live in the Rust
+// core, driven through the `CoreTransaction` napi class. This JS wrapper keeps
+// the host-runtime concerns the core deliberately leaves out: the in-process
+// single-writer mutex/queue, the `AsyncLocalStorage` nested-transaction guard,
+// git-config author resolution, and post-commit hooks.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { CoreTransaction, callCore } from './core.js';
 import { RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
-import { commitTreeWithRepo, type BindingRepo } from './substrate.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
-import type { TreeView } from './working-tree.js';
 
 const exec = promisify(execFile);
 
@@ -68,20 +75,13 @@ function validateTrailers(trailers: Readonly<Record<string, string>> | undefined
   }
 }
 
-function formatCommitMessage(subject: string, trailers?: Readonly<Record<string, string>>): string {
-  // The `subject` arg is the full message string — it may already contain a body.
-  const body = subject.trimEnd();
-  if (!trailers || Object.keys(trailers).length === 0) {
-    return body + '\n';
-  }
-  const lines = Object.entries(trailers).map(([k, v]) => `${k}: ${v}`).join('\n');
-  return `${body}\n\n${lines}\n`;
-}
-
 /**
  * In-process mutex serializing transactions on a single Repository.
  * Concurrent callers from independent async contexts queue; nested
  * repo.transact attempts (same async context) throw before acquiring.
+ *
+ * The core exposes a *throwing* per-repo single-writer slot; this queue is the
+ * host-runtime half that lets independent async callers wait rather than fail.
  */
 export class Mutex {
   #locked = false;
@@ -108,24 +108,19 @@ export class Mutex {
 }
 
 export class Transaction {
-  readonly #binding: BindingRepo;
-  readonly #rootView: TreeView;
+  readonly #coreTx: CoreTransaction;
+  readonly #gitDir: string;
   readonly #parentCommitHash: string | null;
-  readonly #parentRef: string | null;
-  readonly #branchRef: string | null;
-  readonly #author: Author;
-  readonly #committer: Author;
-  readonly #message: string;
-  readonly #trailers: Readonly<Record<string, string>>;
   /** Function the Repository injects so Transaction.sheet() can build Sheet instances. */
   readonly #sheetFactory: <T extends RecordLike = RecordLike>(
     name: string,
-    tree: TreeView,
+    tx: Transaction,
     validator?: StandardSchemaV1<unknown, T>,
     prefix?: string,
   ) => Sheet<T>;
+  /** Sheet names already opened in the core transaction (open-once per name). */
+  readonly #openedSheets = new Set<string>();
   #closed = false;
-  #anyMutation = false;
 
   /**
    * @internal — Transactions are created by Repository.transact (or
@@ -134,57 +129,42 @@ export class Transaction {
    * handler parameters.
    */
   constructor(opts: {
-    binding: BindingRepo;
-    rootView: TreeView;
-    parentCommitHash: string | null;
-    parentRef: string | null;
-    branchRef: string | null;
-    author: Author;
-    committer: Author;
-    message: string;
-    trailers: Readonly<Record<string, string>>;
+    coreTx: CoreTransaction;
+    gitDir: string;
     sheetFactory: <T extends RecordLike = RecordLike>(
       name: string,
-      tree: TreeView,
+      tx: Transaction,
       validator?: StandardSchemaV1<unknown, T>,
       prefix?: string,
     ) => Sheet<T>;
   }) {
-    this.#binding = opts.binding;
-    this.#rootView = opts.rootView;
-    this.#parentCommitHash = opts.parentCommitHash;
-    this.#parentRef = opts.parentRef;
-    this.#branchRef = opts.branchRef;
-    this.#author = opts.author;
-    this.#committer = opts.committer;
-    this.#message = opts.message;
-    this.#trailers = opts.trailers;
+    this.#coreTx = opts.coreTx;
+    this.#gitDir = opts.gitDir;
     this.#sheetFactory = opts.sheetFactory;
+    this.#parentCommitHash = callCore(() => this.#coreTx.parentCommitHash()) ?? null;
   }
 
-  /**
-   * The transaction's root working tree. Mutations stage here (in memory) and
-   * commit on finalize. Backed by the holo-tree binding via {@link TreeView}.
-   */
-  get tree(): TreeView {
-    return this.#rootView;
+  /** @internal — the underlying core transaction the tx-bound Sheet drives. */
+  get coreTx(): CoreTransaction {
+    return this.#coreTx;
+  }
+
+  get gitDir(): string {
+    return this.#gitDir;
   }
 
   get parentCommitHash(): string | null {
     return this.#parentCommitHash;
   }
 
-  get parentRef(): string | null {
-    return this.#parentRef;
-  }
-
-  get branchRef(): string | null {
-    return this.#branchRef;
-  }
-
-  /** Marker used by Sheet to record that a mutation happened in this tx. */
-  markMutated(): void {
-    this.#anyMutation = true;
+  /**
+   * @internal — Ensure the named sheet is opened in the core transaction (config
+   * read + template/schema/comparators compiled once). Opened once per name.
+   */
+  openCoreSheet(name: string, configPath: string, prefix: string): void {
+    if (this.#openedSheets.has(name)) return;
+    callCore(() => this.#coreTx.openSheet(name, configPath, '.', prefix));
+    this.#openedSheets.add(name);
   }
 
   /**
@@ -205,12 +185,22 @@ export class Transaction {
         'transaction is already closed — obtain a fresh Transaction via repo.transact',
       );
     }
-    return this.#sheetFactory<T>(
-      name,
-      this.#rootView,
-      opts?.validator,
-      opts?.prefix,
-    );
+    return this.#sheetFactory<T>(name, this, opts?.validator, opts?.prefix);
+  }
+
+  /**
+   * @internal — Stage a raw text file at `path` (repo-root-relative) in this
+   * transaction's tree. The generic file write the CLI uses to commit sheet
+   * config edits atomically. Marks the transaction mutated.
+   */
+  writeFile(path: string, content: string): void {
+    if (this.#closed) {
+      throw new TransactionError(
+        'transaction_closed',
+        'transaction is already closed — obtain a fresh Transaction via repo.transact',
+      );
+    }
+    callCore(() => this.#coreTx.writeFile(path, content));
   }
 
   /**
@@ -220,106 +210,21 @@ export class Transaction {
    */
   async finalize<T>(value: T): Promise<TransactionResult<T>> {
     this.#closed = true;
-
-    const noChange: TransactionResult<T> = {
-      value,
-      commitHash: null,
-      treeHash: null,
-      ref: null,
-      parentCommitHash: this.#parentCommitHash,
-    };
-
-    if (!this.#anyMutation) {
-      return noChange;
-    }
-
-    // The holo-tree binding (#127) is the sole tree substrate: it backs the
-    // working-tree flush, commit-object creation, the no-op tree-hash probe,
-    // the parent-moved check, and compare-and-swap ref movement. See
-    // plans/holo-tree-migration.md.
-    const binding = this.#binding;
-
-    // Optimistic concurrency: re-check the parent ref hasn't moved. The CAS
-    // `updateRef` below is the actual race guard; this pre-check just surfaces
-    // the friendlier `parent_moved` error (and an early exit) before we bother
-    // writing a commit object.
-    if (this.#parentRef !== null) {
-      const current = binding.resolveRef(this.#parentRef);
-      if (current !== this.#parentCommitHash) {
-        throw new TransactionError(
-          'parent_moved',
-          `parent ref ${this.#parentRef} moved during transaction (expected ${this.#parentCommitHash ?? 'null'}, found ${current ?? 'null'})`,
-        );
-      }
-    }
-
-    const treeHash = await this.#rootView.write();
-
-    // No-op detection: if the resulting tree-hash matches the parent
-    // commit's tree-hash, nothing actually changed. Skip the commit + ref
-    // update — same return shape as the `!#anyMutation` path above. The
-    // `#anyMutation` flag tracks "a mutating method was called," which
-    // over-approximates: clear() on an already-empty sheet, upsert() of
-    // byte-identical content, and bulk reimport-with-unchanged-data patterns
-    // all set the flag without changing the tree. Tree-hash equality is the
-    // canonical git-native truth. See specs/api/transaction.md#no-op-detection.
-    if (this.#parentCommitHash !== null) {
-      const parentTreeHash = binding.createTreeFromRef(this.#parentCommitHash).write();
-      if (parentTreeHash === treeHash) {
-        return noChange;
-      }
-    }
-
-    const message = formatCommitMessage(this.#message, this.#trailers);
-
-    let commitHash: string;
-    try {
-      commitHash = commitTreeWithRepo(binding, {
-        treeHash,
-        parents: this.#parentCommitHash ? [this.#parentCommitHash] : [],
-        message,
-        author: this.#author,
-        committer: this.#committer,
-      });
-    } catch (err) {
-      throw new TransactionError(
-        'commit_failed',
-        `holo-tree commitTree failed: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
-    }
-
-    if (this.#branchRef !== null) {
-      try {
-        // CAS: only advance the ref if it still points at the parent commit
-        // (undefined expected-old → unconditional, for a fresh branch) —
-        // matching `git update-ref <ref> <new> [<old>]`.
-        binding.updateRef(
-          this.#branchRef,
-          commitHash,
-          this.#parentCommitHash ?? undefined,
-        );
-      } catch (err) {
-        throw new TransactionError(
-          'commit_failed',
-          `holo-tree updateRef ${this.#branchRef} failed: ${err instanceof Error ? err.message : String(err)}`,
-          { cause: err },
-        );
-      }
-    }
-
+    const r = callCore(() => this.#coreTx.finalize());
     return {
       value,
-      commitHash,
-      treeHash,
-      ref: this.#branchRef,
-      parentCommitHash: this.#parentCommitHash,
+      commitHash: r.commitHash ?? null,
+      treeHash: r.treeHash ?? null,
+      ref: r.refName ?? null,
+      parentCommitHash: r.parentCommitHash ?? this.#parentCommitHash,
     };
   }
 
-  /** Called by Repository on handler throw. Marks the transaction closed. */
+  /** Called by Repository on handler throw. Discards the core tree + frees the slot. */
   discard(): void {
+    if (this.#closed) return;
     this.#closed = true;
+    callCore(() => this.#coreTx.discard());
   }
 
   static normalizeOptions(opts: TransactionOptions): {
@@ -340,6 +245,13 @@ export class Transaction {
       trailers: opts.trailers ?? {},
     };
   }
+}
+
+/** Convert a JS trailer map to the core's ordered `{ key, value }` array form. */
+export function toTrailerArray(
+  trailers: Readonly<Record<string, string>>,
+): Array<{ key: string; value: string }> {
+  return Object.entries(trailers).map(([key, value]) => ({ key, value }));
 }
 
 // --- Author resolution from git config ---

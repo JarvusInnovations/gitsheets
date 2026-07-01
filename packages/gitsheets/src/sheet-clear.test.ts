@@ -55,24 +55,22 @@ async function commitCount(fixture: TestRepoHandle): Promise<number> {
 }
 
 describe('Sheet.clear', () => {
-  it('subtree serializes to EMPTY_TREE_HASH after clear', async () => {
+  it('clear empties the sheet subtree — omitted from the committed tree', async () => {
     const fixture = await seedRepo({ withRecords: true });
     const repo = await openRepo({ gitDir: fixture.gitDir });
 
-    let observedHash = '';
     await repo.transact({ message: 'clear users' }, async (tx) => {
-      const sheet = tx.sheet('users');
-      await sheet.clear();
-      // Reach into the workspace tree at the sheet's root and assert its
-      // serialized hash. The shape of `tx.tree` is the data root; the
-      // sheet root is 'users' (per USERS_CONFIG).
-      const sheetSubtree = await tx.tree.getSubtree('users', false);
-      if (sheetSubtree) {
-        observedHash = await sheetSubtree.getHash();
-      }
+      await tx.sheet('users').clear();
     });
 
-    expect(observedHash).toBe(EMPTY_TREE_HASH);
+    // An emptied subtree serializes to the empty tree, which git omits from the
+    // committed tree — so there's no `users/` entry and no records remain.
+    const { stdout } = await fixture.git('ls-tree', '--name-only', 'HEAD');
+    const entries = stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+    expect(entries).not.toContain('users');
+
+    const users = await repo.openSheet('users');
+    expect(await users.queryAll()).toEqual([]);
   });
 
   it('committed sheet has no records after clear', async () => {
