@@ -108,14 +108,18 @@ classes we don't use) and maps the core's structured errors onto the canonical
 3. Markdown non-string-body guard (#6): kept as the historical `TypeError` via a
    cheap host-side guard before the core call; title↔H1 disagreement / missing-H1
    surface the core's typed `ValidationError`.
-4. **Validation strict-mode leniency (NOT in the prompt's enumerated #1-6, but
-   pre-accepted by the core — see `gitsheets-core::validation` "See the plan
-   Notes").** Former `ajv` `strict: true` rejected unknown JSON-Schema keywords
-   (and `$data`) at compile with `ConfigError(config_invalid)`; the core's
-   `jsonschema` crate is lenient and silently ignores them, so a typo'd/`$data`
-   schema now compiles. Record-level validation of valid schemas is at parity
-   (validity + instance path + failing-keyword `code`). Updated
-   `specs/behaviors/validation.md` + the one strict-mode test to the new behavior.
+4. **Validation strict-mode: PARITY (unknown-keyword rejection restored).** The
+   former `ajv` `strict: true` rejected unknown JSON-Schema keywords (and `$data`)
+   at compile with `ConfigError(config_invalid)`. The `jsonschema` crate is lenient
+   by itself, so — per the user's "require rejection now" decision — the core
+   (`gitsheets-core::validation`) now **walks the schema at compile and rejects any
+   keyword outside the known Draft-07 vocabulary** (and `$data`), raising
+   `config_invalid`, restoring the `ajv` strict guard. So this is **NOT a behavior
+   change** — it is at parity with the pre-cutover behavior (validity + instance
+   path + failing-keyword `code` for valid schemas; `ConfigError` for a typo'd/
+   `$data` schema). `specs/behaviors/validation.md` documents the strict behavior.
+   (This corrects an earlier draft of these Notes that described a since-reverted
+   leniency.)
 
 **`.d.ts` / public surface:** the consumer entry surface (`index.d.ts`
 re-exports) is byte-for-byte identical. Internal-module `.d.ts` deltas only:
@@ -219,10 +223,12 @@ release-track item.
   in-progress tree. They agree for every current flow (config is never written and
   read back for records in the same tx), but a napi "read config from the tx tree"
   accessor would close the gap.
-- **Core validator strict-mode parity.** If the spec's ajv-strict
-  unknown-keyword / `$data` rejection is wanted back, it must be added to the
-  core (`gitsheets-core::validation`) — the binding can't re-impose it without
-  re-introducing `ajv`. Currently resolved by relaxing the spec (see Notes #4).
+- **Core validator strict-mode parity — DONE (not a follow-up).** ajv-strict
+  unknown-keyword / `$data` rejection was added to the core
+  (`gitsheets-core::validation` walks the schema and raises `config_invalid` on
+  unknown Draft-07 keywords), so strict validation is at parity — see Notes #4.
+  (Remaining follow-up: the known-keyword vocabulary is Draft-07; broaden if a
+  later draft is adopted.)
 - **Per-platform addon prebuild + npm publish** (release track): build the six
   napi triples, publish the addon, and consume it as a real dependency instead of
   the workspace-linked local `.node`.
