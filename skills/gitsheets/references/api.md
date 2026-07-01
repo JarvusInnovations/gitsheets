@@ -8,7 +8,7 @@ ESM-only. `import { … } from 'gitsheets'`. Targets Node ≥ 20 / Bun ≥ 1, `s
 - [openRepo](#openrepo) — open a Repository
 - [Repository](#repository) — methods on the repo handle
 - [Sheet](#sheet) — per-sheet operations
-  - [Reading](#reading) — query / queryFirst / queryAll / loadBody / pathForRecord / normalizeRecord
+  - [Reading](#reading) — query / queryFirst / queryAll / count / loadBody / pathForRecord / normalizeRecord
   - [Writing](#writing) — upsert / delete / patch / clear / clone
   - [Attachments](#attachments) — get / set / delete / iterator
   - [Indexing](#indexing) — defineIndex / findByIndex
@@ -67,12 +67,12 @@ const repo = await openRepo({ gitDir: '/.git' });       // explicit
 const repo = await openRepo({ gitDir, workTree });      // working-tree hint
 ```
 
-Backed by hologit's repo discovery. Fresh-but-initialized repositories (no commits yet) are supported.
+Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized repositories (no commits yet) are supported.
 
 ## Repository
 
 | Method | Purpose |
-|---|---|
+| --- | --- |
 | `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix` |
 | `repo.openSheets(opts?)` | `Record<string, Sheet>` of every sheet declared under `.gitsheets/` |
 | `repo.transact(opts, handler)` | Single-commit transaction; see below |
@@ -117,10 +117,11 @@ const all = await sheet.queryAll();
 ```
 
 | Method | Returns | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `sheet.query(filter?, opts?)` | `AsyncGenerator<T>` | `opts.signal` (AbortSignal), `opts.withBody` (content-typed sheets) |
 | `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` | Same opts |
 | `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` | Same opts |
+| `sheet.count(filter?)` | `Promise<number>` | Cheap count (walks candidate paths, no parse) when unfiltered; a filter falls back to a body-less scan |
 | `sheet.loadBody(record)` | `Promise<T>` | Hydrate a body-less record (markdown sheets); no-op on TOML sheets |
 | `sheet.pathForRecord(record)` | `Promise<string>` | Render the path template; doesn't write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` | Canonical form (deep-sort keys, array sort rules); doesn't write/validate |
@@ -141,7 +142,7 @@ const cloned = await sheet.clone();                // staging copy
 ```
 
 | Method | Purpose |
-|---|---|
+| --- | --- |
 | `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for markdown sheets. |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachment directory |
 | `sheet.patch(query, partial)` | RFC 7396 merge: `null` deletes a field, arrays replace, objects merge |
@@ -162,7 +163,7 @@ await sheet.setAttachment(record, 'avatar.jpg', blob);
 await sheet.setAttachments(record, { 'avatar.jpg': blob, 'cover.png': otherBlob });
 
 const blob = await sheet.getAttachment(record, 'avatar.jpg');
-const map = await sheet.getAttachments(record);          // Map of name → BlobObject
+const map = await sheet.getAttachments(record);          // Map of name → BlobHandle
 
 await sheet.deleteAttachment(record, 'avatar.jpg');      // throws if missing
 await sheet.deleteAttachments(record);                   // no-op if no attachment dir
@@ -214,7 +215,7 @@ for await (const change of sheet.diffFrom('HEAD~1', { records: true, patches: tr
   // change.srcHash / dstHash           — blob hashes (null on add/delete)
   // change.src / dst                   — parsed records (records: true)
   // change.patch                       — RFC 6902 ops (patches: true)
-  // change.srcBlob / dstBlob           — hologit BlobObject handles (blobs: true)
+  // change.srcBlob / dstBlob           — gitsheets BlobHandle handles (blobs: true)
 }
 ```
 
@@ -326,7 +327,7 @@ class GitsheetsError extends Error {
 Subclasses + codes:
 
 | Class | Codes |
-|---|---|
+| --- | --- |
 | `ConfigError` | `config_missing`, `config_invalid` |
 | `ValidationError` | `validation_failed` (carries `issues: ValidationIssue[]`) |
 | `TransactionError` | `transaction_in_progress`, `transaction_required`, `parent_moved`, `commit_failed`, `push_daemon_running`, `transaction_closed` |
