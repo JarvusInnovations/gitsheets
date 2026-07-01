@@ -109,11 +109,9 @@ export function fieldsWithExtras(
 }
 
 /**
- * Count records in a sheet. Uses queryAll under the hood — fine for repos
- * with thousands of records; cap-checking is the consumer's job if their
- * corpus pushes higher.
+ * Count records in a sheet. Uses `Sheet.count()`, which walks candidate paths
+ * without parsing any record, so counting stays cheap even on large sheets.
  */
 export async function countRecords(sheet: Sheet): Promise<number> {
-  const rows = await sheet.queryAll({}, { withBody: false });
-  return rows.length;
+  return sheet.count();
 }

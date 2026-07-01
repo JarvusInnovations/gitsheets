@@ -111,9 +111,9 @@ describe('home', () => {
   it('surfaces record counts in home', async () => {
     const fixture = await seedRepo({ withRecords: true });
     const { stdout } = await runCli([], fixture.path);
-    // 2 users + 2 posts; counts render as quoted strings (TOON column).
-    expect(stdout).toMatch(/users,toml,"2"/);
-    expect(stdout).toMatch(/posts,markdown,"2"/);
+    // 2 users + 2 posts; counts render as bare numbers (TOON numeric column).
+    expect(stdout).toMatch(/users,toml,2\b/);
+    expect(stdout).toMatch(/posts,markdown,2\b/);
   });
 });
 
