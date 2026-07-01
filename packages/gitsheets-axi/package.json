@@ -45,6 +45,7 @@
   "dependencies": {
     "@toon-format/toon": "^2.2.0",
     "axi-sdk-js": "^0.1.6",
+    "csv-stringify": "^6.8.0",
     "gitsheets": "*"
   },
   "devDependencies": {
