@@ -1,6 +1,6 @@
 ---
-status: in-progress
-depends: [sheet-store-core, canonical-rebaseline, markdown-codec-core, locale-collation-core, markdown-normalize-core]
+status: planned
+depends: [sheet-store-core, canonical-rebaseline, markdown-codec-core, locale-collation-core, markdown-normalize-core, attachment-staging-core]
 specs:
   - specs/rust-core.md
   - specs/api/conventions.md
