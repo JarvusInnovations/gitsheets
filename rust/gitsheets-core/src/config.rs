@@ -75,51 +75,6 @@ impl FormatKind {
     }
 }
 
-/// The markdownlint configuration from `[gitsheet.format].markdownlint`.
-///
-/// Carried so the codec config round-trips and **nothing is dropped**, but the
-/// core does NOT apply markdownlint to the body — see the [`crate::codec`]
-/// module docs: the lint+fix pass is a host-side pre-pass (the binding runs the
-/// `markdownlint` package), and the core only computes the effective ruleset via
-/// [`Markdownlint::resolve`].
-#[derive(Clone, Debug, PartialEq)]
-pub enum Markdownlint {
-    /// No `markdownlint` key — apply the defaults only.
-    Default,
-    /// `markdownlint = false` — normalization disabled.
-    Disabled,
-    /// `[gitsheet.format.markdownlint]` — a table of user rule overrides,
-    /// layered on top of the defaults by [`Markdownlint::resolve`].
-    Rules(IndexMap<String, Value>),
-}
-
-impl Markdownlint {
-    /// The effective markdownlint config the host's pre-pass should apply, or
-    /// `None` when normalization is disabled. Mirrors the JS `normalizeBody`
-    /// merge: `{ default: true, MD013: false, MD041: false, ...user }`, and when
-    /// title-from-H1 is enabled (`title_is_set`) and the user didn't pin
-    /// `MD041`, it auto-enables `MD041` (first-line-H1).
-    pub fn resolve(&self, title_is_set: bool) -> Option<Value> {
-        let empty = IndexMap::new();
-        let user = match self {
-            Markdownlint::Disabled => return None,
-            Markdownlint::Default => &empty,
-            Markdownlint::Rules(t) => t,
-        };
-        let mut out: IndexMap<String, Value> = IndexMap::new();
-        out.insert("default".to_string(), Value::Boolean(true));
-        out.insert("MD013".to_string(), Value::Boolean(false));
-        out.insert("MD041".to_string(), Value::Boolean(false));
-        for (k, v) in user {
-            out.insert(k.clone(), v.clone());
-        }
-        if title_is_set && !user.contains_key("MD041") {
-            out.insert("MD041".to_string(), Value::Boolean(true));
-        }
-        Some(Value::Table(out))
-    }
-}
-
 /// Resolved `[gitsheet.format]` config. Defaults to `type = "toml"`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormatConfig {
@@ -128,9 +83,11 @@ pub struct FormatConfig {
     pub body: Option<String>,
     /// The field denormalized from the body's first H1 (markdown/mdx only).
     pub title: Option<String>,
-    /// The markdownlint configuration (carried, not applied by the core — see
-    /// [`Markdownlint`]).
-    pub markdownlint: Markdownlint,
+    /// Whether to normalize the body on write with the native
+    /// `dprint-plugin-markdown` formatter (markdown/mdx only). Defaults to
+    /// `true`; `normalize = false` frames the body verbatim. See
+    /// [`crate::codec::normalize_body`].
+    pub normalize: bool,
 }
 
 impl FormatConfig {
@@ -274,7 +231,7 @@ fn parse_format(raw: Option<&Value>, source: &str) -> Result<FormatConfig> {
             kind: FormatKind::Toml,
             body: None,
             title: None,
-            markdownlint: Markdownlint::Default,
+            normalize: true,
         });
     };
     let table = as_table(raw).ok_or_else(|| Error::ConfigInvalid {
@@ -288,18 +245,23 @@ fn parse_format(raw: Option<&Value>, source: &str) -> Result<FormatConfig> {
     };
     let body = table.get("body").and_then(as_str).map(|s| s.to_string());
     let title = table.get("title").and_then(as_str).map(|s| s.to_string());
-    // markdownlint: `false` disables; a table is user rules; anything else (or
-    // absent) falls back to the defaults. Matches the JS `resolveFormatConfig`.
-    let markdownlint = match table.get("markdownlint") {
-        Some(Value::Boolean(false)) => Markdownlint::Disabled,
-        Some(Value::Table(t)) => Markdownlint::Rules(t.clone()),
-        _ => Markdownlint::Default,
+    // normalize: defaults to `true` (native dprint body normalization on write);
+    // `normalize = false` frames the body verbatim. A non-boolean value is a
+    // config error.
+    let normalize = match table.get("normalize") {
+        None => true,
+        Some(Value::Boolean(b)) => *b,
+        Some(_) => {
+            return Err(Error::ConfigInvalid {
+                message: format!("{source}: [gitsheet.format].normalize must be a boolean"),
+            })
+        }
     };
     Ok(FormatConfig {
         kind,
         body,
         title,
-        markdownlint,
+        normalize,
     })
 }
 
@@ -437,43 +399,28 @@ mod tests {
     }
 
     #[test]
-    fn markdownlint_defaults_when_absent() {
+    fn normalize_defaults_to_true_when_absent() {
         let c = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\n").unwrap();
-        assert_eq!(c.format.markdownlint, Markdownlint::Default);
-        let resolved = c.format.markdownlint.resolve(false).unwrap();
-        let Value::Table(t) = resolved else { panic!() };
-        assert_eq!(t["default"], Value::Boolean(true));
-        assert_eq!(t["MD013"], Value::Boolean(false));
-        assert_eq!(t["MD041"], Value::Boolean(false));
+        assert!(c.format.normalize);
     }
 
     #[test]
-    fn markdownlint_false_disables() {
-        let c = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\nmarkdownlint = false\n").unwrap();
-        assert_eq!(c.format.markdownlint, Markdownlint::Disabled);
-        assert!(c.format.markdownlint.resolve(false).is_none());
+    fn normalize_false_disables() {
+        let c = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\nnormalize = false\n").unwrap();
+        assert!(!c.format.normalize);
     }
 
     #[test]
-    fn markdownlint_user_rules_layer_over_defaults() {
-        let c = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\n[gitsheet.format.markdownlint]\nMD013 = true\nMD033 = false\n").unwrap();
-        let resolved = c.format.markdownlint.resolve(false).unwrap();
-        let Value::Table(t) = resolved else { panic!() };
-        assert_eq!(t["MD013"], Value::Boolean(true), "user override wins");
-        assert_eq!(t["MD033"], Value::Boolean(false));
-        assert_eq!(t["default"], Value::Boolean(true));
+    fn normalize_non_boolean_is_config_invalid() {
+        let err = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\nnormalize = 'yes'\n").unwrap_err();
+        assert_eq!(err.code(), "config_invalid");
+        assert!(err.message().contains("normalize must be a boolean"));
     }
 
     #[test]
-    fn markdownlint_auto_enables_md041_when_title_set() {
-        // Defaults + title-from-H1 → MD041 auto-enabled.
-        let c = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\ntitle = 'title'\n").unwrap();
-        let Value::Table(t) = c.format.markdownlint.resolve(true).unwrap() else { panic!() };
-        assert_eq!(t["MD041"], Value::Boolean(true));
-
-        // …unless the consumer pinned it.
-        let c2 = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\ntitle = 'title'\n[gitsheet.format.markdownlint]\nMD041 = false\n").unwrap();
-        let Value::Table(t2) = c2.format.markdownlint.resolve(true).unwrap() else { panic!() };
-        assert_eq!(t2["MD041"], Value::Boolean(false), "consumer override respected");
+    fn toml_format_defaults_normalize_true() {
+        // The toml-default branch still produces a stable normalize flag.
+        let c = cfg("[gitsheet]\npath = '${{ slug }}'\n").unwrap();
+        assert!(c.format.normalize);
     }
 }

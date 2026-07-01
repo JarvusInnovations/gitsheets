@@ -6,8 +6,8 @@
 //   - the frontmatter+body codec: round-trip byte-identity, empty/embedded-`+++`
 //     bodies, UTF-8 BOM, TOML datetimes in the frontmatter, lazy (header-only) reads;
 //   - title-from-H1 extraction, the H1 rewrite helper, and the disagreement guard;
-//   - the resolved markdownlint ruleset (computed by the core; APPLIED host-side —
-//     see the codec module docs: the core frames the body verbatim);
+//   - native body normalization (the embedded dprint-plugin-markdown formatter):
+//     deterministic + idempotent, applied on serialize, and the normalize:false toggle;
 //   - end-to-end markdown sheets: `.md` on disk, read-back, withBody:false, and
 //     the allowMissingBody opt-in.
 //
@@ -40,7 +40,7 @@ const {
   markdownParseHeaderOnly,
   markdownExtractH1,
   markdownRewriteH1,
-  markdownResolveLintConfig,
+  markdownNormalizeBody,
 } = binding;
 
 // ── direct codec: serialize / parse byte parity ────────────────────────────────
@@ -197,24 +197,43 @@ test('serialize omits the title when the body has no H1 and none is supplied', (
   assert.ok(!/title\s*=/.test(text));
 });
 
-// ── markdownlint config resolution (computed in the core, APPLIED host-side) ─────
+// ── native body normalization (embedded dprint-plugin-markdown) ──────────────────
 
-test('resolveLintConfig returns the layered defaults', () => {
-  const cfg = markdownResolveLintConfig(true, false); // `true` ⇒ no overrides → defaults
-  assert.equal(cfg.default, true);
-  assert.equal(cfg.MD013, false);
-  assert.equal(cfg.MD041, false);
+test('normalizeBody is deterministic and idempotent', () => {
+  const messy = '#  Hello\n\n\n\nsome   text that\nis soft-wrapped\n\n*  one\n*  two\n';
+  const once = markdownNormalizeBody(messy);
+  assert.equal(once, markdownNormalizeBody(once), 'normalize(normalize(b)) == normalize(b)');
+  // textWrap:never unwraps the paragraph; blank lines collapse; markers normalize.
+  assert.equal(once, '# Hello\n\nsome text that is soft-wrapped\n\n- one\n- two\n');
 });
 
-test('resolveLintConfig returns null when disabled', () => {
-  assert.equal(markdownResolveLintConfig(false, false), null);
+test('normalizeBody rewrites emphasis and converts setext headings to ATX', () => {
+  assert.equal(markdownNormalizeBody('this is *italic* and __bold__\n'), 'this is _italic_ and **bold**\n');
+  assert.equal(markdownNormalizeBody('Title\n=====\n\nbody\n'), '# Title\n\nbody\n');
 });
 
-test('resolveLintConfig layers user rules and auto-enables MD041 with a title', () => {
-  const withRules = markdownResolveLintConfig({ MD013: true }, false);
-  assert.equal(withRules.MD013, true, 'user override wins');
-  const withTitle = markdownResolveLintConfig(true, true);
-  assert.equal(withTitle.MD041, true, 'title-from-H1 auto-enables MD041');
+test('serialize normalizes the body on write', () => {
+  const text = markdownSerialize({ slug: 'x', body: 'hello *there*\n\n\n*  a\n*  b\n' }, 'body');
+  assert.ok(text.endsWith('+++\n\nhello _there_\n\n- a\n- b\n'));
+  // Round-trips byte-stably: re-serializing the parsed record is a no-op.
+  assert.equal(markdownSerialize(markdownParse(text, 'body'), 'body'), text);
+});
+
+test('normalize:false frames the body verbatim', () => {
+  const body = 'hello *there*\n\n\n*  a\n*  b';
+  const text = markdownSerialize({ slug: 'x', body }, 'body', undefined, false);
+  assert.ok(text.endsWith(`+++\n\n${body}\n`), 'body bytes untouched (verbatim)');
+  assert.equal(markdownParse(text, 'body').body, body);
+});
+
+test('normalization feeds title-from-H1 from a setext heading', () => {
+  const text = markdownSerialize(
+    { slug: 'x', body: 'Hello, world\n============\n\nBody.' },
+    'body',
+    'title',
+  );
+  assert.match(text, /title = "Hello, world"/);
+  assert.ok(text.includes('+++\n\n# Hello, world\n\nBody.\n'));
 });
 
 // ── end-to-end markdown sheets through a transaction ────────────────────────────

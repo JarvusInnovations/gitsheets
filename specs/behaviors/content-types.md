@@ -26,24 +26,55 @@ path = '${{ slug }}'
 type = 'markdown'           # default: 'toml'. 'mdx' is an alias (same parser, .mdx extension).
 body = 'body'               # field name that holds the body text; required when type='markdown' or 'mdx'
 title = 'title'             # optional — denormalize body's first H1 into this field (see "Title from H1")
-
-[gitsheet.format.markdownlint]
-# Optional. Passed straight through as markdownlint config.
-# Defaults applied on top of consumer settings:
-#   default = true     (all default rules)
-#   MD013 = false      (line-length 80 disabled — prose / long lines OK)
-#   MD041 = false      (first-line H1 not required — many bodies start with prose)
-# When [gitsheet.format].title is set, MD041 is auto-enabled (consumer can override).
+normalize = true            # optional, default true — native body normalization on write (see below)
 ```
 
-Disable normalization entirely with `markdownlint = false`:
+### Body normalization
+
+Markdown/mdx bodies are normalized on **write** by the native Rust
+`dprint-plugin-markdown` formatter, embedded directly in the bytes-authority
+core. The formatter is the **single** source of body bytes across every binding
+(Node, Python, …) — there is no host-side markdownlint pre-pass, so a given body
+serializes to identical bytes regardless of which language drives the write.
+
+The formatter runs **aggressive with `textWrap = "never"`**: each paragraph is
+unwrapped to a single logical line (soft line breaks removed; hard breaks —
+backslash or two-trailing-spaces — and block boundaries preserved), tables are
+column-aligned, list / emphasis / heading / code-fence styles are made
+consistent, and runs of blank lines collapse. Because `textWrap` is `never`, the
+line width never affects prose bytes.
+
+The exact emitted configuration (a canonical-behavior contract input, pinned in
+`rust/gitsheets-core/Cargo.toml` alongside the serializer / engine / collator):
+
+```text
+dprint-plugin-markdown =0.22.1
+  textWrap         = never        # unwrap paragraphs; line width is inert for prose
+  emphasisKind     = underscores  # _italic_
+  strongKind       = asterisks    # **bold**
+  unorderedListKind = dashes      # - item
+  headingKind      = atx          # # Heading (setext is converted to ATX)
+  listIndentKind   = commonMark
+```
+
+Disable normalization with `normalize = false` — the body is then framed
+**verbatim** (only the codec's structural framing applies: delimiters,
+frontmatter, trailing-newline). Use this when bytes must be preserved exactly:
 
 ```toml
 [gitsheet.format]
 type = 'markdown'
 body = 'body'
-markdownlint = false
+normalize = false
 ```
+
+> **One-time re-baseline.** Switching body normalization from the former
+> host-side `markdownlint --fix` pass to the native `dprint-plugin-markdown`
+> formatter re-baselines on-disk body bytes once (e.g. emphasis `*italic*` →
+> `_italic_`, list markers normalized to `-`, setext headings converted to ATX,
+> soft-wrapped paragraphs unwrapped). Markdown data is negligible by design, so
+> the re-baseline is acceptable; the `markdownlint` dependency and its
+> rule-specific config surface are dropped.
 
 ## On-disk format
 
@@ -57,7 +88,7 @@ title = 'Hello, world'
 
 # Hello, world
 
-This is the body, normalized by markdownlint.
+This is the body, normalized by the native dprint formatter.
 ```
 
 - Frontmatter is canonical TOML (deep-sorted keys via the existing `stringifyRecord` path).
@@ -70,7 +101,7 @@ This is the body, normalized by markdownlint.
 
 1. Split the record: body field (the configured `body` name) → body text; everything else → frontmatter record.
 2. Serialize frontmatter via `stringifyRecord` (deep-sorted keys, the existing canonical TOML path).
-3. Normalize body via `markdownlint --fix` with the configured rule set (skipped if `markdownlint = false`).
+3. Normalize body via the native `dprint-plugin-markdown` formatter (skipped if `normalize = false`). Normalization runs **before** title-from-H1 extraction, so the extracted title agrees with the body that lands on disk.
 4. Join `+++\n<frontmatter>+++\n\n<body>\n`.
 5. Write the blob.
 
@@ -80,7 +111,9 @@ This is the body, normalized by markdownlint.
 2. Parse frontmatter as TOML.
 3. Body verbatim → inject under the configured `body` field name.
 
-**Normalization is body-only.** The TOML frontmatter is never seen by markdownlint — that avoids any risk of lint rules mangling TOML content that happens to look like markdown.
+**Normalization is body-only.** The TOML frontmatter is never seen by the formatter — only the body string is handed to `dprint-plugin-markdown`. That avoids any risk of the formatter mangling TOML content that happens to look like markdown.
+
+**Normalization is deterministic and idempotent.** `normalize(normalize(body)) == normalize(body)`, so a record round-trips byte-stably: re-upserting a record read back from disk is a no-op.
 
 ## Validation
 
@@ -213,16 +246,23 @@ Consumer supplies a delta. Patch applies it and reconciles to maintain the invar
 
 The asymmetry between `upsert({title: 'X'})` (throws because body wasn't supplied) and `patch({title: 'X'})` (works — rewrites body's H1) mirrors PUT vs PATCH semantics: `upsert` is a state assertion; `patch` is a reconciled delta.
 
-### Markdownlint interaction
+### Normalization interaction
 
-When `[gitsheet.format].title` is set, **MD041** (first-line-must-be-H1) auto-enables in the markdownlint config so a body that starts with prose fails loud at the body level rather than silently producing `undefined` as the title.
+Body normalization runs **before** title-from-H1 extraction, so the title is
+derived from the bytes that land on disk. This means the formatter's heading
+normalization feeds the invariant — e.g. a setext H1 (`Title\n=====`) is
+converted to ATX (`# Title`) and *then* recognized as the first H1, so a
+setext-authored title is extracted rather than silently lost.
 
-Consumer can override:
+The title invariant is enforced by the codec itself, independent of
+normalization:
 
-```toml
-[gitsheet.format.markdownlint]
-MD041 = false   # opt out of the auto-enable
-```
+- Supplying `title` with a body that has **no** H1 throws `ValidationError`
+  (`{slug, title: 'X', body: 'no heading'}` is self-inconsistent).
+- Supplying **no** `title` with a body that has no H1 simply omits `title` from
+  frontmatter.
+
+(There is no markdownlint `MD041` auto-enable anymore — markdownlint is gone.)
 
 ### Performance
 

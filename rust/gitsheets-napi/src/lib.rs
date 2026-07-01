@@ -1464,29 +1464,30 @@ pub fn core_check_validators(
 // ── markdown / mdx content-type codec (markdown-codec-core) ─────────────────────
 //
 // The frontmatter+body codec, exposed directly so the boundary suite can assert
-// byte-level parity with the JS oracle (`packages/gitsheets/src/format/markdown.ts`).
-// markdownlint body-NORMALIZATION is NOT applied here — it is a host-side pre-pass
-// (see gitsheets_core::codec module docs); these surface the byte-deterministic
-// framing, title-from-H1, and lazy-body parts of the format.
+// byte-level parity with the core. Body NORMALIZATION is native (the embedded
+// `dprint-plugin-markdown` formatter — see gitsheets_core::codec module docs), so
+// `markdownSerialize` emits normalized bytes unless `normalize: false` is passed.
 
 use gitsheets_core::codec;
-use gitsheets_core::config::{FormatConfig, FormatKind, Markdownlint};
+use gitsheets_core::config::{FormatConfig, FormatKind};
 
-/// Build a markdown `FormatConfig` for the direct codec entry points. The
-/// markdownlint setting is irrelevant to these (the core never applies it).
-fn markdown_format(body_field: String, title_field: Option<String>) -> FormatConfig {
+/// Build a markdown `FormatConfig` for the direct codec entry points. `normalize`
+/// drives native body normalization (only meaningful on serialize); parse paths
+/// pass `true` but never look at it.
+fn markdown_format(body_field: String, title_field: Option<String>, normalize: bool) -> FormatConfig {
     FormatConfig {
         kind: FormatKind::Markdown,
         body: Some(body_field),
         title: title_field,
-        markdownlint: Markdownlint::Default,
+        normalize,
     }
 }
 
 /// Serialize a record to its on-disk markdown bytes (`+++` frontmatter + body),
 /// enforcing the title-from-H1 invariant when `titleField` is set. The body is
-/// framed verbatim — markdownlint normalization is the host's pre-pass. A
-/// non-string body or a title that disagrees with the body's H1 throws a typed
+/// normalized natively by the embedded `dprint-plugin-markdown` formatter unless
+/// `normalize` is `false` (then it is framed verbatim). A non-string body or a
+/// title that disagrees with the body's (normalized) H1 throws a typed
 /// `ValidationError`.
 #[napi]
 pub fn markdown_serialize(
@@ -1494,9 +1495,18 @@ pub fn markdown_serialize(
     record: JsValue,
     body_field: String,
     title_field: Option<String>,
+    normalize: Option<bool>,
 ) -> Result<String> {
-    let cfg = markdown_format(body_field, title_field);
+    let cfg = markdown_format(body_field, title_field, normalize.unwrap_or(true));
     codec::serialize(&record.0, &cfg).map_err(|err| raise_core_error(&env, &err))
+}
+
+/// Normalize a markdown body with the native `dprint-plugin-markdown` formatter
+/// (the pinned aggressive `textWrap: never` config). Deterministic + idempotent.
+/// Exposed so the boundary suite can assert the normalizer directly.
+#[napi]
+pub fn markdown_normalize_body(body: String) -> String {
+    codec::normalize_body(&body)
 }
 
 /// Parse on-disk markdown bytes into a full record (frontmatter fields + the
@@ -1508,7 +1518,7 @@ pub fn markdown_parse(
     body_field: String,
     title_field: Option<String>,
 ) -> Result<JsValue> {
-    let cfg = markdown_format(body_field, title_field);
+    let cfg = markdown_format(body_field, title_field, true);
     codec::parse(&text, &cfg)
         .map(JsValue)
         .map_err(|err| raise_core_error(&env, &err))
@@ -1522,7 +1532,7 @@ pub fn markdown_parse_header_only(
     text: String,
     body_field: String,
 ) -> Result<JsValue> {
-    let cfg = markdown_format(body_field, None);
+    let cfg = markdown_format(body_field, None, true);
     codec::parse_header_only(&text, &cfg)
         .map(JsValue)
         .map_err(|err| raise_core_error(&env, &err))
@@ -1540,24 +1550,4 @@ pub fn markdown_extract_h1(body: String) -> Option<String> {
 #[napi]
 pub fn markdown_rewrite_h1(body: String, title: String) -> String {
     codec::rewrite_leading_h1(&body, &title)
-}
-
-/// The effective markdownlint config the host's normalization pre-pass should
-/// apply, or `null` when disabled. The defaults (`default: true`, `MD013:
-/// false`, `MD041: false`) layered with any `[gitsheet.format.markdownlint]`
-/// overrides, plus the `MD041` auto-enable when title-from-H1 is on. The core
-/// computes the ruleset but does NOT apply it (see the codec module docs).
-#[napi]
-pub fn markdown_resolve_lint_config(
-    markdownlint: JsValue,
-    title_is_set: bool,
-) -> Option<JsValue> {
-    // Marshal the raw `[gitsheet.format].markdownlint` value: `false` → disabled,
-    // a table → user rules, anything else → defaults.
-    let setting = match &markdownlint.0 {
-        Value::Boolean(false) => Markdownlint::Disabled,
-        Value::Table(t) => Markdownlint::Rules(t.clone()),
-        _ => Markdownlint::Default,
-    };
-    setting.resolve(title_is_set).map(JsValue)
 }

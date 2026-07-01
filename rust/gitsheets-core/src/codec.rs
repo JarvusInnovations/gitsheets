@@ -14,32 +14,36 @@
 //! form). There is no second TOML serializer: a markdown record's frontmatter
 //! and a TOML record with the same fields produce identical bytes.
 //!
-//! ## markdownlint normalization is NOT done here — and that is deliberate
+//! ## Body normalization is native — in the core
 //!
-//! The JS oracle normalizes the body with the `markdownlint` npm package
-//! (`lint` + `applyFixes`) on write. **That pass is intentionally not
-//! reimplemented in the core.** `markdownlint` is ~40 rules with bespoke,
-//! interdependent fix logic; no Rust port is byte-identical to it, so a partial
-//! reimplementation would *silently* emit different body bytes for any body that
-//! triggers a rule the port handled differently or not at all — exactly the
-//! failure mode the plan forbids. Instead:
+//! Markdown/mdx bodies are normalized on **write** by the native
+//! [`dprint-plugin-markdown`](https://crates.io/crates/dprint-plugin-markdown)
+//! formatter, embedded directly here as a Rust library (see [`normalize_body`]).
+//! Because the formatter lives in the bytes-authority core, a given body
+//! serializes to **identical bytes across every binding** (Node, Python, …) —
+//! there is no host-side `markdownlint` pre-pass that could let two languages
+//! normalize differently. (The former host-side markdownlint plumbing was
+//! removed by `plans/markdown-normalize-core.md`; this re-baselines body bytes
+//! one time — markdown data is negligible by design.)
 //!
-//! - The core codec frames the body **verbatim** (byte-deterministic,
-//!   language-agnostic: delimiters, frontmatter, trailing-newline, title-from-H1).
-//! - The markdownlint *configuration* is fully parsed and the effective ruleset
-//!   computed by the core ([`crate::config::Markdownlint::resolve`]) so nothing
-//!   is dropped.
-//! - The *application* of markdownlint to the body is a **host-side pre-pass**
-//!   (the binding runs the `markdownlint` package — which already lives in the
-//!   Node ecosystem — before handing the record to the codec), the same way the
-//!   consumer Standard-Schema validator runs host-side. The core never calls
-//!   back into the host (re-entrancy hazard).
+//! The formatter runs **aggressive with `textWrap: never`**: each paragraph is
+//! unwrapped to a single logical line (soft breaks removed; hard breaks + block
+//! boundaries preserved), tables are column-aligned, and list / emphasis /
+//! heading / code-fence styles are made consistent. The exact config is captured
+//! in [`normalize_body`] and pinned (`dprint-plugin-markdown =0.22.1` in
+//! `Cargo.toml`) as a canonical-behavior contract input.
 //!
-//! Net: the codec is byte-identical to `markdown.ts` **with `markdownlint =
-//! false`**; with linting on, the binding's pre-pass supplies the normalized
-//! body and the framing still matches byte-for-byte. See
-//! `plans/markdown-codec-core.md` for the full parity write-up.
+//! Normalization is **deterministic + idempotent** (`normalize(normalize(b)) ==
+//! normalize(b)`) and runs **before** title-from-H1 extraction, so the extracted
+//! title agrees with the body that lands on disk. `normalize = false` in
+//! `[gitsheet.format]` frames the body verbatim (only structural framing —
+//! delimiters, frontmatter, trailing-newline — applies).
 
+use dprint_plugin_markdown::configuration::{
+    Configuration, ConfigurationBuilder, EmphasisKind, HeadingKind, ListIndentKind, StrongKind,
+    TextWrap, UnorderedListKind,
+};
+use dprint_plugin_markdown::format_text;
 use indexmap::IndexMap;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -63,15 +67,62 @@ static DELIMITER_LINE_RE: LazyLock<Regex> =
 static H1_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^# ([^\r\n]+?)[ \t]*$").expect("static H1 regex"));
 
+// ── native body normalization (dprint-plugin-markdown) ───────────────────────
+
+/// The canonical `dprint-plugin-markdown` configuration — a canonical-behavior
+/// contract input, pinned alongside the `=0.22.1` version in `Cargo.toml`.
+///
+/// `textWrap: never` unwraps each paragraph to a single logical line (line width
+/// is therefore inert for prose). The style fields are set explicitly (rather
+/// than relying on the crate's defaults) so the emitted bytes are nailed down by
+/// this file, not by a transitive default:
+///
+/// - `emphasisKind: underscores` → `_italic_`
+/// - `strongKind: asterisks` → `**bold**`
+/// - `unorderedListKind: dashes` → `- item`
+/// - `headingKind: atx` → `# Heading` (setext is converted to ATX)
+/// - `listIndentKind: commonMark`
+static MARKDOWN_CONFIG: LazyLock<Configuration> = LazyLock::new(|| {
+    ConfigurationBuilder::new()
+        .text_wrap(TextWrap::Never)
+        .emphasis_kind(EmphasisKind::Underscores)
+        .strong_kind(StrongKind::Asterisks)
+        .unordered_list_kind(UnorderedListKind::Dashes)
+        .heading_kind(HeadingKind::Atx)
+        .list_indent_kind(ListIndentKind::CommonMark)
+        .build()
+});
+
+/// Normalize a markdown body with the native `dprint-plugin-markdown` formatter
+/// using the pinned [`MARKDOWN_CONFIG`]. Deterministic and idempotent. The
+/// formatter always emits a trailing newline; the codec's framing strips/owns
+/// the file's trailing newline, so callers treat the result as the canonical
+/// body text.
+///
+/// Code blocks are left as-is (the inner-format callback returns the code
+/// unchanged) — gitsheets does not recursively format embedded languages.
+///
+/// `format_text` only fails on a parser-level error; markdown has no such hard
+/// errors in practice (any text is valid CommonMark), so on the off chance of an
+/// error we fall back to the input unchanged rather than losing the body.
+pub fn normalize_body(body: &str) -> String {
+    match format_text(body, &MARKDOWN_CONFIG, |_tag, code, _line| Ok(Some(code.to_string()))) {
+        Ok(Some(out)) => out,
+        // `Ok(None)` means "already formatted / no change".
+        Ok(None) => body.to_string(),
+        Err(_) => body.to_string(),
+    }
+}
+
 // ── format dispatch ──────────────────────────────────────────────────────────
 
 /// Serialize a record to its on-disk text for the sheet's format.
 ///
 /// - `toml` → canonical TOML bytes ([`canonical::serialize`]).
 /// - `markdown`/`mdx` → `+++\n<frontmatter>+++\n\n<body>\n` (see
-///   [`serialize_markdown`]). The body is **not** markdownlint-normalized here
-///   (see the module docs); callers that want normalization apply it before
-///   calling.
+///   [`serialize_markdown`]). The body is normalized natively by
+///   [`normalize_body`] unless `format.normalize` is `false` (see the module
+///   docs).
 pub fn serialize(record: &Value, format: &FormatConfig) -> Result<String> {
     match format.kind {
         FormatKind::Toml => canonical::serialize(record),
@@ -117,7 +168,7 @@ fn serialize_markdown(record: &Value, format: &FormatConfig) -> Result<String> {
 
     // The body field → body text. An absent body is the empty string (matches
     // the JS `?? ''`); a present non-string body is a type error.
-    let body = match table.get(body_field) {
+    let raw_body = match table.get(body_field) {
         None => String::new(),
         Some(Value::String(s)) => s.clone(),
         Some(other) => {
@@ -129,6 +180,15 @@ fn serialize_markdown(record: &Value, format: &FormatConfig) -> Result<String> {
                 issues: Vec::new(),
             })
         }
+    };
+
+    // Native body normalization runs FIRST, so title-from-H1 extraction (below)
+    // sees the bytes that land on disk — e.g. a setext H1 becomes ATX and is then
+    // recognized. `normalize = false` frames the body verbatim.
+    let body = if format.normalize {
+        normalize_body(&raw_body)
+    } else {
+        raw_body
     };
 
     // Frontmatter = every field except the body field.
@@ -281,14 +341,23 @@ pub fn rewrite_leading_h1(body: &str, new_title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Markdownlint;
 
     fn md(body_field: &str, title: Option<&str>) -> FormatConfig {
         FormatConfig {
             kind: FormatKind::Markdown,
             body: Some(body_field.to_string()),
             title: title.map(|s| s.to_string()),
-            markdownlint: Markdownlint::Default,
+            normalize: true,
+        }
+    }
+
+    /// A markdown format with body normalization disabled (verbatim framing).
+    fn md_verbatim(body_field: &str, title: Option<&str>) -> FormatConfig {
+        FormatConfig {
+            kind: FormatKind::Markdown,
+            body: Some(body_field.to_string()),
+            title: title.map(|s| s.to_string()),
+            normalize: false,
         }
     }
 
@@ -506,6 +575,71 @@ mod tests {
         assert_eq!(field(&parsed, "body"), Some(&s("# Hello, world\n\nA short post.")));
     }
 
+    // ── native body normalization ────────────────────────────────────────────
+
+    #[test]
+    fn normalize_body_is_deterministic_and_idempotent() {
+        let messy = "#  Hello\n\n\n\nsome   text that\nis soft-wrapped\n\n*  one\n*  two\n";
+        let once = normalize_body(messy);
+        let twice = normalize_body(&once);
+        assert_eq!(once, twice, "normalize(normalize(b)) == normalize(b)");
+        // The aggressive `textWrap: never` config unwraps the paragraph, collapses
+        // blank lines, and normalizes the list marker + heading.
+        assert_eq!(
+            once,
+            "# Hello\n\nsome text that is soft-wrapped\n\n- one\n- two\n"
+        );
+    }
+
+    #[test]
+    fn normalize_body_rewrites_emphasis_and_setext_headings() {
+        assert_eq!(
+            normalize_body("this is *italic* and __bold__\n"),
+            "this is _italic_ and **bold**\n"
+        );
+        // Setext H1 → ATX (feeds title-from-H1).
+        assert_eq!(normalize_body("Title\n=====\n\nbody\n"), "# Title\n\nbody\n");
+    }
+
+    #[test]
+    fn serialize_normalizes_the_body_on_write() {
+        let text = serialize(
+            &rec(&[("slug", s("x")), ("body", s("hello *there*\n\n\n*  a\n*  b\n"))]),
+            &md("body", None),
+        )
+        .unwrap();
+        assert!(text.ends_with("+++\n\nhello _there_\n\n- a\n- b\n"));
+        // Re-serializing the parsed record is a byte-stable no-op.
+        let parsed = parse(&text, &md("body", None)).unwrap();
+        assert_eq!(serialize(&parsed, &md("body", None)).unwrap(), text);
+    }
+
+    #[test]
+    fn normalize_false_frames_the_body_verbatim() {
+        let body = "hello *there*\n\n\n*  a\n*  b";
+        let text = serialize(
+            &rec(&[("slug", s("x")), ("body", s(body))]),
+            &md_verbatim("body", None),
+        )
+        .unwrap();
+        // The body bytes are untouched (only the file's trailing newline added).
+        assert!(text.ends_with(&format!("+++\n\n{body}\n")));
+        let parsed = parse(&text, &md_verbatim("body", None)).unwrap();
+        assert_eq!(field(&parsed, "body"), Some(&s(body)));
+    }
+
+    #[test]
+    fn normalization_feeds_title_from_setext_h1() {
+        // Setext H1 in the raw body → normalized to ATX → extracted as the title.
+        let text = serialize(
+            &rec(&[("slug", s("x")), ("body", s("Hello, world\n============\n\nBody."))]),
+            &md("body", Some("title")),
+        )
+        .unwrap();
+        assert!(text.contains("title = \"Hello, world\""));
+        assert!(text.contains("+++\n\n# Hello, world\n\nBody.\n"));
+    }
+
     // ── toml passthrough ─────────────────────────────────────────────────────
 
     #[test]
@@ -514,7 +648,7 @@ mod tests {
             kind: FormatKind::Toml,
             body: None,
             title: None,
-            markdownlint: Markdownlint::Default,
+            normalize: true,
         };
         let r = rec(&[("slug", s("jane")), ("email", s("jane@x.org"))]);
         let text = serialize(&r, &fmt).unwrap();

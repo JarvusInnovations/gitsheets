@@ -52,9 +52,21 @@ gix = "0.83"
 # byte-equivalent leftmost-first, multiline `^`/`$`, greedy `\s*` semantics, so
 # the delimiter/H1 parse parity is exact rather than a hand-rolled approximation
 # (the one class of parity bug a manual line scan would risk on trailing
-# whitespace / CRLF). The body-NORMALIZATION pass (markdownlint) is NOT done
-# here — see the codec module docs and plans/markdown-codec-core.md.
+# whitespace / CRLF).
 regex = "1"
+# ── markdown-normalize-core (native body normalization) ───────────────────────
+# The native markdown body formatter. Markdown/mdx bodies are normalized on write
+# directly in the core (NOT via a host-side `markdownlint` pre-pass), so body
+# bytes are byte-identical across every binding (Node, Python, …). Used as a
+# direct Rust library — `dprint_plugin_markdown::format_text(text, &config, …)` —
+# NOT as a WASM/CLI dprint plugin. Configured aggressive with `textWrap: never`
+# (unwrap paragraphs to one logical line; preserve hard breaks + block
+# boundaries; align tables; consistent list/emphasis/heading style; collapse
+# blank lines). The emitted bytes depend on the formatter + its config, so this
+# is part of the canonical-behavior contract and is PINNED EXACTLY (`=`) like the
+# serializer, engine, and collator. See src/codec.rs (`normalize_body`) and
+# specs/behaviors/content-types.md.
+dprint-plugin-markdown = "=0.22.1"
 # ── locale-collation-core (native ICU collation for declarative `sort = true`) ─
 # The ICU4X collator. Declarative `sort = true` (locale-sensitive string-array
 # sorting) is NATIVE — it does NOT route through the boa engine, because boa is
