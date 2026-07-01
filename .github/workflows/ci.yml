@@ -13,7 +13,16 @@ jobs:
       matrix:
         node: ['20', '22']
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+
+      # The core-routed tests commit to throwaway scratch repos; gix's update_ref
+      # writes a reflog entry, which needs a committer identity from git config.
+      # CI runners have none configured, so without this the reflog write fails
+      # ("The reflog could not be created or updated"). Mirrors rust-core.yml.
+      - name: Configure git identity (core-backed tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
 
       - name: Set up Node.js ${{ matrix.node }}
         uses: actions/setup-node@v6
@@ -21,12 +30,30 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
+      # The JS package now hard-depends on the @gitsheets/core-napi addon
+      # (workspace-linked at rust/gitsheets-napi). Building its .node needs a
+      # Rust toolchain; the cache keeps rebuilds cheap across runs.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
       - name: Install dependencies
         run: npm ci
 
-      # Build first: gitsheets-axi consumes the `gitsheets` workspace through
-      # its `dist/` (the `main`/`types` fields point there), so type-check
-      # and test both need the library built before they run.
+      # Build the napi addon (release) BEFORE the JS build/test: the workspace
+      # link node_modules/@gitsheets/core-napi -> rust/gitsheets-napi only
+      # resolves once the platform .node exists next to its index.js, and every
+      # core-routed test loads it. @napi-rs/cli comes from the npm ci above
+      # (rust/gitsheets-napi is a workspace member, so its devDeps are installed).
+      - name: Build the napi addon (release)
+        working-directory: rust/gitsheets-napi
+        run: npm run build
+
+      # Build next: gitsheets-axi consumes the `gitsheets` workspace through its
+      # `dist/` (the `main`/`types` fields point there), so type-check and test
+      # both need the library built before they run.
       - name: Build
         run: npm run build
 
