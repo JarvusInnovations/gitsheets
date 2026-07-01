@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [node-binding-thin]
 specs:
   - specs/rust-core.md
