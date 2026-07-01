@@ -62,8 +62,10 @@ export const markdownFormat: Format = {
         `markdown format: record.${bodyField} must be a string, got ${typeof bodyRaw}`,
       );
     }
-    // `markdownlint === false` disables body normalization (frame verbatim).
-    const normalize = config.markdownlint !== false;
+    // `normalize === false` frames the body verbatim — the same toggle the core
+    // codec honors on the write path, so host serialization (CLI check/edit)
+    // agrees with what an upsert commits. See specs/behaviors/content-types.md.
+    const normalize = config.normalize !== false;
     return callCore(() =>
       addon.markdownSerialize(record, bodyField, config.title ?? null, normalize),
     );

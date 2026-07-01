@@ -7,7 +7,7 @@ import { markdownFormat } from './markdown.js';
 import type { FormatConfig } from './index.js';
 
 const CONFIG: FormatConfig = { type: 'markdown', body: 'body' };
-const CONFIG_NO_LINT: FormatConfig = { type: 'markdown', body: 'body', markdownlint: false };
+const CONFIG_NO_LINT: FormatConfig = { type: 'markdown', body: 'body', normalize: false };
 
 describe('markdownFormat.serialize', () => {
   it('writes frontmatter delimited by +++ followed by the body', async () => {
@@ -48,7 +48,7 @@ describe('markdownFormat.serialize', () => {
     expect(text).not.toContain('*  item2');
   });
 
-  it('skips normalization when [gitsheet.format.markdownlint] = false', async () => {
+  it('skips normalization when [gitsheet.format].normalize = false', async () => {
     const text = await markdownFormat.serialize(
       { slug: 'raw', body: '* item1\n*  item2\n' },
       CONFIG_NO_LINT,

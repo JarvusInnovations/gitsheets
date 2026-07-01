@@ -1671,10 +1671,25 @@ export class Sheet<T extends RecordLike = RecordLike> {
     }
     const previous = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
     const prevArg = typeof previous === 'string' ? previous : undefined;
+    const allowMissing = opts.allowMissingBody ?? false;
 
-    const wc = (await this.#withCoreTx((coreTx) =>
-      callCore(() => coreTx.willChange(this.#name, input, prevArg, opts.allowMissingBody ?? false)),
-    )) as unknown as { changed: boolean; path: string; currentBlobHash: string | null; nextText: string };
+    const { candidate, wc } = await this.#withCoreTx((coreTx) => {
+      // prepareUpsert (non-mutating) yields the normalized candidate for the
+      // host-side unique-index pre-check — the same pipeline `upsert` runs, per
+      // specs/api/sheet.md#willChange; willChange yields the byte comparison.
+      const candidate = callCore(() =>
+        coreTx.prepareUpsert(this.#name, input, prevArg, allowMissing),
+      ) as unknown as { path: string; nextText: string; record: RecordLike };
+      const wc = callCore(() => coreTx.willChange(this.#name, input, prevArg, allowMissing)) as unknown as {
+        changed: boolean;
+        path: string;
+        currentBlobHash: string | null;
+        nextText: string;
+      };
+      return { candidate, wc };
+    });
+
+    this.#uniqueIndexPrecheck(candidate.record, candidate.path);
 
     const out: WillChangeResult = { changed: wc.changed, path: wc.path, nextText: wc.nextText };
     if (wc.currentBlobHash !== null) {

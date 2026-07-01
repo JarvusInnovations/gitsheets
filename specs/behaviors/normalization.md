@@ -106,7 +106,7 @@ Sorts an array of strings using locale-aware comparison (`localeCompare` with `s
 - Null values are *omitted* from the output. TOML can't represent `null`; absent fields read back as `undefined` and are treated as null by validation.
 - Empty arrays and empty objects are preserved (they have semantic meaning distinct from absent).
 
-> **v1.0 substrate note.** The v1.0 Node substrate still serializes through `@iarna/toml`, so its on-disk bytes differ from the canonical form above by exactly the three value-preserving reformat classes documented under [Canonical-form re-baseline](#canonical-form-re-baseline-the-rust-serializer). The cutover to the core serializer — and the one-time live re-normalization — is sequenced with the Node binding work (`node-binding-thin`), not performed implicitly. Until then this is a bounded, documented spec↔substrate drift.
+> **Substrate note.** The canonical form above is now in effect on the Node binding: TOML serialization (and the whole tree/commit substrate) runs through `gitsheets-core`, and the `@iarna/toml` / `smol-toml` dependencies are dropped (`node-binding-thin`). Existing repos re-normalize once via `git sheet normalize` per the [Canonical-form re-baseline](#canonical-form-re-baseline-the-rust-serializer).
 
 ### File bytes
 
