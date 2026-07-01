@@ -27,6 +27,7 @@
 //! handle and the trees navigated through it stay on one thread — the same
 //! discipline the embedded engine ([`crate::engine`]) already requires.
 
+use gix::bstr::ByteSlice;
 use holo_tree::{MutableTree, ObjectId};
 
 use crate::canonical;
@@ -187,6 +188,49 @@ pub(crate) fn read_blob_value(repo: &gix::Repository, hash: ObjectId) -> Result<
         message: format!("record blob {hash} is not valid UTF-8: {e}"),
     })?;
     canonical::parse(&text)
+}
+
+// ── blob-write primitive (the attachment / arbitrary-blob seam) ───────────────
+
+/// Hash `bytes` into the object database as a loose blob and return its git
+/// blob hash. This is the core's authoritative blob-write primitive — the ODB
+/// write goes through the core (holo-tree's `gix::Repository::write_blob`), so
+/// every binding hashes binary content identically. The hash is a pure function
+/// of the bytes (`sha1("blob <len>\0<bytes>")`), so two bindings writing the
+/// same attachment agree byte-for-byte. Staging that blob into a record's
+/// attachment tree is [`crate::sheet::Sheet::set_attachments`].
+pub fn write_blob(repo: &gix::Repository, bytes: &[u8]) -> Result<String> {
+    let id = repo.write_blob(bytes).map_err(|e| Error::CommitFailed {
+        message: format!("could not write blob to object database: {e}"),
+    })?;
+    Ok(id.detach().to_string())
+}
+
+/// Open the repo at `git_dir` and [`write_blob`] `bytes` into it — the
+/// ref-string wrapper a binding calls (it never handles a `gix::Repository`).
+pub fn write_blob_at_dir(git_dir: &str, bytes: &[u8]) -> Result<String> {
+    let repo = open_repo(git_dir)?;
+    write_blob(&repo, bytes)
+}
+
+/// Read a blob's raw bytes by its hex hash, validating it exists in the ODB and
+/// is a blob (not a tree/commit) — the read half of attachment staging. A
+/// missing object is [`Error::RecordNotFound`]; a non-blob is
+/// [`Error::ConfigInvalid`]. Used to place an already-written blob (by hash)
+/// into a tree at a deep path.
+pub(crate) fn read_blob_bytes_by_hash(repo: &gix::Repository, hash: &str) -> Result<Vec<u8>> {
+    let oid = ObjectId::from_hex(hash.as_bytes()).map_err(|e| Error::CommitFailed {
+        message: format!("invalid blob hash {hash:?}: {e}"),
+    })?;
+    let obj = repo.find_object(oid).map_err(|e| Error::RecordNotFound {
+        message: format!("blob {hash} not found in object database: {e}"),
+    })?;
+    if obj.kind != gix::object::Kind::Blob {
+        return Err(Error::ConfigInvalid {
+            message: format!("object {hash} is not a blob (it is a {:?})", obj.kind),
+        });
+    }
+    Ok(obj.data.to_vec())
 }
 
 // ── join / path helpers ──────────────────────────────────────────────────────
@@ -368,14 +412,17 @@ pub fn list_records(
 
 // ── record-level diff (replacing git diff-tree) ──────────────────────────────
 
-/// The status of one record between two trees. No `renamed`: this primitive does
-/// not do similarity-based rename detection (`git diff-tree -M`); a moved record
-/// surfaces as a `Deleted` + an `Added`. See the plan Notes.
+/// The status of one record between two trees. `Renamed` is emitted by
+/// gix similarity-based rename detection (the `git diff-tree -M` analogue,
+/// 50% default threshold) — a moved record whose content is similar enough
+/// surfaces as a single `Renamed` (carrying `previous_path`) rather than a
+/// `Deleted` + `Added` pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordStatus {
     Added,
     Modified,
     Deleted,
+    Renamed,
 }
 
 impl RecordStatus {
@@ -384,47 +431,83 @@ impl RecordStatus {
             RecordStatus::Added => "added",
             RecordStatus::Modified => "modified",
             RecordStatus::Deleted => "deleted",
+            RecordStatus::Renamed => "renamed",
         }
     }
 }
 
 /// One record-level change between two trees. `path` is relative to `base`,
-/// without the extension; hashes are `None` on the side where the record is
-/// absent.
+/// without the extension; for a `Renamed` change it is the **destination** (new)
+/// path, matching `Sheet.diffFrom`'s `canonicalPath = dstPath`. `previous_path`
+/// is the rename **source** (old) path, `Some` only for `Renamed`. Hashes are
+/// `None` on the side where the record is absent.
 #[derive(Clone, Debug)]
 pub struct RecordChange {
     pub path: String,
     pub status: RecordStatus,
+    pub previous_path: Option<String>,
     pub src_hash: Option<String>,
     pub dst_hash: Option<String>,
 }
 
-fn record_blob_map(
+/// The tree id of the subtree under `base`, or `None` when that subtree doesn't
+/// exist or is empty (git's empty-tree hash) — scoping the diff to the sheet's
+/// records the way `Sheet.diffFrom`'s `-- <effectiveRoot>` pathspec does.
+fn subtree_id_for_diff(
     repo: &gix::Repository,
     tree: &mut MutableTree,
     base: &str,
-    extension: &str,
-) -> Result<std::collections::BTreeMap<String, String>> {
+) -> Result<Option<ObjectId>> {
     let barg = base_arg(base);
-    let mut out = std::collections::BTreeMap::new();
-    let subtree = match tree.get_subtree(repo, &barg).map_err(map_ht)? {
-        Some(t) => t,
-        None => return Ok(out),
-    };
-    for (path, info) in subtree.get_blob_map(repo).map_err(map_ht)? {
-        if !path.ends_with(extension) {
-            continue;
+    match tree.get_subtree(repo, &barg).map_err(map_ht)? {
+        Some(sub) => {
+            let id = sub.write(repo).map_err(map_ht)?;
+            if id.to_string() == EMPTY_TREE_HASH {
+                Ok(None)
+            } else {
+                Ok(Some(id))
+            }
         }
-        let record_path = path[..path.len() - extension.len()].to_string();
-        out.insert(record_path, hex(info.hash));
+        None => Ok(None),
     }
-    Ok(out)
 }
 
-/// Diff records between two trees under `base`: added (only in dst), deleted
-/// (only in src), modified (present in both, blob hash differs). Identical
-/// blobs are skipped. Yielded in sorted path order (git-canonical), matching
-/// `git diff-tree -r`'s ordering for the add/modify/delete cases.
+/// Load a subtree id as a `gix::Tree`, or `None` for the empty side (so
+/// [`gix::Repository::diff_tree_to_tree`] substitutes its empty tree).
+fn load_gix_tree<'r>(
+    repo: &'r gix::Repository,
+    id: Option<ObjectId>,
+) -> Result<Option<gix::Tree<'r>>> {
+    match id {
+        Some(id) => {
+            let obj = repo.find_object(id).map_err(|e| Error::CommitFailed {
+                message: format!("could not load tree {id}: {e}"),
+            })?;
+            let tree = obj.try_into_tree().map_err(|_| Error::CommitFailed {
+                message: format!("object {id} is not a tree"),
+            })?;
+            Ok(Some(tree))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Strip `extension` off a diff location (relative to `base`), returning the
+/// record path — `None` when the entry isn't a record file for this format
+/// (attachments, hidden files, or a directory), which the caller skips.
+fn record_path_of(location: &gix::bstr::BStr, extension: &str) -> Option<String> {
+    let s = location.to_str().ok()?;
+    s.strip_suffix(extension).map(|p| p.to_string())
+}
+
+/// Diff records between two trees under `base` with git-parity rename detection:
+/// added (only in dst), deleted (only in src), modified (present in both, blob
+/// differs), and **renamed** (a moved record with ≥ 50% content similarity —
+/// the `git diff-tree -M` default). Runs gix's `tree_with_rewrites` over the
+/// `base` subtrees (explicit `Rewrites::default()` = 50%, renames only, no
+/// copies, so the result is independent of any `diff.renames` git config).
+/// Non-record entries (attachments, directories) are filtered by `extension`.
+/// Yielded in sorted destination-path order.
 pub fn diff_record_changes(
     repo: &gix::Repository,
     src_tree: &mut MutableTree,
@@ -432,45 +515,117 @@ pub fn diff_record_changes(
     base: &str,
     extension: &str,
 ) -> Result<Vec<RecordChange>> {
-    let src_map = record_blob_map(repo, src_tree, base, extension)?;
-    let dst_map = record_blob_map(repo, dst_tree, base, extension)?;
+    use gix::diff::{Options, Rewrites};
+    use gix::object::tree::diff::ChangeDetached;
 
-    let mut paths: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
-    paths.extend(src_map.keys());
-    paths.extend(dst_map.keys());
+    let src_id = subtree_id_for_diff(repo, src_tree, base)?;
+    let dst_id = subtree_id_for_diff(repo, dst_tree, base)?;
+    let src_gix = load_gix_tree(repo, src_id)?;
+    let dst_gix = load_gix_tree(repo, dst_id)?;
+
+    // Explicit 50%-rename options (the `-M` default), NOT config-derived, so the
+    // classification is deterministic regardless of the repo's diff.renames.
+    let opts = Options::default().with_rewrites(Some(Rewrites::default()));
+    let changes = repo
+        .diff_tree_to_tree(src_gix.as_ref(), dst_gix.as_ref(), Some(opts))
+        .map_err(|e| Error::CommitFailed {
+            message: format!("gix diff_tree_to_tree failed: {e}"),
+        })?;
 
     let mut out = Vec::new();
-    for path in paths {
-        let src = src_map.get(path);
-        let dst = dst_map.get(path);
-        let change = match (src, dst) {
-            (Some(s), Some(d)) => {
-                if s == d {
+    for change in changes {
+        match change {
+            ChangeDetached::Addition {
+                location,
+                entry_mode,
+                id,
+                ..
+            } => {
+                if entry_mode.is_tree() {
                     continue;
                 }
-                RecordChange {
-                    path: path.clone(),
-                    status: RecordStatus::Modified,
-                    src_hash: Some(s.clone()),
-                    dst_hash: Some(d.clone()),
+                if let Some(path) = record_path_of(location.as_ref(), extension) {
+                    out.push(RecordChange {
+                        path,
+                        status: RecordStatus::Added,
+                        previous_path: None,
+                        src_hash: None,
+                        dst_hash: Some(id.to_string()),
+                    });
                 }
             }
-            (None, Some(d)) => RecordChange {
-                path: path.clone(),
-                status: RecordStatus::Added,
-                src_hash: None,
-                dst_hash: Some(d.clone()),
-            },
-            (Some(s), None) => RecordChange {
-                path: path.clone(),
-                status: RecordStatus::Deleted,
-                src_hash: Some(s.clone()),
-                dst_hash: None,
-            },
-            (None, None) => unreachable!(),
-        };
-        out.push(change);
+            ChangeDetached::Deletion {
+                location,
+                entry_mode,
+                id,
+                ..
+            } => {
+                if entry_mode.is_tree() {
+                    continue;
+                }
+                if let Some(path) = record_path_of(location.as_ref(), extension) {
+                    out.push(RecordChange {
+                        path,
+                        status: RecordStatus::Deleted,
+                        previous_path: None,
+                        src_hash: Some(id.to_string()),
+                        dst_hash: None,
+                    });
+                }
+            }
+            ChangeDetached::Modification {
+                location,
+                entry_mode,
+                previous_id,
+                id,
+                ..
+            } => {
+                if entry_mode.is_tree() {
+                    continue;
+                }
+                if let Some(path) = record_path_of(location.as_ref(), extension) {
+                    out.push(RecordChange {
+                        path,
+                        status: RecordStatus::Modified,
+                        previous_path: None,
+                        src_hash: Some(previous_id.to_string()),
+                        dst_hash: Some(id.to_string()),
+                    });
+                }
+            }
+            ChangeDetached::Rewrite {
+                source_location,
+                source_id,
+                location,
+                entry_mode,
+                id,
+                ..
+            } => {
+                if entry_mode.is_tree() {
+                    continue;
+                }
+                // A rename (or copy) whose destination is a record file for this
+                // format. `git diff-tree -M`'s R and C both map to `'renamed'`.
+                let (Some(path), Some(prev)) = (
+                    record_path_of(location.as_ref(), extension),
+                    record_path_of(source_location.as_ref(), extension),
+                ) else {
+                    continue;
+                };
+                out.push(RecordChange {
+                    path,
+                    status: RecordStatus::Renamed,
+                    previous_path: Some(prev),
+                    src_hash: Some(source_id.to_string()),
+                    dst_hash: Some(id.to_string()),
+                });
+            }
+        }
     }
+
+    // Deterministic destination-path order (gix emits additions/deletions in
+    // traversal order then appends rewrites).
+    out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
 }
 
@@ -499,8 +654,11 @@ pub fn diff_records(
     let changes = diff_record_changes(repo, src_tree, dst_tree, base, extension)?;
     let mut out = Vec::with_capacity(changes.len());
     for change in changes {
+        // The src side of a rename lives at `previous_path`; every other status
+        // has src and dst at the same `path`.
+        let src_path = change.previous_path.as_deref().unwrap_or(&change.path);
         let src = match &change.src_hash {
-            Some(_) => read_one(repo, src_tree, base, &change.path, extension)?,
+            Some(_) => read_one(repo, src_tree, base, src_path, extension)?,
             None => None,
         };
         let dst = match &change.dst_hash {
@@ -784,5 +942,125 @@ mod tests {
         let diffs = diff_records(&repo, &mut empty, &mut dst2, "people", TOML_EXTENSION).unwrap();
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].change.status, RecordStatus::Added);
+    }
+
+    // ── blob-write primitive ─────────────────────────────────────────────────
+
+    #[test]
+    fn write_blob_hashes_bytes_to_the_git_blob_hash() {
+        let (_dir, repo) = temp_repo();
+        // Binary content (includes a NUL + high bytes) — proves it's byte-verbatim.
+        let bytes: &[u8] = &[0xde, 0xad, 0xbe, 0xef, 0x00, 0xff, b'h', b'i'];
+        let hash = write_blob(&repo, bytes).unwrap();
+        // Independently computed git blob hash: sha1("blob <len>\0<bytes>").
+        assert_eq!(hash, git_blob_hash(bytes));
+        // And the object is retrievable + byte-identical.
+        let read = read_blob_bytes_by_hash(&repo, &hash).unwrap();
+        assert_eq!(read, bytes);
+    }
+
+    #[test]
+    fn read_blob_bytes_by_hash_rejects_missing_and_non_blob() {
+        let (_dir, repo) = temp_repo();
+        // A well-formed but absent hash → record_not_found.
+        let absent = "0".repeat(40);
+        let err = read_blob_bytes_by_hash(&repo, &absent).err().unwrap();
+        assert_eq!(err.code(), "record_not_found");
+        // A tree hash (the empty tree) is not a blob → config_invalid.
+        let mut t = MutableTree::empty();
+        write_records(&repo, &mut t, "people", &[("jane".into(), rec(&[("slug", s("jane"))]))], TOML_EXTENSION)
+            .unwrap();
+        let tree_hash = t.write(&repo).unwrap().to_string();
+        let err = read_blob_bytes_by_hash(&repo, &tree_hash).err().unwrap();
+        assert_eq!(err.code(), "config_invalid");
+    }
+
+    // ── rename detection (git diff-tree -M parity) ───────────────────────────
+
+    /// Whether the `git` CLI is on PATH (the parity oracle needs it).
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// A 4-field record whose slug drives the path; changing only the slug keeps
+    /// ~75% of the lines identical → well above git's 50% rename threshold.
+    fn person(slug: &str) -> Value {
+        rec(&[
+            ("bio", s("A reasonably long biography line that stays put.")),
+            ("email", s("jane@example.org")),
+            ("name", s("Jane Q. Doe")),
+            ("slug", s(slug)),
+        ])
+    }
+
+    #[test]
+    fn diff_detects_a_moved_record_as_renamed() {
+        let (_dir, repo) = temp_repo();
+        let mut src = MutableTree::empty();
+        write_records(&repo, &mut src, "people", &[("jane".into(), person("jane"))], TOML_EXTENSION).unwrap();
+        let src_hash = src.write(&repo).unwrap().to_string();
+
+        // Move jane → jane-doe (slug change re-renders the path); content stays
+        // ~75% identical.
+        let mut dst = MutableTree::empty();
+        write_records(&repo, &mut dst, "people", &[("jane-doe".into(), person("jane-doe"))], TOML_EXTENSION)
+            .unwrap();
+        let dst_hash = dst.write(&repo).unwrap().to_string();
+
+        let mut src2 = resolve_tree(&repo, &src_hash).unwrap();
+        let mut dst2 = resolve_tree(&repo, &dst_hash).unwrap();
+        let changes = diff_record_changes(&repo, &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
+
+        assert_eq!(changes.len(), 1, "one rename, not an add + a delete");
+        assert_eq!(changes[0].status, RecordStatus::Renamed);
+        assert_eq!(changes[0].path, "jane-doe");
+        assert_eq!(changes[0].previous_path.as_deref(), Some("jane"));
+        assert!(changes[0].src_hash.is_some());
+        assert!(changes[0].dst_hash.is_some());
+
+        // The rename's patch is the src→dst field delta (the slug replace).
+        let diffs = diff_records(&repo, &mut resolve_tree(&repo, &src_hash).unwrap(), &mut resolve_tree(&repo, &dst_hash).unwrap(), "people", TOML_EXTENSION).unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].patch.len(), 1);
+        assert_eq!(diffs[0].patch[0].path, "/slug");
+
+        // Parity: real `git diff-tree -M` classifies the same move as a rename.
+        if git_available() {
+            let out = std::process::Command::new("git")
+                .args(["diff-tree", "-M", "-r", "--name-status", "--no-commit-id", &src_hash, &dst_hash, "--", "people"])
+                .current_dir(_dir.path())
+                .output()
+                .unwrap();
+            let text = String::from_utf8(out.stdout).unwrap();
+            assert!(
+                text.lines().any(|l| l.starts_with('R') && l.contains("people/jane.toml") && l.contains("people/jane-doe.toml")),
+                "git diff-tree -M should report a rename, got: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn diff_dissimilar_records_are_add_plus_delete_not_rename() {
+        // Totally different content on both sides → git (and the core) do NOT
+        // pair them as a rename.
+        let (_dir, repo) = temp_repo();
+        let mut src = MutableTree::empty();
+        write_records(&repo, &mut src, "people", &[("bob".into(), rec(&[("slug", s("bob"))]))], TOML_EXTENSION).unwrap();
+        let src_hash = src.write(&repo).unwrap().to_string();
+        let mut dst = MutableTree::empty();
+        write_records(&repo, &mut dst, "people", &[("amy".into(), rec(&[("slug", s("amy"))]))], TOML_EXTENSION).unwrap();
+        let dst_hash = dst.write(&repo).unwrap().to_string();
+
+        let mut src2 = resolve_tree(&repo, &src_hash).unwrap();
+        let mut dst2 = resolve_tree(&repo, &dst_hash).unwrap();
+        let changes = diff_record_changes(&repo, &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
+        let statuses: std::collections::HashMap<&str, RecordStatus> =
+            changes.iter().map(|c| (c.path.as_str(), c.status)).collect();
+        assert_eq!(statuses["amy"], RecordStatus::Added);
+        assert_eq!(statuses["bob"], RecordStatus::Deleted);
     }
 }
