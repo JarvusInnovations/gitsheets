@@ -85,18 +85,17 @@ describe('validateRecord (JSON Schema layer)', () => {
     }
   });
 
-  it('ignores unknown JSON-Schema keywords (core lenient vs former ajv strict)', async () => {
-    // Enumerated divergence: the former ajv pass ran `strict: true` and rejected
-    // unknown keywords at compile with ConfigError(config_invalid). The core's
-    // `jsonschema` crate is lenient — a typo'd/unknown keyword is silently
-    // ignored, so the schema compiles and the record validates. See
-    // specs/behaviors/validation.md and the node-binding-thin plan Notes.
-    const out = await validateRecord({
-      record: { x: 1 },
-      schema: { type: 'object', frobnicate: true },
-      schemaSourcePath: '.gitsheets/test.toml',
-    });
-    expect(out).toEqual({ x: 1 });
+  it('ConfigError when the schema itself is invalid', async () => {
+    // strict mode rejects unknown keywords — the core walks the schema at
+    // compile and raises ConfigError(config_invalid) on any keyword outside the
+    // known Draft-07 vocabulary, matching the former ajv `strict: true` pass.
+    await expect(
+      validateRecord({
+        record: { x: 1 },
+        schema: { type: 'object', frobnicate: true },
+        schemaSourcePath: '.gitsheets/test.toml',
+      }),
+    ).rejects.toBeInstanceOf(ConfigError);
   });
 
   it('skips JSON Schema when schema is null', async () => {

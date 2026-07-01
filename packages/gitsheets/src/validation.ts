@@ -9,13 +9,13 @@
 // app concern, allowed to be language-specific, and NOT part of the on-disk
 // contract. See specs/rust-core.md.
 //
-// **Enumerated divergence from the former `ajv` pass:** `ajv` ran `strict:
-// true`, rejecting *unknown JSON-Schema keywords* (and disabling `$data`) at
-// compile with `ConfigError(config_invalid)`. The core's `jsonschema` crate is
-// lenient — it silently ignores unknown keywords — so a schema with a typo'd or
-// `$data` keyword now compiles where `ajv` would have rejected it. This is a
-// deliberate, documented core behavior (see gitsheets-core::validation and the
-// node-binding-thin plan Notes).
+// **Strict-mode parity with the former `ajv` pass:** `ajv` ran `strict: true`,
+// rejecting *unknown JSON-Schema keywords* at compile with
+// `ConfigError(config_invalid)`. The core's `jsonschema` crate is lenient on its
+// own, so gitsheets-core walks the schema at compile time and raises
+// `config_invalid` on any keyword outside the known Draft-07 vocabulary —
+// restoring ajv's guard. A typo'd keyword therefore surfaces here as a
+// ConfigError via `callCore` (see gitsheets-core::validation).
 
 import { addon, callCore } from './core.js';
 import { ValidationError, type ValidationIssue } from './errors.js';
