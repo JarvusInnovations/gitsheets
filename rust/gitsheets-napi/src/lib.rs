@@ -1449,6 +1449,32 @@ impl CoreTransaction {
         self.set_attachments(env, name, record_path, map)
     }
 
+    /// Stage a raw text file at `path` in this transaction's private tree
+    /// *(mutating)* — the generic file write the CLI uses to commit sheet-config
+    /// edits (`init` / `infer` / `migrate-config`) atomically alongside nothing
+    /// else. `path` is repo-root-relative. Returns the written blob hash.
+    #[napi]
+    pub fn write_file(&mut self, env: Env, path: String, content: String) -> Result<String> {
+        let Self { inner, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let hash = {
+            let (repo, tree) = tx.split();
+            match tree.write_child_bytes(repo, &path, content.as_bytes()) {
+                Ok(h) => h.to_string(),
+                Err(e) => {
+                    let core_err = gitsheets_core::Error::CommitFailed {
+                        message: format!("write_file {path:?} failed: {e}"),
+                    };
+                    return Err(raise_core_error(&env, &core_err));
+                }
+            }
+        };
+        tx.mark_mutated();
+        Ok(hash)
+    }
+
     /// The blob-hash map of a record's attachments (`name → hash`, sorted by
     /// name), or `null` when the record has no attachment directory. Read-only.
     #[napi]
