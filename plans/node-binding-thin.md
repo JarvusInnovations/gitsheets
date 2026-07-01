@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [sheet-store-core, canonical-rebaseline, markdown-codec-core, locale-collation-core, markdown-normalize-core]
 specs:
   - specs/rust-core.md
