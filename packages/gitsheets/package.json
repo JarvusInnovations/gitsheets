@@ -41,7 +41,7 @@
   "license": "Apache-2.0",
   "author": "Jarvus Innovations",
   "dependencies": {
-    "@gitsheets/core-napi": "^0.0.0",
+    "@gitsheets/core-napi": "^0.1.0",
     "csv-parse": "^6.2.1",
     "csv-stringify": "^6.7.0",
     "rfc6902": "^5.2.0",
