@@ -173,7 +173,7 @@ body = 'body'
 
     const recordPath = join(fixture.path, 'posts', 'hello.md');
     await mkdir(join(fixture.path, 'posts'), { recursive: true });
-    // Two-space list marker — markdownlint MD030 fixes it on --fix
+    // Two-space list marker — the native dprint formatter normalizes it on --fix
     await writeFile(
       recordPath,
       '+++\nslug = "hello"\n+++\n\n* item one\n*  item two\n',
@@ -192,7 +192,7 @@ body = 'body'
     expect(code).toBe(0);
 
     const after = await readFile(recordPath, 'utf8');
-    expect(after).toContain('* item one\n* item two');
+    expect(after).toContain('- item one\n- item two');
     expect(after).not.toContain('*  item two');
   });
 

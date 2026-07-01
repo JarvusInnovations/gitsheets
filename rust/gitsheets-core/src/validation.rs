@@ -30,6 +30,15 @@
 //! is the one field that legitimately differs between the two libraries; the
 //! binding's `ajv-parity.mjs` suite asserts validity + path + keyword parity and
 //! excludes prose. Enumerated divergences live in the plan's Notes.
+//!
+//! ## Strict-mode keyword rejection (ajv `strict: true` parity)
+//!
+//! The `jsonschema` crate is *lenient* — it silently ignores unknown/typo'd
+//! keywords — whereas the host `ajv` ran with `strict: true`, which rejects an
+//! unknown keyword at compile with `ConfigError(config_invalid)`. To keep that
+//! persisted-shape guard identical across every binding, [`CompiledSchema::compile`]
+//! walks the schema before building it and raises [`Error::ConfigInvalid`] on any
+//! keyword outside the known Draft-07 vocabulary (see [`reject_unknown_keywords`]).
 
 use jsonschema::{Draft, Validator};
 use serde_json::Value as Json;
@@ -49,13 +58,15 @@ impl CompiledSchema {
     /// bucket, matching the host raising `ConfigError(config_invalid)` when
     /// `ajv.compile` throws.
     ///
-    /// **Strict-mode divergence (enumerated):** `ajv` runs `strict: true`, which
-    /// rejects *unknown keywords* at compile with `config_invalid`. The
-    /// `jsonschema` crate silently ignores unknown keywords instead, so a schema
-    /// with a typo'd keyword compiles here where `ajv` would reject it. See the
-    /// plan Notes.
+    /// **Strict-mode parity:** `ajv` runs `strict: true`, which rejects *unknown
+    /// keywords* at compile with `config_invalid`. The `jsonschema` crate is
+    /// lenient and silently ignores them, so before building we walk the schema
+    /// and raise [`Error::ConfigInvalid`] on any keyword outside the known
+    /// Draft-07 vocabulary — restoring ajv's strict-mode guard. See
+    /// [`reject_unknown_keywords`].
     pub fn compile(schema: &Value) -> Result<Self> {
         let json = value_to_json(schema);
+        reject_unknown_keywords(&json)?;
         let validator = jsonschema::options()
             .with_draft(Draft::Draft7)
             .should_validate_formats(true)
@@ -154,6 +165,120 @@ fn value_to_json(value: &Value) -> Json {
     }
 }
 
+// --- Strict-mode unknown-keyword rejection (ajv `strict: true` parity) --------
+
+/// How a known keyword's value nests further subschemas — so the walker descends
+/// *into subschemas* (checking their keywords) without ever mistaking a data
+/// position (a `properties` name, an `enum` value, a `default`) for a keyword.
+enum Descent {
+    /// The value carries no subschema (data / scalar / plain array). Don't recurse.
+    None,
+    /// The value *is* a subschema (`not`, `if`, `additionalProperties`, …).
+    Schema,
+    /// The value is an array of subschemas (`allOf`, `anyOf`, `oneOf`).
+    SchemaArray,
+    /// The value is an object whose *values* are subschemas and whose keys are
+    /// arbitrary (`properties`, `patternProperties`, `definitions`, `$defs`,
+    /// `dependentSchemas`).
+    SchemaMap,
+    /// `items`: either a single subschema or an array of subschemas (tuple form).
+    Items,
+    /// `dependencies`: an object whose values are *either* a subschema or a plain
+    /// array of property-name strings (the latter carries no subschema).
+    Dependencies,
+}
+
+/// The known Draft-07 keyword vocabulary (plus the annotation/`$`-core keywords
+/// `ajv` accepts), mapped to how each descends. A key absent from this table in a
+/// schema position is an *unknown keyword* → rejected, matching ajv `strict:true`.
+fn keyword_descent(keyword: &str) -> Option<Descent> {
+    Some(match keyword {
+        // Core / meta / annotation (data-valued — no subschema to descend).
+        "$schema" | "$id" | "$ref" | "$comment" | "$anchor" | "$recursiveRef"
+        | "$recursiveAnchor" | "$dynamicRef" | "$dynamicAnchor" | "$vocabulary"
+        | "title" | "description" | "default" | "examples" | "deprecated"
+        | "readOnly" | "writeOnly" => Descent::None,
+        // Validation assertions (all data-valued).
+        "type" | "enum" | "const" | "multipleOf" | "maximum" | "exclusiveMaximum"
+        | "minimum" | "exclusiveMinimum" | "maxLength" | "minLength" | "pattern"
+        | "maxItems" | "minItems" | "uniqueItems" | "maxContains" | "minContains"
+        | "maxProperties" | "minProperties" | "required" | "dependentRequired"
+        | "format" | "contentMediaType" | "contentEncoding" => Descent::None,
+        // Applicators whose value is a single subschema.
+        "additionalProperties" | "additionalItems" | "propertyNames" | "contains"
+        | "if" | "then" | "else" | "not" | "contentSchema" => Descent::Schema,
+        // Applicators whose value is an array of subschemas.
+        "allOf" | "anyOf" | "oneOf" => Descent::SchemaArray,
+        // Applicators whose value is an object of subschemas (arbitrary keys).
+        "properties" | "patternProperties" | "definitions" | "$defs"
+        | "dependentSchemas" => Descent::SchemaMap,
+        "items" => Descent::Items,
+        "dependencies" => Descent::Dependencies,
+        _ => return None,
+    })
+}
+
+/// Walk a compiled schema and reject any keyword outside [`keyword_descent`]'s
+/// known Draft-07 vocabulary with [`Error::ConfigInvalid`] — the config-time
+/// bucket the host surfaces as `ConfigError(config_invalid)`, restoring ajv
+/// `strict: true`'s unknown-keyword guard. Recurses only through genuine
+/// subschema positions, so `properties` names, `enum`/`const` values, `required`
+/// entries, and `default`s are never misread as keywords.
+fn reject_unknown_keywords(schema: &Json) -> Result<()> {
+    // A subschema may be a boolean (`true`/`false`) — nothing to check there.
+    let Json::Object(map) = schema else {
+        return Ok(());
+    };
+    for (key, value) in map {
+        let Some(descent) = keyword_descent(key) else {
+            return Err(Error::ConfigInvalid {
+                message: format!(
+                    "[gitsheet.schema] unknown JSON Schema keyword '{key}' \
+                     (strict mode rejects unrecognized keywords)"
+                ),
+            });
+        };
+        match descent {
+            Descent::None => {}
+            Descent::Schema => reject_unknown_keywords(value)?,
+            Descent::SchemaArray => {
+                if let Json::Array(items) = value {
+                    for item in items {
+                        reject_unknown_keywords(item)?;
+                    }
+                }
+            }
+            Descent::SchemaMap => {
+                if let Json::Object(subs) = value {
+                    for sub in subs.values() {
+                        reject_unknown_keywords(sub)?;
+                    }
+                }
+            }
+            Descent::Items => match value {
+                Json::Array(items) => {
+                    for item in items {
+                        reject_unknown_keywords(item)?;
+                    }
+                }
+                other => reject_unknown_keywords(other)?,
+            },
+            Descent::Dependencies => {
+                if let Json::Object(deps) = value {
+                    for dep in deps.values() {
+                        // A string-array dependency carries no subschema; only an
+                        // object/bool dependency is a subschema to descend.
+                        if !dep.is_array() {
+                            reject_unknown_keywords(dep)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +369,83 @@ maxLength = 120
         let err = s.validate_or_error(&r).unwrap_err();
         assert_eq!(err.code(), "validation_failed");
         assert!(!err.issues().is_empty());
+    }
+
+    // --- Strict-mode unknown-keyword rejection (ajv `strict: true` parity) ---
+
+    #[test]
+    fn unknown_top_level_keyword_is_config_invalid() {
+        // The restored strict-mode gate: `frobnicate` is not a JSON Schema
+        // keyword — ajv `strict:true` rejects it at compile, and so must we.
+        let s = parse("type = 'object'\nfrobnicate = true\n").expect("parses");
+        let err = match CompiledSchema::compile(&s) {
+            Ok(_) => panic!("unknown keyword should be rejected"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code(), "config_invalid");
+        assert!(err.to_string().contains("frobnicate"));
+    }
+
+    #[test]
+    fn unknown_keyword_inside_a_property_is_config_invalid() {
+        // A typo'd keyword nested in a property subschema is still caught.
+        let s = parse(
+            "type = 'object'\n[properties.slug]\ntype = 'string'\nmaxLenght = 5\n",
+        )
+        .expect("parses");
+        let err = match CompiledSchema::compile(&s) {
+            Ok(_) => panic!("nested unknown keyword should be rejected"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code(), "config_invalid");
+        assert!(err.to_string().contains("maxLenght"));
+    }
+
+    #[test]
+    fn known_vocabulary_including_combinators_compiles() {
+        // Exercises applicators (allOf/oneOf/not/if/then/else/items/$defs) and
+        // data-valued keywords (enum/const/default) so none is misread as an
+        // unknown keyword and no data position (enum values, property names,
+        // required entries) trips the walker.
+        let s = parse(
+            r#"
+type = 'object'
+required = ['status']
+default = { status = 'draft' }
+[properties.status]
+enum = ['draft', 'active', 'archived']
+[properties.tags]
+type = 'array'
+items = { type = 'string' }
+[properties.score]
+const = 42
+[[allOf]]
+type = 'object'
+[[oneOf]]
+required = ['status']
+[properties.nested]
+[properties.nested.not]
+type = 'null'
+[definitions.reusable]
+type = 'string'
+[if]
+required = ['status']
+[then]
+type = 'object'
+"#,
+        )
+        .expect("parses");
+        CompiledSchema::compile(&s).expect("known vocabulary compiles");
+    }
+
+    #[test]
+    fn keyword_named_as_a_property_is_not_a_keyword() {
+        // `frobnicate` here is a *property name*, not a keyword — it must NOT be
+        // rejected (matches ajv: property names are data positions).
+        let s = parse(
+            "type = 'object'\n[properties.frobnicate]\ntype = 'boolean'\n",
+        )
+        .expect("parses");
+        CompiledSchema::compile(&s).expect("property named like a keyword compiles");
     }
 }

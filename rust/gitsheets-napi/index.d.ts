@@ -378,6 +378,13 @@ export declare class CoreTransaction {
   /** Stage a single attachment *(mutating)* — sugar over [`Self::set_attachments`]. */
   setAttachment(name: string, recordPath: string, attachmentName: string, blobHash: string): void
   /**
+   * Stage a raw text file at `path` in this transaction's private tree
+   * *(mutating)* — the generic file write the CLI uses to commit sheet-config
+   * edits (`init` / `infer` / `migrate-config`) atomically alongside nothing
+   * else. `path` is repo-root-relative. Returns the written blob hash.
+   */
+  writeFile(path: string, content: string): string
+  /**
    * The blob-hash map of a record's attachments (`name → hash`, sorted by
    * name), or `null` when the record has no attachment directory. Read-only.
    */

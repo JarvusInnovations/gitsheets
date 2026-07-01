@@ -555,8 +555,7 @@ async function runInfer(argv: InferArgs): Promise<void> {
   const newText = stringifyRecord(parsed);
   const txOpts = buildTxOpts(argv, `${argv.sheet} infer schema (${Object.keys(properties).length} fields)`);
   await repo.transact(txOpts, async (tx) => {
-    await tx.tree.writeChild(configPath, newText);
-    tx.markMutated();
+    tx.writeFile(configPath, newText);
   });
   process.stdout.write(
     `inferred schema for .gitsheets/${argv.sheet}.toml — ${Object.keys(properties).length} properties, ${required.length} required\n`,
@@ -617,8 +616,7 @@ async function runInit(argv: InitArgs): Promise<void> {
 
   const txOpts = buildTxOpts(argv, `${argv.sheet} init sheet config`);
   await repo.transact(txOpts, async (tx) => {
-    await tx.tree.writeChild(configPath, newText);
-    tx.markMutated();
+    tx.writeFile(configPath, newText);
   });
   process.stdout.write(`created .gitsheets/${argv.sheet}.toml\n`);
 }
@@ -674,8 +672,7 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
   const newText = stringifyRecord(parsed);
   const txOpts = buildTxOpts(argv, `${argv.sheet} migrate-config`);
   await repo.transact(txOpts, async (tx) => {
-    await tx.tree.writeChild(configPath, newText);
-    tx.markMutated();
+    tx.writeFile(configPath, newText);
   });
   process.stdout.write(
     `migrated .gitsheets/${argv.sheet}.toml — ${Object.keys(properties).length} property migrations${warnings ? `, ${warnings} warning(s)` : ''}\n`,

@@ -86,7 +86,9 @@ describe('validateRecord (JSON Schema layer)', () => {
   });
 
   it('ConfigError when the schema itself is invalid', async () => {
-    // strict mode rejects unknown keywords
+    // strict mode rejects unknown keywords — the core walks the schema at
+    // compile and raises ConfigError(config_invalid) on any keyword outside the
+    // known Draft-07 vocabulary, matching the former ajv `strict: true` pass.
     await expect(
       validateRecord({
         record: { x: 1 },
