@@ -104,7 +104,7 @@ jobs:
         working-directory: rust/gitsheets-napi
         run: npm run build
 
-      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, ICU locale collation, record CRUD/diff/patch, query, index, Sheet/Transaction/Store, markdown codec)
+      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, ICU locale collation, record CRUD/diff/patch, query, index, Sheet/Transaction/Store, markdown codec, attachments)
         # Explicit file paths (not a glob) so the suite runs identically on
         # node 20 and 22 — `node --test "test/*.mjs"` does NOT expand on node 20.
         # The `test` npm script lists every .mjs explicitly (see package.json),
@@ -116,9 +116,12 @@ jobs:
         # (Transaction lifecycle + the two-phase consumer-validator protocol +
         # Store discovery), and sheet-markdown.mjs, which drives the markdown/mdx
         # content-type codec (frontmatter+body round-trip, title-from-H1, lazy
-        # body, allowMissingBody). record-crud/query/index/sheet-store/
-        # sheet-markdown.mjs use `git init` for their temp repos, so git must be
-        # on PATH (it is, on ubuntu-latest).
+        # body, allowMissingBody), and sheet-attachments.mjs, which drives the
+        # blob-write primitive + atomic attachment staging (record + attachment in
+        # ONE commit) + diff rename detection vs `git diff-tree -M`.
+        # record-crud/query/index/sheet-store/sheet-markdown/sheet-attachments.mjs
+        # use `git init` for their temp repos, so git must be on PATH (it is, on
+        # ubuntu-latest).
         working-directory: rust/gitsheets-napi
         run: npm test
 
@@ -180,5 +183,9 @@ jobs:
           uv pip install --no-index --find-links dist gitsheets
 
       - name: Smoke + cross-binding byte-identical parity tests
+        # tests/ auto-discovers test_smoke.py (incl. the attachment surface + the
+        # blob-write primitive + diff rename detection) and test_cross_binding.py
+        # (incl. the attachment-staging byte-identical Node↔Python commit proof,
+        # which drives the napi peer through _node_writer.mjs).
         working-directory: rust/gitsheets-py
         run: .venv/bin/pytest tests/ -v

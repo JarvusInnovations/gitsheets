@@ -235,6 +235,104 @@ def test_create_patch_and_merge_patch():
     assert merged == {"slug": "jane"}
 
 
+# ── attachments + blob-write primitive ──────────────────────────────────────────
+
+
+def _git_blob_hash(data: bytes) -> str:
+    import hashlib
+
+    h = hashlib.sha1()
+    h.update(b"blob %d\0" % len(data))
+    h.update(data)
+    return h.hexdigest()
+
+
+def test_write_blob_hashes_to_git_blob_hash(fresh_repo):
+    _, git_dir = fresh_repo
+    data = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0xFF])
+    got = gitsheets.write_blob(git_dir, data)
+    assert got == _git_blob_hash(data)
+
+
+def test_record_and_attachment_commit_atomically(seeded_repo):
+    d, git_dir = seeded_repo
+    data = b"AVATAR-BYTES"
+    with gitsheets.transact(
+        git_dir, "add jane + avatar", 1_700_000_000, author=("J", "j@x.org"), branch="refs/heads/main"
+    ) as tx:
+        tx.open_sheet("people", ".gitsheets/people.toml")
+        tx.upsert("people", {"slug": "jane"})
+        blob = gitsheets.write_blob(git_dir, data)
+        tx.set_attachment("people", "jane", "avatar.bin", blob)
+    commit = tx.result["commit_hash"]
+    assert commit is not None
+
+    # ONE commit contains BOTH the record and the attachment.
+    tree = subprocess.run(
+        ["git", "--git-dir", git_dir, "ls-tree", "-r", commit], check=True, capture_output=True
+    ).stdout.decode()
+    assert "people/jane.toml" in tree
+    assert "people/jane/avatar.bin" in tree
+    # The staged attachment blob is exactly the bytes we wrote.
+    in_tree = subprocess.run(
+        ["git", "--git-dir", git_dir, "rev-parse", f"{commit}:people/jane/avatar.bin"],
+        check=True, capture_output=True,
+    ).stdout.decode().strip()
+    assert in_tree == blob == _git_blob_hash(data)
+
+
+def test_attachment_get_delete_surface(seeded_repo):
+    d, git_dir = seeded_repo
+    with gitsheets.transact(
+        git_dir, "seed", 1_700_000_000, author=("J", "j@x.org"), branch="refs/heads/main"
+    ) as tx:
+        tx.open_sheet("people", ".gitsheets/people.toml")
+        tx.upsert("people", {"slug": "jane"})
+        a = gitsheets.write_blob(git_dir, b"A")
+        c = gitsheets.write_blob(git_dir, b"C")
+        tx.set_attachments("people", "jane", {"avatar.jpg": a, "cover.png": c})
+        assert tx.get_attachments("people", "jane") == {"avatar.jpg": a, "cover.png": c}
+        assert tx.get_attachment("people", "jane", "avatar.jpg") == a
+        assert tx.get_attachment("people", "jane", "nope") is None
+        # Strict single-delete of a missing attachment raises.
+        with pytest.raises(gitsheets.NotFoundError):
+            tx.delete_attachment("people", "jane", "nope.png")
+        tx.delete_attachment("people", "jane", "avatar.jpg")
+        assert list(tx.get_attachments("people", "jane").keys()) == ["cover.png"]
+
+
+def test_diff_detects_rename(seeded_repo):
+    d, git_dir = seeded_repo
+
+    def person(slug):
+        return {
+            "bio": "A reasonably long biography line that stays put.",
+            "email": "jane@example.org",
+            "name": "Jane Q. Doe",
+            "slug": slug,
+        }
+
+    with gitsheets.transact(
+        git_dir, "add jane", 1_700_000_000, author=("J", "j@x.org"), branch="refs/heads/main"
+    ) as tx:
+        tx.open_sheet("people", ".gitsheets/people.toml")
+        tx.upsert("people", person("jane"))
+    src = tx.result["commit_hash"]
+
+    with gitsheets.transact(
+        git_dir, "rename", 1_700_000_001, author=("J", "j@x.org"), branch="refs/heads/main"
+    ) as tx:
+        tx.open_sheet("people", ".gitsheets/people.toml")
+        tx.upsert("people", person("jane-doe"), previous_path="jane")
+    dst = tx.result["commit_hash"]
+
+    diffs = gitsheets.diff_records(git_dir, src, dst, "people")
+    assert len(diffs) == 1
+    assert diffs[0]["status"] == "renamed"
+    assert diffs[0]["path"] == "jane-doe"
+    assert diffs[0]["previous_path"] == "jane"
+
+
 # ── typed error mapping ─────────────────────────────────────────────────────────
 
 

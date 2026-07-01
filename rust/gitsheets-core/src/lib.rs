@@ -42,8 +42,8 @@ pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
 pub use index::{MultiIndex, UniqueIndex};
 pub use query::{matches as query_matches, query_candidate_paths, query_records, Filter, FilterPred};
 pub use record::{
-    DeleteOutcome, RecordChange, RecordDiff, RecordStatus, WriteOutcome, EMPTY_TREE_HASH,
-    TOML_EXTENSION,
+    write_blob, write_blob_at_dir, DeleteOutcome, RecordChange, RecordDiff, RecordStatus,
+    WriteOutcome, EMPTY_TREE_HASH, TOML_EXTENSION,
 };
 pub use sheet::{Sheet, StageOutcome, UpsertCandidate, WillChange};
 pub use transaction::{Author, Transaction, TransactionOptions, TransactionResult};

@@ -49,6 +49,7 @@ record_read = _core.record_read
 record_write = _core.record_write
 record_delete = _core.record_delete
 record_list = _core.record_list
+write_blob = _core.write_blob
 substrate_stats = _core.substrate_stats
 substrate_reset = _core.substrate_reset
 create_patch = _core.create_patch
@@ -90,6 +91,7 @@ __all__ = [
     "record_write",
     "record_delete",
     "record_list",
+    "write_blob",
     "substrate_stats",
     "substrate_reset",
     "create_patch",
@@ -163,6 +165,38 @@ class Transaction:
 
     def clear(self, sheet: str) -> None:
         self._inner.clear(sheet)
+
+    def set_attachment(
+        self, sheet: str, record_path: str, name: str, blob_hash: str
+    ) -> None:
+        """Stage a single attachment (`name → blob_hash`) for ``record_path``."""
+        self._inner.set_attachment(sheet, record_path, name, blob_hash)
+
+    def set_attachments(
+        self, sheet: str, record_path: str, attachments: dict[str, str]
+    ) -> None:
+        """Stage attachments (a ``{name: blob_hash}`` dict) for ``record_path``."""
+        self._inner.set_attachments(sheet, record_path, attachments)
+
+    def get_attachments(
+        self, sheet: str, record_path: str
+    ) -> Optional[dict[str, str]]:
+        """The ``{name: hash}`` map of a record's attachments, or ``None``."""
+        return self._inner.get_attachments(sheet, record_path)
+
+    def get_attachment(
+        self, sheet: str, record_path: str, name: str
+    ) -> Optional[str]:
+        """The blob hash of a single named attachment, or ``None``."""
+        return self._inner.get_attachment(sheet, record_path, name)
+
+    def delete_attachment(self, sheet: str, record_path: str, name: str) -> None:
+        """Remove a single named attachment (strict — raises if absent)."""
+        self._inner.delete_attachment(sheet, record_path, name)
+
+    def delete_attachments(self, sheet: str, record_path: str) -> bool:
+        """Remove all attachments for a record (no-op when none). Returns removed?"""
+        return self._inner.delete_attachments(sheet, record_path)
 
     @property
     def parent_commit_hash(self) -> Optional[str]:

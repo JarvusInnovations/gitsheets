@@ -442,6 +442,149 @@ impl Sheet {
         Ok(())
     }
 
+    // ── attachments ──────────────────────────────────────────────────────────
+    //
+    // Attachments are arbitrary blobs colocated with a record: for a record at
+    // `<base>/<recordPath>.toml`, they live in the sibling directory
+    // `<base>/<recordPath>/<name>`. They stage into the SAME `MutableTree` this
+    // sheet's records write into — so a record upsert + its attachments commit
+    // atomically in one transaction (specs/behaviors/attachments.md). Reads and
+    // deletes scope to the `<recordPath>/` subtree; the record's own
+    // `<recordPath>.toml` is a sibling, never inside it, so it's never touched.
+
+    /// Full tree path of a record's attachment directory (`<base>/<recordPath>`).
+    fn attachment_dir(&self, record_path: &str) -> String {
+        join_path(&[&self.base, record_path])
+    }
+
+    /// Full tree path of a single attachment (`<base>/<recordPath>/<name>`).
+    fn attachment_path(&self, record_path: &str, name: &str) -> String {
+        join_path(&[&self.base, record_path, name])
+    }
+
+    /// Stage attachments for a record *(mutating)*: place each `(name, blobHash)`
+    /// at `<base>/<recordPath>/<name>` in the transaction's live tree. The blob
+    /// must already exist in the ODB (write it with
+    /// [`crate::record::write_blob`]); the hash is content-addressed, so the
+    /// placed bytes are exactly the written bytes. An existing attachment of the
+    /// same name is overwritten. Matches `Sheet.setAttachments`.
+    pub fn set_attachments(
+        &mut self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        record_path: &str,
+        attachments: &[(String, String)],
+    ) -> Result<()> {
+        for (name, blob_hash) in attachments {
+            let full = self.attachment_path(record_path, name);
+            // Re-read the (already-written) blob by hash and place it at `full`.
+            // holo-tree lacks a place-by-hash primitive (upstream hardening
+            // finding — a `MutableTree::write_child_hash(path, hash, mode)` would
+            // avoid this read); `write_child_bytes` re-hashes to the same content-
+            // addressed id, so the placed object is byte-identical.
+            let bytes = record::read_blob_bytes_by_hash(repo, blob_hash)?;
+            tree.write_child_bytes(repo, &full, &bytes)
+                .map_err(record::map_ht)?;
+        }
+        self.index_cache = None;
+        Ok(())
+    }
+
+    /// The blob-hash map of a record's attachments (`name → hash`), sorted by
+    /// name; `None` when the record has no attachment directory. Matches
+    /// `Sheet.getAttachments` (returns `null` for no dir).
+    pub fn get_attachments(
+        &self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        record_path: &str,
+    ) -> Result<Option<Vec<(String, String)>>> {
+        let dir = self.attachment_dir(record_path);
+        let barg = if dir.is_empty() { ".".to_string() } else { dir };
+        match tree.get_subtree(repo, &barg).map_err(record::map_ht)? {
+            Some(sub) => {
+                let blob_map = sub.get_blob_map(repo).map_err(record::map_ht)?;
+                Ok(Some(
+                    blob_map
+                        .into_iter()
+                        .map(|(name, info)| (name, info.hash.to_string()))
+                        .collect(),
+                ))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// The blob hash of a single named attachment, or `None` if absent. Matches
+    /// `Sheet.getAttachment`.
+    pub fn get_attachment(
+        &self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        record_path: &str,
+        name: &str,
+    ) -> Result<Option<String>> {
+        let full = self.attachment_path(record_path, name);
+        match tree.get_child(repo, &full).map_err(record::map_ht)? {
+            Some(holo_tree::Child::Blob { hash, .. }) => Ok(Some(hash.to_string())),
+            _ => Ok(None),
+        }
+    }
+
+    /// Remove a single named attachment *(mutating)*. Strict:
+    /// [`Error::RecordNotFound`] when the named attachment doesn't exist, so
+    /// callers can't silently miss bugs. Sibling attachments are left intact.
+    /// Matches `Sheet.deleteAttachment`.
+    pub fn delete_attachment(
+        &mut self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        record_path: &str,
+        name: &str,
+    ) -> Result<()> {
+        let full = self.attachment_path(record_path, name);
+        let is_blob = matches!(
+            tree.get_child(repo, &full).map_err(record::map_ht)?,
+            Some(holo_tree::Child::Blob { .. })
+        );
+        if !is_blob {
+            return Err(Error::RecordNotFound {
+                message: format!(
+                    "{}: no attachment at {}",
+                    self.name,
+                    join_path(&[record_path, name])
+                ),
+            });
+        }
+        tree.delete_child_deep(repo, &full).map_err(record::map_ht)?;
+        self.index_cache = None;
+        Ok(())
+    }
+
+    /// Remove all attachments for a record (drops the entire attachment
+    /// directory) *(mutating)*. Returns whether anything was removed — `false`
+    /// is the idempotent no-op when the record has no attachment directory (the
+    /// caller then leaves the transaction unmutated). Matches
+    /// `Sheet.deleteAttachments`.
+    pub fn delete_attachments(
+        &mut self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        record_path: &str,
+    ) -> Result<bool> {
+        let full = self.attachment_dir(record_path);
+        let is_tree = matches!(
+            tree.get_child(repo, &full).map_err(record::map_ht)?,
+            Some(holo_tree::Child::Tree(_))
+        );
+        if !is_tree {
+            return Ok(false);
+        }
+        tree.delete_child_deep(repo, &full).map_err(record::map_ht)?;
+        self.index_cache = None;
+        Ok(true)
+    }
+
     /// List every record under the sheet's base, in sorted path order, decoded
     /// through the format codec. `with_body` is the lazy-body switch for
     /// markdown sheets (`false` omits the body field — the `withBody: false`
@@ -1094,5 +1237,126 @@ mod tests {
         let listed = sheet.list(&repo, &mut tree, true).unwrap();
         let wc = sheet.will_change(&repo, &mut tree, &listed[0].1, None, false).unwrap();
         assert!(!wc.changed, "byte-identical markdown re-upsert is a no-op");
+    }
+
+    // ── attachments ──────────────────────────────────────────────────────────
+
+    /// Stage a record at `record_path` in `tree`.
+    fn stage_record(sheet: &mut Sheet, repo: &gix::Repository, tree: &mut MutableTree, slug: &str) {
+        let r = rec(&[("slug", s(slug))]);
+        let c = sheet.prepare_upsert(repo, tree, &r, None, false).unwrap();
+        sheet.stage_upsert(repo, tree, &c).unwrap();
+    }
+
+    /// Write `bytes` to the ODB and place it as attachment `name` on `record_path`.
+    fn attach(sheet: &mut Sheet, repo: &gix::Repository, tree: &mut MutableTree, record_path: &str, name: &str, bytes: &[u8]) {
+        let hash = crate::record::write_blob(repo, bytes).unwrap();
+        sheet.set_attachments(repo, tree, record_path, &[(name.to_string(), hash)]).unwrap();
+    }
+
+    #[test]
+    fn set_get_attachments_round_trips_by_hash() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
+        let mut sheet = open(&repo, &mut tree);
+        stage_record(&mut sheet, &repo, &mut tree, "jane");
+
+        let avatar_hash = crate::record::write_blob(&repo, b"AVATAR-BYTES").unwrap();
+        let cover_hash = crate::record::write_blob(&repo, b"COVER-BYTES").unwrap();
+        sheet
+            .set_attachments(&repo, &mut tree, "jane", &[
+                ("avatar.jpg".into(), avatar_hash.clone()),
+                ("cover.png".into(), cover_hash.clone()),
+            ])
+            .unwrap();
+
+        let got = sheet.get_attachments(&repo, &mut tree, "jane").unwrap().unwrap();
+        assert_eq!(
+            got,
+            vec![
+                ("avatar.jpg".to_string(), avatar_hash.clone()),
+                ("cover.png".to_string(), cover_hash),
+            ]
+        );
+        // Single lookup + absent name.
+        assert_eq!(sheet.get_attachment(&repo, &mut tree, "jane", "avatar.jpg").unwrap(), Some(avatar_hash));
+        assert_eq!(sheet.get_attachment(&repo, &mut tree, "jane", "nope.png").unwrap(), None);
+
+        // The record file is NOT reported as an attachment (it's a sibling).
+        let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["avatar.jpg", "cover.png"]);
+    }
+
+    #[test]
+    fn get_attachments_is_none_without_a_dir() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
+        let mut sheet = open(&repo, &mut tree);
+        stage_record(&mut sheet, &repo, &mut tree, "jane");
+        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
+    }
+
+    #[test]
+    fn overwrite_attachment_replaces_the_blob() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
+        let mut sheet = open(&repo, &mut tree);
+        stage_record(&mut sheet, &repo, &mut tree, "jane");
+        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"V1");
+        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"V2");
+        let got = sheet.get_attachments(&repo, &mut tree, "jane").unwrap().unwrap();
+        assert_eq!(got.len(), 1);
+        let expected = crate::record::write_blob(&repo, b"V2").unwrap();
+        assert_eq!(got[0].1, expected);
+    }
+
+    #[test]
+    fn delete_attachment_is_strict_and_leaves_siblings() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
+        let mut sheet = open(&repo, &mut tree);
+        stage_record(&mut sheet, &repo, &mut tree, "jane");
+        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"A");
+        attach(&mut sheet, &repo, &mut tree, "jane", "cover.png", b"C");
+
+        // Missing → RecordNotFound.
+        let err = sheet.delete_attachment(&repo, &mut tree, "jane", "nope.png").err().unwrap();
+        assert_eq!(err.code(), "record_not_found");
+
+        // Existing → removed, sibling intact.
+        sheet.delete_attachment(&repo, &mut tree, "jane", "avatar.jpg").unwrap();
+        let got = sheet.get_attachments(&repo, &mut tree, "jane").unwrap().unwrap();
+        let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["cover.png"]);
+    }
+
+    #[test]
+    fn delete_attachments_removes_dir_and_no_ops_when_absent() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
+        let mut sheet = open(&repo, &mut tree);
+        stage_record(&mut sheet, &repo, &mut tree, "jane");
+
+        // No attachment dir → no-op (returns false, caller leaves tx unmutated).
+        assert!(!sheet.delete_attachments(&repo, &mut tree, "jane").unwrap());
+
+        attach(&mut sheet, &repo, &mut tree, "jane", "a.bin", b"a");
+        attach(&mut sheet, &repo, &mut tree, "jane", "b.bin", b"b");
+        assert!(sheet.delete_attachments(&repo, &mut tree, "jane").unwrap());
+        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
+        // The record itself is intact.
+        assert_eq!(sheet.list(&repo, &mut tree, true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_the_record_cascades_its_attachments() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
+        let mut sheet = open(&repo, &mut tree);
+        stage_record(&mut sheet, &repo, &mut tree, "jane");
+        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"A");
+        sheet.delete_at_path(&repo, &mut tree, "jane").unwrap();
+        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
+        assert!(sheet.list(&repo, &mut tree, true).unwrap().is_empty());
     }
 }

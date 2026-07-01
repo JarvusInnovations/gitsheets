@@ -599,6 +599,54 @@ mod tests {
     }
 
     #[test]
+    fn record_and_attachment_land_in_one_commit_atomically() {
+        let (dir, git_dir, parent) = setup(config_value("${{ slug }}", "people"));
+
+        // One transaction: upsert the record AND stage an attachment for it.
+        let mut tx = Transaction::begin(&git_dir, default_opts("add jane + avatar")).unwrap();
+        let attach_hash;
+        {
+            let (repo, tree) = tx.split();
+            let mut sheet =
+                Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
+            let rec = record_value(&[("slug", "jane")]);
+            let candidate = sheet.prepare_upsert(repo, tree, &rec, None, false).unwrap();
+            sheet.stage_upsert(repo, tree, &candidate).unwrap();
+            // Blob-write primitive → set_attachments (place-by-hash into the SAME
+            // live tree the record staged into).
+            attach_hash = record::write_blob(repo, b"AVATAR").unwrap();
+            sheet
+                .set_attachments(repo, tree, "jane", &[("avatar.jpg".into(), attach_hash.clone())])
+                .unwrap();
+        }
+        tx.mark_mutated();
+        let result = tx.finalize().unwrap();
+
+        let commit_hash = result.commit_hash.expect("one commit produced");
+
+        // The new commit is a single child of the parent (one commit, not two).
+        let repo = record::open_repo(&git_dir).unwrap();
+        let obj = repo.rev_parse_single(commit_hash.as_str()).unwrap().object().unwrap();
+        let commit = obj.try_into_commit().unwrap();
+        let parents: Vec<_> = commit.parent_ids().collect();
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].to_string(), parent.to_string());
+
+        // That ONE commit's tree contains BOTH the record and the attachment.
+        let mut committed = record::resolve_tree(&repo, &commit_hash).unwrap();
+        let record_blob = committed.read_blob(&repo, "people/jane.toml").unwrap();
+        assert!(record_blob.is_some(), "record file is in the commit");
+        let attach_child = committed.get_child(&repo, "people/jane/avatar.jpg").unwrap();
+        match attach_child {
+            Some(holo_tree::Child::Blob { hash, .. }) => {
+                assert_eq!(hash.to_string(), attach_hash, "attachment blob is the written one");
+            }
+            _ => panic!("attachment blob missing from the committed tree"),
+        }
+        drop(dir);
+    }
+
+    #[test]
     fn full_upsert_commits_with_identity_trailers_and_record() {
         let (dir, git_dir, parent) = setup(config_value("${{ slug }}", "people"));
         let mut opts = default_opts("people: add jane");

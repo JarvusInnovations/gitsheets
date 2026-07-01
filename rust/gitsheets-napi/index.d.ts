@@ -116,6 +116,15 @@ export interface JsRecordEntry {
  */
 export declare function recordList(gitDir: string, treeRef: string, base: string, extension?: string | undefined | null): Array<JsRecordEntry>
 /**
+ * Hash raw bytes into the object database as a loose blob, returning its git
+ * blob hash — the core's blob-write primitive (replaces the JS package's direct
+ * `@hologit/holo-tree` `writeBlob`). Used by the CLI/host to hash a binary
+ * attachment before staging it into a record's attachment tree with
+ * `CoreTransaction.setAttachment(s)`. The hash is a pure function of the bytes,
+ * so Node and Python hashing the same content produce the same object.
+ */
+export declare function writeBlob(gitDir: string, content: Buffer): string
+/**
  * A snapshot of holo-tree's process-wide tree/blob counters — read-side
  * instrumentation for the bulk benchmark and the hologit#464 perf finding.
  */
@@ -236,6 +245,14 @@ export interface JsStageOutcome {
   path: string
 }
 /**
+ * One attachment entry from `CoreTransaction.getAttachments`: its filename and
+ * blob hash (name → hash).
+ */
+export interface JsAttachmentEntry {
+  name: string
+  hash: string
+}
+/**
  * Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
  * `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
  */
@@ -351,6 +368,34 @@ export declare class CoreTransaction {
   delete(name: string, recordPath: string): void
   /** `Sheet.clear` *(mutating)* — empties the sheet's data subtree. */
   clear(name: string): void
+  /**
+   * Stage attachments for a record *(mutating)*: place each `name → blobHash`
+   * at `<recordPath>/<name>` in this transaction's live tree, so the record
+   * and its attachments commit atomically. Write the blob first with the
+   * top-level `writeBlob`. Marks the transaction mutated.
+   */
+  setAttachments(name: string, recordPath: string, attachments: Record<string, string>): void
+  /** Stage a single attachment *(mutating)* — sugar over [`Self::set_attachments`]. */
+  setAttachment(name: string, recordPath: string, attachmentName: string, blobHash: string): void
+  /**
+   * The blob-hash map of a record's attachments (`name → hash`, sorted by
+   * name), or `null` when the record has no attachment directory. Read-only.
+   */
+  getAttachments(name: string, recordPath: string): Array<JsAttachmentEntry> | null
+  /** The blob hash of a single named attachment, or `null` if absent. Read-only. */
+  getAttachment(name: string, recordPath: string, attachmentName: string): string | null
+  /**
+   * Remove a single named attachment *(mutating)*. Throws
+   * `NotFoundError(record_not_found)` when it doesn't exist. Marks mutated.
+   */
+  deleteAttachment(name: string, recordPath: string, attachmentName: string): void
+  /**
+   * Remove all attachments for a record *(mutating)*. A no-op when the record
+   * has no attachment directory — in that case the transaction is NOT marked
+   * mutated (so an otherwise-empty transaction still finalizes to no commit).
+   * Returns whether anything was removed.
+   */
+  deleteAttachments(name: string, recordPath: string): boolean
   /**
    * List every record under the sheet's base, decoded through the format
    * codec, in sorted path order. `withBody` is the lazy-body switch for

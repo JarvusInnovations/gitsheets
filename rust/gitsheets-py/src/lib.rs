@@ -607,6 +607,16 @@ fn record_list<'py>(
     }
 }
 
+/// Hash raw bytes (`content`) into the object database as a loose blob, returning
+/// its git blob hash — the core's blob-write primitive. Used to hash a binary
+/// attachment before staging it with `CoreTransaction.set_attachment(s)`. The
+/// hash is a pure function of the bytes, so Python and Node hashing the same
+/// content produce the same object.
+#[pyfunction]
+fn write_blob(py: Python<'_>, git_dir: String, content: Vec<u8>) -> PyResult<String> {
+    record::write_blob_at_dir(&git_dir, &content).map_err(|e| raise_core_error(py, &e))
+}
+
 /// A snapshot of holo-tree's process-wide tree/blob counters.
 #[pyfunction]
 fn substrate_stats(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
@@ -730,6 +740,8 @@ fn diff_records<'py>(
         let obj = PyDict::new(py);
         obj.set_item("path", d.change.path)?;
         obj.set_item("status", d.change.status.as_str())?;
+        // `previous_path` is the rename source (old) path — `None` unless renamed.
+        obj.set_item("previous_path", d.change.previous_path)?;
         obj.set_item("src_hash", d.change.src_hash)?;
         obj.set_item("dst_hash", d.change.dst_hash)?;
         obj.set_item("src", opt_value_to_py(py, d.src)?)?;
@@ -1107,6 +1119,155 @@ impl CoreTransaction {
         Ok(())
     }
 
+    /// Stage attachments for a record *(mutating)*: place each `name → blob_hash`
+    /// (a dict) at `<record_path>/<name>` in this transaction's live tree, so the
+    /// record and its attachments commit atomically. Write the blob first with
+    /// the module-level `write_blob`. Marks the transaction mutated.
+    fn set_attachments(
+        &mut self,
+        py: Python<'_>,
+        name: String,
+        record_path: String,
+        attachments: std::collections::HashMap<String, String>,
+    ) -> PyResult<()> {
+        let items: Vec<(String, String)> = attachments.into_iter().collect();
+        let Self { inner, sheets, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        {
+            let (repo, tree) = tx.split();
+            let sheet = sheets
+                .get_mut(&name)
+                .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
+            sheet
+                .set_attachments(repo, tree, &record_path, &items)
+                .map_err(|e| raise_core_error(py, &e))?;
+        }
+        tx.mark_mutated();
+        Ok(())
+    }
+
+    /// Stage a single attachment *(mutating)* — sugar over `set_attachments`.
+    fn set_attachment(
+        &mut self,
+        py: Python<'_>,
+        name: String,
+        record_path: String,
+        attachment_name: String,
+        blob_hash: String,
+    ) -> PyResult<()> {
+        let mut map = std::collections::HashMap::new();
+        map.insert(attachment_name, blob_hash);
+        self.set_attachments(py, name, record_path, map)
+    }
+
+    /// The blob-hash map of a record's attachments (`{name: hash}`), or `None`
+    /// when the record has no attachment directory. Read-only.
+    fn get_attachments<'py>(
+        &mut self,
+        py: Python<'py>,
+        name: String,
+        record_path: String,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get(&name)
+            .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
+        match sheet
+            .get_attachments(repo, tree, &record_path)
+            .map_err(|e| raise_core_error(py, &e))?
+        {
+            Some(entries) => {
+                let d = PyDict::new(py);
+                for (attachment_name, hash) in entries {
+                    d.set_item(attachment_name, hash)?;
+                }
+                Ok(Some(d))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// The blob hash of a single named attachment, or `None` if absent. Read-only.
+    fn get_attachment(
+        &mut self,
+        py: Python<'_>,
+        name: String,
+        record_path: String,
+        attachment_name: String,
+    ) -> PyResult<Option<String>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get(&name)
+            .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
+        sheet
+            .get_attachment(repo, tree, &record_path, &attachment_name)
+            .map_err(|e| raise_core_error(py, &e))
+    }
+
+    /// Remove a single named attachment *(mutating)*. Raises
+    /// `NotFoundError` (`record_not_found`) when it doesn't exist. Marks mutated.
+    fn delete_attachment(
+        &mut self,
+        py: Python<'_>,
+        name: String,
+        record_path: String,
+        attachment_name: String,
+    ) -> PyResult<()> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        {
+            let (repo, tree) = tx.split();
+            let sheet = sheets
+                .get_mut(&name)
+                .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
+            sheet
+                .delete_attachment(repo, tree, &record_path, &attachment_name)
+                .map_err(|e| raise_core_error(py, &e))?;
+        }
+        tx.mark_mutated();
+        Ok(())
+    }
+
+    /// Remove all attachments for a record *(mutating)*. A no-op when the record
+    /// has no attachment directory — in that case the transaction is NOT marked
+    /// mutated. Returns whether anything was removed.
+    fn delete_attachments(
+        &mut self,
+        py: Python<'_>,
+        name: String,
+        record_path: String,
+    ) -> PyResult<bool> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let removed = {
+            let (repo, tree) = tx.split();
+            let sheet = sheets
+                .get_mut(&name)
+                .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
+            sheet
+                .delete_attachments(repo, tree, &record_path)
+                .map_err(|e| raise_core_error(py, &e))?
+        };
+        if removed {
+            tx.mark_mutated();
+        }
+        Ok(removed)
+    }
+
     /// The parent commit hash captured at open (`None` on a fresh repo).
     fn parent_commit_hash(&self) -> Option<String> {
         self.inner.as_ref().and_then(|t| t.parent_commit_hash())
@@ -1207,6 +1368,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(record_write, m)?)?;
     m.add_function(wrap_pyfunction!(record_delete, m)?)?;
     m.add_function(wrap_pyfunction!(record_list, m)?)?;
+    m.add_function(wrap_pyfunction!(write_blob, m)?)?;
     m.add_function(wrap_pyfunction!(substrate_stats, m)?)?;
     m.add_function(wrap_pyfunction!(substrate_reset, m)?)?;
     m.add_function(wrap_pyfunction!(create_patch, m)?)?;
