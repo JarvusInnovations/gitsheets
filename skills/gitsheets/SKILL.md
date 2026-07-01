@@ -24,6 +24,8 @@ If unsure or the question spans multiple surfaces, read all four. They're sized 
 
 If the user is working *inside an agent session* and wants to read/mutate gitsheets data via shell, prefer `gitsheets-axi` (`references/axi.md`). If they're writing application code, prefer the library API. If they're authoring configs or asking conceptual questions, sheet-config or api references are right.
 
+**Bootstrapping the CLI.** `gitsheets-axi` may not be on `PATH` in a fresh environment where only this skill is installed — that's fine. Run it with no install via `npx -y gitsheets-axi <args>` (e.g. `npx -y gitsheets-axi query users`), or `npm install -g gitsheets-axi` once for a persistent command. Check with `command -v gitsheets-axi`. The human `gitsheets` CLI bootstraps the same way (`npx -y gitsheets …`). So "just install the skill" is a complete starting point — the tools are one `npx` away.
+
 ## Always-true facts
 
 These don't change between releases and are worth keeping in mind regardless of the user's question:
@@ -66,7 +68,7 @@ If the user is heading toward one of these, gently steer them back:
 
 If you're going to edit gitsheets record files (`.toml` or `.md`) directly on disk rather than through the API, install a post-edit hook that runs `gitsheets-axi check <sheet> $FILE --fix` after each edit. This re-canonicalizes the file (deep-sorted keys, normalized markdown body) and validates against the sheet's schema, catching mistakes immediately rather than at the next git commit. Hook examples in `references/axi.md`.
 
-`gitsheets-axi` is preferred for hook use because its output is TOON on stdout with stable error codes (`VALIDATION_FAILED`, `CONFIG_INVALID`, `NOT_CANONICAL`, etc.) — an agent reading the hook's stdout can switch on the outcome. The human `gitsheets check` works too and is documented in `references/cli.md`; pick it when `gitsheets-axi` isn't installed in the environment.
+`gitsheets-axi` is preferred for hook use because its output is TOON on stdout with stable error codes (`VALIDATION_FAILED`, `CONFIG_INVALID`, `NOT_CANONICAL`, etc.) — an agent reading the hook's stdout can switch on the outcome. If it isn't installed, install it (`npm install -g gitsheets-axi`) — a `npx -y` prefix isn't a good fit inside a per-edit hook that fires constantly, so a real install is worth it here. The human `gitsheets check` (`references/cli.md`) is an equivalent fallback when a global install isn't possible.
 
 For CI / pre-commit verification, drop the `--fix`: `gitsheets-axi check <sheet> $FILE` exits non-zero if the file isn't already canonical, without touching it.
 

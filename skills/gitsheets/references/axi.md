@@ -4,10 +4,15 @@
 
 **Use `gitsheets-axi` when an agent is reading or mutating gitsheets data via shell execution.** Use the `gitsheets` library (TypeScript imports) when authoring code that runs inside an application.
 
+**Getting the tool.** If `gitsheets-axi` isn't already on `PATH`, don't stop — you don't need to install anything to start:
+
 ```bash
-npm install -g gitsheets-axi    # one-time global install
-gitsheets-axi                   # session-aware home view
+gitsheets-axi query users            # if it's already installed
+npx -y gitsheets-axi query users     # zero-install: runs the published package on demand
+npm install -g gitsheets-axi         # optional: install once for a persistent global command
 ```
+
+`npx -y gitsheets-axi <args>` runs the latest published package with no install step, so a fresh environment that has **only this skill** can use every command below by prefixing `npx -y`. For repeated use in a session, `npm install -g gitsheets-axi` once (then drop the prefix). To check availability: `command -v gitsheets-axi`. Every example in this reference writes the bare `gitsheets-axi` — prefix `npx -y` when it isn't installed.
 
 `gitsheets-axi` shares the gitsheets minor version (1.3.x ↔ 1.3.x). Major and minor stay in lockstep; patch versions are independent. Run `gitsheets-axi setup hooks` once to install opt-in `SessionStart` hooks for Claude Code, Codex, and OpenCode — once installed, every new agent session sees a TOON home view of the current repo's sheets.
 
