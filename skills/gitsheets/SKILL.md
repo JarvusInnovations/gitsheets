@@ -61,7 +61,8 @@ If the user is heading toward one of these, gently steer them back:
 - **Indexing on body content.** Indexes always build with body-less reads on markdown sheets — `keyFn(record).body` is `undefined`. Index on frontmatter fields.
 - **Calling `pull` then `push`** to sync. The library has no pull. The single-writer model is non-negotiable; "pull elsewhere, restart consumer" is the canonical reconciliation path.
 - **Using `Sheet.upsert(partial)` to update a single field.** `upsert` is a full-record replace. To mutate fields without overwriting the rest, use `sheet.patch(query, partial)` (RFC 7396 — `null` deletes a field, arrays replace).
-- **Looping `upsert` once per record for a bulk load.** That produces one commit per record (hundreds of junk commits). `upsert` autodetects a JSON array or NDJSON and imports the whole batch in a single commit — pass the stream, don't loop.
+- **Updating existing records with `upsert` in bulk.** `upsert` replaces the whole record, so a bulk update must re-send every field or silently drop the rest. For updating fields across many records (classifying, tagging, backfilling), use **bulk `gitsheets-axi patch`** (array / NDJSON of combined records → one commit, merge semantics) — emit only the fields you're setting.
+- **Looping `upsert` (or `patch`) once per record for a bulk job.** That produces one commit per record (hundreds of junk commits). Both `upsert` and `patch` autodetect a JSON array or NDJSON and process the whole batch in a single commit — pass the stream, don't loop.
 - **Hand-serializing TOML to write records.** Never build TOML strings (or reach for a TOML library) to produce records. gitsheets owns serialization, key-sorting, canonical form, and validation. Produce JSON and let `upsert` write the bytes.
 
 ## Editing record files directly (post-edit hook)

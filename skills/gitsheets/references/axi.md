@@ -151,19 +151,35 @@ Output on no-op mirrors the shape with `result: no-op` and no `commit`.
 
 > **Working-tree gotcha.** gitsheets writes to the git **ref** via plumbing; it does **not** touch your working tree. Right after a commit, `git status` shows the new records as *deleted* on disk (the ref has them, the working tree doesn't). Run `git checkout HEAD -- .` to materialize them. This surprises every first-time user — it's not data loss.
 
-### `gitsheets-axi patch <sheet> <query-json> [--patch <json>] [flags]`
+### `gitsheets-axi patch <sheet> [<query-json>] [flags]`
 
-RFC 7396 JSON Merge Patch against the record matched by `<query-json>`. `null` deletes a field, arrays replace, objects merge recursively.
+RFC 7396 JSON Merge Patch — update fields without replacing the whole record. `null` deletes a field, arrays replace, objects merge recursively. Two modes:
 
 | Flag | Notes |
 | --- | --- |
-| `--patch <json>` | Partial JSON. If omitted, reads stdin. |
+| `--patch <json>` | **Single mode**: partial JSON for the record matched by `<query-json>`. If omitted, reads stdin. |
+| `--data <json>` | **Bulk mode**: a JSON array / NDJSON of combined records. If omitted, reads stdin. |
 | `--prefix <p>` | Tenant scope |
 | `--message <m>` | Commit message |
 
-**Idempotent.** Same no-op semantics as upsert.
+**Single** — explicit query + partial:
 
-Throws `NOT_FOUND` if the query matches no record.
+```bash
+gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane O. Doe"}'
+```
+
+**Bulk — this is the classification primitive.** Drop the `<query-json>` positional and pass an array / NDJSON of **combined** records. In each record the sheet's **path-template fields** form the query (which record to patch); the **remaining fields** are the merge patch. Every patch runs in **one transaction → one commit**:
+
+```bash
+# classify many repos at once — one commit, merge-not-replace
+jq -c '.[] | {name, target_team, status}' decisions.json | gitsheets-axi patch repos
+```
+
+Prefer bulk `patch` over bulk `upsert` for updates: `upsert` is a full-record *replace* (you must carry every existing field or lose it), while `patch` merges — you emit only the fields you're setting, and untouched fields are safe.
+
+**Idempotent.** Unchanged records are skipped; a batch where nothing changed is a `no-op` with no commit. In a batch, a record whose query matches nothing **aborts the whole transaction** (nothing committed) and names the offending row. Output mirrors bulk `upsert` (`patched:` / `unchanged:` / the materialize hint).
+
+Single mode throws `NOT_FOUND` if the query matches no record.
 
 ### `gitsheets-axi delete <sheet> <path> [flags]`
 
@@ -288,7 +304,20 @@ Populating a sheet from an external source (a GitHub API dump, a CSV, another sy
 4. **Materialize the working tree** if you want the files on disk: `git checkout HEAD -- .` (gitsheets committed to the ref, not the working tree — see the gotcha under `upsert`).
 5. **Round-trip to reshape:** `gitsheets-axi query <sheet> --ndjson-out` → transform the file with `jq` → pipe back into `upsert`. Exported JSON/NDJSON is verbatim, so re-import is clean and idempotent.
 
-Do **not** loop `upsert --data` once per record — that produces one commit per record (hundreds of junk commits). Pass the whole array/stream to a single `upsert`.
+**Incrementally classifying / updating records** (adding `target_team`, `status`, etc. to records that already exist) is a **bulk `patch`** job, not upsert:
+
+```bash
+# pull the worklist, decide, patch the whole pass in one commit
+gitsheets-axi query repos --filter status=unclassified --ndjson-out
+# → transform into {name, target_team, status} decisions with jq/logic, then:
+jq -c '.[]' decisions.json | gitsheets-axi patch repos --message "classify batch 1"
+gitsheets-axi diff repos HEAD~1        # review what changed
+gitsheets-axi query repos --filter status=unclassified   # what's left
+```
+
+`patch` merges, so you emit only the fields you're setting and the rest of each record is safe — whereas `upsert` would replace the whole record and drop anything you didn't re-send. Idempotency makes each pass re-runnable (already-classified records no-op), and `diff` per batch is your review surface.
+
+Do **not** loop `upsert --data` (or `patch`) once per record — that produces one commit per record (hundreds of junk commits). Pass the whole array/stream to a single `upsert` / `patch`.
 
 ## When to use `gitsheets-axi` vs `gitsheets`
 
