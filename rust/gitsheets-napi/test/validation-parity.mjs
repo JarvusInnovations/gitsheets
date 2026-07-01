@@ -123,6 +123,18 @@ test('failing (location, keyword) sets match ajv', () => {
   assert.equal(divergences.length, 0, 'no (location,keyword) divergences');
 });
 
+test('unknown JSON Schema keyword is rejected, matching ajv strict:true', () => {
+  // ajv `strict:true` throws at compile on an unrecognized keyword; the core
+  // now mirrors that (config_invalid) instead of silently ignoring it.
+  const bad = { type: 'object', frobnicate: true };
+  assert.throws(() => ajv.compile(bad)); // ajv strict rejects it
+  assert.throws(
+    () => validateBatch(bad, [{ x: 1 }]),
+    (err) => /frobnicate/.test(err.message),
+    'core rejects the unknown keyword with a config_invalid naming it',
+  );
+});
+
 test('validateBatch compiles the schema once for the whole batch', () => {
   // A 200-record batch validates in a single FFI crossing with one compile.
   const many = Array.from({ length: 200 }, (_, k) => ({
