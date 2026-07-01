@@ -5,6 +5,7 @@ specs:
   - specs/rust-core.md
   - specs/architecture.md
 issues: [127]
+pr: 218
 ---
 
 # Plan: per-platform addon prebuild + npm publish (release track)
@@ -58,8 +59,57 @@ same playbook) and any engine changes.
 
 ## Notes
 
-(Populated at closeout.)
+**Status: machinery scaffolded + build matrix proven in CI; the one-time manual
+bootstrap (first publish + per-package trusted-publisher config) is still pending
+— that's the human's step, so this plan stays `in-progress`.**
+
+**Version scheme.** `@gitsheets/core-napi` carries its own semver in its own
+`core-napi-v*` git-tag namespace, decoupled from the `gitsheets` JS package's
+`v*` tags (mirrors holo-tree's `holo-tree-v*`). Starts at `0.1.0`.
+`packages/gitsheets` depends on it via `^0.1.0` — a caret range so a compatible
+addon release is picked up without a lockstep bump. In-repo, npm workspaces
+resolve the dep to the workspace member (symlink), so dev/CI never touch the
+registry; only external `npm install gitsheets` consumers pull the published
+platform packages.
+
+**What's scaffolded:**
+
+- `rust/gitsheets-napi/package.json` — version `0.1.0` (was `0.0.0`, private
+  removed), six `optionalDependencies` platform packages pinned to `0.1.0`,
+  `prepublishOnly: napi prepublish -t npm --skip-gh-release`, `artifacts` +
+  `version` (`napi version`) scripts. `napi.triples` unchanged (the 6).
+- `rust/gitsheets-napi/npm/<triple>/` — six platform-package manifests generated
+  by `napi create-npm-dir -t .` (correct `os`/`cpu`/`libc`/`main`). Committed;
+  their `.node` payloads are git-ignored and dropped in at publish time.
+- `.github/workflows/core-napi.yml` — 6-triple build matrix (native
+  build+smoke-test on matching runners incl. `ubuntu-24.04-arm`; musl via
+  `--zig`, darwin-x64 cross → build-only), uploads `bindings-*` artifacts. A
+  **tag-gated** `publish` job (`if: startsWith(github.ref,
+  'refs/tags/core-napi-v')`) does `napi version` + pins root
+  `optionalDependencies` + `napi artifacts` + `npm publish --provenance --access
+  public` over **OIDC trusted publishing** (`--skip-gh-release`, no token).
+  Triggers: `pull_request` on `rust/**` + `workflow_dispatch` (build only);
+  publish only on `core-napi-v*` tags. Action tags pinned to resolvable majors
+  (`checkout@v7`, `setup-node@v6`, `upload-artifact@v7`, `download-artifact@v8`,
+  `rust-cache@v2`, `rust-toolchain@stable`).
+- `packages/gitsheets/package.json` — dep bumped `^0.0.0` → `^0.1.0`; root
+  lockfile regenerated (`npm ci` verified green, workspace symlink intact, the
+  not-yet-published optional platform deps are skipped gracefully).
 
 ## Follow-ups
 
-(Populated at closeout.)
+- **[HUMAN] One-time bootstrap** (see `rust/gitsheets-napi/README.md`
+  "Publishing"): (0) ensure the `@gitsheets` npm scope exists and you're a member;
+  (1) run the `core-napi` workflow and download the six `bindings-*` artifacts;
+  (2) `npm login` as a `@gitsheets` member, `npx napi artifacts --dir <dir>`,
+  publish the six `npm/*/` platform packages then the main package
+  (`--ignore-scripts`) at `0.1.0`; (3) enable trusted publishing on npmjs.com for
+  **each** of the seven packages → GitHub Actions, repo
+  `JarvusInnovations/gitsheets`, workflow `core-napi.yml`. After that, releases
+  are `git tag core-napi-v<x> && git push` → CI publishes tokenlessly.
+- Once the addon is published, confirm a clean `npm install gitsheets` on a
+  supported platform resolves the prebuilt addon with NO Rust toolchain and
+  round-trips an upsert→commit (Validation item 2).
+- Consider a build-from-source fallback (`postinstall`) for platforms without a
+  prebuilt binary (optional; unsupported platforms currently get a clear
+  `ConfigError` from the loader).

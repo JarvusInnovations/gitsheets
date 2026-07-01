@@ -1,0 +1,27 @@
+{
+  "name": "@gitsheets/core-napi-linux-x64-gnu",
+  "version": "0.1.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "gitsheets-core.linux-x64-gnu.node",
+  "files": [
+    "gitsheets-core.linux-x64-gnu.node"
+  ],
+  "description": "Node.js native binding for gitsheets-core — the FFI marshalling boundary.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JarvusInnovations/gitsheets.git",
+    "directory": "rust/gitsheets-napi"
+  },
+  "libc": [
+    "glibc"
+  ]
+}
