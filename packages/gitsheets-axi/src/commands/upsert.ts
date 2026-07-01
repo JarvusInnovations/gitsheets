@@ -7,6 +7,7 @@ import { joinBlocks, renderHelp, renderObject } from '../output/render.js';
 import { readStdin } from '../util/stdin.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { parseRecordsInput, recordLabel } from '../util/parse-records.js';
+import { MATERIALIZE_HINT } from '../util/hints.js';
 
 export const UPSERT_HELP = `usage: gitsheets-axi upsert <sheet> [--data <json>] [--allow-missing-body] [--prefix p] [--message m]
 flags[4]:
@@ -90,9 +91,6 @@ function parseUpsertFlags(args: string[]): UpsertFlags {
   flags.sheet = positional[0]!;
   return flags;
 }
-
-const MATERIALIZE_HINT =
-  'gitsheets committed to the git ref, not your working tree — run `git checkout HEAD -- .` to materialize the record files on disk';
 
 export async function upsertCommand(
   args: string[],
