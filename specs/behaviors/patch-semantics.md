@@ -131,7 +131,7 @@ await sheet.upsert(merged);
 
 ## Implementation note
 
-The library uses an inline RFC 7396 implementation in `packages/gitsheets/src/patch.ts` — about 40 lines, no external dependency. Inline-ness is deliberate: the TOML parser's custom Date subclasses (`smol-toml`'s `TomlDate`, an `instanceof Date`) and other class instances need to flow through the merge as opaque values rather than being recursively merged, and an off-the-shelf merge package's `isPlainObject` heuristic isn't tailored to that. The `deepmerge` package is removed from `package.json` during the [#128 purge](https://github.com/JarvusInnovations/gitsheets/issues/128).
+The library uses an inline RFC 7396 implementation in `packages/gitsheets/src/patch.ts` — about 40 lines, no external dependency. Inline-ness is deliberate: `Date` instances (the Node binding surfaces the core's TOML datetimes as `instanceof Date`) and other class instances need to flow through the merge as opaque values rather than being recursively merged, and an off-the-shelf merge package's `isPlainObject` heuristic isn't tailored to that. The `deepmerge` package is removed from `package.json` during the [#128 purge](https://github.com/JarvusInnovations/gitsheets/issues/128).
 
 ## Conformance
 
