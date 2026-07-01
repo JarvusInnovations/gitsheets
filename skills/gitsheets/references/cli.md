@@ -20,7 +20,7 @@
 ## Global flags
 
 | Flag | Default | Env |
-|---|---|---|
+| --- | --- | --- |
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
@@ -33,6 +33,8 @@
 `--prefix` scopes records to a sub-tree under each sheet's configured root — useful for multi-tenant deployments. With `--prefix tenant-a`, a sheet with `root = 'users'` reads/writes records at `users/tenant-a/<path>.toml`. The sheet's config file is unaffected.
 
 A `--working` flag (read/write the working tree's state) is documented but deferred — see issue #165.
+
+> **Working-tree gotcha.** Every mutating command commits to the git **ref** via plumbing and does **not** update your checked-out files. After a write (especially a bulk `upsert`), `git status` shows the new records as *deleted* on disk — the ref has them, the working tree doesn't. Run `git checkout HEAD -- .` to materialize them. This is expected, not data loss, and is what #165's `--working` mode will eventually smooth over.
 
 ## upsert
 
@@ -206,7 +208,7 @@ Migration mapping: `type` → `[gitsheet.schema.properties.<name>].type`, `enum`
 ## Exit codes
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | 0 | Success |
 | 1 | Generic / unknown error (or `check` reporting not-canonical) |
 | 2 | Argument-parsing error |

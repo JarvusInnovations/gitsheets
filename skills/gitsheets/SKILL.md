@@ -34,6 +34,8 @@ These don't change between releases and are worth keeping in mind regardless of 
 - **Validation is on writes only.** Reads return whatever's on disk. If a schema was tightened after some records were written, those reads can return records that wouldn't pass current validation.
 - **Canonical normalization is deterministic.** Object keys are deep-sorted on write; array fields can declare a `sort` rule. Logically-equal records produce byte-identical TOML, so git diffs are meaningful.
 - **Mutations go through transactions.** `repo.transact(opts, async tx => …)` is the explicit path. Outside a transaction, standalone Sheet methods (`upsert`, `delete`, `patch`) auto-open one — unless the consumer called `repo.requireExplicitTransactions()`, in which case they throw.
+- **Writes land in the git ref, not the working tree.** gitsheets commits records via git plumbing directly to the branch ref; it does **not** update your checked-out files. Right after a write, `git status` shows the new records as *deleted* on disk — the ref has them, the working tree doesn't. `git checkout HEAD -- .` materializes them. This is expected, not data loss.
+- **Sheet configs are read from the committed tree.** A freshly-authored `.gitsheets/<name>.toml` is invisible to record commands until it's committed. Commit the config first, then upsert/query.
 - **Push is push-only.** The optional push daemon (`repo.startPushDaemon`) pushes new commits to a remote with retry/backoff. It never pulls — the consumer process is the single writer.
 - **All gitsheets errors extend `GitsheetsError`** and carry a stable `code` field. Consumers switch on `instanceof` or `err.code`, never on `err.message`. The error classes are: `ConfigError`, `ValidationError`, `TransactionError`, `IndexError`, `RefError`, `PathTemplateError`, `NotFoundError`.
 
@@ -46,6 +48,7 @@ When the user is building something, these idioms are usually the right shape:
 - **Bulk reads + lazy bodies**: on content-typed (markdown) sheets, pass `{ withBody: false }` to `query` for listing/filtering, then `await sheet.loadBody(record)` when the body is actually needed.
 - **Secondary indices**: `sheet.defineIndex('byEmail', { unique: true }, r => r.email.toLowerCase())`. Built lazily on first `findByIndex` call; rebuilt when the underlying tree hash changes. For markdown sheets, index builds always use body-less reads — don't index on body content (returns `undefined` → record excluded).
 - **CSV import**: `gitsheets upsert <sheet> records.csv --format=csv` — first row is the header, each subsequent row becomes one record. Cell values stay strings; type coercion belongs in the schema.
+- **Bulk ingest a databank**: build a JSON array or NDJSON stream with `jq` (never hand-serialize TOML), then pipe it into **one** `upsert` — `jq -c '.[]' raw.json | gitsheets-axi upsert repos`. The whole batch commits once. To reshape existing data, `gitsheets-axi query <sheet> --ndjson-out`, transform the file, and pipe it back in (exports round-trip verbatim). See `references/axi.md` → "Bulk data engineering".
 
 ## Anti-patterns to redirect
 
@@ -56,6 +59,8 @@ If the user is heading toward one of these, gently steer them back:
 - **Indexing on body content.** Indexes always build with body-less reads on markdown sheets — `keyFn(record).body` is `undefined`. Index on frontmatter fields.
 - **Calling `pull` then `push`** to sync. The library has no pull. The single-writer model is non-negotiable; "pull elsewhere, restart consumer" is the canonical reconciliation path.
 - **Using `Sheet.upsert(partial)` to update a single field.** `upsert` is a full-record replace. To mutate fields without overwriting the rest, use `sheet.patch(query, partial)` (RFC 7396 — `null` deletes a field, arrays replace).
+- **Looping `upsert` once per record for a bulk load.** That produces one commit per record (hundreds of junk commits). `upsert` autodetects a JSON array or NDJSON and imports the whole batch in a single commit — pass the stream, don't loop.
+- **Hand-serializing TOML to write records.** Never build TOML strings (or reach for a TOML library) to produce records. gitsheets owns serialization, key-sorting, canonical form, and validation. Produce JSON and let `upsert` write the bytes.
 
 ## Editing record files directly (post-edit hook)
 
