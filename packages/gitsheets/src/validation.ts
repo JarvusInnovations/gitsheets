@@ -1,14 +1,24 @@
-// Validation pipeline — JSON Schema via ajv, then optional Standard Schema.
+// Validation pipeline — JSON Schema in the core, then optional Standard Schema.
 // See specs/behaviors/validation.md.
+//
+// The JSON-Schema step is the core's native validator (`validateBatch`, the
+// pure-Rust `jsonschema` crate configured to mirror the former `ajv` setup:
+// Draft 7, formats asserted, all errors). It is the bytes-authority-adjacent,
+// cross-binding-consistent persisted-shape check. The consumer-supplied
+// Standard Schema validator runs host-side on the native object — a consumer
+// app concern, allowed to be language-specific, and NOT part of the on-disk
+// contract. See specs/rust-core.md.
+//
+// **Enumerated divergence from the former `ajv` pass:** `ajv` ran `strict:
+// true`, rejecting *unknown JSON-Schema keywords* (and disabling `$data`) at
+// compile with `ConfigError(config_invalid)`. The core's `jsonschema` crate is
+// lenient — it silently ignores unknown keywords — so a schema with a typo'd or
+// `$data` keyword now compiles where `ajv` would have rejected it. This is a
+// deliberate, documented core behavior (see gitsheets-core::validation and the
+// node-binding-thin plan Notes).
 
-// ajv v8 named-exports Ajv as a class; addFormats is a default-exported plugin
-// in a CJS package — NodeNext gives us the namespace, so we pull `.default`.
-import { Ajv, type ValidateFunction, type ErrorObject } from 'ajv';
-import * as addFormatsNs from 'ajv-formats';
-const addFormats: (ajv: Ajv) => Ajv =
-  (addFormatsNs as unknown as { default: (a: Ajv) => Ajv }).default;
-
-import { ConfigError, ValidationError, type ValidationIssue } from './errors.js';
+import { addon, callCore } from './core.js';
+import { ValidationError, type ValidationIssue } from './errors.js';
 
 export type JSONSchema = Record<string, unknown>;
 
@@ -42,39 +52,6 @@ export interface StandardSchemaV1<Input = unknown, Output = Input> {
   readonly __types__?: { input: Input; output: Output };
 }
 
-// --- ajv setup ---
-
-// Compiled validators are cached per schema-identity (object reference) so a
-// Sheet's `Sheet.readConfig` returning the same schema object hits the cache.
-const COMPILED_CACHE = new WeakMap<JSONSchema, ValidateFunction>();
-let sharedAjv: Ajv | null = null;
-
-function getAjv(): Ajv {
-  if (!sharedAjv) {
-    sharedAjv = new Ajv({ strict: true, allErrors: true, $data: false });
-    addFormats(sharedAjv);
-  }
-  return sharedAjv;
-}
-
-export function compileSchema(schema: JSONSchema, sourcePath: string): ValidateFunction {
-  const cached = COMPILED_CACHE.get(schema);
-  if (cached) return cached;
-  const ajv = getAjv();
-  let compiled: ValidateFunction;
-  try {
-    compiled = ajv.compile(schema);
-  } catch (err) {
-    throw new ConfigError(
-      'config_invalid',
-      `${sourcePath}: [gitsheet.schema] failed to compile: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err },
-    );
-  }
-  COMPILED_CACHE.set(schema, compiled);
-  return compiled;
-}
-
 // --- Public validate ---
 
 export async function validateRecord(opts: {
@@ -87,12 +64,11 @@ export async function validateRecord(opts: {
   let value: Record<string, unknown> = opts.record;
 
   if (opts.schema) {
-    const compiled = compileSchema(opts.schema, opts.schemaSourcePath ?? '<schema>');
-    const ok = compiled(value);
-    if (!ok) {
-      for (const err of compiled.errors ?? []) {
-        issues.push(ajvErrorToIssue(err));
-      }
+    // Compile-once + validate in the core; a schema that won't compile surfaces
+    // as a typed ConfigError(config_invalid) via callCore.
+    const [recordIssues = []] = callCore(() => addon.validateBatch(opts.schema, [value]));
+    for (const issue of recordIssues) {
+      issues.push(coreIssueToIssue(issue));
     }
   }
 
@@ -120,26 +96,26 @@ export async function validateRecord(opts: {
   return value;
 }
 
-function ajvErrorToIssue(err: ErrorObject): ValidationIssue {
-  const path = err.instancePath
-    ? err.instancePath.split('/').slice(1).map(unescapeJsonPointer)
-    : [];
-  const issue: ValidationIssue = {
-    path,
-    message: err.message ?? 'validation failed',
-    source: 'json-schema',
+/** Map a core `JsValidationIssue` onto the package `ValidationIssue` shape. */
+function coreIssueToIssue(issue: {
+  path: string[];
+  message: string;
+  source: string;
+  schemaPath?: string;
+  code?: string;
+}): ValidationIssue {
+  const out: ValidationIssue = {
+    path: issue.path,
+    message: issue.message,
+    source: issue.source === 'standard-schema' ? 'standard-schema' : 'json-schema',
   };
-  if (err.schemaPath !== undefined) {
-    Object.assign(issue, { schemaPath: err.schemaPath });
+  if (issue.schemaPath !== undefined) {
+    Object.assign(out, { schemaPath: issue.schemaPath });
   }
-  if (err.keyword !== undefined) {
-    Object.assign(issue, { code: err.keyword });
+  if (issue.code !== undefined) {
+    Object.assign(out, { code: issue.code });
   }
-  return issue;
-}
-
-function unescapeJsonPointer(segment: string): string {
-  return segment.replace(/~1/g, '/').replace(/~0/g, '~');
+  return out;
 }
 
 function standardIssueToIssue(issue: StandardSchemaIssue): ValidationIssue {
