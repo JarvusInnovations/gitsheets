@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, substrateStats, substrateReset, recordQuery, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, coreDiscoverSheets, coreCheckValidators, markdownSerialize, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1, markdownResolveLintConfig } = nativeBinding
+const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, substrateStats, substrateReset, recordQuery, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, coreDiscoverSheets, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
 
 module.exports.roundtrip = roundtrip
 module.exports.parseRecords = parseRecords
@@ -339,8 +339,8 @@ module.exports.CoreTransaction = CoreTransaction
 module.exports.coreDiscoverSheets = coreDiscoverSheets
 module.exports.coreCheckValidators = coreCheckValidators
 module.exports.markdownSerialize = markdownSerialize
+module.exports.markdownNormalizeBody = markdownNormalizeBody
 module.exports.markdownParse = markdownParse
 module.exports.markdownParseHeaderOnly = markdownParseHeaderOnly
 module.exports.markdownExtractH1 = markdownExtractH1
 module.exports.markdownRewriteH1 = markdownRewriteH1
-module.exports.markdownResolveLintConfig = markdownResolveLintConfig

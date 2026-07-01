@@ -248,11 +248,18 @@ export declare function coreCheckValidators(declared: Array<string>, validatorNa
 /**
  * Serialize a record to its on-disk markdown bytes (`+++` frontmatter + body),
  * enforcing the title-from-H1 invariant when `titleField` is set. The body is
- * framed verbatim — markdownlint normalization is the host's pre-pass. A
- * non-string body or a title that disagrees with the body's H1 throws a typed
+ * normalized natively by the embedded `dprint-plugin-markdown` formatter unless
+ * `normalize` is `false` (then it is framed verbatim). A non-string body or a
+ * title that disagrees with the body's (normalized) H1 throws a typed
  * `ValidationError`.
  */
-export declare function markdownSerialize(record: JsValue, bodyField: string, titleField?: string | undefined | null): string
+export declare function markdownSerialize(record: JsValue, bodyField: string, titleField?: string | undefined | null, normalize?: boolean | undefined | null): string
+/**
+ * Normalize a markdown body with the native `dprint-plugin-markdown` formatter
+ * (the pinned aggressive `textWrap: never` config). Deterministic + idempotent.
+ * Exposed so the boundary suite can assert the normalizer directly.
+ */
+export declare function markdownNormalizeBody(body: string): string
 /**
  * Parse on-disk markdown bytes into a full record (frontmatter fields + the
  * body under `bodyField`). Mirrors `markdownFormat.parse`.
@@ -273,14 +280,6 @@ export declare function markdownExtractH1(body: string): string | null
  * `rewriteLeadingH1` — the `Sheet.patch` title-reconciliation helper.
  */
 export declare function markdownRewriteH1(body: string, title: string): string
-/**
- * The effective markdownlint config the host's normalization pre-pass should
- * apply, or `null` when disabled. The defaults (`default: true`, `MD013:
- * false`, `MD041: false`) layered with any `[gitsheet.format.markdownlint]`
- * overrides, plus the `MD041` auto-enable when title-from-H1 is on. The core
- * computes the ruleset but does NOT apply it (see the codec module docs).
- */
-export declare function markdownResolveLintConfig(markdownlint: JsValue, titleIsSet: boolean): JsValue | null
 /**
  * A compiled sheet definition: the embedded engine plus the definition's
  * path template (and optional raw-JS sort comparator), **compiled once** at
