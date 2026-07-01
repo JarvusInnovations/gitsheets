@@ -86,12 +86,12 @@ describe('content-typed sheet (markdown)', () => {
     expect(bySlug.get('b')?.['body']).toBe('body of B');
   });
 
-  it('normalizes the body through markdownlint on write by default', async () => {
+  it('normalizes the body through the native dprint formatter on write by default', async () => {
     const fixture = await seedRepoWithPosts();
     const repo = await openRepo({ gitDir: fixture.gitDir });
 
     await repo.transact({ message: 'add post' }, async (tx) => {
-      // Two spaces after the list marker; MD030 fixes to one space.
+      // dprint rewrites list markers to `-` and single-spaces them.
       await tx.sheet('posts').upsert({
         slug: 'lint',
         title: 'Lint',
@@ -104,7 +104,7 @@ describe('content-typed sheet (markdown)', () => {
       'blob',
       'HEAD:posts/lint.md',
     );
-    expect(content).toContain('* one\n* two');
+    expect(content).toContain('- one\n- two');
     expect(content).not.toContain('*  two');
   });
 

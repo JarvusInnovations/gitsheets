@@ -35,16 +35,16 @@ describe('markdownFormat.serialize', () => {
     expect(text.endsWith('+++\n\n\n')).toBe(true);
   });
 
-  it('normalizes the body through markdownlint by default', async () => {
+  it('normalizes the body through the native dprint formatter by default', async () => {
     const text = await markdownFormat.serialize(
-      // Two spaces after the list marker — MD030 fixes to one
+      // dprint rewrites list markers to `-` and single-spaces them
       { slug: 'lint', body: '* item1\n*  item2\n' },
       CONFIG,
     );
     // Frontmatter unaffected
     expect(text).toContain(`slug = "lint"`);
-    // Body fixed
-    expect(text).toContain('* item1\n* item2');
+    // Body normalized by the native dprint formatter
+    expect(text).toContain('- item1\n- item2');
     expect(text).not.toContain('*  item2');
   });
 
