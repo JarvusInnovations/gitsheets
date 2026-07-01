@@ -84,7 +84,7 @@ Specs declare *what* must be true, not *how* to implement it.
 > "Patch updates a record by merging in changes."
 
 **Too detailed** — duplicates the code:
-> "Open the record blob, parse with `smol-toml`, deepclone the object, walk the patch tree with a recursive merge function, then…"
+> "Open the record blob, parse the TOML into an object, deepclone it, walk the patch tree with a recursive merge function, then…"
 
 ## Spec drift auditing
 
@@ -92,7 +92,7 @@ Run `/audit-spec-drift` (the Claude Code command at `.claude/commands/audit-spec
 
 ## Versioning relative to specs
 
-These specs describe the **current shipped surface** of gitsheets. v1.0 sets the API contract; v1.1 adds the full CLI flag/command surface plus library additions (`diffFrom`, attachment iterator + deletes, query AbortSignal, push-daemon hardening, `--prefix`). v1.2 adds content-typed records (markdown/mdx with TOML frontmatter), lazy body loading, and the `check` CLI command. Items intentionally deferred to later releases (e.g., [`--working`](https://github.com/JarvusInnovations/gitsheets/issues/165), watch mode, field-level encryption) live in [`deferred.md`](deferred.md). The [holo-tree migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is **done** — tree ops run on the Rust `@hologit/holo-tree` binding (see [`architecture.md`](architecture.md#holo-tree-migration-done)) — and is phase 1 of the Rust-core evolution specced in [`rust-core.md`](rust-core.md) and built out as plans in [`plans/`](../plans/).
+These specs describe the **current shipped surface** of gitsheets. v1.0 sets the API contract; v1.1 adds the full CLI flag/command surface plus library additions (`diffFrom`, attachment iterator + deletes, query AbortSignal, push-daemon hardening, `--prefix`). v1.2 adds content-typed records (markdown/mdx with TOML frontmatter), lazy body loading, and the `check` CLI command. Items intentionally deferred to later releases (e.g., [`--working`](https://github.com/JarvusInnovations/gitsheets/issues/165), watch mode, field-level encryption) live in [`deferred.md`](deferred.md). The [Rust-core migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is **done** — the engine lives in the `gitsheets-core` crate, the Node package is a thin marshalling shell over `@gitsheets/core-napi`, and a Python binding runs over the same core (see [`rust-core.md`](rust-core.md) and [`architecture.md`](architecture.md#holo-tree-migration-done)). It was built out as the (now-`done`) plans in [`plans/`](../plans/).
 
 When work begins on a deferred item, the entry is promoted out of `deferred.md` into the active specs in the same PR that closes the issue; the spec authoring rules above apply.
 

@@ -128,5 +128,5 @@ When a root isn't specified:
 ## I/O
 
 - All file paths inside the data repo are POSIX-style (`/` separators) regardless of host OS.
-- TOML reads use `smol-toml` (lean parse — see [architecture.md](../architecture.md)); Date types still read back as `instanceof Date`.
-- TOML writes serialize via `@iarna/toml` with sorted keys (deep) for byte-stable normalization.
+- TOML reads and writes happen in the Rust `gitsheets-core` engine (the bytes-authority — see [architecture.md](../architecture.md)); the Node binding surfaces datetimes as `instanceof Date`.
+- Writes serialize to the byte-stable canonical form (deep-sorted keys) in the core, identical across every binding.
