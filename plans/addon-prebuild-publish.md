@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: [node-binding-thin]
 specs:
   - specs/rust-core.md
@@ -59,9 +59,17 @@ same playbook) and any engine changes.
 
 ## Notes
 
-**Status: machinery scaffolded + build matrix proven in CI; the one-time manual
-bootstrap (first publish + per-package trusted-publisher config) is still pending
-— that's the human's step, so this plan stays `in-progress`.**
+**Status: DONE.** Machinery scaffolded + build matrix proven in CI, and the
+one-time manual bootstrap is complete: all **7 `@gitsheets/*` packages published
+at `0.1.0`** (the `@gitsheets` org was created; the 6 platform packages + the main
+`@gitsheets/core-napi` are live on npm) and **per-package trusted publishing is
+configured** (repo `JarvusInnovations/gitsheets`, workflow `core-napi.yml`) — so
+future releases are tokenless via a `core-napi-v*` tag. **End-to-end verified:** a
+clean-room `npm install @gitsheets/core-napi@0.1.0` (no repo / no Rust toolchain /
+no workspace) resolved the correct platform prebuilt via `optionalDependencies`,
+loaded the addon, and ran the Rust core (`serializeRecords([{b:2,a:1}])` →
+`["a = 1\nb = 2\n"]`). Remaining is only the downstream `gitsheets` JS package
+release (below) — not this plan.
 
 **Version scheme.** `@gitsheets/core-napi` carries its own semver in its own
 `core-napi-v*` git-tag namespace, decoupled from the `gitsheets` JS package's
