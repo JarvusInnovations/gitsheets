@@ -13,11 +13,12 @@ A **transaction** scopes a set of mutations to one commit. The mutations stage i
 
 ## Single-writer model
 
-One open transaction per `Repository` at a time, serialized by an in-process mutex.
+One open transaction per `Repository` at a time, serialized by an in-process mutex. (The Rust core exposes a *throwing* per-repo single-writer slot; the host binding wraps it with the fair queue below — queueing is a host concern.)
 
 | Scenario | Behavior |
 | --- | --- |
-| Two concurrent `repo.transact` calls | Second waits on the mutex; runs after the first commits or releases. |
+| Two concurrent `repo.transact` calls from independent async contexts | Second waits on the mutex; runs after the first commits or releases. |
+| **Nested** `repo.transact` — opening one inside another's handler (same async context) | Throws `TransactionError` (`transaction_in_progress`) immediately; it does not queue. Use `tx.sheet(name)` inside the handler instead. |
 | Concurrent `repo.transact` *and* a permissive-mode `Sheet.upsert` outside a transaction | The permissive `upsert` opens its own transaction, contends for the same mutex. |
 | Same-process concurrent reads | Reads don't take the mutex. They see the *committed* state (pre-transaction tree). |
 
@@ -86,6 +87,8 @@ HTTP-header style:
 - Rest lowercase
 
 Examples: `Subject-Type`, `User-Agent`, `Response-Code`. Single-word keys: `Action`, `Reason`, `Host`.
+
+A trailer whose key isn't HTTP-header style, or whose value isn't a single-line string, is rejected up front (at option-normalization time, before any tree work) with `TransactionError` (`commit_failed`). See [api/transaction.md#errors](../api/transaction.md#errors).
 
 ### Semantic vs. request trailers
 

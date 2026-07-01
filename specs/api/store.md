@@ -57,10 +57,12 @@ When a sheet has an entry in `validators`, its type flows through:
 
 When a sheet does not have an entry in `validators`:
 
-- It is **not** accessible through property access on `store`. The typed surface includes only sheets named in `validators`.
+- It is **not part of the typed surface** — the `Store` type includes only sheets named in `validators`, so property access on a non-validator sheet is a compile-time error and there's no autocomplete for it.
 - Use `repo.openSheet(name)` for one-off un-typed access — it returns `Sheet<Record<string, unknown>>` and the persisted JSON Schema still runs on every write.
 
 Rationale: a mapped-type-plus-index-signature shape (`{ [K in keyof V]: Sheet<…> } & Record<string, Sheet<unknown>>`) doesn't compose cleanly in TypeScript without losing the typo-protection that the typed `Store` surface exists for. Confining the typed surface to declared validators is the cleaner tradeoff.
+
+> **Type-level vs runtime.** This confinement is a *type-level* guarantee, not a runtime filter. `openStore` discovers **every** sheet in `.gitsheets/` and, for implementation simplicity, attaches all of them (validator-bound or not) as runtime properties on both the `store` object and the `tx` object inside `store.transact` — the non-validator ones just aren't visible to the type checker. Consumers should treat the typed surface as the contract; reaching a non-validator sheet by dynamic string key happens to work at runtime (typed `Sheet<Record<string, unknown>>`) but is outside the typed API. The persisted JSON Schema still runs on those sheets.
 
 ## Sheet discovery
 

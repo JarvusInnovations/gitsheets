@@ -68,7 +68,10 @@ Trailer keys use HTTP-header style: first letter capitalized, multi-word hyphena
 
 ## Concurrency
 
-One open transaction per `Repository` at a time. A concurrent `repo.transact(...)` call while another is open throws `TransactionError` (`transaction_in_progress`).
+One open transaction per `Repository` at a time, enforced two ways:
+
+- **Nested** `repo.transact(...)` — calling `repo.transact` from *within* an open transaction's handler (same async context, detected via `AsyncLocalStorage`) throws `TransactionError` (`transaction_in_progress`) immediately. Use `tx.sheet(name)` inside the handler instead of re-opening a transaction.
+- **Concurrent-but-independent** `repo.transact(...)` — a call from a *separate* async context while another transaction is open does **not** throw; it **queues** on an in-process mutex and runs after the open one commits or releases. (The Rust core exposes a *throwing* per-repo single-writer slot; the host binding wraps it with this fair queue, so well-behaved concurrent callers serialize rather than fail.) See [behaviors/transactions.md](../behaviors/transactions.md#single-writer-model).
 
 Mutations made *outside* any open transaction (permissive mode) implicitly open and commit a single-mutation transaction; they too contend for the mutex.
 
@@ -172,10 +175,10 @@ await repo.transact({ message: '...' }, async (tx) => {
 
 | Class | Code | When |
 | --- | --- | --- |
-| `TransactionError` | `transaction_in_progress` | Concurrent `repo.transact` attempt |
+| `TransactionError` | `transaction_in_progress` | Nested `repo.transact` inside an open transaction's handler (independent-context calls queue instead — see [Concurrency](#concurrency)) |
 | `TransactionError` | `transaction_required` | Mutation outside a transaction in strict mode |
 | `TransactionError` | `parent_moved` | Optimistic-concurrency conflict at commit |
-| `TransactionError` | `commit_failed` | `git commit-tree` or `update-ref` returned non-zero |
+| `TransactionError` | `commit_failed` | `git commit-tree` / `update-ref` returned non-zero, **or** a malformed trailer key/value was rejected at option-normalization time (HTTP-header-style key, string value with no newlines) |
 | `RefError` | `ref_not_found` | `opts.parent` is a branch name that doesn't exist |
 | (any) | (any) | Errors thrown by the handler propagate out after tree discard |
 
