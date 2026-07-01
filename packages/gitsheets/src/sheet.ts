@@ -920,6 +920,36 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
+   * Count records without materializing them. For the common case of counting
+   * every record (an empty filter, outside a transaction), this walks the tree
+   * for candidate paths and counts them — no record is parsed or decoded, so it
+   * is O(records) tree entries rather than O(records) full parses. Any filter
+   * (value or function predicate) or a tx-bound sheet falls back to a body-less
+   * `query` scan so the count still honors the filter, just without the fast
+   * path.
+   */
+  async count(filter: QueryFilter<T> = {}): Promise<number> {
+    if (typeof filter === 'function') {
+      throw new TypeError('Sheet.count() does not accept a function — pass a filter object');
+    }
+    // Fast path: no filter at all + not tx-bound → count candidate paths only.
+    if (Object.keys(filter as object).length === 0 && this.#transaction === undefined) {
+      const config = await this.readConfig();
+      const format = this.#getFormat(config);
+      const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
+      const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
+      const candidates = callCore(() =>
+        addon.recordQueryCandidates(this.#gitDir, treeRef, base, config.path, {}, format.extension),
+      ) as string[];
+      return candidates.length;
+    }
+    // Filtered / tx-bound: scan body-less and count matches (honors the filter).
+    let n = 0;
+    for await (const _ of this.query(filter, { withBody: false })) n++;
+    return n;
+  }
+
+  /**
    * Hydrate a body-less record returned by `query`/`findByIndex` with its
    * full body. Re-reads the record blob at the path annotation symbol and
    * returns a fresh record with the body field populated.

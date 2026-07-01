@@ -14,7 +14,7 @@ This skill helps you assist a developer who consumes the published `gitsheets` p
 Four reference files cover the surface. Read the relevant one(s) for the user's question:
 
 | User is asking about… | Read |
-|---|---|
+| --- | --- |
 | The `gitsheets` / `git sheet` CLI (commands, flags, exit codes) | `references/cli.md` |
 | The TypeScript API (`openRepo`, `Sheet`, `Transaction`, `Store`, push daemon, errors) | `references/api.md` |
 | Authoring `.gitsheets/<name>.toml` configs (path template, schema, fields, format, indices) | `references/sheet-config.md` |
@@ -29,6 +29,7 @@ If the user is working *inside an agent session* and wants to read/mutate gitshe
 These don't change between releases and are worth keeping in mind regardless of the user's question:
 
 - **TypeScript, ESM-only.** `import { ... } from 'gitsheets'` — no CJS `require`. Targets Node ≥ 20 or Bun ≥ 1.
+- **Rust-core engine (v2+).** Since v2.0.0 the engine (TOML, normalization, path templates, validation, query, markdown, the whole state machine) is a shared Rust core, shipped as a prebuilt addon (`@gitsheets/core-napi`) for Linux/macOS/Windows — a plain `npm install gitsheets` needs no Rust toolchain. The same core backs a Python binding, so writes are byte-identical across languages. The JS API is unchanged from v1; the one migration is a one-time canonical re-baseline of on-disk bytes (re-normalize with `git sheet normalize`).
 - **One record = one file.** Records are individual TOML (or markdown-with-frontmatter) files; the sheet's `path` template renders the filename from record fields. The whole sheet's set of records lives under a per-sheet `root`.
 - **Validation is on writes only.** Reads return whatever's on disk. If a schema was tightened after some records were written, those reads can return records that wouldn't pass current validation.
 - **Canonical normalization is deterministic.** Object keys are deep-sorted on write; array fields can declare a `sort` rule. Logically-equal records produce byte-identical TOML, so git diffs are meaningful.

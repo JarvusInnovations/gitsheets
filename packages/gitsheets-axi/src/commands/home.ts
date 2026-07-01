@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import type { GitsheetsContext } from '../context.js';
 import { renderListResponse } from '../output/render.js';
 import { countRecords } from '../output/sheet-schema.js';
-import { computed, display, field } from '../output/schema.js';
+import { display, field } from '../output/schema.js';
 import { translateError } from '../errors.js';
 
 function collapseHome(path: string): string {
@@ -79,7 +79,7 @@ export async function homeCommand(
     schema: [
       field('name'),
       display('format'),
-      computed('records', (item) => `${item['records']}`),
+      field('records'),
       field('root'),
     ],
     suggestions: help,

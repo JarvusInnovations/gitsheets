@@ -36,6 +36,10 @@ Returns `Promise<T | undefined>`. The first match, or `undefined`. Honors the sa
 
 Returns `Promise<T[]>`. All matches collected into an array. Convenience over `for await ... push`. Honors the same `opts.signal` and `opts.withBody` as `query`.
 
+### `sheet.count(filter?)`
+
+Returns `Promise<number>`, the number of matching records. With no filter (outside a transaction) it counts candidate paths from the tree walk without parsing any record, so it stays cheap on large sheets. A non-empty filter (value or function predicate) or a tx-bound sheet falls back to a body-less scan that honors the filter. Throws `TypeError` if passed a function.
+
 ### `sheet.loadBody(record)`
 
 Hydrate a body-less record (returned by `query` / `queryFirst` / `queryAll` / `findByIndex` under `withBody: false`) with its full body. Re-reads the record blob and returns a fresh record with the body field populated. For TOML sheets (no body concept), returns the record unchanged. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).

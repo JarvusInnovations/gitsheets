@@ -28,7 +28,7 @@ That's it. Records live at `users/<slug>.toml`. No validation, no normalization 
 ## Top-level `[gitsheet]`
 
 | Key | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `root` | string | Sub-directory under the data root where this sheet's records live. Required. |
 | `path` | string | Path template — see below. Required. Non-empty string. |
 
@@ -93,7 +93,7 @@ Per the spec, rendered segments reject Windows-invalid characters: `< > : " | ? 
 
 A standard JSON Schema validated on every write. Validation runs in this order:
 
-1. JSON Schema (this block) via `ajv` in strict mode + `ajv-formats`
+1. JSON Schema (this block) via the Rust core's `jsonschema` validator (Draft-07, formats asserted, strict — an unknown/typo'd keyword fails to compile with `ConfigError('config_invalid')` at sheet-open)
 2. Standard Schema (consumer-supplied via `openSheet({validator})` or `openStore({validators})`) — Zod, Valibot, ArkType, Effect Schema
 
 The Standard Schema layer can **transform** the record; the transformed value is what gets normalized and written.
@@ -119,7 +119,7 @@ default = 'user'
 
 Notes:
 
-- `$data` references (the ajv extension that lets a schema reference another field's runtime value) are **disabled** in v1.0 — a `[gitsheet.schema]` containing `$data` fails to compile with `ConfigError('config_invalid')`.
+- `$data` references (a schema referencing another field's runtime value) are **disabled** — a `[gitsheet.schema]` containing `$data` fails to compile with `ConfigError('config_invalid')`.
 - Reads don't validate. Only writes.
 - Default values from `default:` apply on write if the field is unset.
 
@@ -160,25 +160,21 @@ Optional. Switches the sheet's on-disk storage from `.toml` to markdown-with-fro
 [gitsheet.format]
 type = 'markdown'      # default: 'toml'. 'mdx' is an alias with .mdx extension.
 body = 'body'          # required for markdown/mdx — field that holds the body text
-title = 'title'        # optional — denormalize body's first H1 into this field (v1.3)
-
-[gitsheet.format.markdownlint]
-# Optional. Passed to markdownlint --fix during serialize.
-# Default-rules-on-top: { default = true, MD013 = false, MD041 = false }
-# When [gitsheet.format].title is set, MD041 auto-enables (consumer can override).
-# Override any rule:
-MD024 = false          # allow duplicate headings (long-form prose)
+title = 'title'        # optional — denormalize body's first H1 into this field
+normalize = true       # default true — reformat the body on write (see below)
 ```
+
+Bodies are normalized on write by the native `dprint-plugin-markdown` formatter embedded in the core (the same bytes across every binding). It runs aggressive with `textWrap: never`: each paragraph is unwrapped to one logical line, tables are column-aligned, and list/emphasis/heading/code-fence styles are made consistent (unordered lists become `-`, headings ATX). There is no per-rule config; it is on or off. (Before v2 this was a host-side `markdownlint --fix` pass with a `[gitsheet.format.markdownlint]` rule table — both are gone.)
 
 When `title` is set, the library enforces `record[<title>] === <body's first H1, or undefined>` on every write. `Sheet.upsert` with disagreeing input throws `ValidationError`; `Sheet.patch({title: 'X'})` rewrites the body's H1; `Sheet.patch({body: '# Y\n…'})` re-derives the title. The on-disk file remains a standalone markdown document — the H1 stays in the body verbatim.
 
-Disable normalization entirely:
+Disable normalization entirely (bodies written verbatim):
 
 ```toml
 [gitsheet.format]
 type = 'markdown'
 body = 'body'
-markdownlint = false
+normalize = false
 ```
 
 ### On-disk layout (markdown / mdx)
@@ -193,7 +189,7 @@ title = "Hello, world"
 
 # Hello, world
 
-This is the body. Normalized via markdownlint --fix on write.
+This is the body. Normalized on write by the core's native markdown formatter.
 ```
 
 - Frontmatter is canonical TOML (deep-sorted keys via the existing `stringifyRecord` path).
@@ -203,7 +199,7 @@ This is the body. Normalized via markdownlint --fix on write.
 ### Format types
 
 | `type` | Extension | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `'toml'` | `.toml` | Default. Whole record as TOML. |
 | `'markdown'` | `.md` | TOML frontmatter + designated body field. |
 | `'mdx'` | `.mdx` | Alias of markdown with `.mdx` extension. |
@@ -263,10 +259,7 @@ path = '${{ slug }}'
 [gitsheet.format]
 type = 'markdown'
 body = 'body'
-
-# Layered on top of library defaults (MD013, MD041 off):
-[gitsheet.format.markdownlint]
-MD024 = false       # allow duplicate headings (long-form content)
+# normalize = false   # optional: write bodies verbatim (default is native reformat)
 
 [gitsheet.schema]
 type = 'object'
@@ -325,7 +318,7 @@ Independent of validation. Applied on every write:
 
 1. **Deep-sort object keys** (alphabetical, recursive).
 2. **Per-field sort rules** from `[gitsheet.fields.<name>.sort]`.
-3. **Format-specific normalization** — for markdown sheets, the body goes through `markdownlint --fix` with the configured rule set.
+3. **Format-specific normalization** — for markdown sheets (unless `normalize = false`), the body is reformatted by the core's native `dprint-plugin-markdown` formatter.
 
 Bytes on disk are deterministic per logical-record state. Logically-equal records produce byte-identical files. This makes git diffs meaningful and enables content-hash-based caching.
 

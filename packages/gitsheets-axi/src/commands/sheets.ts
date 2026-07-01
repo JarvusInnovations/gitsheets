@@ -3,7 +3,7 @@ import { AxiError } from 'axi-sdk-js';
 import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderListResponse, renderObject } from '../output/render.js';
-import { computed, display, field } from '../output/schema.js';
+import { display, field } from '../output/schema.js';
 import { countRecords } from '../output/sheet-schema.js';
 import { Template } from 'gitsheets';
 
@@ -75,7 +75,7 @@ async function sheetsList(ctx: GitsheetsContext): Promise<string> {
     schema: [
       field('name'),
       display('format'),
-      computed('records', (item) => `${item['records']}`),
+      field('records'),
       field('root'),
     ],
     suggestions: help,
