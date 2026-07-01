@@ -602,6 +602,20 @@ pub fn record_list(
     }
 }
 
+/// Hash raw bytes into the object database as a loose blob, returning its git
+/// blob hash — the core's blob-write primitive (replaces the JS package's direct
+/// `@hologit/holo-tree` `writeBlob`). Used by the CLI/host to hash a binary
+/// attachment before staging it into a record's attachment tree with
+/// `CoreTransaction.setAttachment(s)`. The hash is a pure function of the bytes,
+/// so Node and Python hashing the same content produce the same object.
+#[napi]
+pub fn write_blob(env: Env, git_dir: String, content: Buffer) -> Result<String> {
+    match record::write_blob_at_dir(&git_dir, content.as_ref()) {
+        Ok(hash) => Ok(hash),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
 // ── substrate read/write counters (bulk benchmark + hologit#464 finding) ──────
 
 /// A snapshot of holo-tree's process-wide tree/blob counters — read-side
@@ -898,6 +912,12 @@ pub fn diff_records(
         let mut obj = env.create_object()?;
         obj.set_named_property("path", env.create_string(&d.change.path)?)?;
         obj.set_named_property("status", env.create_string(d.change.status.as_str())?)?;
+        // `previousPath` is the rename source (old) path — non-null only for a
+        // 'renamed' change, matching Sheet.diffFrom's rename semantics.
+        match &d.change.previous_path {
+            Some(p) => obj.set_named_property("previousPath", env.create_string(p)?)?,
+            None => obj.set_named_property("previousPath", env.get_null()?)?,
+        }
         match &d.change.src_hash {
             Some(h) => obj.set_named_property("srcHash", env.create_string(h)?)?,
             None => obj.set_named_property("srcHash", env.get_null()?)?,
@@ -1138,6 +1158,14 @@ pub struct JsStageOutcome {
     pub path: String,
 }
 
+/// One attachment entry from `CoreTransaction.getAttachments`: its filename and
+/// blob hash (name → hash).
+#[napi(object)]
+pub struct JsAttachmentEntry {
+    pub name: String,
+    pub hash: String,
+}
+
 /// A live transaction the JS boundary suite drives. Holds a `!Send`
 /// `Transaction` (repo + private tree) and the opened `Sheet`s, so it is
 /// constructed and used on its owning JS thread — the thread-confinement the
@@ -1374,6 +1402,160 @@ impl CoreTransaction {
         }
         tx.mark_mutated();
         Ok(())
+    }
+
+    /// Stage attachments for a record *(mutating)*: place each `name → blobHash`
+    /// at `<recordPath>/<name>` in this transaction's live tree, so the record
+    /// and its attachments commit atomically. Write the blob first with the
+    /// top-level `writeBlob`. Marks the transaction mutated.
+    #[napi]
+    pub fn set_attachments(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+        attachments: HashMap<String, String>,
+    ) -> Result<()> {
+        let items: Vec<(String, String)> = attachments.into_iter().collect();
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        {
+            let (repo, tree) = tx.split();
+            let sheet = sheets.get_mut(&name).ok_or_else(|| {
+                Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
+            })?;
+            if let Err(err) = sheet.set_attachments(repo, tree, &record_path, &items) {
+                return Err(raise_core_error(&env, &err));
+            }
+        }
+        tx.mark_mutated();
+        Ok(())
+    }
+
+    /// Stage a single attachment *(mutating)* — sugar over [`Self::set_attachments`].
+    #[napi]
+    pub fn set_attachment(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+        attachment_name: String,
+        blob_hash: String,
+    ) -> Result<()> {
+        let mut map = HashMap::new();
+        map.insert(attachment_name, blob_hash);
+        self.set_attachments(env, name, record_path, map)
+    }
+
+    /// The blob-hash map of a record's attachments (`name → hash`, sorted by
+    /// name), or `null` when the record has no attachment directory. Read-only.
+    #[napi]
+    pub fn get_attachments(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+    ) -> Result<Option<Vec<JsAttachmentEntry>>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        match sheet.get_attachments(repo, tree, &record_path) {
+            Ok(Some(entries)) => Ok(Some(
+                entries
+                    .into_iter()
+                    .map(|(name, hash)| JsAttachmentEntry { name, hash })
+                    .collect(),
+            )),
+            Ok(None) => Ok(None),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// The blob hash of a single named attachment, or `null` if absent. Read-only.
+    #[napi]
+    pub fn get_attachment(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+        attachment_name: String,
+    ) -> Result<Option<String>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        sheet
+            .get_attachment(repo, tree, &record_path, &attachment_name)
+            .map_err(|err| raise_core_error(&env, &err))
+    }
+
+    /// Remove a single named attachment *(mutating)*. Throws
+    /// `NotFoundError(record_not_found)` when it doesn't exist. Marks mutated.
+    #[napi]
+    pub fn delete_attachment(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+        attachment_name: String,
+    ) -> Result<()> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        {
+            let (repo, tree) = tx.split();
+            let sheet = sheets.get_mut(&name).ok_or_else(|| {
+                Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
+            })?;
+            if let Err(err) = sheet.delete_attachment(repo, tree, &record_path, &attachment_name) {
+                return Err(raise_core_error(&env, &err));
+            }
+        }
+        tx.mark_mutated();
+        Ok(())
+    }
+
+    /// Remove all attachments for a record *(mutating)*. A no-op when the record
+    /// has no attachment directory — in that case the transaction is NOT marked
+    /// mutated (so an otherwise-empty transaction still finalizes to no commit).
+    /// Returns whether anything was removed.
+    #[napi]
+    pub fn delete_attachments(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+    ) -> Result<bool> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let removed = {
+            let (repo, tree) = tx.split();
+            let sheet = sheets.get_mut(&name).ok_or_else(|| {
+                Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
+            })?;
+            match sheet.delete_attachments(repo, tree, &record_path) {
+                Ok(r) => r,
+                Err(err) => return Err(raise_core_error(&env, &err)),
+            }
+        };
+        if removed {
+            tx.mark_mutated();
+        }
+        Ok(removed)
     }
 
     /// List every record under the sheet's base, decoded through the format

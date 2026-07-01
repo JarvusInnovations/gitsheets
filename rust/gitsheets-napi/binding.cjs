@@ -127,6 +127,9 @@ module.exports = {
   recordDelete: wrap(addon.recordDelete),
   recordList: wrap(addon.recordList),
   diffRecords: wrap(addon.diffRecords),
+  // Blob-write primitive: hash raw attachment bytes into the ODB. A substrate
+  // failure surfaces as a typed core error.
+  writeBlob: wrap(addon.writeBlob),
   // Query traversal + filtering (batch-first): the template prunes the walk and
   // the filter (equality / nested / `$pred` engine snippets) runs in the core.
   recordQuery: wrap(addon.recordQuery),
