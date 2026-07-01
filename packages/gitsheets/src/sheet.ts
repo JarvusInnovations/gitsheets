@@ -746,6 +746,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
   readonly #prefix: string;
   readonly #indexes = new Map<string, IndexState<T>>();
+  #configPromise: Promise<SheetConfig> | undefined;
 
   constructor(opts: SheetConstructorOptions<T>) {
     this.#repo = opts.repo;
@@ -811,7 +812,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async readConfig(): Promise<SheetConfig> {
-    return loadConfig(this.#gitDir, this.#configTreeRef(), this.#configPath);
+    // A Sheet reads a single, immutable tree ref (the open snapshot, or the tx
+    // parent), so its config never changes over the instance's lifetime.
+    // Memoize to avoid a `git rev-parse` per call on hot write/query loops.
+    if (this.#configPromise === undefined) {
+      this.#configPromise = loadConfig(this.#gitDir, this.#configTreeRef(), this.#configPath);
+    }
+    return this.#configPromise;
   }
 
   /** Same as readConfig — config is cached by config-blob hash anyway. */
