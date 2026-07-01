@@ -1,11 +1,14 @@
-# Rust core & language bindings (v-next target architecture)
+# Rust core & language bindings (current architecture)
 
-**Status: target / direction.** This spec records committed architectural
-*decisions* for gitsheets' evolution into a Rust-core engine with thin
-language bindings. It is forward-looking: most of it is **not yet implemented**,
-and a spec-drift audit will (correctly) report it as unimplemented. The build-out
-is tracked as a plan DAG in [`plans/`](../plans/) (see [Phasing](#phasing)). It
-extends the substrate evolution begun by the holo-tree migration
+**Status: implemented / current architecture.** This spec records the
+architectural *decisions* behind gitsheets' Rust-core engine with thin language
+bindings — and, as of the [#127](https://github.com/JarvusInnovations/gitsheets/issues/127)
+cutover, the shipped reality: `gitsheets-core` owns the engine, the Node package
+is a thin marshalling shell over `@gitsheets/core-napi`, and a Python binding
+(`rust/gitsheets-py`) runs over the same core. A spec-drift audit should find this
+implemented, not pending. The build-out landed via the (now-`done`) plan DAG in
+[`plans/`](../plans/) (see [Phasing](#phasing)). It completed the substrate
+evolution begun by the holo-tree migration
 ([#127](https://github.com/JarvusInnovations/gitsheets/issues/127),
 [`architecture.md`](architecture.md)).
 
@@ -38,7 +41,8 @@ under multi-binding, centralizing the bytes-authority is mandatory, not optional
 
 Owns everything bytes-determining or consistency-critical:
 
-- Tree / blob / commit operations (via holo-tree; shipped as `@hologit/holo-tree`).
+- Tree / blob / commit operations (via `holo-tree`/gitoxide, linked directly into
+  the core — the Node package no longer depends on `@hologit/holo-tree`).
 - **TOML parse + serialize** (`toml` / `toml_edit`).
 - **Normalization** — key sorting, byte-stable canonical form.
 - **Path-template rendering** (record → path), including partition derivations.
@@ -147,6 +151,19 @@ parity fails on real snippets or a use case needs `Intl`/advanced built-ins. As
 boa evolves quickly, its **version is pinned** (per the contract constraint
 below) and upgraded deliberately.
 
+> **Shipped status (Node cutover).** The *declarative-first* half (point 1) is
+> live in the core: `${{ field }}` substitution, `{field: dir}` directives,
+> JSON-Schema validation, and locale-sensitive `sort = true` via the native ICU
+> collator all run natively in `gitsheets-core`. The *JS escape-hatch* half
+> (point 2) is **not yet routed through the core's boa engine on the Node
+> binding**: raw-JS sort comparators (`Sheet.<field>.sort` string rules) still run
+> host-side in `node:vm` via the retained `buildSorter`/exported `Template`
+> path. This is a **deliberate deferral** — it is single-binding today (Node only,
+> where `node:vm` is the parity baseline anyway) and moves to the in-core boa
+> engine when the Python binding needs raw-JS comparators to stay byte-identical.
+> Until then the core's boa engine is the specified target for this escape hatch,
+> not the Node runtime path. Tracked in [`node-binding-thin`](../plans/node-binding-thin.md).
+
 **Two constraints this creates:**
 
 - **Thread-confinement.** Embedded JS contexts are single-threaded (`!Send`).
@@ -174,20 +191,25 @@ one-time re-baseline**:
 
 ## Phasing
 
-The DAG in [`plans/`](../plans/) realizes this in dependency order. The
-load-bearing sequencing rule: **the bytes-authority must land before a second
-binding exists**, or Node and Python will disagree on bytes.
+The DAG in [`plans/`](../plans/) realized this in dependency order — **all three
+phases are now done**. The load-bearing sequencing rule held: **the bytes-authority
+landed before a second binding existed**, so Node and Python agree on bytes.
 
 1. **Tree ops in Rust** *(done — [#203](https://github.com/JarvusInnovations/gitsheets/pull/203))* —
    `@hologit/holo-tree` binding; tree/blob/commit moved off hologit JS, TOML stays
    JS, behind the unchanged public API.
    (`holo-tree-napi-spike` → `holo-tree-migration`.)
-2. **Bytes-authority core** — establish `gitsheets-core`; move TOML +
+2. **Bytes-authority core** *(done)* — established `gitsheets-core`; moved TOML +
    normalization, path templates, shape validation, and definition-embedded logic
-   into it; execute the rebaseline. This is the gate for multi-binding.
-3. **Engine + thin bindings** — record engine (CRUD/query/index/diff), the
-   `Sheet`/`Transaction`/`Store` state machine, re-thin the Node binding, add the
-   Python binding.
+   into it and executed the rebaseline. This was the gate for multi-binding.
+   (`toml-core`, `canonical-rebaseline`, `path-template-core`, `validation-core`,
+   the codec/collation/normalize plans, etc.)
+3. **Engine + thin bindings** *(done — Node cutover [#216](https://github.com/JarvusInnovations/gitsheets/pull/216))* —
+   record engine (CRUD/query/index/diff) and the `Sheet`/`Transaction`/`Store`
+   state machine in the core; the Node binding re-thinned to a marshalling shell
+   over `@gitsheets/core-napi` (`node-binding-thin`) with the direct
+   `@hologit/holo-tree` dependency dropped; the Python binding
+   (`rust/gitsheets-py`, pyo3) added over the same core, proven byte-identical.
 
 ## Non-negotiables (carried from the existing specs)
 
