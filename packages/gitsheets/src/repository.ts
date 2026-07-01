@@ -1,12 +1,13 @@
-// Repository — entry point. Wraps hologit's Repo with gitsheets-specific
-// orchestration (transactions, sheet discovery). See specs/api/repository.md.
+// Repository — entry point. A thin orchestration shell over the Rust core
+// (`gitsheets-core`, via the `@gitsheets/core-napi` addon): transactions run on
+// `CoreTransaction`, reads resolve against a captured tree ref, and the only
+// remaining git shell-outs are genuine porcelain (ref resolution, sheet
+// discovery, author config). See specs/api/repository.md.
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { Repo as HologitRepo } from 'hologit';
-import type { TreeObject, Workspace } from 'hologit';
-
+import { addon, callCore, CoreTransaction } from './core.js';
 import { ConfigError, RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
 import {
@@ -19,12 +20,14 @@ import {
   Mutex,
   Transaction,
   resolveAuthor,
+  toTrailerArray,
   transactionContext,
   type TransactionHandler,
   type TransactionOptions,
   type TransactionResult,
 } from './transaction.js';
 import type { StandardSchemaV1 } from './validation.js';
+import { EMPTY_TREE_HASH, makeBlobHandle, type BlobHandle } from './working-tree.js';
 
 const exec = promisify(execFile);
 
@@ -57,48 +60,45 @@ export interface OpenSheetsOptions {
   readonly prefix?: string;
 }
 
+/** Resolve the absolute `.git` directory for `gitDir` (or discovered from `cwd`). */
+async function resolveGitDir(gitDir: string | undefined): Promise<string> {
+  const cwd = gitDir ?? process.cwd();
+  try {
+    const { stdout } = await exec('git', ['rev-parse', '--absolute-git-dir'], { cwd });
+    return stdout.trim();
+  } catch (err) {
+    throw new ConfigError(
+      'config_missing',
+      `could not find a git repository at ${cwd}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+}
+
 export class Repository {
-  readonly #hologitRepo: HologitRepo;
+  readonly #gitDir: string;
   readonly #mutex = new Mutex();
   readonly #postCommitHooks: Array<(commitHash: string) => void> = [];
   #strictMode = false;
   #pushDaemon: PushDaemon | null = null;
 
-  constructor(hologitRepo: HologitRepo) {
-    this.#hologitRepo = hologitRepo;
+  constructor(opts: { gitDir: string }) {
+    this.#gitDir = opts.gitDir;
   }
 
   /** Discover a `.git` upward from `cwd` and open it. */
   static async fromCwd(): Promise<Repository> {
-    const repo = await HologitRepo.getFromEnvironment();
-    return new Repository(repo);
+    return Repository.open({});
   }
 
-  /** Open a specific git directory. */
+  /** Open a specific git directory (or discover one from the cwd). */
   static async open(opts: OpenRepoOptions): Promise<Repository> {
-    if (!opts.gitDir) {
-      return Repository.fromCwd();
-    }
-    const repoOpts: { gitDir: string; workTree?: string | null } = { gitDir: opts.gitDir };
-    if (opts.workTree !== undefined) {
-      repoOpts.workTree = opts.workTree;
-    }
-    const repo = new HologitRepo(repoOpts);
-    return new Repository(repo);
-  }
-
-  /**
-   * @internal — Direct access to the underlying hologit substrate is reserved
-   * for the library. Consumers should use the public Repository surface; the
-   * substrate is an implementation detail and will swap to Rust holo-tree in
-   * v1.1 with no public-API change ([#127]).
-   */
-  get hologitRepo(): HologitRepo {
-    return this.#hologitRepo;
+    const gitDir = await resolveGitDir(opts.gitDir);
+    return new Repository({ gitDir });
   }
 
   get gitDir(): string {
-    return this.#hologitRepo.gitDir;
+    return this.#gitDir;
   }
 
   /** @internal — used by Sheet to enforce strict mode. Library cross-class signal, not a consumer API. */
@@ -113,7 +113,17 @@ export class Repository {
 
   /** Resolve a ref or commit hash. Returns the full commit hash or null. */
   async resolveRef(ref: string): Promise<string | null> {
-    return this.#hologitRepo.resolveRef(ref);
+    return resolveCommit(this.#gitDir, ref);
+  }
+
+  /**
+   * @internal — Write raw bytes as a loose blob in the ODB and return a
+   * gitsheets blob handle. Used by the CLI to hash binary attachments before
+   * placing them in a record's attachment tree.
+   */
+  async writeBlob(content: Buffer): Promise<BlobHandle> {
+    const hash = callCore(() => addon.writeBlob(this.#gitDir, content));
+    return makeBlobHandle(this.#gitDir, hash, '100644', content);
   }
 
   /**
@@ -126,15 +136,14 @@ export class Repository {
     opts: OpenSheetOptions<T> = {},
   ): Promise<Sheet<T>> {
     const root = opts.root ?? '.';
-    const workspace = await this.#getWorkspace();
-    const dataTree = await this.#resolveDataTree(workspace, root);
+    const readRef = await this.#resolveReadTree();
     const configPath = joinTreePath(root, '.gitsheets', `${name}.toml`);
     const sheetOpts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
-      workspace,
-      dataTree,
       name,
       configPath,
+      readRef,
+      dataBase: dataRootBase(root),
     };
     if (opts.validator !== undefined) {
       Object.assign(sheetOpts, { validator: opts.validator });
@@ -151,27 +160,22 @@ export class Repository {
   /** Discover every sheet declared in `<root>/.gitsheets/*.toml`. */
   async openSheets(opts: OpenSheetsOptions = {}): Promise<Record<string, Sheet>> {
     const root = opts.root ?? '.';
-    const workspace = await this.#getWorkspace();
-    const sheetsDir = await workspace.root.getSubtree(joinTreePath(root, '.gitsheets'));
-    if (!sheetsDir) return {};
+    const readRef = await this.#resolveReadTree();
+    let names: string[];
+    try {
+      names = callCore(() => addon.coreDiscoverSheets(this.#gitDir, readRef, root));
+    } catch {
+      return {};
+    }
 
-    const children = await sheetsDir.getChildren();
     const out: Record<string, Sheet> = {};
-    const dataTree = await this.#resolveDataTree(workspace, root);
-
-    // for...in to include hologit's prototype-loaded entries.
-    for (const childName in children) {
-      const child = children[childName];
-      const match = /^(.+)\.toml$/.exec(childName);
-      if (!match) continue;
-      if (!child || (child as { isBlob?: boolean }).isBlob !== true) continue;
-      const sheetName = match[1]!;
+    for (const sheetName of names) {
       const sheetOpts: import('./sheet.js').SheetConstructorOptions = {
         repo: this,
-        workspace,
-        dataTree,
         name: sheetName,
-        configPath: joinTreePath(root, '.gitsheets', childName),
+        configPath: joinTreePath(root, '.gitsheets', `${sheetName}.toml`),
+        readRef,
+        dataBase: dataRootBase(root),
       };
       if (opts.prefix !== undefined) {
         Object.assign(sheetOpts, { prefix: opts.prefix });
@@ -197,34 +201,34 @@ export class Repository {
     }
 
     const normalized = Transaction.normalizeOptions(opts);
-    const author = await resolveAuthor(this.gitDir, normalized.author);
+    const author = await resolveAuthor(this.#gitDir, normalized.author);
     const committer = normalized.committer ?? author;
 
     const release = await this.#mutex.acquire();
     try {
-      const { parent, branch } = await this.#resolveParent(normalized.parent, normalized.branch);
-      const parentCommitHash = parent.commitHash;
-      const workspace = parentCommitHash
-        ? await this.#hologitRepo.createWorkspaceFromRef(parentCommitHash)
-        : await this.#emptyWorkspace();
-
-      const tx: Transaction = new Transaction({
-        hologitRepo: this.#hologitRepo,
-        workspace,
-        parentCommitHash,
-        parentRef: parent.refName,
-        branchRef: branch,
+      const coreOpts: import('@gitsheets/core-napi').JsTransactionOptions = {
+        message: normalized.message,
+        trailers: toTrailerArray(normalized.trailers),
         author,
         committer,
-        message: normalized.message,
-        trailers: normalized.trailers,
+        timeSeconds: Math.floor(Date.now() / 1000),
+        // getTimezoneOffset returns minutes local is *behind* UTC; negate for
+        // git's "+HHMM"-style offset (minutes ahead of UTC).
+        offsetMinutes: -new Date().getTimezoneOffset(),
+      };
+      if (normalized.parent !== undefined) coreOpts.parent = normalized.parent;
+      if (normalized.branch !== undefined) coreOpts.branch = normalized.branch;
+
+      const coreTx = callCore(() => CoreTransaction.begin(this.#gitDir, coreOpts));
+      const tx: Transaction = new Transaction({
+        coreTx,
+        gitDir: this.#gitDir,
         sheetFactory: <R extends RecordLike = RecordLike>(
           name: string,
-          ws: Workspace,
-          tree: TreeObject,
+          txn: Transaction,
           validator?: StandardSchemaV1<unknown, R>,
           prefix?: string,
-        ): Sheet<R> => this.#makeTxSheet<R>(tx, name, ws, tree, validator, prefix),
+        ): Sheet<R> => this.#makeTxSheet<R>(txn, name, validator, prefix),
       });
 
       let value: T;
@@ -302,16 +306,12 @@ export class Repository {
   #makeTxSheet<T extends RecordLike = RecordLike>(
     tx: Transaction,
     name: string,
-    workspace: Workspace,
-    tree: TreeObject,
     validator?: StandardSchemaV1<unknown, T>,
     prefix?: string,
   ): Sheet<T> {
     const configPath = `.gitsheets/${name}.toml`;
     const opts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
-      workspace,
-      dataTree: tree,
       name,
       configPath,
       transaction: tx,
@@ -321,91 +321,18 @@ export class Repository {
     return new Sheet<T>(opts);
   }
 
-  async #getWorkspace(): Promise<Workspace> {
-    // Bypass hologit's getWorkspace cache — it caches the first observed
-    // workspace per Repo instance, so post-commit reads would return stale
-    // state. Resolve HEAD fresh on each call. Fresh-repo fallback handles #19.
-    let head: string | null = null;
+  /** The tree hash reads resolve against — HEAD's tree, or the empty tree on a fresh repo. */
+  async #resolveReadTree(): Promise<string> {
     try {
-      head = await this.#hologitRepo.resolveRef('HEAD');
+      const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', 'HEAD^{tree}'], {
+        cwd: this.#gitDir,
+      });
+      const hash = stdout.trim();
+      if (hash) return hash;
     } catch {
-      head = null;
+      // fresh repo — no HEAD
     }
-    if (head) {
-      return this.#hologitRepo.createWorkspaceFromRef(head);
-    }
-    return this.#emptyWorkspace();
-  }
-
-  async #emptyWorkspace(): Promise<Workspace> {
-    // hologit doesn't expose an empty-workspace factory directly. Use the
-    // empty-tree hash to bootstrap a workspace from a deterministic tree.
-    const { TreeObject } = await import('hologit');
-    const emptyTreeHash = TreeObject.getEmptyTreeHash();
-    return this.#hologitRepo.createWorkspaceFromTreeHash(emptyTreeHash);
-  }
-
-  async #resolveDataTree(workspace: Workspace, root: string): Promise<TreeObject> {
-    if (root === '.' || root === '') return workspace.root;
-    const sub = await workspace.root.getSubtree(root, true);
-    if (!sub) {
-      throw new ConfigError('config_missing', `data root ${root} not found in workspace`);
-    }
-    return sub;
-  }
-
-  /**
-   * Resolve the parent ref + branch ref pair per specs/behaviors/transactions.md.
-   * - parent unset → HEAD's branch (or detached HEAD's commit)
-   * - parent = branch → branch advances
-   * - parent = hash → no ref updated unless `branch` explicit
-   */
-  async #resolveParent(
-    parent: string | undefined,
-    branch: string | undefined,
-  ): Promise<{ parent: { refName: string | null; commitHash: string | null }; branch: string | null }> {
-    if (!parent) {
-      // Use HEAD's branch when on a branch; otherwise current HEAD commit.
-      const headRef = await this.#headBranchRef();
-      if (headRef) {
-        const commit = await this.#hologitRepo.resolveRef(headRef);
-        return {
-          parent: { refName: headRef, commitHash: commit },
-          branch: branch ?? headRef,
-        };
-      }
-      // Detached or fresh repo
-      const headHash = await this.#hologitRepo.resolveRef('HEAD').catch(() => null);
-      return {
-        parent: { refName: null, commitHash: headHash },
-        branch: branch ?? null,
-      };
-    }
-
-    // parent is set — figure out if it's a ref name (branch) or a hash
-    const isLikelyBranch = /^[a-zA-Z0-9_./-]+$/.test(parent) && !/^[0-9a-f]{4,40}$/.test(parent);
-    if (isLikelyBranch) {
-      const refName = parent.startsWith('refs/') ? parent : `refs/heads/${parent}`;
-      const commit = await this.#hologitRepo.resolveRef(refName);
-      if (commit === null) {
-        // Maybe they passed a raw "main" that doesn't exist yet
-        throw new RefError('ref_not_found', `ref not found: ${parent}`);
-      }
-      return {
-        parent: { refName, commitHash: commit },
-        branch: branch ?? refName,
-      };
-    }
-
-    // Hash
-    const resolved = await this.#hologitRepo.resolveRef(parent);
-    if (!resolved) {
-      throw new RefError('ref_not_found', `cannot resolve commit: ${parent}`);
-    }
-    return {
-      parent: { refName: null, commitHash: resolved },
-      branch: branch ? (branch.startsWith('refs/') ? branch : `refs/heads/${branch}`) : null,
-    };
+    return EMPTY_TREE_HASH;
   }
 
   async #headBranchRef(): Promise<string | null> {
@@ -425,9 +352,29 @@ export async function openRepo(opts: OpenRepoOptions = {}): Promise<Repository> 
   return Repository.open(opts);
 }
 
+/** Resolve a ref/commit-ish to its full commit hash via git rev-parse; null on failure. */
+async function resolveCommit(gitDir: string, ref: string): Promise<string | null> {
+  try {
+    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+      cwd: gitDir,
+    });
+    const hash = stdout.trim();
+    return hash || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Join tree-path segments, dropping empties / `.` and stray slashes. */
 function joinTreePath(...parts: string[]): string {
   return parts
     .map((p) => p.replace(/^\/+/, '').replace(/\/+$/, ''))
     .filter((p) => p.length > 0 && p !== '.')
     .join('/');
+}
+
+/** Normalize the `root` open-option to a tree base path (`''` for the repo root). */
+function dataRootBase(root: string): string {
+  if (root === '.' || root === '') return '';
+  return root.replace(/^\/+|\/+$/g, '');
 }

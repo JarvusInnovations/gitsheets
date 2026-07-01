@@ -1,0 +1,22 @@
+accountLevel = "user"
+bio = """
+Azizi Developments is a leading developer based in Dubai with an extensive portfolio of modern luxury residential and commercial properties across the emirate’s most sought-after locations. Its properties, through which they aim to enrich the lives of UAE residents and investors, cater to all lifestyles.\r
+visit here:  [https://azizidevelopments.com/](https://azizidevelopments.com/)\r
+\r
+\r
+Email: info@azizidevelopments.com\r
+Tel. Number 00971 4 359 6673\r
+P.O. Box 00000\r
+Address "Suite No. 805 (Customer Care)\r
+Suite No. 1302 (Sales)\r
+Conrad Hotel,\r
+Sheikh Zayed Road, Dubai, UAE""""
+createdAt = "2023-07-15T11:29:30.000Z"
+firstName = "Azizi"
+fullName = "Azizi Developments"
+id = "019e4021-2037-79cc-a4ff-e423ec96713e"
+lastName = "Developments"
+legacyId = 13653
+slackSamlNameId = "azizidevelopments"
+slug = "azizidevelopments"
+updatedAt = "2023-07-15T11:49:26.000Z"

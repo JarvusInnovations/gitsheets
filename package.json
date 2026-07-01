@@ -3,7 +3,8 @@
   "private": true,
   "description": "Workspace root for the gitsheets monorepo. Published packages live under packages/.",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "rust/gitsheets-napi"
   ],
   "scripts": {
     "build": "npm run build -w gitsheets && npm run build -w gitsheets-axi",

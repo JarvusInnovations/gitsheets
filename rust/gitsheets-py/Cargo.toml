@@ -1,0 +1,19 @@
+[package]
+name = "gitsheets-py"
+description = "Python (pyo3) binding for gitsheets-core: marshals records between Python and the Rust core with full TOML type fidelity."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "gitsheets_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+gitsheets-core = { version = "0.0.0", path = "../gitsheets-core" }
+indexmap = "2"
+pyo3 = { version = "0.29.0", features = ["extension-module", "abi3-py39", "indexmap"] }
+toml = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

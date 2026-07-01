@@ -1,0 +1,8 @@
+localDate = 1979-05-27
+localDatetime = 1979-05-27T07:32:00
+localTime = 07:32:00
+offsetDatetime = 1979-05-27T07:32:00Z
+offsetDatetimeWithZone = 1979-05-27T00:32:00-07:00
+ratioOne = 1.0
+ratioPi = 3.14
+smallInt = 42

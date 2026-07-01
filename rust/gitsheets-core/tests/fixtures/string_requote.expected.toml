@@ -1,0 +1,11 @@
+accountLevel = "user"
+bio = """I’m Adrien, a content writer currently living in the USA, dedicated to creating engaging and informative content. As part of my work, I rely on <a href="https://forbiztech.com/products/software/content-management-software/">content management software</a> to keep my projects organized and easily accessible. I’ve been working with a service provider who offers excellent support and tools for managing content more efficiently. Their platform has helped me streamline my workflow and stay on top of deadlines. If you're looking to improve your content organization and management, it might be worth exploring how content management software can benefit your own process."""
+createdAt = "2025-04-08T06:45:43.000Z"
+firstName = "Adrien"
+fullName = "Adrien Broody"
+id = "019e4020-e4bb-77fd-be4c-9416d9cabca2"
+lastName = "Broody"
+legacyId = 26362
+slackSamlNameId = "adrien123"
+slug = "adrien123"
+updatedAt = "2025-04-08T06:47:46.000Z"

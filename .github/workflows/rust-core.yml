@@ -1,0 +1,191 @@
+# Rust core CI — builds and tests the gitsheets-core crate and its napi FFI
+# boundary. Kept SEPARATE from the main `ci.yml` (which runs the JS suite on
+# node 20 + 22 without a Rust toolchain): the Rust core is additive scaffolding
+# consumed by no JS code yet, so the main build must never depend on the built
+# `.node` addon. This workflow is the only place a Rust toolchain is required.
+#
+# Modeled on hologit's holo-tree-napi.yml (build + node --test round-trip), minus
+# the per-platform prebuild matrix and npm publish — this foundation only needs
+# to prove the boundary builds and round-trips on a native runner.
+#
+# Network note: gitsheets-core now depends on holo-tree as a *git* dependency
+# (the hologit repo, pinned via Cargo.lock). Cargo fetches it over https on the
+# first build — the runner allows this; no extra auth or config is needed.
+name: rust-core
+
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-core.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  core:
+    name: gitsheets-core (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The transaction tests commit to throwaway gix repos; gix's update_ref
+      # writes a reflog entry, which needs a committer identity from git config.
+      # CI runners have none configured, so without this the reflog write fails
+      # ("The reflog could not be created or updated"). Mirrors hologit's own
+      # holo-tree-napi.yml. (Upstream follow-up: holo-tree's update_ref should
+      # use the commit's identity for the reflog instead of ambient git config.)
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build workspace (incl. examples / parity harness)
+        run: cargo build --workspace --all-targets
+
+      - name: Core unit + canonical-parity tests
+        # Runs the value/error/canonical unit tests AND the corpus_parity
+        # integration test, PLUS the definition-logic unit tests (path_template,
+        # validation, engine), PLUS the record-engine tests added by
+        # plans/record-engine-core.md: diff/patch (RFC 6902 + 7396) units and the
+        # holo-tree CRUD + diff integration tests, which spin up throwaway
+        # gix-init repos in-process (no external git binary needed). CI exercises
+        # the committed fixture subset (golden canonical bytes); the full
+        # ~29.5k-record corpus parity is run locally against CodeForPhilly
+        # origin/published via GITSHEETS_PARITY_CORPUS — see
+        # plans/toml-canonical-core.md Notes.
+        run: cargo test -p gitsheets-core
+
+      - name: Clippy (deny warnings)
+        # Whole workspace + all targets: the core (incl. its record/diff tests)
+        # and the napi crate both lint clean.
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  napi:
+    name: gitsheets-napi boundary (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same reflog-identity requirement as the core job (the Sheet/Transaction
+      # boundary tests commit to scratch repos).
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install binding dev deps (@napi-rs/cli, ajv for parity)
+        working-directory: rust/gitsheets-napi
+        run: npm install
+
+      - name: Build the napi addon (release)
+        working-directory: rust/gitsheets-napi
+        run: npm run build
+
+      - name: Boundary + parity tests (canonical, path templates, ajv, node:vm engine, ICU locale collation, record CRUD/diff/patch, query, index, Sheet/Transaction/Store, markdown codec, attachments)
+        # Explicit file paths (not a glob) so the suite runs identically on
+        # node 20 and 22 — `node --test "test/*.mjs"` does NOT expand on node 20.
+        # The `test` npm script lists every .mjs explicitly (see package.json),
+        # including collator-parity.mjs, which asserts the native ICU collator for
+        # declarative `sort = true` matches this node's `localeCompare` byte-exactly
+        # (the boa-vs-V8 divergence locale-collation-core fixes — it needs Node for
+        # the reference, which this job has), and
+        # including sheet-store.mjs, which drives the orchestration state machine
+        # (Transaction lifecycle + the two-phase consumer-validator protocol +
+        # Store discovery), and sheet-markdown.mjs, which drives the markdown/mdx
+        # content-type codec (frontmatter+body round-trip, title-from-H1, lazy
+        # body, allowMissingBody), and sheet-attachments.mjs, which drives the
+        # blob-write primitive + atomic attachment staging (record + attachment in
+        # ONE commit) + diff rename detection vs `git diff-tree -M`.
+        # record-crud/query/index/sheet-store/sheet-markdown/sheet-attachments.mjs
+        # use `git init` for their temp repos, so git must be on PATH (it is, on
+        # ubuntu-latest).
+        working-directory: rust/gitsheets-napi
+        run: npm test
+
+      - name: Bulk read/query benchmark (SMOKE — committed fixture subset)
+        # Runs `bench/query-bench.mjs` with NO env, so it uses the committed
+        # ~60-record people fixture and just proves the bulk read/query path
+        # completes (timings are meaningless at that size — they're a smoke).
+        # The real ~18k-record numbers are a LOCAL/opt-in run against the
+        # CodeForPhilly corpus via GITSHEETS_BENCH_REPO/REF/BASE — see
+        # plans/record-query-index.md Notes.
+        working-directory: rust/gitsheets-napi
+        run: npm run bench
+
+  python:
+    name: gitsheets-py (pyo3 wheel + parity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Sheet/Transaction commit tests + the cross-binding commit-parity test
+      # commit to scratch repos, whose update_ref writes a reflog needing a
+      # committer identity from git config (same requirement as the other jobs).
+      - name: Configure git identity (commit-bearing tests write reflogs)
+        run: |
+          git config --global user.name "gitsheets CI"
+          git config --global user.email "ci@gitsheets.local"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v8.2.0
+
+      # Node is needed only for the cross-binding byte-identical proof: the
+      # Python parity suite drives the napi binding through _node_writer.mjs and
+      # asserts the resulting tree/blob/commit bytes match.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build the napi addon (release) — the cross-binding parity peer
+        working-directory: rust/gitsheets-napi
+        run: |
+          npm install
+          npm run build
+
+      - name: Build + install the gitsheets-py wheel (maturin/abi3)
+        working-directory: rust/gitsheets-py
+        run: |
+          uv venv
+          uv pip install maturin pytest pydantic
+          .venv/bin/maturin build --release --out dist
+          uv pip install --no-index --find-links dist gitsheets
+
+      - name: Smoke + cross-binding byte-identical parity tests
+        # tests/ auto-discovers test_smoke.py (incl. the attachment surface + the
+        # blob-write primitive + diff rename detection) and test_cross_binding.py
+        # (incl. the attachment-staging byte-identical Node↔Python commit proof,
+        # which drives the napi peer through _node_writer.mjs).
+        working-directory: rust/gitsheets-py
+        run: .venv/bin/pytest tests/ -v

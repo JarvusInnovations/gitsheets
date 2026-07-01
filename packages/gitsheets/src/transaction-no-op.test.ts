@@ -99,15 +99,14 @@ describe('Transaction#finalize no-op detection', () => {
     expect(await commitCount(fixture)).toBe(before + 1);
   });
 
-  it('markMutated alone (no tree change) produces no commit — behavior change vs v1.3.0', async () => {
+  it('an empty transaction (no tree change) produces no commit', async () => {
     const fixture = await seedRepo({ withRecords: true });
     const repo = await openRepo({ gitDir: fixture.gitDir });
     const before = await commitCount(fixture);
 
-    const result = await repo.transact({ message: 'force?' }, async (tx) => {
-      // markMutated alone used to produce an empty commit; after #179, the
-      // tree-hash comparison short-circuits.
-      tx.markMutated();
+    const result = await repo.transact({ message: 'force?' }, async () => {
+      // No mutating call — the core commits on success only when the resulting
+      // tree differs from the parent's (no-op detection).
     });
 
     expect(result.commitHash).toBeNull();
@@ -129,8 +128,7 @@ describe('Transaction#finalize no-op detection', () => {
         // No `parent` — fresh repo, no parent commit to compare against.
       },
       async (tx) => {
-        await tx.tree.writeChild('.gitsheets/users.toml', USERS_CONFIG);
-        tx.markMutated();
+        tx.writeFile('.gitsheets/users.toml', USERS_CONFIG);
       },
     );
 

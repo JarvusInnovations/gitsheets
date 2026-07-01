@@ -40,6 +40,8 @@ export type { Format, FormatConfig } from './format/index.js';
 
 export { mergePatch } from './patch.js';
 
+export type { BlobHandle } from './working-tree.js';
+
 export { openStore } from './store.js';
 export type {
   OpenStoreOptions,

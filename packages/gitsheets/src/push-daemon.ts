@@ -83,6 +83,14 @@ export class PushDaemon extends EventEmitter {
   #pendingCounter = 0;
   #lastPushedCounter = 0;
   #lastCommit: string | null = null;
+  // The HEAD a push last targeted (success or terminal). A `git push` syncs the
+  // whole branch, so the startup-backlog drain and a `notifyCommit` for the SAME
+  // commit must not both push — coalesce by this hash. Genuinely new commits
+  // (a different HEAD) still each push + emit their own classified error, per
+  // specs/behaviors/push-sync.md. (The fast in-process commit path widened the
+  // race window where a commit is on-disk — rev-list counts it — before
+  // notifyCommit has incremented the counter, which a counter-only guard misses.)
+  #lastPushedCommit: string | null = null;
   #lastPushAt: string | null = null;
   #lastError: {
     message: string;
@@ -172,6 +180,23 @@ export class PushDaemon extends EventEmitter {
         } catch {
           /* keep null */
         }
+        // Don't double-prime for a HEAD that's already pushed, or that the
+        // in-flight push is already targeting — a `git push` syncs the whole
+        // branch, so that commit is (or is about to be) on the remote. Priming
+        // anyway would inflate the pending counter transiently (notifyCommit and
+        // a stale-fetch backlog count counting the same commit), which a status
+        // read can observe between the increment and the next drain. Only prime
+        // when there's genuinely-newer local work than what's in flight.
+        if (
+          headCommit &&
+          (headCommit === this.#lastPushedCommit ||
+            (this.#inFlight && headCommit === this.#lastCommit))
+        ) {
+          return;
+        }
+        // Prime the pending queue and drain (per push-sync.md#startup-backlog).
+        // A redundant push for a commit `notifyCommit` also saw is further
+        // guarded in #drain by coalescing on #lastPushedCommit.
         this.#pendingCounter += ahead;
         if (headCommit) this.#lastCommit = headCommit;
         void this.#drain();
@@ -223,6 +248,16 @@ export class PushDaemon extends EventEmitter {
   async #drain(): Promise<void> {
     if (this.#inFlight || !this.#running) return;
     if (this.#pendingCounter <= this.#lastPushedCounter) return;
+    // Coalesce by HEAD: a `git push` syncs the whole branch, so if the current
+    // HEAD was already pushed (or terminally attempted), there is nothing new to
+    // send — mark the pending backlog handled and skip. A genuinely new commit
+    // has a different #lastCommit and falls through to push. This closes the
+    // startup-backlog ↔ notifyCommit double-push race that a counter-only guard
+    // misses (commit on-disk before its counter increment).
+    if (this.#lastCommit !== null && this.#lastCommit === this.#lastPushedCommit) {
+      this.#lastPushedCounter = this.#pendingCounter;
+      return;
+    }
     this.#inFlight = true;
     try {
       await this.#pushWithBackoff();
@@ -255,6 +290,7 @@ export class PushDaemon extends EventEmitter {
       try {
         await exec('git', ['push', this.#remote, this.#branch], { cwd: this.#gitDir });
         this.#lastPushedCounter = counterAtStart;
+        this.#lastPushedCommit = commit;
         this.#lastPushAt = new Date().toISOString();
         this.emit('push', { commit, durationMs: Date.now() - started });
         return;
@@ -269,11 +305,13 @@ export class PushDaemon extends EventEmitter {
           // own classified error event). Consumer intervention is required —
           // the no-force-push policy is non-negotiable.
           this.#lastPushedCounter = counterAtStart;
+          this.#lastPushedCommit = commit;
           return;
         }
         if (attempt >= this.#maxRetries) {
           // Give up on this batch; drop the counter forward so we don't loop forever.
           this.#lastPushedCounter = counterAtStart;
+          this.#lastPushedCommit = commit;
           return;
         }
         const next = Math.min(delay, this.#backoff.cap);

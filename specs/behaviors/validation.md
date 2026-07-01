@@ -73,10 +73,10 @@ The single-TOML-file approach is the default. Use the escape hatch sparingly.
 
 ## Validation engine
 
-- JSON Schema validation runs through **`ajv`** (or equivalent). The library configures `ajv` once per sheet with the sheet's schema compiled.
-- All formats from `ajv-formats` are available: `email`, `date-time`, `uri`, `uuid`, etc.
-- `strict: true` mode is enabled — unknown JSON Schema keywords produce a `ConfigError` (`config_invalid`) at sheet-open time rather than silently being ignored.
-- `$data` references (the non-default ajv extension that lets a schema reference another field's runtime value) are **disabled** in v1.0. A `[gitsheet.schema]` block containing `$data` will fail to compile with `ConfigError(config_invalid)`. This is a deliberate hardening choice; if a consumer surfaces a real need, it can be re-enabled in a follow-up.
+- JSON Schema validation runs in the **Rust core** through the pure-Rust [`jsonschema`](https://docs.rs/jsonschema) crate (the bytes-authority: the `[gitsheet.schema]` block is persisted with the data, so every binding must enforce it identically). The schema is compiled once per sheet and reused. Draft 7 is pinned (matching the former `ajv` default meta-schema). A schema the crate can't build surfaces as a `ConfigError` (`config_invalid`).
+- Standard formats are asserted (`email`, `date-time`, `uri`, `uuid`, etc.), matching the former `ajv-formats` behavior.
+- **`strict: true` mode is enabled** — unknown JSON Schema keywords produce a `ConfigError` (`config_invalid`) at sheet-open time rather than silently being ignored. The `jsonschema` crate is lenient by itself, so the core walks the schema at compile and rejects any keyword outside the known Draft-07 vocabulary, restoring the former `ajv` `strict: true` guard. Record-level validation of valid schemas is at parity with the former `ajv` pass (validity + instance path + failing-keyword `code`).
+- `$data` references (the non-default ajv extension that lets a schema reference another field's runtime value) are **disabled** in v1.0. A `[gitsheet.schema]` block containing `$data` will fail to compile with `ConfigError` (`config_invalid`) — the `jsonschema` crate rejects a `{ "$data": … }` object wherever a concrete keyword value (a number, string, etc.) is required. This is a deliberate hardening choice; if a consumer surfaces a real need, it can be re-enabled in a follow-up.
 
 ## Standard Schema layer
 

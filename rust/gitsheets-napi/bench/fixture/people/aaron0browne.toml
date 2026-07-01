@@ -1,0 +1,11 @@
+accountLevel = "user"
+bio = "Data Integration Programmer/Analyst in the Department of Biomedical Informatics at CHOP. Backend, Server-side, Client-side-beginner. Python, Django, Docker, PostgreSQL."
+createdAt = "2015-01-20T17:47:32.000Z"
+firstName = "Aaron"
+fullName = "Aaron Browne"
+id = "019e4021-294a-7710-8e63-eca975394083"
+lastName = "Browne"
+legacyId = 811
+slackSamlNameId = "aaron0browne"
+slug = "aaron0browne"
+updatedAt = "2018-08-27T21:39:54.000Z"

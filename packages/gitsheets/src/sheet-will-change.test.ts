@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ValidationError } from './errors.js';
+import { IndexError, ValidationError } from './errors.js';
 import { openRepo } from './repository.js';
 import { testRepo, type TestRepoHandle } from './test-helpers/test-repo.js';
 
@@ -138,6 +138,24 @@ describe('Sheet.willChange', () => {
 
     const result = await sheet.willChange({ slug: 'bob-tables', email: 'bob@x.org' });
     expect(result.path).toBe('bob-tables');
+  });
+
+  it('runs the unique-index conflict check, same as upsert (specs/api/sheet.md)', async () => {
+    const fixture = await seedRepo();
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+
+    await repo.transact({ message: 'seed jane' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'jane', email: 'shared@x.org' });
+    });
+
+    const sheet = await repo.openSheet('users');
+    await sheet.defineIndex('byEmail', { unique: true, eager: true }, (r) => r['email'] as string);
+
+    // A different record reusing jane's email would collide on the unique index —
+    // willChange must surface it the same way upsert would, before any write.
+    await expect(
+      sheet.willChange({ slug: 'bob', email: 'shared@x.org' }),
+    ).rejects.toBeInstanceOf(IndexError);
   });
 
   it('handles markdown sheets — body included in byte comparison', async () => {

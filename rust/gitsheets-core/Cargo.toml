@@ -1,0 +1,89 @@
+[package]
+name = "gitsheets-core"
+description = "Pure-Rust core for gitsheets: the TOML-faithful value type, typed error surface, and (later) the bytes-authority engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Insertion-order-preserving map for table values (TOML key ordering is a
+# normalization concern handled later; the value type itself preserves order).
+indexmap = "2"
+# Backs the four distinct TOML datetime kinds and gives byte-faithful `Display`.
+# This is the same crate the serializer will use, so the datetime kinds the
+# value type carries are exactly the ones that re-serialize.
+toml = "0.8"
+
+# ── definition-logic-core (path templates, validation, embedded engine) ──────
+# Embedded JS engine for definition escape-hatch snippets (path-template
+# expressions + raw-JS sort comparators). PURE-RUST, so the whole core stays
+# C-free for trivial cross-platform prebuilds. Its JS semantics are part of the
+# canonical-behavior contract, so the version is PINNED EXACTLY (`=`) and
+# upgraded deliberately — see specs/rust-core.md "Embedded code execution".
+boa_engine = "=0.21.1"
+# JSON-Schema validation of the persisted record shape (the `[gitsheet.schema]`
+# block), replacing `ajv`. default-features off drops the reqwest/TLS remote-ref
+# resolver the core doesn't use (inline schemas only for v1.0).
+jsonschema = { version = "0.46.7", default-features = false }
+# JSON value type the `jsonschema` crate validates against; the core marshals
+# its `Value` to/from it for the shape-validation pass.
+serde_json = "1"
+
+# ── record-engine-core (the holo-tree substrate seam) ────────────────────────
+# Mutable in-memory git trees (read/write/delete blobs, commit, ref CAS). Not on
+# crates.io, so a git dependency on the hologit repo (the form decided in
+# gitsheets-core-foundation). `branch = "develop"`, NOT `master`: the merged
+# spike fixes this layer relies on — notably `delete_child_deep`'s
+# dirty-propagation (hologit#473) — live on develop and are not yet on master.
+# `Cargo.lock` is committed so the exact commit is pinned and reproducible.
+holo-tree = { git = "https://github.com/JarvusInnovations/hologit", branch = "develop" }
+# The git object layer holo-tree drives. Pinned to the SAME version holo-tree
+# depends on (0.83) so the `gix::Repository` handle this crate opens and passes
+# into holo-tree is one unified type. Default features (matching holo-tree) cover
+# rev-parse, object read/write, and repo open/init.
+gix = "0.83"
+
+# ── markdown-codec-core (the content-typed record format) ────────────────────
+# Faithful frontmatter-delimiter (`+++`) and first-H1 matching for the
+# markdown/mdx codec. The JS oracle (`format/markdown.ts`) matches these with
+# JS regexes (`/^\+\+\+\s*$/m`, `/^# (.+?)[ \t]*$/m`); the `regex` crate gives
+# byte-equivalent leftmost-first, multiline `^`/`$`, greedy `\s*` semantics, so
+# the delimiter/H1 parse parity is exact rather than a hand-rolled approximation
+# (the one class of parity bug a manual line scan would risk on trailing
+# whitespace / CRLF).
+regex = "1"
+# ── markdown-normalize-core (native body normalization) ───────────────────────
+# The native markdown body formatter. Markdown/mdx bodies are normalized on write
+# directly in the core (NOT via a host-side `markdownlint` pre-pass), so body
+# bytes are byte-identical across every binding (Node, Python, …). Used as a
+# direct Rust library — `dprint_plugin_markdown::format_text(text, &config, …)` —
+# NOT as a WASM/CLI dprint plugin. Configured aggressive with `textWrap: never`
+# (unwrap paragraphs to one logical line; preserve hard breaks + block
+# boundaries; align tables; consistent list/emphasis/heading style; collapse
+# blank lines). The emitted bytes depend on the formatter + its config, so this
+# is part of the canonical-behavior contract and is PINNED EXACTLY (`=`) like the
+# serializer, engine, and collator. See src/codec.rs (`normalize_body`) and
+# specs/behaviors/content-types.md.
+dprint-plugin-markdown = "=0.22.1"
+# ── locale-collation-core (native ICU collation for declarative `sort = true`) ─
+# The ICU4X collator. Declarative `sort = true` (locale-sensitive string-array
+# sorting) is NATIVE — it does NOT route through the boa engine, because boa is
+# built without `Intl` and its `localeCompare` falls back to code-unit order,
+# diverging from V8/`node:vm` on non-ASCII / mixed-case input. ICU4X is the same
+# ICU/CLDR lineage V8 uses, configured (Strength::Primary + AlternateHandling::
+# Shifted + CollationNumericOrdering::True, root locale) to match V8's
+# `localeCompare(b, undefined, { sensitivity: 'base', ignorePunctuation: true,
+# numeric: true })` exactly — see src/collator.rs and specs/behaviors/
+# normalization.md. The collator + its baked CLDR data determine sort order, hence
+# the canonical bytes of sorted arrays, so this is part of the canonical-behavior
+# contract and is PINNED EXACTLY (`=`) like the serializer and the engine. The
+# `compiled_data` default feature bakes the CLDR collation data into the binary
+# (no runtime data load). Held to 2.0.x because boa_engine 0.21.1 pins
+# `icu_normalizer ~2.0`; a newer icu_collator would diverge that shared dep.
+icu_collator = "=2.0.0"
+
+[dev-dependencies]
+# Throwaway git repos for the record-CRUD + diff integration tests.
+tempfile = "3"

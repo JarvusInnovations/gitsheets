@@ -10,6 +10,10 @@ npm install gitsheets
 
 ESM-only. Targets Node.js ≥ 20 and Bun ≥ 1. CLI installs as `gitsheets` and `git-sheet`.
 
+The engine is a shared Rust core, shipped as a prebuilt native addon (`@gitsheets/core-napi`) for Linux (x64/arm64, glibc + musl), macOS (x64/arm64), and Windows (x64), so a plain install needs no Rust toolchain. The same core backs a Python binding, and a write from either language produces byte-identical commits.
+
+> **Upgrading from v1?** The public API is unchanged, but v2 moves the engine to that Rust core. Two things change for existing repos: `gitsheets` now depends on the prebuilt addon above, and the canonical on-disk form shifted once (the change is value-preserving; for example, integer digit separators are dropped and markdown bodies are reformatted). Re-normalize an existing repo once; see the [v2.0.0 release notes](https://github.com/JarvusInnovations/gitsheets/releases) for the exact command.
+
 ## Quick taste
 
 ```typescript
@@ -58,11 +62,12 @@ That lands on disk as `users/jane.toml` with deep-sorted keys for byte-stable di
 - **JSON Schema validation** layered with optional consumer Standard Schema validators. Both run on every write.
 - **Canonical normalization** on write — deep-sorted keys, per-field array sort rules — so byte-equality means logical-equality and git diffs are meaningful.
 - **Path templates** with `${{ field }}` and `${{ expression }}` syntax, recursive `${{ field/** }}`, multi-variable per-segment.
-- **Content-typed sheets.** Opt into `[gitsheet.format] type = 'markdown'` for records as `.md` files with TOML frontmatter and a designated body field. Lazy body loading; markdownlint-normalized bodies.
+- **Content-typed sheets.** Opt into `[gitsheet.format] type = 'markdown'` for records as `.md` files with TOML frontmatter and a designated body field. Lazy body loading; bodies normalized on write by the core's markdown formatter.
 - **Secondary indices.** `sheet.defineIndex(name, fn)` — in-memory, lazy, auto-rebuilt on tree-hash change.
 - **Push daemon.** Optional library-side background task that pushes new commits with retry/backoff. Push-only (single-writer model).
 - **Attachments.** Binary blobs colocated with records; first-class API; cascade-delete with the record.
 - **CLI** (`gitsheets` / `git sheet`) for upsert / query / read / edit / check / normalize / init / infer / migrate-config.
+- **One engine, many languages.** Everything above runs in a shared Rust core, so the Node and Python bindings serialize, validate, sort, and commit identically. The same input yields the same commit in either language.
 
 ## Companion: `gitsheets-axi`
 

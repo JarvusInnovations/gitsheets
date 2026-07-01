@@ -190,8 +190,7 @@ export async function initCommand(
     const result = await repo.transact(
       { message: commitMessage },
       async (tx) => {
-        await tx.tree.writeChild(configPath, newText);
-        tx.markMutated();
+        tx.writeFile(configPath, newText);
       },
     );
     commitHash = result.commitHash ?? '';

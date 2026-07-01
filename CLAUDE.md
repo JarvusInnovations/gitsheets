@@ -41,18 +41,18 @@ Plans live in [plans/](plans/) — see [plans/README.md](plans/README.md).
 
 ## v1.0 milestone
 
-The active work scope is [the 1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1) — see issues #128 through #141 (excluding the few backlog ones). The [holo-tree (Rust) migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is v1.1; v1.0 stays on the JS hologit substrate.
+The active work scope is [the 1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1) — see issues #128 through #141 (excluding the few backlog ones). The [Rust-core migration](https://github.com/JarvusInnovations/gitsheets/issues/127) is **done**: the engine lives in the Rust `gitsheets-core` crate (`rust/gitsheets-core`), the published `gitsheets` npm package is a **thin marshalling shell** over it (via the `@gitsheets/core-napi` addon), and a parallel **Python** binding (`rust/gitsheets-py`, pyo3) runs over the same core, byte-identical. Tree/blob/commit ops now run on `holo-tree` (gitoxide) *inside* the core — the direct `@hologit/holo-tree` JS dependency was dropped at the cutover ([#216](https://github.com/JarvusInnovations/gitsheets/pull/216)). The architecture is specced in [specs/rust-core.md](specs/rust-core.md) and was built out via the (now-`done`) [`plans/`](plans/) DAG.
 
 ## Stack
 
+- **Engine** — Rust `gitsheets-core` crate (`rust/gitsheets-core`), the bytes-authority: TOML parse+serialize, canonical normalization/key-sort, path templates, JSON-Schema validation (strict), the embedded boa JS engine, native ICU collation, native `dprint-plugin-markdown` normalization, record CRUD, query/index, diff/patch, attachments, and the `Sheet`/`Transaction`/`Store` state machine. Tree/blob/commit via `holo-tree` (gitoxide) inside the core.
+- **Bindings** — Node (`gitsheets` npm package, a thin marshalling shell over the `@gitsheets/core-napi` addon) and Python (`rust/gitsheets-py`, pyo3), byte-identical over the same core.
 - **Language** — TypeScript (strict). ESM-only.
 - **Runtime** — Node.js ≥ 20 or Bun ≥ 1.
-- **Tree primitives** — hologit (JS) for v1.0; holo-tree (Rust via napi-rs) for v1.1.
-- **TOML** — `smol-toml` for parse (lean memory), `@iarna/toml` for serialize (byte-stable canonical form). Date types preserved (`instanceof Date`). See [specs/architecture.md](specs/architecture.md).
-- **JSON Schema validation** — `ajv`.
-- **Runtime consumer-validator interface** — [Standard Schema](https://standardschema.dev) (any compliant validator: Zod, Valibot, ArkType, Effect Schema).
-- **JSON Merge Patch** — RFC 7396 via `json-merge-patch`.
-- **Tests** — Vitest (or `node --test`; chosen during #137).
+- **Retained JS deps** — `sort-keys` (public `Sheet.normalizeRecord` array-field sort), `node:vm` (exported `Template` render + raw-JS sort comparators), `rfc6902` (public `DiffChange.patch` type + markdown `diffFrom`), `yargs`, `csv-*`. Dropped at the cutover: `@iarna/toml`, `smol-toml`, `ajv`, `ajv-formats`, `markdownlint`, `@hologit/holo-tree`.
+- **Runtime consumer-validator interface** — [Standard Schema](https://standardschema.dev) (any compliant validator: Zod, Valibot, ArkType, Effect Schema), run host-side in the binding.
+- **JSON Merge Patch** — RFC 7396, inline in `packages/gitsheets/src/patch.ts`.
+- **Tests** — Vitest.
 
 See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 
@@ -61,7 +61,7 @@ See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 - TypeScript everywhere. `strict: true`. No `.js` in `packages/gitsheets/src/`.
 - Field naming: `camelCase` in code, in TOML records, and on `Sheet.<field>` config — no casing translation.
 - IDs: consumer's choice (gitsheets doesn't impose UUID/string/numeric). Path templates render whatever the field holds.
-- Timestamps: TOML datetime types preserved across parse (`smol-toml` → `instanceof Date`) and serialize (`@iarna/toml`); consumers can also use ISO 8601 strings.
+- Timestamps: TOML datetime types are preserved by the Rust core across parse and serialize; the Node binding surfaces them as `instanceof Date`, and consumers can also use ISO 8601 strings.
 - Use the typed error classes from [specs/api/errors.md](specs/api/errors.md) — never throw plain `Error` from public surfaces.
 - Mutations go through `repo.transact` or via the permissive Sheet methods documented in [specs/behaviors/transactions.md](specs/behaviors/transactions.md).
 

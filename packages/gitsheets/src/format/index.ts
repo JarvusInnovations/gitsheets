@@ -21,18 +21,24 @@ export interface FormatConfig {
    * only). When set, the format pipeline:
    *
    *   - Extracts the first H1 from the body (line matching `^#\s+...`).
-   *   - Enforces the invariant `record[title] === body's first H1`. Writes
-   *     with a disagreeing title throw `ValidationError`.
-   *   - Auto-enables markdownlint's `MD041` (first-line H1) — fail loud on
-   *     bodies that don't start with a heading. Consumer can override.
+   *   - Enforces the invariant `record[title] === body's first H1` (via the core
+   *     codec's `title` parameter) — writes with a disagreeing title, or a body
+   *     with no leading H1, throw `ValidationError`.
    *
    * See `Sheet.patch` for how patch reconciles title-only or body-only
    * deltas against the invariant.
    */
   readonly title?: string;
   /**
-   * Markdownlint configuration object, or `false` to disable normalization.
-   * Markdown formats only.
+   * Whether to normalize the body on write with the native dprint formatter
+   * (markdown/mdx only). Default `true`; `normalize = false` frames the body
+   * verbatim. See specs/behaviors/content-types.md.
+   */
+  readonly normalize?: boolean;
+  /**
+   * @deprecated Legacy pre-core toggle, superseded by {@link normalize}. Retained
+   * for type back-compat; no longer consulted on the write path (the core codec
+   * owns body normalization). Markdown formats only.
    */
   readonly markdownlint?: Readonly<Record<string, unknown>> | false;
 }
@@ -105,10 +111,14 @@ export function resolveFormatConfig(raw: unknown): FormatConfig {
     type: string;
     body?: string;
     title?: string;
+    normalize?: boolean;
     markdownlint?: Readonly<Record<string, unknown>> | false;
   } = { type };
   if (typeof obj['body'] === 'string') out.body = obj['body'];
   if (typeof obj['title'] === 'string') out.title = obj['title'];
+  // `normalize = false` disables native body normalization (specs/behaviors/
+  // content-types.md) — the toggle the core codec honors on the write path.
+  if (typeof obj['normalize'] === 'boolean') out.normalize = obj['normalize'];
   if (obj['markdownlint'] === false) {
     out.markdownlint = false;
   } else if (
