@@ -41,6 +41,7 @@
   "license": "Apache-2.0",
   "author": "Jarvus Innovations",
   "dependencies": {
+    "@gitsheets/core-napi": "^0.0.0",
     "@hologit/holo-tree": "^0.3.0",
     "@iarna/toml": "^2.2.5",
     "ajv": "^8.20.0",
