@@ -5,6 +5,7 @@ import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
 import { readStdin } from '../util/stdin.js';
+import { openSheetForCommand } from '../util/open-sheet.js';
 
 export const PATCH_HELP = `usage: gitsheets-axi patch <sheet> <query-json> [--patch <json>] [--prefix p] [--message m]
 flags[3]:
@@ -120,15 +121,11 @@ export async function patchCommand(
   }
 
   const repo = await ctx.repo();
-  let sheet;
-  try {
-    sheet = await repo.openSheet(
-      flags.sheet,
-      flags.prefix !== undefined ? { prefix: flags.prefix } : {},
-    );
-  } catch (error) {
-    throw translateError(error);
-  }
+  const sheet = await openSheetForCommand(
+    repo,
+    flags.sheet,
+    flags.prefix !== undefined ? { prefix: flags.prefix } : {},
+  );
 
   let existing;
   try {

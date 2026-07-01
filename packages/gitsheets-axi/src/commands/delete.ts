@@ -4,6 +4,7 @@ import { NotFoundError, RECORD_PATH_KEY } from 'gitsheets';
 import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
+import { openSheetForCommand } from '../util/open-sheet.js';
 
 export const DELETE_HELP = `usage: gitsheets-axi delete <sheet> <path> [--prefix p] [--message m]
 flags[2]:
@@ -78,15 +79,11 @@ export async function deleteCommand(
   const target = stripExtension(flags.path);
 
   const repo = await ctx.repo();
-  let sheet;
-  try {
-    sheet = await repo.openSheet(
-      flags.sheet,
-      flags.prefix !== undefined ? { prefix: flags.prefix } : {},
-    );
-  } catch (error) {
-    throw translateError(error);
-  }
+  const sheet = await openSheetForCommand(
+    repo,
+    flags.sheet,
+    flags.prefix !== undefined ? { prefix: flags.prefix } : {},
+  );
 
   // Pre-flight existence check — idempotent on already-missing.
   let exists = false;
