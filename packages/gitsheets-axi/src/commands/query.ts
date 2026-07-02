@@ -15,39 +15,44 @@ import {
 } from '../output/sheet-schema.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { exportRecords, type ExportFormat } from '../util/export-file.js';
+import { buildPredicate } from '../util/filter.js';
+import { facetCounts, sortRecords } from '../util/aggregate.js';
 
-export const QUERY_HELP = `usage: gitsheets-axi query <sheet> [--filter k=v ...] [--fields a,b,c] [--limit n] [--json-out[=path]] [--ndjson-out[=path]] [--csv-out[=path]]
-flags[7]:
-  --filter <k>=<v>     Equality match against record field (repeatable)
+export const QUERY_HELP = `usage: gitsheets-axi query <sheet> [--filter expr ...] [--fields a,b] [--sort f [--desc]] [--limit n] [--group-by f] [--json-out[=path]] [--ndjson-out[=path]] [--csv-out[=path]]
+flags[9]:
+  --filter <expr>      Filter clause (repeatable): k=v · k!=v · k<v · k>v ·
+                       k<=v · k>=v · k~regex · "k in (a,b)" · k:present · k:empty
   --fields <list>      Extra columns beyond the default schema (comma-separated)
+  --sort <field>       Sort records by a field (missing values sort last)
+  --desc               Sort descending (with --sort)
   --limit <n>          Cap the stdout preview (default: 100, max: 10000)
-  --prefix <p>         Tenant sub-tree scope (see gitsheets --prefix)
-  --json-out[=path]    Also write the FULL result to a JSON array file
-  --ndjson-out[=path]  Also write the FULL result to an NDJSON file
-  --csv-out[=path]     Also write the FULL result to a CSV file (flat, lossy)
+  --group-by <field>   Faceted counts by a field instead of a record list
+  --prefix <p>         Tenant sub-tree scope
+  --json-out[=path]    Also write the FULL matched result to a JSON array file
+  --ndjson-out[=path]  Also write the FULL matched result to an NDJSON file
+  --csv-out[=path]     Also write the FULL matched result to a CSV file (flat)
 examples:
-  gitsheets-axi query users
-  gitsheets-axi query users --filter status=active --limit 50
-  gitsheets-axi query posts --fields title,published
-  gitsheets-axi query repos --ndjson-out | tail -1   # export path, pipe elsewhere
+  gitsheets-axi query repos --filter status=unclassified
+  gitsheets-axi query repos --filter 'pushed_at<2022-01-01' --sort pushed_at
+  gitsheets-axi query repos --group-by target_team
+  gitsheets-axi query repos --filter 'target_team in (archive,sencha)' --ndjson-out
 output:
-  Default schema is format-aware:
-    TOML sheets    — path-template fields + first scalar properties (cap 4)
-    Markdown/MDX   — path-template fields + title + body_size (never body content)
-  --fields appends additional columns.
+  Default schema is format-aware (TOML: path fields + first scalars, cap 4;
+  Markdown: path fields + title + body_size). --fields appends columns.
+  --group-by emits {value,count} facets (biggest first) over the filtered set.
 export (--json-out / --ndjson-out / --csv-out):
-  stdout stays the TOON preview; the file carries EVERY matched record (not
-  capped by --limit). JSON/NDJSON are written verbatim so they round-trip
-  straight back into \`gitsheets-axi upsert\`; CSV is flat + lossy (nested
-  values JSON-encoded), for reporting. A bare flag auto-writes a 0600 file
-  under the OS temp dir; \`=path\` persists it. One export flag per invocation.
+  stdout stays the TOON preview; the file carries EVERY matched record (ignores
+  --limit). JSON/NDJSON verbatim (round-trip into upsert); CSV flat + lossy.
 `;
 
 interface QueryFlags {
-  filters: Array<[string, string]>;
+  filters: string[];
   extras: string[];
   limit: number;
   prefix: string | undefined;
+  sort: string | undefined;
+  desc: boolean;
+  groupBy: string | undefined;
   exportFormat: ExportFormat | undefined;
   exportPath: string | undefined;
 }
@@ -65,28 +70,27 @@ function parseQueryFlags(args: string[]): { sheetName: string; flags: QueryFlags
     extras: [],
     limit: 100,
     prefix: undefined,
+    sort: undefined,
+    desc: false,
+    groupBy: undefined,
     exportFormat: undefined,
     exportPath: undefined,
   };
 
   const setExport = (format: ExportFormat, arg: string): void => {
     if (flags.exportFormat) {
-      throw new AxiError(
-        'Only one export flag is allowed per invocation',
-        'VALIDATION_ERROR',
-        ['Pass either --json-out or --ndjson-out, not both'],
-      );
+      throw new AxiError('Only one export flag is allowed per invocation', 'VALIDATION_ERROR', [
+        'Pass one of --json-out / --ndjson-out / --csv-out',
+      ]);
     }
     flags.exportFormat = format;
     const eq = arg.indexOf('=');
     if (eq !== -1) {
       const p = arg.slice(eq + 1);
       if (!p) {
-        throw new AxiError(
-          `${arg.slice(0, eq)} was given an empty path`,
-          'VALIDATION_ERROR',
-          ['Use the bare flag for an auto-generated temp path, or --…-out=/real/path'],
-        );
+        throw new AxiError(`${arg.slice(0, eq)} was given an empty path`, 'VALIDATION_ERROR', [
+          'Use the bare flag for an auto temp path, or --…-out=/real/path',
+        ]);
       }
       flags.exportPath = p;
     }
@@ -111,37 +115,36 @@ function parseQueryFlags(args: string[]): { sheetName: string; flags: QueryFlags
 
     const next = args[i + 1];
     switch (arg) {
-      case '--filter': {
-        if (!next || !next.includes('=')) {
-          throw new AxiError(
-            '--filter expects key=value',
-            'VALIDATION_ERROR',
-            ['Example: --filter status=active'],
-          );
-        }
-        const eq = next.indexOf('=');
-        flags.filters.push([next.slice(0, eq), next.slice(eq + 1)]);
+      case '--filter':
+        if (!next) throw new AxiError('--filter expects an expression', 'VALIDATION_ERROR');
+        flags.filters.push(next);
         i++;
         break;
-      }
       case '--fields':
-        if (!next) {
-          throw new AxiError('--fields expects a comma-separated list', 'VALIDATION_ERROR');
-        }
+        if (!next) throw new AxiError('--fields expects a comma-separated list', 'VALIDATION_ERROR');
         flags.extras = next.split(',').map((s) => s.trim()).filter(Boolean);
         i++;
         break;
+      case '--sort':
+        if (!next) throw new AxiError('--sort expects a field name', 'VALIDATION_ERROR');
+        flags.sort = next;
+        i++;
+        break;
+      case '--desc':
+        flags.desc = true;
+        break;
+      case '--group-by':
+        if (!next) throw new AxiError('--group-by expects a field name', 'VALIDATION_ERROR');
+        flags.groupBy = next;
+        i++;
+        break;
       case '--limit':
-        if (!next) {
-          throw new AxiError('--limit expects an integer', 'VALIDATION_ERROR');
-        }
+        if (!next) throw new AxiError('--limit expects an integer', 'VALIDATION_ERROR');
         flags.limit = Math.min(10_000, Math.max(1, parseInt(next, 10) || 100));
         i++;
         break;
       case '--prefix':
-        if (!next) {
-          throw new AxiError('--prefix expects a path', 'VALIDATION_ERROR');
-        }
+        if (!next) throw new AxiError('--prefix expects a path', 'VALIDATION_ERROR');
         flags.prefix = next;
         i++;
         break;
@@ -165,7 +168,6 @@ export async function queryCommand(
 
   const { sheetName, flags } = parseQueryFlags(args);
   const repo = await ctx.repo();
-
   const sheet = await openSheetForCommand(
     repo,
     sheetName,
@@ -173,26 +175,33 @@ export async function queryCommand(
   );
 
   const config = await sheet.readConfig();
-  const filter: Record<string, unknown> = {};
-  for (const [k, v] of flags.filters) {
-    filter[k] = v;
-  }
-
-  // Load bodies for content-typed sheets so the body_size column renders
-  // correctly. We never put body content itself into the default schema —
-  // per AXI's "long-form content belongs in detail views, not lists" — but
-  // the size is the cheap, agent-actionable summary.
   const withBody = config.format.body !== undefined;
 
-  let records;
+  let all;
   try {
-    records = await sheet.queryAll(filter, { withBody });
+    all = await sheet.queryAll({}, { withBody });
   } catch (error) {
     throw translateError(error);
   }
 
-  const total = records.length;
-  const limited = records.slice(0, flags.limit);
+  const predicate = buildPredicate(flags.filters);
+  const matched = (all as Array<Record<string, unknown>>).filter(predicate);
+
+  // --group-by: faceted counts over the filtered set (not capped by --limit).
+  if (flags.groupBy) {
+    const facets = facetCounts(matched, flags.groupBy);
+    const groupBlock = renderListResponse({
+      summary: { groups: `${facets.length} distinct ${flags.groupBy}`, matched: matched.length },
+      name: 'groups',
+      items: facets as unknown as Array<Record<string, unknown>>,
+      schema: [field('value'), field('count')],
+      emptyMessage: `no records match in ${sheetName}`,
+    });
+    return maybeExport(groupBlock, matched, flags, sheetName);
+  }
+
+  const ordered = flags.sort ? sortRecords(matched, flags.sort, flags.desc) : matched;
+  const limited = ordered.slice(0, flags.limit);
 
   const baseSchema = defaultSheetSchema(config);
   const schema = fieldsWithExtras(baseSchema, flags.extras);
@@ -200,34 +209,23 @@ export async function queryCommand(
   const suggestions: string[] = [];
   if (limited.length === 0 && flags.filters.length > 0) {
     suggestions.push(
-      'No records match the filter — try `gitsheets-axi query ' +
-        sheetName +
-        '` without filters',
+      `No records match the filter — try \`gitsheets-axi query ${sheetName}\` without filters`,
     );
   } else if (limited.length > 0) {
-    suggestions.push(
-      `Run \`gitsheets-axi read ${sheetName} <path>\` to view a single record`,
-    );
-    if (config.format.body) {
-      suggestions.push(
-        `Add \`--full\` on \`read\` to see untruncated body content`,
-      );
-    }
+    suggestions.push(`Run \`gitsheets-axi read ${sheetName} <path>\` to view a single record`);
+    if (config.format.body) suggestions.push('Add `--full` on `read` to see untruncated body content');
   }
-  if (total > limited.length && !flags.exportFormat) {
+  if (matched.length > limited.length && !flags.exportFormat) {
     suggestions.push(
-      `${total - limited.length} records hidden by --limit ${flags.limit}; raise --limit or use --json-out to capture all`,
+      `${matched.length - limited.length} records hidden by --limit ${flags.limit}; raise --limit or use --json-out to capture all`,
     );
   }
 
   const listResponse = renderListResponse({
-    summary: { count: `${limited.length} of ${total} total` },
+    summary: { count: `${limited.length} of ${matched.length} total` },
     name: 'records',
     items: limited.map((r) => ({
       ...r,
-      // Surface the record's source path as a top-level "path" so default
-      // schemas that include it work without callers needing to know the
-      // RECORD_PATH_KEY symbol.
       path: (r as Record<symbol, unknown>)[Symbol.for('gitsheets-path')] ?? '',
     })) as Array<Record<string, unknown>>,
     schema: [...schema, field('path')],
@@ -235,16 +233,21 @@ export async function queryCommand(
     emptyMessage: `no records in ${sheetName}`,
   });
 
-  if (!flags.exportFormat) return listResponse;
+  return maybeExport(listResponse, ordered, flags, sheetName);
+}
 
-  // Side-channel export: full result set (ignores --limit), written verbatim
-  // so it round-trips back into `upsert`. Additive to the TOON preview above.
-  const exp = exportRecords(
-    records as unknown as Array<Record<string, unknown>>,
-    flags.exportFormat,
-    flags.exportPath,
-    sheetName,
-  );
+/**
+ * Append the side-channel export block when an export flag was passed. The file
+ * carries the full matched (and, for the record path, sorted) set, verbatim.
+ */
+function maybeExport(
+  stdoutBlock: string,
+  records: Array<Record<string, unknown>>,
+  flags: QueryFlags,
+  sheetName: string,
+): string {
+  if (!flags.exportFormat) return stdoutBlock;
+  const exp = exportRecords(records, flags.exportFormat, flags.exportPath, sheetName);
   const firstCol = exp.columns[0] ?? '';
   const hint =
     flags.exportFormat === 'csv'
@@ -253,7 +256,7 @@ export async function queryCommand(
         ? `Run \`jq '.${firstCol}' ${exp.path}\` to process all ${exp.rows} rows`
         : `Run \`jq '.[] | .${firstCol}' ${exp.path}\` to process all ${exp.rows} rows`;
   return joinBlocks(
-    listResponse,
+    stdoutBlock,
     renderObject({ wrote: exp.path, rows: exp.rows, cols: exp.cols }),
     renderObject({ columns: exp.columns }),
     renderHelp([hint]),
