@@ -10,6 +10,8 @@ import { createContext, type GitsheetsContext } from '../src/context.js';
 import { homeCommand } from '../src/commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from '../src/commands/sheets.js';
 import { queryCommand, QUERY_HELP } from '../src/commands/query.js';
+import { countCommand, COUNT_HELP } from '../src/commands/count.js';
+import { distinctCommand, DISTINCT_HELP } from '../src/commands/distinct.js';
 import { readCommand, READ_HELP } from '../src/commands/read.js';
 import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
 import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
@@ -30,6 +32,8 @@ import { setupCommand, SETUP_HELP } from '../src/commands/setup.js';
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
   query: QUERY_HELP,
+  count: COUNT_HELP,
+  distinct: DISTINCT_HELP,
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
@@ -48,6 +52,8 @@ const COMMAND_HELP: Record<string, string> = {
 const COMMANDS = {
   sheets: sheetsCommand,
   query: queryCommand,
+  count: countCommand,
+  distinct: distinctCommand,
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
