@@ -8,18 +8,29 @@ import { readStdin } from '../util/stdin.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { parseRecordsInput, recordLabel } from '../util/parse-records.js';
 import { MATERIALIZE_HINT } from '../util/hints.js';
+import { renderDryRun, type InvalidRow } from './upsert.js';
+
+const PATH_KEY = Symbol.for('gitsheets-path');
+type OnMissing = 'abort' | 'skip' | 'insert';
 
 export const PATCH_HELP = `usage: gitsheets-axi patch <sheet> <query-json> [--patch <json>] [--prefix p] [--message m]
-       gitsheets-axi patch <sheet> [--data <json>] [--prefix p] [--message m]   # bulk
-flags[4]:
+       gitsheets-axi patch <sheet> [--data <json>] [--on-missing m] [--delete-missing] [--dry-run]   # bulk
+flags[7]:
   --patch <json>       Single mode: RFC 7396 partial. If omitted, reads stdin.
   --data <json>        Bulk mode: JSON array / NDJSON of combined records.
+  --on-missing <m>     Bulk: what to do when a record's query matches nothing —
+                       abort (default) | skip | insert (upsert it as new).
+  --delete-missing     Bulk: delete existing records NOT targeted by the batch
+                       (exact re-sync). One commit.
+  --dry-run            Bulk: preview {will-change, no-op, missing, invalid,
+                       delete} — no commit.
   --prefix <p>         Tenant sub-tree scope
   --message <m>        Commit message (default: "<sheet> patch <path>")
 examples:
   gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane O. Doe"}'
-  echo '{"name":"Jane O. Doe"}' | gitsheets-axi patch users '{"slug":"jane"}'
-  jq -c '.[]' classify.json | gitsheets-axi patch repos      # bulk, one commit
+  jq -c '.[]' classify.json | gitsheets-axi patch repos                   # bulk, one commit
+  jq -c '.[]' classify.json | gitsheets-axi patch repos --on-missing skip # tolerate stale rows
+  gitsheets-axi patch repos --data "$(cat sync.json)" --on-missing insert --delete-missing
 bulk:
   With no <query-json>, input is a JSON array or NDJSON of records. In each
   record the sheet's path-template fields form the query (which record to
@@ -30,10 +41,10 @@ semantics:
   RFC 7396 JSON Merge Patch. \`null\` deletes a field, arrays replace
   in full, objects merge recursively. Same as gitsheets's library patch.
 idempotency:
-  Each record is merged and run through willChange. Unchanged records are
-  skipped; a batch where nothing changed exits 0 with result: "no-op" and no
-  commit. In a batch, a record whose query matches nothing aborts the whole
-  transaction — nothing is committed.
+  Unchanged records are skipped; a batch where nothing changed exits 0 with
+  result: "no-op" and no commit. With --on-missing abort (default), a record
+  matching nothing aborts the batch (nothing committed); --dry-run reports all
+  missing/invalid rows at once.
 `;
 
 interface PatchFlags {
@@ -43,6 +54,9 @@ interface PatchFlags {
   data: string | undefined;
   prefix: string | undefined;
   message: string | undefined;
+  onMissing: OnMissing;
+  deleteMissing: boolean;
+  dryRun: boolean;
 }
 
 function parsePatchFlags(args: string[]): PatchFlags {
@@ -53,6 +67,9 @@ function parsePatchFlags(args: string[]): PatchFlags {
     data: undefined,
     prefix: undefined,
     message: undefined,
+    onMissing: 'abort',
+    deleteMissing: false,
+    dryRun: false,
   };
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -69,6 +86,19 @@ function parsePatchFlags(args: string[]): PatchFlags {
         if (!next) throw new AxiError('--data expects JSON', 'VALIDATION_ERROR');
         flags.data = next;
         i++;
+        break;
+      case '--on-missing':
+        if (next !== 'abort' && next !== 'skip' && next !== 'insert') {
+          throw new AxiError('--on-missing expects abort | skip | insert', 'VALIDATION_ERROR');
+        }
+        flags.onMissing = next;
+        i++;
+        break;
+      case '--delete-missing':
+        flags.deleteMissing = true;
+        break;
+      case '--dry-run':
+        flags.dryRun = true;
         break;
       case '--prefix':
         if (!next) throw new AxiError('--prefix expects a path', 'VALIDATION_ERROR');
@@ -124,6 +154,12 @@ export async function patchCommand(
     if (flags.data !== undefined) {
       throw new AxiError(
         '--data is bulk mode — drop the <query-json> positional to use it',
+        'VALIDATION_ERROR',
+      );
+    }
+    if (flags.onMissing !== 'abort' || flags.deleteMissing || flags.dryRun) {
+      throw new AxiError(
+        '--on-missing / --delete-missing / --dry-run are bulk-only — drop the <query-json> positional',
         'VALIDATION_ERROR',
       );
     }
@@ -217,16 +253,19 @@ async function batchPatch(
   const { records } = parseRecordsInput(raw);
 
   const config = await sheet.readConfig();
-  const templateFields = new Set(Template.fromString(config.path).getFieldNames());
+  const template = Template.fromString(config.path);
+  const templateFields = new Set(template.getFieldNames());
 
-  // Pre-flight: split each record into (query, partial), confirm the target
-  // exists, and merge+willChange to categorize changed vs unchanged — all
-  // before opening a transaction, so a bad record aborts with nothing
-  // committed and the changed subset commits atomically.
-  const changes: Array<{
-    query: Record<string, unknown>;
-    partial: Record<string, unknown>;
-  }> = [];
+  // Pre-flight: split each record into (query, partial) and categorize —
+  // changed / unchanged / missing (query matched nothing) / invalid — before
+  // opening a transaction. We never throw mid-loop so --dry-run can report the
+  // full picture; the commit path aborts explicitly afterward.
+  const changes: Array<{ query: Record<string, unknown>; partial: Record<string, unknown> }> = [];
+  const inserts: Array<Record<string, unknown>> = [];
+  const batchPaths = new Set<string>();
+  const invalid: InvalidRow[] = [];
+  const missing: Array<{ row: number; id: string }> = [];
+  let unchanged = 0;
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i]!;
@@ -238,47 +277,100 @@ async function batchPatch(
     }
 
     if (Object.keys(query).length === 0) {
-      throw new AxiError(
-        `Record ${i + 1} (${recordLabel(record)}) has none of the path-template fields (${[...templateFields].join(', ')}) — can't tell which record to patch`,
-        'VALIDATION_ERROR',
-        ['Each bulk-patch record must carry the path-template fields as its query'],
-      );
+      invalid.push({
+        row: i + 1,
+        id: recordLabel(record),
+        reason: `has none of the path-template fields (${[...templateFields].join(', ')})`,
+        code: 'VALIDATION_ERROR',
+      });
+      continue;
     }
-    // Query-only record (nothing to set) — a harmless no-op, skip it.
-    if (Object.keys(partial).length === 0) continue;
 
-    let willResult;
+    let preview;
     try {
-      willResult = await previewPatch(sheet, query, partial);
+      preview = await previewPatch(sheet, query, partial);
     } catch (error) {
-      throw attribute(translateError(error), i, record);
+      const axi = translateError(error);
+      invalid.push({ row: i + 1, id: recordLabel(record), reason: axi.message, code: axi.code });
+      continue;
     }
-    if (willResult === 'not-found') {
-      throw new AxiError(
-        `Record ${i + 1} (${recordLabel(record)}): no record matches ${JSON.stringify(query)}`,
-        'NOT_FOUND',
-        ['The whole batch was aborted — nothing committed. Fix or remove the record and re-run.'],
-      );
+
+    if (preview === 'not-found') {
+      if (flags.onMissing === 'skip') {
+        missing.push({ row: i + 1, id: recordLabel(record) });
+      } else if (flags.onMissing === 'insert') {
+        inserts.push(record);
+        try {
+          batchPaths.add(template.render(record));
+        } catch {
+          /* un-renderable insert surfaces at commit; ignore for path set */
+        }
+      } else {
+        missing.push({ row: i + 1, id: recordLabel(record) }); // abort mode: collected, thrown below
+      }
+      continue;
     }
-    if (willResult.changed) changes.push({ query, partial });
+
+    batchPaths.add(preview.path);
+    if (preview.changed) changes.push({ query, partial });
+    else unchanged++;
   }
 
-  if (changes.length === 0) {
+  // --delete-missing: existing records not targeted by the batch.
+  const deletions: string[] = [];
+  if (flags.deleteMissing) {
+    const existing = await sheet.queryAll({}, { withBody: false });
+    for (const r of existing) {
+      const p = (r as Record<symbol, unknown>)[PATH_KEY];
+      if (typeof p === 'string' && !batchPaths.has(p)) deletions.push(p);
+    }
+  }
+
+  if (flags.dryRun) {
+    return renderDryRun(
+      flags.sheet,
+      {
+        willChange: changes.length,
+        insert: inserts.length,
+        noOp: unchanged,
+        missing: missing.length,
+        invalid: invalid.length,
+        ...(flags.deleteMissing ? { willDelete: deletions.length } : {}),
+      },
+      invalid,
+    );
+  }
+
+  if (invalid.length > 0) {
+    const first = invalid[0]!;
+    throw new AxiError(`Record ${first.row} (${first.id}): ${first.reason}`, first.code, [
+      `${invalid.length} record(s) invalid — the whole batch was aborted, nothing committed. Run --dry-run to see all.`,
+    ]);
+  }
+  if (flags.onMissing === 'abort' && missing.length > 0) {
+    const first = missing[0]!;
+    throw new AxiError(`Record ${first.row} (${first.id}): no record matches its query`, 'NOT_FOUND', [
+      `${missing.length} record(s) matched nothing — batch aborted. Use --on-missing skip|insert, or --dry-run to see all.`,
+    ]);
+  }
+
+  if (changes.length === 0 && inserts.length === 0 && deletions.length === 0) {
     return renderObject({
       result: 'no-op',
       sheet: flags.sheet,
       patched: 0,
-      unchanged: records.length,
+      unchanged: records.length - invalid.length - missing.length,
+      ...(missing.length > 0 ? { skipped: missing.length } : {}),
     });
   }
 
-  const commitMessage = flags.message ?? `${flags.sheet} patch (${changes.length})`;
+  const commitMessage = flags.message ?? `${flags.sheet} patch (${changes.length + inserts.length})`;
   try {
     const result = await repo.transact({ message: commitMessage }, async (tx) => {
       const txSheet = tx.sheet(flags.sheet, prefixOpts);
-      for (const { query, partial } of changes) {
-        await txSheet.patch(query, partial);
-      }
+      for (const { query, partial } of changes) await txSheet.patch(query, partial);
+      for (const record of inserts) await txSheet.upsert(record as never);
+      for (const path of deletions) await txSheet.delete(path);
       return changes.length;
     });
     return joinBlocks(
@@ -286,7 +378,10 @@ async function batchPatch(
         result: 'committed',
         sheet: flags.sheet,
         patched: changes.length,
-        unchanged: records.length - changes.length,
+        ...(inserts.length > 0 ? { inserted: inserts.length } : {}),
+        unchanged,
+        ...(missing.length > 0 ? { skipped: missing.length } : {}),
+        ...(flags.deleteMissing ? { deleted: deletions.length } : {}),
         commit: result.commitHash,
       }),
       renderHelp([MATERIALIZE_HINT]),
@@ -325,14 +420,6 @@ async function previewPatch(
   // since the merge already produced the canonical record.
   const wc = await sheet.willChange(merged as never, { allowMissingBody: true });
   return { changed: wc.changed, path: wc.path, hash: wc.currentBlobHash };
-}
-
-function attribute(axi: AxiError, index: number, record: Record<string, unknown>): AxiError {
-  return new AxiError(
-    `Record ${index + 1} (${recordLabel(record)}): ${axi.message}`,
-    axi.code,
-    ['The whole batch was aborted — nothing committed. Fix or remove the record and re-run.'],
-  );
 }
 
 function stripSymbols(record: unknown): unknown {

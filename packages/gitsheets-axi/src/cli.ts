@@ -7,9 +7,12 @@ import { createContext, type GitsheetsContext } from './context.js';
 import { homeCommand } from './commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from './commands/sheets.js';
 import { queryCommand, QUERY_HELP } from './commands/query.js';
+import { countCommand, COUNT_HELP } from './commands/count.js';
+import { distinctCommand, DISTINCT_HELP } from './commands/distinct.js';
 import { readCommand, READ_HELP } from './commands/read.js';
 import { upsertCommand, UPSERT_HELP } from './commands/upsert.js';
 import { patchCommand, PATCH_HELP } from './commands/patch.js';
+import { renameCommand, RENAME_HELP } from './commands/rename.js';
 import { deleteCommand, DELETE_HELP } from './commands/delete.js';
 import { checkCommand, CHECK_HELP } from './commands/check.js';
 import { diffCommand, DIFF_HELP } from './commands/diff.js';
@@ -28,35 +31,37 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[16]:
-  (none)=home, sheets, query, read,
-  upsert, patch, delete,
-  check, diff, normalize,
+commands[19]:
+  (none)=home, sheets, query, count,
+  distinct, read, upsert, patch, rename,
+  delete, check, diff, normalize,
   init, infer, migrate-config,
   attachment, push, setup
 flags[2]:
   --help, -v/-V/--version
 examples:
   gitsheets-axi
-  gitsheets-axi query users --filter status=active
+  gitsheets-axi query repos --filter status=unclassified --sort pushed_at
+  gitsheets-axi count repos --filter archived=true
+  gitsheets-axi query repos --group-by target_team
+  gitsheets-axi distinct repos disposition
   gitsheets-axi upsert users --data '{"slug":"jane","email":"jane@x.org"}'
   gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane"}'
   gitsheets-axi check users users/jane.toml --fix
   gitsheets-axi diff posts HEAD~10
-  gitsheets-axi normalize users
-  gitsheets-axi init users
-  gitsheets-axi infer users
   gitsheets-axi attachment list users jane
-  gitsheets-axi push
   gitsheets-axi setup hooks
 `;
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
   query: QUERY_HELP,
+  count: COUNT_HELP,
+  distinct: DISTINCT_HELP,
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
+  rename: RENAME_HELP,
   delete: DELETE_HELP,
   check: CHECK_HELP,
   diff: DIFF_HELP,
@@ -74,9 +79,12 @@ type CommandFn = (args: string[], ctx: GitsheetsContext) => Promise<string | Rec
 const COMMANDS: Record<string, CommandFn> = {
   sheets: sheetsCommand,
   query: queryCommand,
+  count: countCommand,
+  distinct: distinctCommand,
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
+  rename: renameCommand,
   delete: deleteCommand,
   check: checkCommand,
   diff: diffCommand,

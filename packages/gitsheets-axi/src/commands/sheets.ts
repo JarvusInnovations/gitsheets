@@ -130,7 +130,10 @@ async function sheetsView(
   }
 
   if (schemaProps.length > 0) {
-    output['schema'] = renderSchemaProperties(schemaProps);
+    const schemaObj = (config as { schema?: Record<string, unknown> }).schema;
+    const requiredList = schemaObj?.['required'];
+    const required = new Set<string>(Array.isArray(requiredList) ? (requiredList as string[]) : []);
+    output['schema'] = renderSchemaProperties(schemaProps, required);
   }
 
   output['help'] = [
@@ -153,13 +156,20 @@ function schemaPropertyList(
 
 function renderSchemaProperties(
   props: Array<[string, Record<string, unknown>]>,
+  required: Set<string>,
 ): Record<string, string> {
-  // Flat name → "type [required]" map for token-efficient display.
+  // Flat name → "type [required] enum: a|b|c" map for token-efficient display.
+  // Surfacing the enum options lets an agent see allowed values before it
+  // writes, instead of learning them from a rejected upsert.
   const out: Record<string, string> = {};
   for (const [name, schema] of props) {
     const type = String(schema['type'] ?? 'any');
     const format = schema['format'] ? ` (${String(schema['format'])})` : '';
-    out[name] = `${type}${format}`;
+    const req = required.has(name) ? ' [required]' : '';
+    const enumVals = Array.isArray(schema['enum'])
+      ? ` enum: ${(schema['enum'] as unknown[]).map(String).join('|')}`
+      : '';
+    out[name] = `${type}${format}${req}${enumVals}`;
   }
   return out;
 }

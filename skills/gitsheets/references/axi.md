@@ -60,7 +60,7 @@ List sheets configured in the current repo. Same data as the home view, separate
 
 ### `gitsheets-axi sheets view <name>`
 
-Single-sheet detail: config summary (root, format, path template), schema property types, record count. Surfaces `body_field` for content-typed sheets.
+Single-sheet detail: config summary (root, format, path template), schema property types, record count. Surfaces `body_field` for content-typed sheets. Each schema field renders as `type [required] enum: a|b|c`, so you see allowed enum values (and which fields are required) **before** writing rather than from a rejected upsert.
 
 ### `gitsheets-axi query <sheet> [flags]`
 
@@ -68,13 +68,28 @@ List records.
 
 | Flag | Notes |
 | --- | --- |
-| `--filter <k>=<v>` | Equality match; repeatable |
+| `--filter <expr>` | Filter clause; repeatable, clauses AND. See the filter DSL below. |
 | `--fields <list>` | Extra columns beyond the default schema |
+| `--sort <field>` | Sort records by a field (missing values sort last) |
+| `--desc` | Sort descending (with `--sort`) |
+| `--group-by <field>` | Emit `{value,count}` facets instead of a record list |
 | `--limit <n>` | Caps the **stdout preview**. Default 100, max 10000 |
 | `--prefix <p>` | Tenant sub-tree scope (matches the library's `prefix` option) |
 | `--json-out[=path]` | Also write the **full** result set to a JSON array file |
 | `--ndjson-out[=path]` | Also write the full result set to an NDJSON file |
 | `--csv-out[=path]` | Also write the full result set to a CSV file (flat, lossy) |
+
+**Filter DSL** (`--filter`, repeatable, AND-combined) — shared by `query`, `count`, `distinct`, and bulk `delete`:
+
+| Form | Meaning |
+| --- | --- |
+| `k=v` / `k!=v` | equality / inequality |
+| `k<v` `k>v` `k<=v` `k>=v` | comparison (numeric for number fields, time for dates, else lexical — ISO dates sort right) |
+| `k~regex` | `String(value)` matches the JS regex |
+| `"k in (a,b,c)"` | value is one of the listed strings |
+| `k:present` / `k:empty` | field exists and is non-empty / is absent, null, `""`, or `[]` |
+
+`--group-by <field>` aggregates over the **filtered** set (ignores `--limit`), biggest bucket first: `groups[K]{value,count}:`.
 
 **Default schema is format-aware:**
 
@@ -95,6 +110,14 @@ help[1]: Run `jq '.name' /tmp/gitsheets-axi/repos-….ndjson` to process all 463
 
 `--json-out` and `--ndjson-out` are written **verbatim** (record fields only, no injected keys), so they pipe straight back into `gitsheets-axi upsert` — export → transform → re-import is a clean loop. `--csv-out` is flat (nested values JSON-encoded into their cell): a lossy reporting view, not a round-trip format.
 
+### `gitsheets-axi count <sheet> [--filter expr ...]`
+
+Record count. With no `--filter`, counts candidate tree paths **without parsing** (cheap — the fast path for totals). A filter scans body-less records and reports `count: <matched>` + `of: <total>`. Same filter DSL as `query`. Use this instead of `query … --limit 1 | grep count`.
+
+### `gitsheets-axi distinct <sheet> <field> [--filter expr ...]`
+
+Unique values of `<field>` with counts, sorted alphabetically (`values[K]{value,count}:`). `query --group-by <field>` is the same facets ordered by count. Kills the `--ndjson-out | jq 'group_by'` loop for "what values does this field take?".
+
 ### `gitsheets-axi read <sheet> <path> [--full]`
 
 Single-record detail. For markdown/mdx sheets, the body field is truncated to ~500 chars with `(truncated, N chars total)` and a `--full` hint. Surfaces `_path` and `_sheet` as plain fields (the `RECORD_PATH_KEY` / `RECORD_SHEET_KEY` Symbol annotations).
@@ -106,6 +129,8 @@ Create or replace one **or many** records.
 | Flag | Notes |
 | --- | --- |
 | `--data <json>` | Record JSON inline. If omitted, reads stdin. |
+| `--delete-missing` | After the batch, delete existing records **not** in the input set (exact re-sync). One commit. |
+| `--dry-run` | Preview `{willChange, noOp, invalid, willDelete}` (+ invalid rows) — no commit. |
 | `--allow-missing-body` | Content-typed sheets only — opt in to upserting without body field |
 | `--prefix <p>` | Tenant scope |
 | `--message <m>` | Commit message (default: `<sheet> upsert <path>`) |
@@ -149,6 +174,8 @@ help[1]: gitsheets committed to the git ref, not your working tree — run `git 
 
 Output on no-op mirrors the shape with `result: no-op` and no `commit`.
 
+**`--delete-missing`** makes the sheet exactly match the input set (upsert the batch, delete anything else) — the primitive for a periodic re-sync from a source. **`--dry-run`** validates a whole batch up front and reports `willChange` / `noOp` / `invalid` (with the offending rows) / `willDelete` without committing — use it before a big import instead of finding out about a bad row mid-batch.
+
 > **Working-tree gotcha.** gitsheets writes to the git **ref** via plumbing; it does **not** touch your working tree. Right after a commit, `git status` shows the new records as *deleted* on disk (the ref has them, the working tree doesn't). Run `git checkout HEAD -- .` to materialize them. This surprises every first-time user — it's not data loss.
 
 ### `gitsheets-axi patch <sheet> [<query-json>] [flags]`
@@ -159,6 +186,9 @@ RFC 7396 JSON Merge Patch — update fields without replacing the whole record. 
 | --- | --- |
 | `--patch <json>` | **Single mode**: partial JSON for the record matched by `<query-json>`. If omitted, reads stdin. |
 | `--data <json>` | **Bulk mode**: a JSON array / NDJSON of combined records. If omitted, reads stdin. |
+| `--on-missing <m>` | Bulk: when a record's query matches nothing — `abort` (default) \| `skip` \| `insert` (upsert it as new). |
+| `--delete-missing` | Bulk: delete existing records **not** targeted by the batch (exact re-sync). One commit. |
+| `--dry-run` | Bulk: preview `{willChange, insert, noOp, missing, invalid, willDelete}` — no commit. |
 | `--prefix <p>` | Tenant scope |
 | `--message <m>` | Commit message |
 
@@ -177,20 +207,27 @@ jq -c '.[] | {name, target_team, status}' decisions.json | gitsheets-axi patch r
 
 Prefer bulk `patch` over bulk `upsert` for updates: `upsert` is a full-record *replace* (you must carry every existing field or lose it), while `patch` merges — you emit only the fields you're setting, and untouched fields are safe.
 
-**Idempotent.** Unchanged records are skipped; a batch where nothing changed is a `no-op` with no commit. In a batch, a record whose query matches nothing **aborts the whole transaction** (nothing committed) and names the offending row. Output mirrors bulk `upsert` (`patched:` / `unchanged:` / the materialize hint).
+**Idempotent.** Unchanged records are skipped; a batch where nothing changed is a `no-op` with no commit. By default a record whose query matches nothing **aborts the whole transaction** (nothing committed) and names the offending row — but `--on-missing skip` tolerates stale rows (handy re-running a classification pass after new records were ingested) and `--on-missing insert` upserts them as new. Output mirrors bulk `upsert` (`patched:` / `unchanged:` / `skipped:` / the materialize hint).
 
 Single mode throws `NOT_FOUND` if the query matches no record.
 
-### `gitsheets-axi delete <sheet> <path> [flags]`
+### `gitsheets-axi rename <sheet> <old-path> <new-path>`
 
-Delete the record at `<path>`.
+Re-key a record: read it, write it at `<new-path>`, delete the old one — atomically in **one commit**. Supported for a bare single-field path template (`path = '${{ field }}'`), where `<new-path>` maps directly onto the field's value; refuses to overwrite an existing target, errors on a missing source. For decorated/multi-field templates, use `patch` to change the path fields (or `upsert --delete-missing`). This reads as intent in git history vs. a manual write-new + delete-old.
+
+### `gitsheets-axi delete <sheet> <path> [flags]` · bulk: `delete <sheet> --filter … | --stdin`
+
+Delete the record at `<path>`, or many records at once.
 
 | Flag | Notes |
 | --- | --- |
+| `--filter <expr>` | Bulk: delete every record matching the filter DSL (repeatable). No `<path>`. |
+| `--stdin` | Bulk: delete records named one-per-line on stdin. No `<path>`. |
+| `--dry-run` | Bulk: report `willDelete` (of total) — no commit. |
 | `--prefix <p>` | Tenant scope |
 | `--message <m>` | Commit message |
 
-**Idempotent on already-missing.** Agents can call `delete` without checking existence; an already-absent record exits 0 with `result: "no-op"`.
+**Idempotent on already-missing.** Agents can call `delete` without checking existence; an already-absent record exits 0 with `result: "no-op"`. **Bulk delete** removes every matching record in **one commit** (absent ids skipped) — e.g. `delete repos --filter disposition=delete-candidate`. Always `--dry-run` first to confirm the count.
 
 ### `gitsheets-axi check <sheet> <file> [--fix]`
 
@@ -315,7 +352,11 @@ gitsheets-axi diff repos HEAD~1        # review what changed
 gitsheets-axi query repos --filter status=unclassified   # what's left
 ```
 
-`patch` merges, so you emit only the fields you're setting and the rest of each record is safe — whereas `upsert` would replace the whole record and drop anything you didn't re-send. Idempotency makes each pass re-runnable (already-classified records no-op), and `diff` per batch is your review surface.
+`patch` merges, so you emit only the fields you're setting and the rest of each record is safe — whereas `upsert` would replace the whole record and drop anything you didn't re-send. Idempotency makes each pass re-runnable (already-classified records no-op), and `diff` per batch is your review surface. Re-running a pass after new records were ingested? Add `--on-missing skip`.
+
+**Reviewing / auditing the data** — reach for the analytics commands, not `--ndjson-out | jq`: `count <sheet> --filter …` for totals, `query <sheet> --group-by <field>` for distributions (e.g. `--group-by target_team` → `{archive:110, sencha:49, …}`), `distinct <sheet> <field>` for the value set, and the filter operators (`k<v`, `k!=v`, `"k in (a,b)"`, `k:empty`) for slices like "delete-candidates not pushed since 2022".
+
+**Periodic re-sync from a source** — to make a sheet exactly match an upstream (repos created/archived since last sync), `upsert --delete-missing` (full replace) or `patch --on-missing insert --delete-missing` (merge + insert new + prune gone). Preview with `--dry-run` first. Purge a class of records with `delete --filter <expr>` (again, `--dry-run` first).
 
 Do **not** loop `upsert --data` (or `patch`) once per record — that produces one commit per record (hundreds of junk commits). Pass the whole array/stream to a single `upsert` / `patch`.
 
