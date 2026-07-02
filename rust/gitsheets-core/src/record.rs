@@ -213,24 +213,15 @@ pub fn write_blob_at_dir(git_dir: &str, bytes: &[u8]) -> Result<String> {
     write_blob(&repo, bytes)
 }
 
-/// Read a blob's raw bytes by its hex hash, validating it exists in the ODB and
-/// is a blob (not a tree/commit) — the read half of attachment staging. A
-/// missing object is [`Error::RecordNotFound`]; a non-blob is
-/// [`Error::ConfigInvalid`]. Used to place an already-written blob (by hash)
-/// into a tree at a deep path.
-pub(crate) fn read_blob_bytes_by_hash(repo: &gix::Repository, hash: &str) -> Result<Vec<u8>> {
-    let oid = ObjectId::from_hex(hash.as_bytes()).map_err(|e| Error::CommitFailed {
+/// Parse a hex object id, erroring on malformed input. Placing an
+/// already-written blob into a tree by hash goes through holo-tree's
+/// `MutableTree::write_child_hash`, which validates existence + blob-kind from
+/// the object header (no byte read) — so attachment staging no longer reads the
+/// blob back just to re-place it (hologit#477).
+pub(crate) fn parse_oid(hash: &str) -> Result<ObjectId> {
+    ObjectId::from_hex(hash.as_bytes()).map_err(|e| Error::CommitFailed {
         message: format!("invalid blob hash {hash:?}: {e}"),
-    })?;
-    let obj = repo.find_object(oid).map_err(|e| Error::RecordNotFound {
-        message: format!("blob {hash} not found in object database: {e}"),
-    })?;
-    if obj.kind != gix::object::Kind::Blob {
-        return Err(Error::ConfigInvalid {
-            message: format!("object {hash} is not a blob (it is a {:?})", obj.kind),
-        });
-    }
-    Ok(obj.data.to_vec())
+    })
 }
 
 // ── join / path helpers ──────────────────────────────────────────────────────
@@ -955,24 +946,8 @@ mod tests {
         // Independently computed git blob hash: sha1("blob <len>\0<bytes>").
         assert_eq!(hash, git_blob_hash(bytes));
         // And the object is retrievable + byte-identical.
-        let read = read_blob_bytes_by_hash(&repo, &hash).unwrap();
-        assert_eq!(read, bytes);
-    }
-
-    #[test]
-    fn read_blob_bytes_by_hash_rejects_missing_and_non_blob() {
-        let (_dir, repo) = temp_repo();
-        // A well-formed but absent hash → record_not_found.
-        let absent = "0".repeat(40);
-        let err = read_blob_bytes_by_hash(&repo, &absent).err().unwrap();
-        assert_eq!(err.code(), "record_not_found");
-        // A tree hash (the empty tree) is not a blob → config_invalid.
-        let mut t = MutableTree::empty();
-        write_records(&repo, &mut t, "people", &[("jane".into(), rec(&[("slug", s("jane"))]))], TOML_EXTENSION)
-            .unwrap();
-        let tree_hash = t.write(&repo).unwrap().to_string();
-        let err = read_blob_bytes_by_hash(&repo, &tree_hash).err().unwrap();
-        assert_eq!(err.code(), "config_invalid");
+        let obj = repo.find_object(parse_oid(&hash).unwrap()).unwrap();
+        assert_eq!(obj.data, bytes);
     }
 
     // ── rename detection (git diff-tree -M parity) ───────────────────────────

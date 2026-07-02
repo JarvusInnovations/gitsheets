@@ -32,13 +32,13 @@ jsonschema = { version = "0.46.7", default-features = false }
 serde_json = "1"
 
 # ── record-engine-core (the holo-tree substrate seam) ────────────────────────
-# Mutable in-memory git trees (read/write/delete blobs, commit, ref CAS). Not on
-# crates.io, so a git dependency on the hologit repo (the form decided in
-# gitsheets-core-foundation). `branch = "develop"`, NOT `master`: the merged
-# spike fixes this layer relies on — notably `delete_child_deep`'s
-# dirty-propagation (hologit#473) — live on develop and are not yet on master.
-# `Cargo.lock` is committed so the exact commit is pinned and reproducible.
-holo-tree = { git = "https://github.com/JarvusInnovations/hologit", branch = "develop" }
+# Mutable in-memory git trees (read/write/delete blobs, commit, ref CAS). The
+# holo-tree crate isn't on crates.io, so this is a git dependency pinned to an
+# immutable `holo-tree-v*` release tag (cut in lockstep with the `@hologit/
+# holo-tree` npm package). holo-tree-v0.4.0 carries the reflog-identity
+# (hologit#476) and write_child_hash (hologit#477) fixes this crate consumes.
+# Bump the tag to adopt a new release; `Cargo.lock` still pins the exact commit.
+holo-tree = { git = "https://github.com/JarvusInnovations/hologit", tag = "holo-tree-v0.4.0" }
 # The git object layer holo-tree drives. Pinned to the SAME version holo-tree
 # depends on (0.83) so the `gix::Repository` handle this crate opens and passes
 # into holo-tree is one unified type. Default features (matching holo-tree) cover
