@@ -10,9 +10,12 @@ import { createContext, type GitsheetsContext } from '../src/context.js';
 import { homeCommand } from '../src/commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from '../src/commands/sheets.js';
 import { queryCommand, QUERY_HELP } from '../src/commands/query.js';
+import { countCommand, COUNT_HELP } from '../src/commands/count.js';
+import { distinctCommand, DISTINCT_HELP } from '../src/commands/distinct.js';
 import { readCommand, READ_HELP } from '../src/commands/read.js';
 import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
 import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
+import { renameCommand, RENAME_HELP } from '../src/commands/rename.js';
 import { deleteCommand, DELETE_HELP } from '../src/commands/delete.js';
 import { checkCommand, CHECK_HELP } from '../src/commands/check.js';
 import { diffCommand, DIFF_HELP } from '../src/commands/diff.js';
@@ -30,9 +33,12 @@ import { setupCommand, SETUP_HELP } from '../src/commands/setup.js';
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
   query: QUERY_HELP,
+  count: COUNT_HELP,
+  distinct: DISTINCT_HELP,
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
+  rename: RENAME_HELP,
   delete: DELETE_HELP,
   check: CHECK_HELP,
   diff: DIFF_HELP,
@@ -48,9 +54,12 @@ const COMMAND_HELP: Record<string, string> = {
 const COMMANDS = {
   sheets: sheetsCommand,
   query: queryCommand,
+  count: countCommand,
+  distinct: distinctCommand,
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
+  rename: renameCommand,
   delete: deleteCommand,
   check: checkCommand,
   diff: diffCommand,

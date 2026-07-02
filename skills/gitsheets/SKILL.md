@@ -24,6 +24,8 @@ If unsure or the question spans multiple surfaces, read all four. They're sized 
 
 If the user is working *inside an agent session* and wants to read/mutate gitsheets data via shell, prefer `gitsheets-axi` (`references/axi.md`). If they're writing application code, prefer the library API. If they're authoring configs or asking conceptual questions, sheet-config or api references are right.
 
+**Bootstrapping the CLI.** `gitsheets-axi` may not be on `PATH` in a fresh environment where only this skill is installed — that's fine. Run it with no install via `npx -y gitsheets-axi <args>` (e.g. `npx -y gitsheets-axi query users`), or `npm install -g gitsheets-axi` once for a persistent command. Check with `command -v gitsheets-axi`. The human `gitsheets` CLI bootstraps the same way (`npx -y gitsheets …`). So "just install the skill" is a complete starting point — the tools are one `npx` away.
+
 ## Always-true facts
 
 These don't change between releases and are worth keeping in mind regardless of the user's question:
@@ -34,6 +36,8 @@ These don't change between releases and are worth keeping in mind regardless of 
 - **Validation is on writes only.** Reads return whatever's on disk. If a schema was tightened after some records were written, those reads can return records that wouldn't pass current validation.
 - **Canonical normalization is deterministic.** Object keys are deep-sorted on write; array fields can declare a `sort` rule. Logically-equal records produce byte-identical TOML, so git diffs are meaningful.
 - **Mutations go through transactions.** `repo.transact(opts, async tx => …)` is the explicit path. Outside a transaction, standalone Sheet methods (`upsert`, `delete`, `patch`) auto-open one — unless the consumer called `repo.requireExplicitTransactions()`, in which case they throw.
+- **Writes land in the git ref, not the working tree.** gitsheets commits records via git plumbing directly to the branch ref; it does **not** update your checked-out files. Right after a write, `git status` shows the new records as *deleted* on disk — the ref has them, the working tree doesn't. `git checkout HEAD -- .` materializes them. This is expected, not data loss.
+- **Sheet configs are read from the committed tree.** A freshly-authored `.gitsheets/<name>.toml` is invisible to record commands until it's committed. Commit the config first, then upsert/query.
 - **Push is push-only.** The optional push daemon (`repo.startPushDaemon`) pushes new commits to a remote with retry/backoff. It never pulls — the consumer process is the single writer.
 - **All gitsheets errors extend `GitsheetsError`** and carry a stable `code` field. Consumers switch on `instanceof` or `err.code`, never on `err.message`. The error classes are: `ConfigError`, `ValidationError`, `TransactionError`, `IndexError`, `RefError`, `PathTemplateError`, `NotFoundError`.
 
@@ -46,6 +50,9 @@ When the user is building something, these idioms are usually the right shape:
 - **Bulk reads + lazy bodies**: on content-typed (markdown) sheets, pass `{ withBody: false }` to `query` for listing/filtering, then `await sheet.loadBody(record)` when the body is actually needed.
 - **Secondary indices**: `sheet.defineIndex('byEmail', { unique: true }, r => r.email.toLowerCase())`. Built lazily on first `findByIndex` call; rebuilt when the underlying tree hash changes. For markdown sheets, index builds always use body-less reads — don't index on body content (returns `undefined` → record excluded).
 - **CSV import**: `gitsheets upsert <sheet> records.csv --format=csv` — first row is the header, each subsequent row becomes one record. Cell values stay strings; type coercion belongs in the schema.
+- **Bulk ingest a databank**: build a JSON array or NDJSON stream with `jq` (never hand-serialize TOML), then pipe it into **one** `upsert` — `jq -c '.[]' raw.json | gitsheets-axi upsert repos`. The whole batch commits once. To reshape existing data, `gitsheets-axi query <sheet> --ndjson-out`, transform the file, and pipe it back in (exports round-trip verbatim). See `references/axi.md` → "Bulk data engineering".
+- **Classify / update in bulk**: use bulk `gitsheets-axi patch` (array/NDJSON of `{<path-fields>, <fields-to-set>}` → one commit, merge-not-replace), not `upsert` (which replaces whole records). `--on-missing skip|insert` tolerates or inserts stale rows; `--dry-run` previews; `--delete-missing` makes the sheet exactly match a source.
+- **Review / audit without `jq`**: `gitsheets-axi count <sheet> --filter …` for totals, `query --group-by <field>` for distributions, `distinct <sheet> <field>` for the value set. The `--filter` DSL does comparison / `!=` / `in()` / regex / `:present` / `:empty`, not just equality.
 
 ## Anti-patterns to redirect
 
@@ -56,12 +63,15 @@ If the user is heading toward one of these, gently steer them back:
 - **Indexing on body content.** Indexes always build with body-less reads on markdown sheets — `keyFn(record).body` is `undefined`. Index on frontmatter fields.
 - **Calling `pull` then `push`** to sync. The library has no pull. The single-writer model is non-negotiable; "pull elsewhere, restart consumer" is the canonical reconciliation path.
 - **Using `Sheet.upsert(partial)` to update a single field.** `upsert` is a full-record replace. To mutate fields without overwriting the rest, use `sheet.patch(query, partial)` (RFC 7396 — `null` deletes a field, arrays replace).
+- **Updating existing records with `upsert` in bulk.** `upsert` replaces the whole record, so a bulk update must re-send every field or silently drop the rest. For updating fields across many records (classifying, tagging, backfilling), use **bulk `gitsheets-axi patch`** (array / NDJSON of combined records → one commit, merge semantics) — emit only the fields you're setting.
+- **Looping `upsert` (or `patch`) once per record for a bulk job.** That produces one commit per record (hundreds of junk commits). Both `upsert` and `patch` autodetect a JSON array or NDJSON and process the whole batch in a single commit — pass the stream, don't loop.
+- **Hand-serializing TOML to write records.** Never build TOML strings (or reach for a TOML library) to produce records. gitsheets owns serialization, key-sorting, canonical form, and validation. Produce JSON and let `upsert` write the bytes.
 
 ## Editing record files directly (post-edit hook)
 
 If you're going to edit gitsheets record files (`.toml` or `.md`) directly on disk rather than through the API, install a post-edit hook that runs `gitsheets-axi check <sheet> $FILE --fix` after each edit. This re-canonicalizes the file (deep-sorted keys, normalized markdown body) and validates against the sheet's schema, catching mistakes immediately rather than at the next git commit. Hook examples in `references/axi.md`.
 
-`gitsheets-axi` is preferred for hook use because its output is TOON on stdout with stable error codes (`VALIDATION_FAILED`, `CONFIG_INVALID`, `NOT_CANONICAL`, etc.) — an agent reading the hook's stdout can switch on the outcome. The human `gitsheets check` works too and is documented in `references/cli.md`; pick it when `gitsheets-axi` isn't installed in the environment.
+`gitsheets-axi` is preferred for hook use because its output is TOON on stdout with stable error codes (`VALIDATION_FAILED`, `CONFIG_INVALID`, `NOT_CANONICAL`, etc.) — an agent reading the hook's stdout can switch on the outcome. If it isn't installed, install it (`npm install -g gitsheets-axi`) — a `npx -y` prefix isn't a good fit inside a per-edit hook that fires constantly, so a real install is worth it here. The human `gitsheets check` (`references/cli.md`) is an equivalent fallback when a global install isn't possible.
 
 For CI / pre-commit verification, drop the `--fix`: `gitsheets-axi check <sheet> $FILE` exits non-zero if the file isn't already canonical, without touching it.
 

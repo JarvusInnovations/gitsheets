@@ -131,6 +131,7 @@ needed. `gix`'s `blob-diff` feature is already on via its default features
 (`basic`), so **no new dependency** — no `cargo add`. A `Renamed` change carries
 `previous_path` (source) and `path` (destination); its src record is read from
 `previous_path`, and its patch is the src→dst field delta. `RecordStatus::Renamed`
+
 - `RecordChange.previous_path` are surfaced as `status: 'renamed'` / `previousPath`
 on both bindings' `diffRecords`.
 
@@ -151,9 +152,12 @@ correct and byte-identical.
 
 ## Follow-ups
 
-- **holo-tree `write_child_hash` primitive** — place an existing blob by hash at a
-  deep path without reading its bytes back (the efficiency note above). Upstream
-  hologit hardening; not blocking v1.x.
+- **holo-tree `write_child_hash` primitive — DONE (hologit#477 → gitsheets#221).**
+  Place an existing blob by hash at a deep path without reading its bytes back
+  (the efficiency note above). **Fixed upstream** in
+  [hologit#477](https://github.com/JarvusInnovations/hologit/pull/479) (released
+  as `holo-tree-v0.4.0`) and **consumed in gitsheets#221** — `set_attachments`
+  now places by hash via `write_child_hash`, dropping the redundant ODB read.
 - **`node-binding-thin` (the cutover)** rewires `packages/gitsheets` to route
   `Sheet.setAttachment(s)` / `deleteAttachment(s)` / `repo.writeBlob` and
   `Sheet.diffFrom` through this core surface (replacing the direct

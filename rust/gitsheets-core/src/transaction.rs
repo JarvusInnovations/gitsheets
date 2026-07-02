@@ -557,6 +557,52 @@ mod tests {
         (dir, git_dir, commit)
     }
 
+    /// Regression for hologit#476 / gitsheets#220: the commit + ref-update path
+    /// must not depend on ambient git config. We open the repo with `isolated()`
+    /// options — no environment / global / system config, so no `user.name` /
+    /// `user.email` is visible — enable reflogs in LOCAL config (honored under
+    /// isolation, and needed so the reflog-identity path actually runs), then
+    /// drive the same `commit_tree` + `update_ref` that `finalize` uses. The old
+    /// holo-tree read the reflog committer from ambient config and failed here
+    /// with "The reflog could not be created or updated"; the fix derives it from
+    /// the commit's committer, so no machine identity is needed. This is why CI
+    /// no longer configures a git identity.
+    #[test]
+    fn commit_and_ref_update_need_no_ambient_git_identity() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        gix::init(dir.path()).unwrap();
+        let mut cfg = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.path().join(".git/config"))
+            .unwrap();
+        writeln!(cfg, "[core]\n\tlogallrefupdates = true").unwrap();
+        drop(cfg);
+
+        // No ambient git identity visible to this handle.
+        let repo = gix::open_opts(dir.path(), gix::open::Options::isolated()).unwrap();
+
+        let mut tree = MutableTree::empty();
+        let tree_hash = tree.write(&repo).unwrap();
+        let sig = build_signature(
+            &Author { name: "Test".into(), email: "test@test".into() },
+            1_600_000_000,
+            0,
+        )
+        .unwrap();
+        let commit =
+            holo_repo::commit_tree(&repo, tree_hash, &[], "init\n", Some(sig.clone()), Some(sig))
+                .unwrap();
+
+        // The assertion: the ref update (which writes a reflog) succeeds despite
+        // no ambient git identity. Panics on the pre-fix holo-tree.
+        holo_repo::update_ref(&repo, "refs/heads/main", commit, None).unwrap();
+        assert_eq!(
+            holo_repo::resolve_ref(&repo, "refs/heads/main").unwrap(),
+            Some(commit),
+        );
+    }
+
     fn default_opts(message: &str) -> TransactionOptions {
         TransactionOptions {
             parent: None,

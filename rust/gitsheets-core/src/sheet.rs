@@ -477,13 +477,12 @@ impl Sheet {
     ) -> Result<()> {
         for (name, blob_hash) in attachments {
             let full = self.attachment_path(record_path, name);
-            // Re-read the (already-written) blob by hash and place it at `full`.
-            // holo-tree lacks a place-by-hash primitive (upstream hardening
-            // finding — a `MutableTree::write_child_hash(path, hash, mode)` would
-            // avoid this read); `write_child_bytes` re-hashes to the same content-
-            // addressed id, so the placed object is byte-identical.
-            let bytes = record::read_blob_bytes_by_hash(repo, blob_hash)?;
-            tree.write_child_bytes(repo, &full, &bytes)
+            // Place the already-written blob at `full` by hash — holo-tree's
+            // `write_child_hash` validates existence + blob-kind from the object
+            // header (no byte read + re-hash), so a large attachment isn't read
+            // back just to re-place it (hologit#477). 0o100644 = regular file.
+            let oid = record::parse_oid(blob_hash)?;
+            tree.write_child_hash(repo, &full, oid, 0o100644)
                 .map_err(record::map_ht)?;
         }
         self.index_cache = None;
@@ -1285,6 +1284,32 @@ mod tests {
         // The record file is NOT reported as an attachment (it's a sibling).
         let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["avatar.jpg", "cover.png"]);
+    }
+
+    #[test]
+    fn set_attachments_rejects_missing_and_non_blob_hashes() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
+        let mut sheet = open(&repo, &mut tree);
+        stage_record(&mut sheet, &repo, &mut tree, "jane");
+
+        // A well-formed but absent hash is rejected — the placement is validated
+        // (via write_child_hash's header lookup) before any tree mutation.
+        let absent = "0".repeat(40);
+        assert!(sheet
+            .set_attachments(&repo, &mut tree, "jane", &[("x.bin".into(), absent)])
+            .is_err());
+
+        // A tree hash (not a blob) is rejected with a clear message.
+        let tree_hash = tree.write(&repo).unwrap().to_string();
+        let err = sheet
+            .set_attachments(&repo, &mut tree, "jane", &[("x.bin".into(), tree_hash)])
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("not a blob"), "got: {err}");
+
+        // The rejections left no stray attachment behind.
+        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
     }
 
     #[test]
