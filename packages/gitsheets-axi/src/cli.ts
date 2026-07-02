@@ -12,6 +12,7 @@ import { distinctCommand, DISTINCT_HELP } from './commands/distinct.js';
 import { readCommand, READ_HELP } from './commands/read.js';
 import { upsertCommand, UPSERT_HELP } from './commands/upsert.js';
 import { patchCommand, PATCH_HELP } from './commands/patch.js';
+import { renameCommand, RENAME_HELP } from './commands/rename.js';
 import { deleteCommand, DELETE_HELP } from './commands/delete.js';
 import { checkCommand, CHECK_HELP } from './commands/check.js';
 import { diffCommand, DIFF_HELP } from './commands/diff.js';
@@ -30,10 +31,10 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[18]:
+commands[19]:
   (none)=home, sheets, query, count,
-  distinct, read, upsert, patch, delete,
-  check, diff, normalize,
+  distinct, read, upsert, patch, rename,
+  delete, check, diff, normalize,
   init, infer, migrate-config,
   attachment, push, setup
 flags[2]:
@@ -60,6 +61,7 @@ const COMMAND_HELP: Record<string, string> = {
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
+  rename: RENAME_HELP,
   delete: DELETE_HELP,
   check: CHECK_HELP,
   diff: DIFF_HELP,
@@ -82,6 +84,7 @@ const COMMANDS: Record<string, CommandFn> = {
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
+  rename: renameCommand,
   delete: deleteCommand,
   check: checkCommand,
   diff: diffCommand,

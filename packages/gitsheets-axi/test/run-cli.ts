@@ -15,6 +15,7 @@ import { distinctCommand, DISTINCT_HELP } from '../src/commands/distinct.js';
 import { readCommand, READ_HELP } from '../src/commands/read.js';
 import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
 import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
+import { renameCommand, RENAME_HELP } from '../src/commands/rename.js';
 import { deleteCommand, DELETE_HELP } from '../src/commands/delete.js';
 import { checkCommand, CHECK_HELP } from '../src/commands/check.js';
 import { diffCommand, DIFF_HELP } from '../src/commands/diff.js';
@@ -37,6 +38,7 @@ const COMMAND_HELP: Record<string, string> = {
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
+  rename: RENAME_HELP,
   delete: DELETE_HELP,
   check: CHECK_HELP,
   diff: DIFF_HELP,
@@ -57,6 +59,7 @@ const COMMANDS = {
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
+  rename: renameCommand,
   delete: deleteCommand,
   check: checkCommand,
   diff: diffCommand,
