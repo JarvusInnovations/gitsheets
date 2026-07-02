@@ -51,6 +51,8 @@ When the user is building something, these idioms are usually the right shape:
 - **Secondary indices**: `sheet.defineIndex('byEmail', { unique: true }, r => r.email.toLowerCase())`. Built lazily on first `findByIndex` call; rebuilt when the underlying tree hash changes. For markdown sheets, index builds always use body-less reads — don't index on body content (returns `undefined` → record excluded).
 - **CSV import**: `gitsheets upsert <sheet> records.csv --format=csv` — first row is the header, each subsequent row becomes one record. Cell values stay strings; type coercion belongs in the schema.
 - **Bulk ingest a databank**: build a JSON array or NDJSON stream with `jq` (never hand-serialize TOML), then pipe it into **one** `upsert` — `jq -c '.[]' raw.json | gitsheets-axi upsert repos`. The whole batch commits once. To reshape existing data, `gitsheets-axi query <sheet> --ndjson-out`, transform the file, and pipe it back in (exports round-trip verbatim). See `references/axi.md` → "Bulk data engineering".
+- **Classify / update in bulk**: use bulk `gitsheets-axi patch` (array/NDJSON of `{<path-fields>, <fields-to-set>}` → one commit, merge-not-replace), not `upsert` (which replaces whole records). `--on-missing skip|insert` tolerates or inserts stale rows; `--dry-run` previews; `--delete-missing` makes the sheet exactly match a source.
+- **Review / audit without `jq`**: `gitsheets-axi count <sheet> --filter …` for totals, `query --group-by <field>` for distributions, `distinct <sheet> <field>` for the value set. The `--filter` DSL does comparison / `!=` / `in()` / regex / `:present` / `:empty`, not just equality.
 
 ## Anti-patterns to redirect
 
