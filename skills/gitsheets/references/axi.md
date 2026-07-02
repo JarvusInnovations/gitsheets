@@ -4,10 +4,15 @@
 
 **Use `gitsheets-axi` when an agent is reading or mutating gitsheets data via shell execution.** Use the `gitsheets` library (TypeScript imports) when authoring code that runs inside an application.
 
+**Getting the tool.** If `gitsheets-axi` isn't already on `PATH`, don't stop — you don't need to install anything to start:
+
 ```bash
-npm install -g gitsheets-axi    # one-time global install
-gitsheets-axi                   # session-aware home view
+gitsheets-axi query users            # if it's already installed
+npx -y gitsheets-axi query users     # zero-install: runs the published package on demand
+npm install -g gitsheets-axi         # optional: install once for a persistent global command
 ```
+
+`npx -y gitsheets-axi <args>` runs the latest published package with no install step, so a fresh environment that has **only this skill** can use every command below by prefixing `npx -y`. For repeated use in a session, `npm install -g gitsheets-axi` once (then drop the prefix). To check availability: `command -v gitsheets-axi`. Every example in this reference writes the bare `gitsheets-axi` — prefix `npx -y` when it isn't installed.
 
 `gitsheets-axi` shares the gitsheets minor version (1.3.x ↔ 1.3.x). Major and minor stay in lockstep; patch versions are independent. Run `gitsheets-axi setup hooks` once to install opt-in `SessionStart` hooks for Claude Code, Codex, and OpenCode — once installed, every new agent session sees a TOON home view of the current repo's sheets.
 
@@ -62,11 +67,14 @@ Single-sheet detail: config summary (root, format, path template), schema proper
 List records.
 
 | Flag | Notes |
-|---|---|
+| --- | --- |
 | `--filter <k>=<v>` | Equality match; repeatable |
 | `--fields <list>` | Extra columns beyond the default schema |
-| `--limit <n>` | Default 100, max 10000 |
+| `--limit <n>` | Caps the **stdout preview**. Default 100, max 10000 |
 | `--prefix <p>` | Tenant sub-tree scope (matches the library's `prefix` option) |
+| `--json-out[=path]` | Also write the **full** result set to a JSON array file |
+| `--ndjson-out[=path]` | Also write the full result set to an NDJSON file |
+| `--csv-out[=path]` | Also write the full result set to a CSV file (flat, lossy) |
 
 **Default schema is format-aware:**
 
@@ -75,24 +83,49 @@ List records.
 
 The summary line `count: N of M total` is always present so agents know when results are paginated.
 
+**Bulk export — the round-trip out of gitsheets.** The `--*-out` flags are a side-channel: stdout stays the token-cheap TOON preview, and the file carries **every matched record** (ignoring `--limit`). A bare flag auto-writes an owner-only (`0600`) file under `$TMPDIR/gitsheets-axi/`; `=path` persists it wherever you point it. At most one export flag per invocation. On write, stdout gains `wrote:` / `columns:` / a `jq` hint so you can compose the follow-up without opening the file:
+
+```
+wrote: /tmp/gitsheets-axi/repos-….ndjson
+rows: 463
+cols: 12
+columns[12]: name,visibility,archived,...
+help[1]: Run `jq '.name' /tmp/gitsheets-axi/repos-….ndjson` to process all 463 rows
+```
+
+`--json-out` and `--ndjson-out` are written **verbatim** (record fields only, no injected keys), so they pipe straight back into `gitsheets-axi upsert` — export → transform → re-import is a clean loop. `--csv-out` is flat (nested values JSON-encoded into their cell): a lossy reporting view, not a round-trip format.
+
 ### `gitsheets-axi read <sheet> <path> [--full]`
 
 Single-record detail. For markdown/mdx sheets, the body field is truncated to ~500 chars with `(truncated, N chars total)` and a `--full` hint. Surfaces `_path` and `_sheet` as plain fields (the `RECORD_PATH_KEY` / `RECORD_SHEET_KEY` Symbol annotations).
 
 ### `gitsheets-axi upsert <sheet> [--data <json>] [flags]`
 
-Create or replace a record.
+Create or replace one **or many** records.
 
 | Flag | Notes |
-|---|---|
+| --- | --- |
 | `--data <json>` | Record JSON inline. If omitted, reads stdin. |
 | `--allow-missing-body` | Content-typed sheets only — opt in to upserting without body field |
 | `--prefix <p>` | Tenant scope |
 | `--message <m>` | Commit message (default: `<sheet> upsert <path>`) |
 
-**Idempotent:** if the canonical bytes match the existing record, exits 0 with `result: "no-op"` and no commit.
+**Bulk import — this is the path for loading a databank.** The input shape is autodetected, no flag needed:
 
-Output on commit:
+- a single JSON object → one record
+- a **JSON array** of objects → batch
+- **NDJSON** (one compact object per line) → batch
+
+A batch upserts every record in **one transaction that produces ONE commit** — not one commit per record. Feed it a file or a pipe:
+
+```bash
+cat repos.array.json | gitsheets-axi upsert repos          # JSON array → one commit
+jq -c '.[]' repos.json | gitsheets-axi upsert repos        # NDJSON → one commit
+```
+
+**Idempotent, per record.** Each record's canonical bytes are compared against what's on disk; unchanged records are skipped. A batch where nothing changed exits 0 with `result: "no-op"` and no commit. In a batch, a **single invalid record aborts the whole transaction** (nothing committed) and the error names the offending row.
+
+Single-record output on commit:
 
 ```
 result: committed
@@ -100,37 +133,60 @@ sheet: users
 path: jane
 hash: 4d3f...
 commit: a1b2c3...
+help[1]: gitsheets committed to the git ref, not your working tree — run `git checkout HEAD -- .` to materialize the record files on disk
 ```
 
-Output on no-op:
+Batch output:
 
 ```
-result: no-op
-sheet: users
-path: jane
-hash: 4d3f...
+result: committed
+sheet: repos
+upserted: 5
+unchanged: 458
+commit: a1b2c3...
+help[1]: gitsheets committed to the git ref, not your working tree — run `git checkout HEAD -- .` to materialize the record files on disk
 ```
 
-### `gitsheets-axi patch <sheet> <query-json> [--patch <json>] [flags]`
+Output on no-op mirrors the shape with `result: no-op` and no `commit`.
 
-RFC 7396 JSON Merge Patch against the record matched by `<query-json>`. `null` deletes a field, arrays replace, objects merge recursively.
+> **Working-tree gotcha.** gitsheets writes to the git **ref** via plumbing; it does **not** touch your working tree. Right after a commit, `git status` shows the new records as *deleted* on disk (the ref has them, the working tree doesn't). Run `git checkout HEAD -- .` to materialize them. This surprises every first-time user — it's not data loss.
+
+### `gitsheets-axi patch <sheet> [<query-json>] [flags]`
+
+RFC 7396 JSON Merge Patch — update fields without replacing the whole record. `null` deletes a field, arrays replace, objects merge recursively. Two modes:
 
 | Flag | Notes |
-|---|---|
-| `--patch <json>` | Partial JSON. If omitted, reads stdin. |
+| --- | --- |
+| `--patch <json>` | **Single mode**: partial JSON for the record matched by `<query-json>`. If omitted, reads stdin. |
+| `--data <json>` | **Bulk mode**: a JSON array / NDJSON of combined records. If omitted, reads stdin. |
 | `--prefix <p>` | Tenant scope |
 | `--message <m>` | Commit message |
 
-**Idempotent.** Same no-op semantics as upsert.
+**Single** — explicit query + partial:
 
-Throws `NOT_FOUND` if the query matches no record.
+```bash
+gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane O. Doe"}'
+```
+
+**Bulk — this is the classification primitive.** Drop the `<query-json>` positional and pass an array / NDJSON of **combined** records. In each record the sheet's **path-template fields** form the query (which record to patch); the **remaining fields** are the merge patch. Every patch runs in **one transaction → one commit**:
+
+```bash
+# classify many repos at once — one commit, merge-not-replace
+jq -c '.[] | {name, target_team, status}' decisions.json | gitsheets-axi patch repos
+```
+
+Prefer bulk `patch` over bulk `upsert` for updates: `upsert` is a full-record *replace* (you must carry every existing field or lose it), while `patch` merges — you emit only the fields you're setting, and untouched fields are safe.
+
+**Idempotent.** Unchanged records are skipped; a batch where nothing changed is a `no-op` with no commit. In a batch, a record whose query matches nothing **aborts the whole transaction** (nothing committed) and names the offending row. Output mirrors bulk `upsert` (`patched:` / `unchanged:` / the materialize hint).
+
+Single mode throws `NOT_FOUND` if the query matches no record.
 
 ### `gitsheets-axi delete <sheet> <path> [flags]`
 
 Delete the record at `<path>`.
 
 | Flag | Notes |
-|---|---|
+| --- | --- |
 | `--prefix <p>` | Tenant scope |
 | `--message <m>` | Commit message |
 
@@ -141,7 +197,7 @@ Delete the record at `<path>`.
 Verify a record file in the working tree is parseable, valid against the sheet's schema, and in canonical form. Reads from the working tree (not git). **Never commits.**
 
 | Flag | Notes |
-|---|---|
+| --- | --- |
 | `--fix` | Rewrite the file in canonical form if not already canonical |
 | `--prefix <p>` | Tenant scope |
 
@@ -211,7 +267,7 @@ Translates a pre-v1.0 `[gitsheet.fields]` block into the modern `[gitsheet.schem
 Manage binary blobs colocated with records. Subcommands:
 
 | Subcommand | Flags / Notes |
-|---|---|
+| --- | --- |
 | `list <sheet> <path>` | Table of attachment names + mime types + blob hashes |
 | `get <sheet> <path> <name>` | Base64-encoded content + metadata; truncated at ~64 KB unless `--full` |
 | `set <sheet> <path> <name> [--file f / --data t / stdin]` | Idempotent on byte-match |
@@ -232,10 +288,41 @@ This is **not** a daemon lifecycle command — for retry-with-backoff semantics 
 
 Explicit, opt-in installer for the agent `SessionStart` hooks (see [Hook installation](#hook-installation)). Installs into Claude Code, Codex, and OpenCode. Idempotent and self-repairing — re-running repairs a stale executable path. `--help` prints usage; any action other than `hooks` exits non-zero with a `VALIDATION_ERROR`. Restart the agent session afterward to pick up the ambient context.
 
+## Bulk data engineering (loading a databank)
+
+Populating a sheet from an external source (a GitHub API dump, a CSV, another system) is the canonical gitsheets job. The path that works:
+
+1. **Author the sheet config, then commit it.** `gitsheets-axi init <sheet>` scaffolds `.gitsheets/<sheet>.toml`; edit the schema, then `git add .gitsheets/<sheet>.toml && git commit`. **You must commit before any record command sees the sheet** — configs are read from the committed tree, not the working tree. (If you skip this, upsert/query return a targeted "commit the config first" error.)
+2. **Build a JSON array or NDJSON stream of records** with `jq` — do **not** hand-serialize TOML. gitsheets owns TOML serialization, key-sorting, canonical form, and validation; your job is to produce JSON.
+3. **Pipe it into one `upsert`** → one commit for the whole batch:
+
+   ```bash
+   jq -c '.[] | {name, visibility, description}' raw.json \
+     | gitsheets-axi upsert repos --message "seed repos from GitHub"
+   ```
+
+4. **Materialize the working tree** if you want the files on disk: `git checkout HEAD -- .` (gitsheets committed to the ref, not the working tree — see the gotcha under `upsert`).
+5. **Round-trip to reshape:** `gitsheets-axi query <sheet> --ndjson-out` → transform the file with `jq` → pipe back into `upsert`. Exported JSON/NDJSON is verbatim, so re-import is clean and idempotent.
+
+**Incrementally classifying / updating records** (adding `target_team`, `status`, etc. to records that already exist) is a **bulk `patch`** job, not upsert:
+
+```bash
+# pull the worklist, decide, patch the whole pass in one commit
+gitsheets-axi query repos --filter status=unclassified --ndjson-out
+# → transform into {name, target_team, status} decisions with jq/logic, then:
+jq -c '.[]' decisions.json | gitsheets-axi patch repos --message "classify batch 1"
+gitsheets-axi diff repos HEAD~1        # review what changed
+gitsheets-axi query repos --filter status=unclassified   # what's left
+```
+
+`patch` merges, so you emit only the fields you're setting and the rest of each record is safe — whereas `upsert` would replace the whole record and drop anything you didn't re-send. Idempotency makes each pass re-runnable (already-classified records no-op), and `diff` per batch is your review surface.
+
+Do **not** loop `upsert --data` (or `patch`) once per record — that produces one commit per record (hundreds of junk commits). Pass the whole array/stream to a single `upsert` / `patch`.
+
 ## When to use `gitsheets-axi` vs `gitsheets`
 
 | Scenario | Use |
-|---|---|
+| --- | --- |
 | Agent is reading/writing records via shell | `gitsheets-axi` |
 | Writing TypeScript that imports `gitsheets` | `gitsheets` library |
 | Authoring `.gitsheets/<name>.toml` configs | Either (the configs are the same) |

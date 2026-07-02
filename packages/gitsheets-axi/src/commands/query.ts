@@ -2,28 +2,45 @@ import { AxiError } from 'axi-sdk-js';
 
 import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
-import { renderListResponse } from '../output/render.js';
+import {
+  joinBlocks,
+  renderHelp,
+  renderListResponse,
+  renderObject,
+} from '../output/render.js';
 import { field } from '../output/schema.js';
 import {
   defaultSheetSchema,
   fieldsWithExtras,
 } from '../output/sheet-schema.js';
+import { openSheetForCommand } from '../util/open-sheet.js';
+import { exportRecords, type ExportFormat } from '../util/export-file.js';
 
-export const QUERY_HELP = `usage: gitsheets-axi query <sheet> [--filter k=v ...] [--fields a,b,c] [--limit n]
-flags[4]:
+export const QUERY_HELP = `usage: gitsheets-axi query <sheet> [--filter k=v ...] [--fields a,b,c] [--limit n] [--json-out[=path]] [--ndjson-out[=path]] [--csv-out[=path]]
+flags[7]:
   --filter <k>=<v>     Equality match against record field (repeatable)
   --fields <list>      Extra columns beyond the default schema (comma-separated)
-  --limit <n>          Cap results (default: 100, max: 10000)
+  --limit <n>          Cap the stdout preview (default: 100, max: 10000)
   --prefix <p>         Tenant sub-tree scope (see gitsheets --prefix)
+  --json-out[=path]    Also write the FULL result to a JSON array file
+  --ndjson-out[=path]  Also write the FULL result to an NDJSON file
+  --csv-out[=path]     Also write the FULL result to a CSV file (flat, lossy)
 examples:
   gitsheets-axi query users
   gitsheets-axi query users --filter status=active --limit 50
   gitsheets-axi query posts --fields title,published
+  gitsheets-axi query repos --ndjson-out | tail -1   # export path, pipe elsewhere
 output:
   Default schema is format-aware:
     TOML sheets    — path-template fields + first scalar properties (cap 4)
     Markdown/MDX   — path-template fields + title + body_size (never body content)
   --fields appends additional columns.
+export (--json-out / --ndjson-out / --csv-out):
+  stdout stays the TOON preview; the file carries EVERY matched record (not
+  capped by --limit). JSON/NDJSON are written verbatim so they round-trip
+  straight back into \`gitsheets-axi upsert\`; CSV is flat + lossy (nested
+  values JSON-encoded), for reporting. A bare flag auto-writes a 0600 file
+  under the OS temp dir; \`=path\` persists it. One export flag per invocation.
 `;
 
 interface QueryFlags {
@@ -31,6 +48,8 @@ interface QueryFlags {
   extras: string[];
   limit: number;
   prefix: string | undefined;
+  exportFormat: ExportFormat | undefined;
+  exportPath: string | undefined;
 }
 
 function parseQueryFlags(args: string[]): { sheetName: string; flags: QueryFlags } {
@@ -46,10 +65,50 @@ function parseQueryFlags(args: string[]): { sheetName: string; flags: QueryFlags
     extras: [],
     limit: 100,
     prefix: undefined,
+    exportFormat: undefined,
+    exportPath: undefined,
+  };
+
+  const setExport = (format: ExportFormat, arg: string): void => {
+    if (flags.exportFormat) {
+      throw new AxiError(
+        'Only one export flag is allowed per invocation',
+        'VALIDATION_ERROR',
+        ['Pass either --json-out or --ndjson-out, not both'],
+      );
+    }
+    flags.exportFormat = format;
+    const eq = arg.indexOf('=');
+    if (eq !== -1) {
+      const p = arg.slice(eq + 1);
+      if (!p) {
+        throw new AxiError(
+          `${arg.slice(0, eq)} was given an empty path`,
+          'VALIDATION_ERROR',
+          ['Use the bare flag for an auto-generated temp path, or --…-out=/real/path'],
+        );
+      }
+      flags.exportPath = p;
+    }
   };
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
+    if (arg === undefined) continue;
+
+    if (arg === '--json-out' || arg.startsWith('--json-out=')) {
+      setExport('json', arg);
+      continue;
+    }
+    if (arg === '--ndjson-out' || arg.startsWith('--ndjson-out=')) {
+      setExport('ndjson', arg);
+      continue;
+    }
+    if (arg === '--csv-out' || arg.startsWith('--csv-out=')) {
+      setExport('csv', arg);
+      continue;
+    }
+
     const next = args[i + 1];
     switch (arg) {
       case '--filter': {
@@ -107,15 +166,11 @@ export async function queryCommand(
   const { sheetName, flags } = parseQueryFlags(args);
   const repo = await ctx.repo();
 
-  let sheet;
-  try {
-    sheet = await repo.openSheet(
-      sheetName,
-      flags.prefix !== undefined ? { prefix: flags.prefix } : {},
-    );
-  } catch (error) {
-    throw translateError(error);
-  }
+  const sheet = await openSheetForCommand(
+    repo,
+    sheetName,
+    flags.prefix !== undefined ? { prefix: flags.prefix } : {},
+  );
 
   const config = await sheet.readConfig();
   const filter: Record<string, unknown> = {};
@@ -159,13 +214,13 @@ export async function queryCommand(
       );
     }
   }
-  if (total > limited.length) {
+  if (total > limited.length && !flags.exportFormat) {
     suggestions.push(
-      `${total - limited.length} records hidden by --limit ${flags.limit}; raise --limit to see more`,
+      `${total - limited.length} records hidden by --limit ${flags.limit}; raise --limit or use --json-out to capture all`,
     );
   }
 
-  return renderListResponse({
+  const listResponse = renderListResponse({
     summary: { count: `${limited.length} of ${total} total` },
     name: 'records',
     items: limited.map((r) => ({
@@ -179,4 +234,28 @@ export async function queryCommand(
     suggestions,
     emptyMessage: `no records in ${sheetName}`,
   });
+
+  if (!flags.exportFormat) return listResponse;
+
+  // Side-channel export: full result set (ignores --limit), written verbatim
+  // so it round-trips back into `upsert`. Additive to the TOON preview above.
+  const exp = exportRecords(
+    records as unknown as Array<Record<string, unknown>>,
+    flags.exportFormat,
+    flags.exportPath,
+    sheetName,
+  );
+  const firstCol = exp.columns[0] ?? '';
+  const hint =
+    flags.exportFormat === 'csv'
+      ? `Run \`column -s, -t ${exp.path} | less -S\` to inspect all ${exp.rows} rows`
+      : flags.exportFormat === 'ndjson'
+        ? `Run \`jq '.${firstCol}' ${exp.path}\` to process all ${exp.rows} rows`
+        : `Run \`jq '.[] | .${firstCol}' ${exp.path}\` to process all ${exp.rows} rows`;
+  return joinBlocks(
+    listResponse,
+    renderObject({ wrote: exp.path, rows: exp.rows, cols: exp.cols }),
+    renderObject({ columns: exp.columns }),
+    renderHelp([hint]),
+  );
 }
