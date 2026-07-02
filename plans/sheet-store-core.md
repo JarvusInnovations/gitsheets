@@ -177,17 +177,17 @@ embedded-engine parity-gate concern.
 - **Tracked for `python-binding`.** The same `CoreTransaction` surface + the
   two-phase protocol drives the Python binding (Pydantic as the host validator);
   the core orchestration is binding-agnostic.
-- **Upstream holo-tree hardening (Issue).** `holo_repo::update_ref` writes a
-  reflog whose committer it reads from ambient **git config** identity, even when
-  the transaction supplies explicit author/committer for the commit. With no
-  `user.name`/`user.email` configured (a fresh CI runner, or a consumer in an
-  unconfigured/bare context) the ref update fails with *"The reflog could not be
-  created or updated."* Worked around for CI by configuring a git identity in
-  `rust-core.yml` (matching hologit's own CI), but the proper fix is upstream:
-  `update_ref` should derive the reflog identity from the commit's committer (or
-  accept an explicit one / allow suppressing the reflog) so a ref update never
-  depends on ambient git config. Per the holo-tree hardening mandate, file against
-  hologit.
+- **Upstream holo-tree hardening — DONE (hologit#476 → gitsheets#220).**
+  `holo_repo::update_ref` wrote a reflog whose committer it read from ambient
+  **git config** identity, even when the transaction supplied explicit
+  author/committer. With no `user.name`/`user.email` configured (a fresh CI
+  runner, or a consumer in an unconfigured/bare context) the ref update failed
+  with *"The reflog could not be created or updated."* Worked around for CI by
+  configuring a git identity in `rust-core.yml`. **Fixed upstream** in
+  [hologit#476](https://github.com/JarvusInnovations/hologit/pull/478) (released
+  as `holo-tree-v0.4.0`): `update_ref` now derives the reflog identity from the
+  commit's committer. **Consumed in gitsheets#220** — the CI workaround was
+  dropped and a no-ambient-identity regression test added.
 - **`sort = true` locale collation via boa (decide at `node-binding-thin`).**
   Array-field locale sorting (`sort = true`'s `localeCompare`) currently runs
   through the boa engine, which lacks `Intl` — so for non-ASCII / case-sensitive
