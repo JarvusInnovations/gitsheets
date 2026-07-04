@@ -741,7 +741,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #name: string;
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
-  readonly #readRef: string | undefined;
+  /**
+   * Non-transactional read snapshot — mutable: rebound to the current HEAD
+   * tree by the owning Repository's refresh/auto-refresh, or by
+   * {@link refresh}. See specs/behaviors/freshness.md.
+   */
+  #readRef: string | undefined;
   readonly #dataBase: string;
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
   readonly #prefix: string;
@@ -757,6 +762,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#dataBase = (opts.dataBase ?? '').replace(/^\/+|\/+$/g, '');
     this.#validator = opts.validator;
     this.#prefix = (opts.prefix ?? '').replace(/^\/+|\/+$/g, '');
+    if (this.#transaction === undefined) {
+      // Participate in the freshness model: the Repository rebinds every live
+      // non-tx sheet after each of its own commits, and on repo.refresh().
+      this.#repo.registerSheet(this as unknown as Sheet);
+    }
   }
 
   /** The git dir this sheet reads/writes through. */
@@ -811,10 +821,43 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return this.#transaction !== undefined;
   }
 
+  /**
+   * Rebind this sheet's read snapshot to the repository's current HEAD tree.
+   * Only this sheet — the "did my row land?" primitive; use `repo.refresh()`
+   * or `store.refresh()` to rebind every open sheet at once. Not needed after
+   * this repository's own `repo.transact` (a successful commit
+   * auto-refreshes). See specs/behaviors/freshness.md.
+   *
+   * Throws TypeError on a transaction-bound sheet — those read the
+   * transaction's private in-progress tree and are never rebound.
+   */
+  async refresh(): Promise<void> {
+    if (this.#transaction !== undefined) {
+      throw new TypeError(
+        'Sheet.refresh() is not available on a transaction-bound Sheet — it reads the transaction’s private tree',
+      );
+    }
+    this.rebindReadTree(await this.#repo.currentReadTree());
+  }
+
+  /**
+   * @internal — swap the read snapshot to `tree` and lazily re-derive
+   * everything downstream: the memoized config drops (re-read from the new
+   * tree on next access) and index builds invalidate via the existing
+   * `treeHashAtBuild` comparison in `#ensureIndexBuilt`. No-op when the tree
+   * hasn't moved, or on a transaction-bound sheet.
+   */
+  rebindReadTree(tree: string): void {
+    if (this.#transaction !== undefined) return;
+    if (this.#readRef === tree) return;
+    this.#readRef = tree;
+    this.#configPromise = undefined;
+  }
+
   async readConfig(): Promise<SheetConfig> {
-    // A Sheet reads a single, immutable tree ref (the open snapshot, or the tx
-    // parent), so its config never changes over the instance's lifetime.
-    // Memoize to avoid a `git rev-parse` per call on hot write/query loops.
+    // A Sheet reads a stable snapshot tree ref (rebound only via
+    // rebindReadTree, which resets this memo), so config is memoized to avoid
+    // a `git rev-parse` per call on hot write/query loops.
     if (this.#configPromise === undefined) {
       this.#configPromise = loadConfig(this.#gitDir, this.#configTreeRef(), this.#configPath);
     }
@@ -1440,6 +1483,21 @@ export class Sheet<T extends RecordLike = RecordLike> {
       out[name] = makeBlobHandle(this.#gitDir, hash, mode);
     }
     return out;
+  }
+
+  /**
+   * Stream an attachment's bytes without materializing the record. Accepts a
+   * record object or a rendered record path (like `getAttachment`); returns a
+   * Node Readable over the blob's bytes, or `null` when the attachment is
+   * absent. Resolved through the sheet's read snapshot — fresh after this
+   * repository's own commits (auto-refresh) or an explicit `refresh()`.
+   *
+   * See specs/behaviors/attachments.md#streaming-reads-by-keypath.
+   */
+  async getAttachmentStream(record: T | string, name: string): Promise<Readable | null> {
+    const blob = await this.getAttachment(record, name);
+    if (blob === null) return null;
+    return makeAttachmentBlobHandle(this.#gitDir, blob.hash).stream();
   }
 
   /**
