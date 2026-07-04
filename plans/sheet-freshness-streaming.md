@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 239
 depends: []
 specs:
   - specs/behaviors/freshness.md
@@ -82,21 +83,21 @@ lives inside a `CoreTransaction`). No core or napi changes.
 
 ## Validation
 
-- [ ] Standing `Sheet`/`Store` reads reflect a `repo.transact` commit
+- [x] Standing `Sheet`/`Store` reads reflect a `repo.transact` commit
       immediately after it resolves (no re-open) — vitest.
-- [ ] External commit (second `Repository` instance) is invisible until
+- [x] External commit (second `Repository` instance) is invisible until
       `sheet.refresh()` / `repo.refresh()` / `store.refresh()`, visible after —
       vitest.
-- [ ] A commit onto a non-HEAD branch does **not** shift standing sheets — vitest.
-- [ ] `findByIndex` after a commit reflects the new tree (lazy rebuild), and a
+- [x] A commit onto a non-HEAD branch does **not** shift standing sheets — vitest.
+- [x] `findByIndex` after a commit reflects the new tree (lazy rebuild), and a
       committed sheet-config change is visible after rebind — vitest.
-- [ ] `refresh()` on a tx-bound sheet throws `TypeError` — vitest.
-- [ ] `repo.readBlobStream` streams byte-identical content for a committed
+- [x] `refresh()` on a tx-bound sheet throws `TypeError` — vitest.
+- [x] `repo.readBlobStream` streams byte-identical content for a committed
       attachment; missing path / non-blob → `NotFoundError(record_not_found)`;
       bad ref → `RefError(ref_not_found)` — vitest.
-- [ ] `sheet.getAttachmentStream` streams current bytes through the snapshot
+- [x] `sheet.getAttachmentStream` streams current bytes through the snapshot
       (fresh after auto-refresh) and returns `null` when absent — vitest.
-- [ ] Full suites green: package vitest + type-check, `cargo test`, napi
+- [x] Full suites green: package vitest + type-check, `cargo test`, napi
       `node --test` (core untouched — suites prove no regression).
 
 ## Risks / unknowns
@@ -114,8 +115,22 @@ lives inside a `CoreTransaction`). No core or napi changes.
 
 ## Notes
 
-(Populated at closeout.)
+- **Core statelessness confirmed** — the entire freshness model landed in the
+  Node host shell; `recordQuery`/`recordQueryCandidates`/`coreDiscoverSheets`
+  take `gitDir` + `treeRef` per call, so no core/napi change was needed and
+  the napi suite (101) + `cargo test` pass untouched.
+- **Auto-refresh resolves HEAD, not the result tree** — keeps non-HEAD-branch
+  commits from shifting HEAD-bound sheets; covered by a dedicated test.
+- **Indexes went fresh, not stale-pinned** — the existing `treeHashAtBuild`
+  comparison made #184's "indices stay at the snapshot" carve-out unnecessary;
+  rebinding invalidates builds and `findByIndex` lazily rebuilds.
+- **Branch/PR churn** — the original branch (`feat/sheet-freshness-streaming`,
+  PR #238) picked up two unrelated commits from the parallel #232 work via a
+  shared working tree; rebased clean onto develop as
+  `feat/read-freshness-streaming` (PR #239). #238 closed as superseded.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#240](https://github.com/JarvusInnovations/gitsheets/issues/240) —
+  Python-binding parity: rebindable snapshot + `refresh()` + auto-refresh +
+  streaming blob read in `rust/gitsheets-py` (spec is binding-agnostic).
