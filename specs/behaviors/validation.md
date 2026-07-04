@@ -101,6 +101,15 @@ The transformed `result.value` (if the validator does coercion / transforms) bec
 
 The Standard Schema layer is optional. Without it, only JSON Schema runs.
 
+### Type-level contract: no casts required
+
+gitsheets' exported `StandardSchemaV1<Input, Output>` type (and every result/issue type it references) mirrors the [published Standard Schema v1 interface](https://standardschema.dev) **exactly** — including the `types` input/output metadata carrier on `~standard` and issue paths typed as `ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>`. Since Standard Schema is the advertised integration point, the contract is:
+
+- A spec-compliant validator type (Zod v4, Valibot, ArkType, Effect Schema) **assigns directly** to `openSheet({ validator })` and to a `ValidatorMap` entry in `openStore({ validators })` — no `as` cast, no consumer-side wrapper.
+- This is regression-guarded by a compile-time test that assigns real Zod v4 schemas without casts (any narrowing of the declared types that breaks spec-compliant assignability fails `type-check`).
+
+([#237](https://github.com/JarvusInnovations/gitsheets/issues/237) — the previous hand-rolled subset declared issue path keys as `string | number`, which rejected spec-compliant validators whose declared paths use `PropertyKey`.)
+
 ## Order
 
 1. Record arrives at `Sheet.upsert(record)` (or `Sheet.patch(query, partial)` after the merge step).

@@ -31,25 +31,35 @@ The attachment name typically encodes the type via extension (`.jpg`, `.pdf`, `.
 
 ## API
 
-### `sheet.setAttachment(record, name, blob)`
+### `sheet.setAttachment(record, name, content)`
 
 Stage a single attachment.
 
 ```typescript
-const blob = await repo.writeBlobFromFile('/path/to/avatar.jpg');
+// one call from raw bytes — no repo.writeBlob pre-step:
+await sheet.setAttachment(record, 'avatar.jpg', uploadedBuffer);
+
+// or from an already-written blob handle:
+const blob = await repo.writeBlob(bytes);
 await sheet.setAttachment(record, 'avatar.jpg', blob);
 ```
 
-`blob` is a hologit `BlobObject` (or whatever the new substrate provides — see the implementation note below). Helper methods exist for creating blobs from files, buffers, or streams.
+`content` accepts any of:
+
+| Value type | Interpretation |
+| --- | --- |
+| `Buffer` / `Uint8Array` | Raw bytes — written to the object store as part of staging ([#234](https://github.com/JarvusInnovations/gitsheets/issues/234)) |
+| `string` | UTF-8 text — encoded and written as bytes |
+| `BlobHandle` | An already-written object-store blob (from `repo.writeBlob` or a diff) — reused by hash, no re-write |
 
 ### `sheet.setAttachments(record, map)`
 
-Stage multiple attachments at once.
+Stage multiple attachments at once. Values accept the same types as `setAttachment` — mixing is fine:
 
 ```typescript
 await sheet.setAttachments(record, {
-  'avatar.jpg': avatarBlob,
-  'avatar-128.jpg': thumbnailBlob,
+  'avatar.jpg': avatarBuffer,        // raw bytes
+  'avatar-128.jpg': thumbnailBlob,   // BlobHandle
 });
 ```
 
