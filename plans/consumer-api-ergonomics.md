@@ -39,7 +39,7 @@ The ergonomics batch from the first production 2.x migration
 - A `setAttachmentBytes` alias (redundant once `setAttachment` takes bytes;
   the issue offered either).
 - Cross-process locking (out of scope like the transaction mutex itself).
-- #184/#235 — the parallel `sheet-freshness-streaming` plan (PR #238).
+- #184/#235 — the parallel `sheet-freshness-streaming` plan (PR #239).
 
 ## Implements
 
