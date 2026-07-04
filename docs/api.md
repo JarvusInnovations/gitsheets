@@ -80,6 +80,7 @@ const store = await openStore(repo, {
 | `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix` |
 | `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix` |
 | `repo.transact(opts, handler)` | Run a handler in a single-commit transaction |
+| `repo.withLock(fn)` | Run `fn` holding the write lock transact uses — coordinate non-transact git ops. Not reentrant (`lock_held`) |
 | `repo.requireExplicitTransactions()` | Switch to strict mode (one-way) |
 | `repo.startPushDaemon(opts)` | Start async push to a configured remote |
 | `repo.resolveRef(ref)` | Resolve a ref or commit hash; returns `string \| null` |
@@ -128,8 +129,8 @@ All write methods route through a transaction — permissive mode auto-opens one
 | `sheet.getAttachment(record, name)` | One attachment's BlobObject or null |
 | `sheet.getAttachments(record)` | Map of name → BlobObject |
 | `sheet.getAttachmentStream(recordOrPath, name)` | `Promise<Readable \| null>` — stream an attachment's bytes without materializing the record |
-| `sheet.setAttachment(record, name, blob)` | Add or replace |
-| `sheet.setAttachments(record, map)` | Bulk variant |
+| `sheet.setAttachment(record, name, content)` | Add or replace — `content` may be raw bytes (`Buffer`/`Uint8Array`), a UTF-8 `string`, or a `BlobHandle` |
+| `sheet.setAttachments(record, map)` | Bulk variant; values accept the same types, mixed freely |
 | `sheet.deleteAttachment(record, name)` | Remove a single attachment; throws `NotFoundError` if missing |
 | `sheet.deleteAttachments(record)` | Remove all attachments; idempotent no-op when no attachment dir |
 | `sheet.attachments(record)` | `AsyncGenerator<AttachmentEntry>` yielding `{name, mimeType, blob}` with `.read()` / `.stream()` |
@@ -231,7 +232,7 @@ Subclasses:
 | --- | --- |
 | `ConfigError` | `config_missing`, `config_invalid` |
 | `ValidationError` | `validation_failed` (carries `issues: ValidationIssue[]`) |
-| `TransactionError` | `transaction_in_progress`, `transaction_required`, `parent_moved`, `commit_failed`, `push_daemon_running`, `transaction_closed` |
+| `TransactionError` | `transaction_in_progress`, `transaction_required`, `parent_moved`, `commit_failed`, `push_daemon_running`, `transaction_closed`, `lock_held` |
 | `IndexError` | `index_unique_conflict`, `index_not_defined` (carries `conflictingPaths`) |
 | `RefError` | `ref_not_found`, `not_an_ancestor` |
 | `PathTemplateError` | `path_render_failed`, `path_invalid_chars` |
