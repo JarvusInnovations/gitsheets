@@ -29,6 +29,18 @@ const FIXTURES = {
     ratio: 1.5, // → core Float
     when: new Date(Date.UTC(2026, 5, 26, 12, 0, 0)),
   },
+  // Nullish keys (cleared optionals) are DROPPED at the marshal boundary in
+  // every binding — the record serializes as if the keys were never set
+  // (specs/behaviors/normalization.md "Null / undefined handling", #232). The
+  // Python side mirrors this with None values (and simply never sets the
+  // `undefined` one); both must land on the same bytes.
+  nullish: {
+    slug: 'jane',
+    middleName: null,
+    bio: undefined,
+    contact: { email: 'jane@x.org', phone: null },
+    roles: [{ title: 'chair', until: null }],
+  },
 };
 
 function out(obj) {

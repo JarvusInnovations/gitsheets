@@ -113,6 +113,46 @@ def test_naive_datetime_is_treated_as_utc():
     assert "when = 2026-06-26T12:00:00Z\n" in text
 
 
+# ── None handling at the marshal boundary ─────────────────────────────────────
+# specs/behaviors/normalization.md "Null / undefined handling": None-valued
+# keys are dropped recursively (the 1.x drop semantics, #232); a None array
+# element or a None value itself is an error.
+
+
+def test_none_valued_keys_are_dropped_recursively():
+    [out] = gitsheets.roundtrip(
+        [
+            {
+                "keep": "v",
+                "gone": None,
+                "nested": {"x": None, "y": 2},
+                "arr": [{"a": None, "b": 1}],
+            }
+        ]
+    )
+    assert out == {"keep": "v", "nested": {"y": 2}, "arr": [{"b": 1}]}
+
+
+def test_none_keys_serialize_byte_identically_to_the_stripped_record():
+    [with_nones] = gitsheets.serialize_records(
+        [{"slug": "jane", "middleName": None, "contact": {"email": "j@x.org", "phone": None}}]
+    )
+    [stripped] = gitsheets.serialize_records([{"slug": "jane", "contact": {"email": "j@x.org"}}])
+    assert with_nones == stripped
+    assert "middleName" not in with_nones
+    assert "phone" not in with_nones
+
+
+def test_none_array_element_raises_with_the_index_named():
+    with pytest.raises(ValueError, match=r"array element \(index 1\)"):
+        gitsheets.roundtrip([{"tags": ["a", None, "c"]}])
+
+
+def test_none_record_itself_raises():
+    with pytest.raises(ValueError, match="cannot marshal None to a TOML value"):
+        gitsheets.roundtrip([None])
+
+
 # ── record CRUD over holo-tree ──────────────────────────────────────────────────
 
 

@@ -67,10 +67,19 @@ PY_FIXTURES = {
         "ratio": 1.5,
         "when": dt.datetime(2026, 6, 26, 12, 0, 0, tzinfo=dt.timezone.utc),
     },
+    # Nullish keys are dropped at the marshal boundary in every binding (the
+    # 1.x drop semantics, #232). The JS side also carries `bio: undefined`,
+    # which Python expresses by never setting the key — same bytes either way.
+    "nullish": {
+        "slug": "jane",
+        "middleName": None,
+        "contact": {"email": "jane@x.org", "phone": None},
+        "roles": [{"title": "chair", "until": None}],
+    },
 }
 
 
-@pytest.mark.parametrize("fixture", ["basic", "typed"])
+@pytest.mark.parametrize("fixture", ["basic", "typed", "nullish"])
 def test_tree_and_blob_bytes_identical_across_bindings(fixture):
     """record_write from Python and Node yields identical tree + blob hashes."""
     py_dir = tempfile.mkdtemp(prefix="gs-py-")

@@ -119,3 +119,52 @@ test('a top-level array of scalars round-trips', () => {
   const out = roundtrip([[1, 'two', true]]);
   assert.deepEqual(out[0], [1, 'two', true]);
 });
+
+// ── null / undefined handling (specs/behaviors/normalization.md) ─────────────
+//
+// TOML has no null: a null/undefined-valued KEY is dropped (recursively — the
+// 1.x @iarna semantics restored by #232), a null/undefined array ELEMENT or a
+// null/undefined value itself is rejected.
+
+test('null- and undefined-valued keys are dropped from a record', () => {
+  const out = trip({ keep: 'v', gone: null, alsoGone: undefined });
+  assert.deepEqual(out, { keep: 'v' });
+  assert.equal(out.gone, undefined, 'dropped key reads back as undefined');
+});
+
+test('the key drop is recursive: nested tables and objects inside arrays', () => {
+  const out = trip({
+    nested: { x: null, y: 2, deeper: { z: undefined, k: 'v' } },
+    arr: [{ a: null, b: 1 }, { c: 2 }],
+  });
+  assert.deepEqual(out, {
+    nested: { y: 2, deeper: { k: 'v' } },
+    arr: [{ b: 1 }, { c: 2 }],
+  });
+});
+
+test('a record of ONLY nullish keys becomes an empty table, not an error', () => {
+  const out = trip({ a: null, b: undefined });
+  assert.deepEqual(out, {});
+});
+
+test('a null array element is rejected with the index named', () => {
+  assert.throws(
+    () => roundtrip([{ tags: ['a', null, 'c'] }]),
+    (err) => {
+      assert.match(err.message, /array element \(index 1\)/);
+      assert.match(err.message, /remove the element/);
+      return true;
+    },
+  );
+});
+
+test('an undefined array element (and a sparse hole) is rejected the same way', () => {
+  assert.throws(() => roundtrip([{ tags: ['a', undefined] }]), /array element \(index 1\)/);
+  // eslint-disable-next-line no-sparse-arrays
+  assert.throws(() => roundtrip([{ tags: [1, , 3] }]), /array element \(index 1\)/);
+});
+
+test('a null record itself is still rejected', () => {
+  assert.throws(() => roundtrip([null]), /cannot marshal null\/undefined to a TOML value/);
+});
