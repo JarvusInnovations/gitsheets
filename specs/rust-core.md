@@ -104,6 +104,17 @@ kind for faithful re-serialization.
   re-serialization.
 - **Strings, booleans, arrays, tables** map to their obvious idiomatic
   counterparts (table ↔ plain object / dict).
+- **Nulls — no core representation; resolved at the marshal boundary.** The
+  core value type is TOML-faithful and TOML has no `null`, so a host null
+  (JS `null`/`undefined`, Python `None`) never crosses the FFI. Each binding's
+  host→core marshal applies the same rule, specced in
+  [behaviors/normalization.md](behaviors/normalization.md#null--undefined-handling):
+  a null-valued **table key** is dropped (recursively — nested tables, and
+  tables inside arrays), restoring the 1.x `@iarna/toml` drop semantics; a
+  null **array element** is a typed marshal error naming the index (dropping
+  an element would silently shift data); a null in any other value position is
+  an error. The shared rejection messages come from `gitsheets-core` so
+  diagnostics read identically across bindings.
 
 ## Embedded code execution
 

@@ -103,8 +103,45 @@ Sorts an array of strings using locale-aware comparison (`localeCompare` with `s
 - The **canonical serializer** is the Rust core's `gitsheets-core::canonical::serialize` — the [`toml` crate](https://docs.rs/toml)'s default formatting applied to a deep-key-sorted value. It defines the canonical bytes: a value is lowered to `toml::Value` (whose `Table` is a `BTreeMap`, so the deep key sort happens structurally) and emitted with the crate's default rendering (triple-quoted multiline strings, literal-quoted strings where possible). Parsing is the same crate's parser. See [architecture.md](../architecture.md) and [rust-core.md](../rust-core.md#canonical-form-rebaseline).
 - Dates, datetimes, and date-times round-trip by native TOML datetime type — all four kinds (offset date-time, local date-time, local date, local time) parse to the core `Datetime` and serialize back to the matching TOML type byte-faithfully.
 - Multi-line string formatting follows the `toml` crate's defaults — strings with newlines emit as triple-quoted (`"""…"""`); the library imposes no length threshold of its own.
-- Null values are *omitted* from the output. TOML can't represent `null`; absent fields read back as `undefined` and are treated as null by validation.
+- Null values are *omitted* from the output — see [Null / undefined handling](#null--undefined-handling) below for the full rule.
 - Empty arrays and empty objects are preserved (they have semantic meaning distinct from absent).
+
+### Null / undefined handling
+
+TOML has no `null`. A cleared optional field and an absent key are the **same
+state** — there is exactly one on-disk representation for "this field has no
+value", and that is the key not existing. The rules, applied at the host-value
+marshal boundary in **every** binding (JS `null`/`undefined`, Python `None`),
+before the record reaches validation or serialization:
+
+1. **Table keys — dropped, recursively.** A key whose value is null/undefined
+   is dropped as if it were never set. This applies at every depth: top-level
+   fields, keys inside nested tables, and keys inside objects that live inside
+   arrays. Consequently the standard consumer pattern — `.nullable().optional()`
+   schemas with `?? null` normalization on write — serializes identically to
+   never setting the field, and a record round-trips as: write `{ bio: null }`,
+   read back `{}` (the field is `undefined`).
+2. **Array elements — rejected.** A null/undefined **element** of an array is
+   an error (a typed marshal error naming the element index). TOML arrays
+   cannot contain nulls, and silently dropping an element — unlike dropping a
+   key — shifts sibling indices and changes data. Consumers must remove the
+   element host-side if that is what they mean. *(Deliberate divergence from
+   1.x: `@iarna/toml` silently dropped null array elements. That was a silent
+   data mutation, not a semantics-preserving omission, and is not carried
+   forward.)* A JS sparse-array hole (`[1, , 2]`) reads as `undefined` and is
+   rejected the same way.
+3. **A null where a value itself is required** — a whole record, a scalar in
+   any other value position — is an error, as before.
+
+Because keys are dropped *before* validation, a required field set to `null`
+fails JSON-Schema validation as **missing** (exactly as if it were never set),
+and `null` for an optional field validates as absent. This preserves the
+equivalence: absent key == cleared optional field.
+
+These rules are part of the cross-binding bytes-authority contract: dropping
+the same keys in every binding is what keeps a record with cleared optionals
+byte-identical whether written from Node or Python (and byte-identical to what
+1.x `@iarna/toml` produced, which dropped null keys at serialize time).
 
 > **Substrate note.** The canonical form above is now in effect on the Node binding: TOML serialization (and the whole tree/commit substrate) runs through `gitsheets-core`, and the `@iarna/toml` / `smol-toml` dependencies are dropped (`node-binding-thin`). Existing repos re-normalize once via `git sheet normalize` per the [Canonical-form re-baseline](#canonical-form-re-baseline-the-rust-serializer).
 
