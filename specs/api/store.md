@@ -90,6 +90,21 @@ await store.transact({ message: '...' }, async (tx) => {
 
 The transaction's commit message, trailers, author, parent, etc. follow the same options as `repo.transact` (see [api/transaction.md](transaction.md)).
 
+## Freshness
+
+`store.<sheet>` reads follow the standard freshness model ([behaviors/freshness.md](../behaviors/freshness.md)): a successful `store.transact` / `repo.transact` auto-refreshes every sheet, so post-commit reads through `store.<sheet>` reflect the committed state.
+
+### `store.refresh()`
+
+Rebind every sheet to the repository's current `HEAD` tree — delegates to `repo.refresh()` (a Store's sheets are Repository-issued sheets; partial-store freshness is not a meaningful state). Returns `Promise<void>`. Use after out-of-band ref movement.
+
+```typescript
+await store.refresh();
+const fresh = await store.users.queryAll();
+```
+
+Like `transact`, `refresh` is a reserved property name on the `Store` surface — a sheet named `refresh` or `transact` is shadowed by the method and must be reached via `repo.openSheet(name)`.
+
 ## Why `Store` and not just `Repository`?
 
 `Repository.openSheets()` returns `{ [name]: Sheet<unknown> }` — a flat dictionary with no type-level connection between sheet names and shapes. `Store` adds:
@@ -114,3 +129,4 @@ Both APIs are public. Use `Repository` for one-off scripts and dynamic discovery
 - [api/sheet.md](sheet.md)
 - [api/transaction.md](transaction.md)
 - [behaviors/validation.md](../behaviors/validation.md)
+- [behaviors/freshness.md](../behaviors/freshness.md)
