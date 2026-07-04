@@ -463,6 +463,14 @@ export interface AttachmentEntry {
   readonly blob: AttachmentBlobHandle;
 }
 
+/**
+ * Value accepted by `Sheet.setAttachment` / `setAttachments`: raw bytes
+ * (`Buffer` / `Uint8Array`), UTF-8 `string` content, or an already-written
+ * `BlobHandle` from `repo.writeBlob` (reused by hash, no re-write).
+ * See specs/behaviors/attachments.md (#234).
+ */
+export type AttachmentContent = string | Buffer | Uint8Array | BlobHandle;
+
 // Minimum-viable MIME map — covers the bulk of typical attachment uses
 // (images, audio, video, docs). Unknown extensions get application/octet-stream.
 const MIME_BY_EXT: Readonly<Record<string, string>> = {
@@ -1528,14 +1536,14 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async setAttachment(
     record: T | string,
     name: string,
-    blob: string | BlobHandle,
+    content: AttachmentContent,
   ): Promise<void> {
-    await this.setAttachments(record, { [name]: blob });
+    await this.setAttachments(record, { [name]: content });
   }
 
   async setAttachments(
     record: T | string,
-    attachments: Record<string, string | BlobHandle>,
+    attachments: Record<string, AttachmentContent>,
   ): Promise<void> {
     if (this.#transaction === undefined) {
       this.#checkStrictMode();
@@ -1556,12 +1564,21 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#ensureCoreSheetOpened();
     const map: Record<string, string> = {};
     for (const [aName, content] of Object.entries(attachments)) {
-      // A string is hashed as its UTF-8 bytes; a BlobHandle already names an
-      // ODB blob (from repo.writeBlob or a diff), so reuse its hash directly.
+      // Raw bytes (Buffer/Uint8Array) and strings (UTF-8 bytes) are written to
+      // the object store here — the one-call attachment write (#234). A
+      // BlobHandle already names an ODB blob (from repo.writeBlob or a diff),
+      // so its hash is reused directly.
       map[aName] =
         typeof content === 'string'
           ? callCore(() => addon.writeBlob(this.#gitDir, Buffer.from(content, 'utf8')))
-          : content.hash;
+          : content instanceof Uint8Array
+            ? callCore(() =>
+                addon.writeBlob(
+                  this.#gitDir,
+                  Buffer.isBuffer(content) ? content : Buffer.from(content),
+                ),
+              )
+            : content.hash;
     }
     callCore(() => this.#transaction!.coreTx.setAttachments(this.#name, recordPath, map));
   }

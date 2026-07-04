@@ -4,6 +4,7 @@
 // remaining git shell-outs are genuine porcelain (ref resolution, sheet
 // discovery, author config). See specs/api/repository.md.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
@@ -31,6 +32,15 @@ import type { StandardSchemaV1 } from './validation.js';
 import { EMPTY_TREE_HASH, makeBlobHandle, type BlobHandle } from './working-tree.js';
 
 const exec = promisify(execFile);
+
+/**
+ * Marks async contexts that hold the repository write lock via
+ * `repo.withLock`. Used to detect self-deadlock shapes (withLock-in-withLock,
+ * transact-in-withLock) and throw TransactionError('lock_held') instead of
+ * queueing forever. Module-level like `transactionContext` — the stored value
+ * is the Repository whose lock is held.
+ */
+const lockContext = new AsyncLocalStorage<Repository>();
 
 export interface OpenRepoOptions {
   /** Path to a `.git` directory. If omitted, discovered from the cwd upward. */
@@ -197,6 +207,40 @@ export class Repository {
     return child.stdout;
   }
 
+  /**
+   * Run `fn` while holding the repository's write lock — the same in-process
+   * mutex that serializes repo.transact. For coordinating non-transact git
+   * operations (external fetch + ref reset, hot reloads, raw plumbing) so
+   * consumers don't need a parallel lock shadowing gitsheets' own.
+   *
+   * Contends FIFO with transactions from other async contexts; released when
+   * `fn` settles (a throw propagates after release). NOT reentrant: calling
+   * withLock inside withLock, withLock inside a transact handler, or transact
+   * (incl. permissive-mode mutations) inside withLock throws
+   * TransactionError('lock_held') instead of deadlocking.
+   * See specs/api/repository.md#repowithlockfn.
+   */
+  async withLock<T>(fn: () => T | Promise<T>): Promise<T> {
+    if (lockContext.getStore() === this) {
+      throw new TransactionError(
+        'lock_held',
+        'repo.withLock inside repo.withLock would deadlock — the write lock is not reentrant',
+      );
+    }
+    if (transactionContext.getStore() !== undefined) {
+      throw new TransactionError(
+        'lock_held',
+        'repo.withLock inside a transaction handler would deadlock — the transaction already holds the write lock',
+      );
+    }
+    const release = await this.#mutex.acquire();
+    try {
+      return await lockContext.run(this, () => fn());
+    } finally {
+      release();
+    }
+  }
+
   /** Resolve a ref or commit hash. Returns the full commit hash or null. */
   async resolveRef(ref: string): Promise<string | null> {
     return resolveCommit(this.#gitDir, ref);
@@ -283,6 +327,15 @@ export class Repository {
       throw new TransactionError(
         'transaction_in_progress',
         'nested repo.transact is not allowed — use tx.sheet(name) inside the handler',
+      );
+    }
+    if (lockContext.getStore() === this) {
+      // Queueing would self-deadlock: the caller's own async context already
+      // holds the write lock via repo.withLock. (Permissive-mode Sheet
+      // mutations auto-open transactions, so they hit this guard too.)
+      throw new TransactionError(
+        'lock_held',
+        'repo.transact inside repo.withLock would deadlock — the write lock is already held by this context and is not reentrant',
       );
     }
 

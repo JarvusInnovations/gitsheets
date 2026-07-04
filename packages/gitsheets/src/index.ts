@@ -27,6 +27,7 @@ export type {
   DiffOptions,
   DiffChange,
   AttachmentBlobHandle,
+  AttachmentContent,
   AttachmentEntry,
 } from './sheet.js';
 
@@ -82,6 +83,8 @@ export { validateRecord } from './validation.js';
 export type {
   JSONSchema,
   StandardSchemaV1,
+  StandardSchemaProps,
+  StandardSchemaTypes,
   StandardSchemaIssue,
   StandardSchemaResult,
   StandardSchemaFailure,

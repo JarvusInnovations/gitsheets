@@ -25,12 +25,16 @@ export type JSONSchema = Record<string, unknown>;
 // Subset of the Standard Schema v1 interface used here. Consumers may pass any
 // validator (Zod, Valibot, ArkType, Effect Schema) that implements `~standard`.
 // See https://standardschema.dev for the full interface.
+// The declarations mirror the published interface EXACTLY (issue path keys
+// are `PropertyKey`, results carry the optional `types` metadata object) so a
+// compliant validator's own types assign here with no `as` cast — see
+// specs/behaviors/validation.md#type-level-contract-no-casts-required (#237).
 export interface StandardSchemaPathSegment {
-  readonly key: string | number;
+  readonly key: PropertyKey;
 }
 export interface StandardSchemaIssue {
   readonly message: string;
-  readonly path?: ReadonlyArray<string | number | StandardSchemaPathSegment>;
+  readonly path?: ReadonlyArray<PropertyKey | StandardSchemaPathSegment> | undefined;
 }
 export interface StandardSchemaSuccess<Output> {
   readonly value: Output;
@@ -40,16 +44,21 @@ export interface StandardSchemaFailure {
   readonly issues: ReadonlyArray<StandardSchemaIssue>;
 }
 export type StandardSchemaResult<Output> = StandardSchemaSuccess<Output> | StandardSchemaFailure;
+/** The compile-time-only Input/Output carrier on `~standard.types`. */
+export interface StandardSchemaTypes<Input = unknown, Output = Input> {
+  readonly input: Input;
+  readonly output: Output;
+}
+export interface StandardSchemaProps<Input = unknown, Output = Input> {
+  readonly version: 1;
+  readonly vendor: string;
+  readonly validate: (
+    value: unknown,
+  ) => StandardSchemaResult<Output> | Promise<StandardSchemaResult<Output>>;
+  readonly types?: StandardSchemaTypes<Input, Output> | undefined;
+}
 export interface StandardSchemaV1<Input = unknown, Output = Input> {
-  readonly '~standard': {
-    readonly version: 1;
-    readonly vendor: string;
-    readonly validate: (
-      value: unknown,
-    ) => StandardSchemaResult<Output> | Promise<StandardSchemaResult<Output>>;
-  };
-  /** unused — only here so consumers' generic type can flow Input/Output. */
-  readonly __types__?: { input: Input; output: Output };
+  readonly '~standard': StandardSchemaProps<Input, Output>;
 }
 
 // --- Public validate ---
@@ -121,7 +130,7 @@ function coreIssueToIssue(issue: {
 function standardIssueToIssue(issue: StandardSchemaIssue): ValidationIssue {
   const path: string[] = [];
   for (const seg of issue.path ?? []) {
-    if (typeof seg === 'string' || typeof seg === 'number') {
+    if (typeof seg === 'string' || typeof seg === 'number' || typeof seg === 'symbol') {
       path.push(String(seg));
     } else if (seg && typeof seg === 'object' && 'key' in seg) {
       path.push(String(seg.key));
