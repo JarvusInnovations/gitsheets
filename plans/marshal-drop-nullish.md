@@ -1,10 +1,11 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/normalization.md
   - specs/rust-core.md
 issues: [232, 233]
+pr: 241
 ---
 
 # Plan: drop null/undefined-valued keys at the marshal boundary
@@ -84,21 +85,21 @@ Out of scope:
 
 ## Validation
 
-- [ ] `cargo test` green across the workspace (core + bindings build, clippy
+- [x] `cargo test` green across the workspace (core + bindings build, clippy
   `-D warnings` clean)
-- [ ] napi suite (`npm test` in `rust/gitsheets-napi`) green, including new
+- [x] napi suite (`npm test` in `rust/gitsheets-napi`) green, including new
   cases: null/undefined table keys dropped recursively (nested tables, tables
   inside arrays), serialized bytes identical to the pre-stripped record, null
   array element rejected with an error naming the index, top-level null still
   rejected
-- [ ] Python suite (`pytest` in `rust/gitsheets-py`) green, including the
+- [x] Python suite (`pytest` in `rust/gitsheets-py`) green, including the
   mirrored `None` cases and a cross-binding byte-parity case for a record
   with nullish keys
-- [ ] Package vitest suite (`npm test`) green, including the end-to-end
+- [x] Package vitest suite (`npm test`) green, including the end-to-end
   consumer pattern: `.nullable().optional()`-style Standard Schema validator
   emitting `null` for cleared optionals → `upsert` succeeds → read-back has no
   such keys → on-disk TOML bytes contain no trace of them
-- [ ] `docs/migration-guide.md` gains the 1.x → 2.x section enumerating the
+- [x] `docs/migration-guide.md` gains the 1.x → 2.x section enumerating the
   three breaks from #233 with before/after for each
 
 ## Risks / unknowns
@@ -126,6 +127,14 @@ Out of scope:
   (`null_array_element_msg` / `null_scalar_msg`) so both bindings and any
   future one emit identical diagnostics; the drop recursion itself is
   ~6 lines per binding inside each marshal.
+- Considered and rejected a `Value::Null` core variant: it would break the
+  value type's "mirrors TOML's type set exactly" invariant and force a Null
+  arm on every exhaustive match across ~12 core modules, for no gain — the
+  marshal recursion is the only place a host null is visible, and the
+  cross-binding byte-parity suite pins the contract.
+- Verified totals at closeout: core 169, clippy `-D warnings` clean, napi 108,
+  pytest 31 (incl. the new `nullish` cross-binding parity fixture), vitest 298
+  (gitsheets) + 118 (gitsheets-axi), type-check clean.
 
 ## Follow-ups
 
