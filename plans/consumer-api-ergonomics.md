@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 242
 depends: []
 specs:
   - specs/behaviors/attachments.md
@@ -80,21 +81,21 @@ concerns).
 
 ## Validation
 
-- [ ] `setAttachment(record, name, buffer)` and mixed-value `setAttachments`
+- [x] `setAttachment(record, name, buffer)` and mixed-value `setAttachments`
       write attachments byte-identical to the `repo.writeBlob` two-step —
       vitest.
-- [ ] `repo.withLock` serializes against `repo.transact` FIFO (observable
+- [x] `repo.withLock` serializes against `repo.transact` FIFO (observable
       ordering), returns the callback's value, releases on throw — vitest.
-- [ ] All three self-deadlock shapes throw `TransactionError('lock_held')`
+- [x] All three self-deadlock shapes throw `TransactionError('lock_held')`
       immediately: `withLock` in `withLock`, `withLock` in a transact
       handler, `transact` (and a permissive mutation) in `withLock` — vitest.
-- [ ] Real Zod v4 object schemas assign to `openStore({ validators })` and
+- [x] Real Zod v4 object schemas assign to `openStore({ validators })` and
       `openSheet({ validator })` with no casts; `InferRecord` yields the Zod
       output type; suite compiles under `tsc --noEmit` — compile-time test.
-- [ ] Zod validate/transform/reject flows work end-to-end through the typed
+- [x] Zod validate/transform/reject flows work end-to-end through the typed
       Store (transform reflected in written bytes; failure carries
       `source: 'standard-schema'` issues) — vitest runtime.
-- [ ] Full suites green: package vitest + type-check, `cargo test`, napi
+- [x] Full suites green: package vitest + type-check, `cargo test`, napi
       `node --test` (core untouched).
 
 ## Risks / unknowns
@@ -107,8 +108,20 @@ concerns).
 
 ## Notes
 
-(Populated at closeout.)
+- **Zod v4 assignability held with zero implementation-side casts** once the
+  declared types matched the published interface — the only friction found
+  was `Sheet<T>`'s output-only typing (see Follow-ups).
+- **`lock_held` guards are per-`Repository`-instance** (`lockContext` stores
+  the instance): two Repositories on one git dir don't trip each other's
+  guard — matching the documented per-instance lock scope, covered by a test.
+- **transact resolves options/author *before* acquiring the mutex** — an
+  ordering-test gotcha (a queued transaction isn't "in line" until those
+  awaits finish), noted in `repo-with-lock.test.ts`.
+- Suites: gitsheets vitest 312, axi vitest 118 + node-test 101, type-check
+  clean; rust tree untouched (validated green in PR #239's clean worktree).
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#243](https://github.com/JarvusInnovations/gitsheets/issues/243) —
+  thread the validator's Input type through Sheet write methods (upsert of a
+  pre-transform shape currently needs a widening cast).
