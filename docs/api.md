@@ -126,8 +126,8 @@ All write methods route through a transaction — permissive mode auto-opens one
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.getAttachment(record, name)` | One attachment's BlobObject or null |
-| `sheet.getAttachments(record)` | Map of name → BlobObject |
+| `sheet.getAttachment(record, name)` | One attachment's `AttachmentBlobHandle` or null |
+| `sheet.getAttachments(record)` | Map of name → `AttachmentBlobHandle` |
 | `sheet.getAttachmentStream(recordOrPath, name)` | `Promise<Readable \| null>` — stream an attachment's bytes without materializing the record |
 | `sheet.setAttachment(record, name, content)` | Add or replace — `content` may be raw bytes (`Buffer`/`Uint8Array`), a UTF-8 `string`, or a `BlobHandle` |
 | `sheet.setAttachments(record, map)` | Bulk variant; values accept the same types, mixed freely |

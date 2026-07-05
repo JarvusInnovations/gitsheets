@@ -69,7 +69,7 @@ Returns a blob map keyed by attachment name. Used for browsing.
 
 ```typescript
 const attachments = await sheet.getAttachments(record);
-// → { 'avatar.jpg': BlobObject, 'avatar-128.jpg': BlobObject }
+// → { 'avatar.jpg': AttachmentBlobHandle, 'avatar-128.jpg': AttachmentBlobHandle }
 ```
 
 Returns `null` if the record has no attachment directory.

@@ -248,12 +248,12 @@ for await (const change of sheet.diffFrom('HEAD~1', { records: true, patches: tr
   // change.srcHash / change.dstHash        // blob hashes (null on add/delete)
   // change.src / change.dst                // parsed records (records: true)
   // change.patch                           // RFC 6902 JSON Patch ops (patches: true)
-  // change.srcBlob / change.dstBlob        // hologit BlobObject handles (blobs: true)
+  // change.srcBlob / change.dstBlob        // gitsheets BlobHandle handles (blobs: true)
 }
 ```
 
 - `srcCommitHash` accepts a commit hash, a tree hash, or a ref name (`'HEAD~1'`, `'main'`). Defaults to the empty tree — every current record yields `status: 'added'`.
-- `opts.blobs?: boolean` — attach `srcBlob` / `dstBlob` (hologit `BlobObject`) handles.
+- `opts.blobs?: boolean` — attach `srcBlob` / `dstBlob` (gitsheets `BlobHandle`) handles.
 - `opts.records?: boolean` — parse src/dst TOML into records.
 - `opts.patches?: boolean` — produce an RFC 6902 JSON Patch (`Operation[]`) from src to dst. Add and delete entries get a single-op patch (`add` / `remove` on the root); modify entries get the full op sequence.
 
