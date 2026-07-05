@@ -107,6 +107,25 @@ stream.pipe(httpResponse);
 
 The typical consumer is an HTTP handler serving attachment bytes by key (see [behaviors/attachments.md](../behaviors/attachments.md#streaming-reads-by-keypath)); `Sheet.getAttachmentStream` is the sheet-scoped sibling.
 
+### `repo.withLock(fn)`
+
+Run `fn` while holding the repository's **write lock** — the same in-process mutex that serializes `repo.transact`. For consumers coordinating non-transact git operations against the same repo (an external fetch + ref reset, a hot-reload that re-opens the store, raw plumbing reads that must not interleave with a commit), so they don't have to maintain a parallel lock that shadows gitsheets' own.
+
+```typescript
+const result = await repo.withLock(async () => {
+  // no gitsheets transaction can start or commit while this runs
+  await execFile('git', ['fetch', 'origin'], { cwd: repo.gitDir });
+  await execFile('git', ['update-ref', 'refs/heads/main', 'origin/main'], { cwd: repo.gitDir });
+  return 'synced';
+});
+```
+
+- Returns `Promise<T>` where `T` is `fn`'s return type. `fn` may be sync or async.
+- **Queueing**: contends FIFO with `repo.transact` calls (and permissive-mode auto-transactions) from other async contexts — whoever holds the lock runs alone; the lock is released when `fn` settles (resolve or throw). A throw from `fn` propagates after release.
+- **Not reentrant — deliberately.** The lock has no hold-count. Calling `repo.withLock` inside a `withLock` callback, calling `repo.withLock` inside a `repo.transact` handler (the transaction already holds the lock), or calling `repo.transact` (or any permissive-mode mutation, which auto-opens a transaction) inside a `withLock` callback would self-deadlock — each is detected via async-context tracking and throws `TransactionError` (`lock_held`) instead of hanging.
+- The lock is **in-process, per-`Repository`-instance** — the same scope as the transaction mutex ([behaviors/transactions.md](../behaviors/transactions.md#single-writer-model)). It does not coordinate across processes or across two `Repository` instances opened on the same git dir.
+
+
 ### `repo.requireExplicitTransactions()`
 
 Opt into strict mode. After this is called on a `Repository`, calling `Sheet.upsert` / `delete` / `patch` outside a transaction throws `TransactionError` with `code: 'transaction_required'`.
@@ -163,6 +182,7 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlobStream` ref doesn't resolve |
 | `NotFoundError` | `record_not_found` | `readBlobStream` path absent under the ref, or not a blob |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
+| `TransactionError` | `lock_held` | `withLock` / `transact` attempted while the caller's own async context already holds the write lock (not reentrant) |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit |
 | `ConfigError` | `config_missing` | `.gitsheets/<name>.toml` not found in `openSheet` |

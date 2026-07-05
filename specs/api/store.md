@@ -55,6 +55,8 @@ When a sheet has an entry in `validators`, its type flows through:
 - `store.<sheet>` is `Sheet<z.infer<typeof SchemaForThatSheet>>`
 - `tx.<sheet>` inside `store.transact` is the same Sheet type, scoped to the transaction's tree
 
+A spec-compliant Standard Schema validator (Zod v4, Valibot, ArkType, …) assigns to a `validators` entry **directly — no `as` cast** ([behaviors/validation.md](../behaviors/validation.md#type-level-contract-no-casts-required), [#237](https://github.com/JarvusInnovations/gitsheets/issues/237)).
+
 When a sheet does not have an entry in `validators`:
 
 - It is **not part of the typed surface** — the `Store` type includes only sheets named in `validators`, so property access on a non-validator sheet is a compile-time error and there's no autocomplete for it.

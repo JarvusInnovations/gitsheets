@@ -202,8 +202,8 @@ Throws `IndexError` (`index_unique_conflict`) during a lazy build if uniqueness 
 Binary blobs colocated with a record.
 
 ```typescript
-await sheet.setAttachment(record, 'avatar.jpg', blob);
-await sheet.setAttachments(record, { 'avatar.jpg': blob1, 'avatar-128.jpg': blob2 });
+await sheet.setAttachment(record, 'avatar.jpg', bufferOrBlob);
+await sheet.setAttachments(record, { 'avatar.jpg': buffer1, 'avatar-128.jpg': blob2 });
 
 const attachments = await sheet.getAttachments(record); // current low-level surface
 const avatar = await sheet.getAttachment(record, 'avatar.jpg');
@@ -211,6 +211,8 @@ const avatar = await sheet.getAttachment(record, 'avatar.jpg');
 await sheet.deleteAttachment(record, 'avatar.jpg');     // throws NotFoundError if missing
 await sheet.deleteAttachments(record);                  // no-op if record has no attachment dir
 ```
+
+`setAttachment` / `setAttachments` values accept raw bytes (`Buffer` / `Uint8Array`), UTF-8 `string` content, or a `BlobHandle` from `repo.writeBlob` — the raw-bytes form makes the common "here are the bytes, attach them" case one call. See [behaviors/attachments.md](../behaviors/attachments.md#sheetsetattachmentrecord-name-content).
 
 Streaming read without materializing the record:
 

@@ -98,6 +98,8 @@ Internally the library calls `validator['~standard'].validate(record)`. The retu
 
 The Standard Schema layer is **optional**. Without it, only JSON Schema runs.
 
+Gitsheets' declared `StandardSchemaV1` types mirror the published Standard Schema v1 interface exactly, so a compliant validator (Zod v4, Valibot, ArkType, Effect Schema) assigns to `openSheet({ validator })` / `openStore({ validators })` directly — no `as` cast or wrapper needed.
+
 For full type inference across reads and writes, use [`openStore`](concepts.md#store) instead of `openSheet` — see the [typed-sheet-with-Zod recipe](recipes/typed-sheet-with-zod.md).
 
 ## Order of operations
