@@ -73,6 +73,45 @@ See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 - **Generated changes commit first.** When a command modifies files (`npm install`, codegen), commit those in a dedicated commit with the exact command in the body. Then make manual edits in a separate commit.
 - **Don't commit suspected secrets** — `.env`, anything in `*.local.*`, credentials, private keys.
 
+## Releases
+
+Two npm release tracks ship from this repo on **separate, prefix-namespaced git-tag
+tracks** — keep them distinct, and mind the ordering rule:
+
+- **`gitsheets`** (the JS package) — released on **`v*`** tags via the develop→main
+  Release-PR flow (`release-prepare`/`-validate`/`-publish` workflows; use the
+  **`release-flow`** skill). Merging the `Release: vX.Y.Z` PR cuts the tag;
+  `publish-npm.yml` then builds, tests, and publishes from that tag.
+- **`@gitsheets/core-napi`** (+ its 6 platform packages) — released on
+  **`core-napi-v*`** tags via `core-napi.yml`: native per-platform builds + npm
+  trusted publishing (OIDC). Never tag the addon with a bare `v*` — that namespace
+  belongs to the JS package.
+
+Rules learned the hard way (v2.3.0's failed publish — see
+`plans/core-napi-0.2.0-release.md`):
+
+1. **A `gitsheets-core` behavior change requires a core-napi release BEFORE the JS
+   release.** `publish-npm` runs the workspace napi tests against the *published*
+   platform binaries (resolved via the workspace manifest's `optionalDependencies`),
+   so a JS release atop stale binaries fails mid-publish with test assertions
+   mismatching old core behavior. If `rust/gitsheets-core` changed since the last
+   `core-napi-v*` tag, ship core-napi first.
+2. **napi versions are tag-stamped, never pre-committed.** `core-napi.yml` runs
+   `npm version $VERSION` from the tag name at publish time and errors ("Version not
+   changed") if the manifest already carries that version. Tag `develop` with the
+   **un-bumped** manifests; don't bump `rust/gitsheets-napi/package.json` (or
+   `npm/*/package.json`) ahead of the tag.
+3. **Sync manifests AFTER the core-napi publish.** Once the new version is live, PR
+   the sync: `rust/gitsheets-napi` version + platform `optionalDependencies` +
+   `npm/*/package.json` to the released version, `packages/gitsheets` dep range,
+   and a lockfile refresh. Without this, workspace tests keep resolving the previous
+   platform binaries. (Committing the just-released version is safe — the stamp step
+   only fails when the committed version equals the tag being stamped.)
+
+Sequence for a batch that touches core: merge the feature PRs → tag `core-napi-v*`
+on develop → wait for the 7 packages to land on npm → PR the manifest/lockfile sync →
+merge → run the release-flow skill on the auto-opened `Release: v*` PR.
+
 ## Tooling
 
 - **`gh-axi`** (or `gh`) for all GitHub operations.
