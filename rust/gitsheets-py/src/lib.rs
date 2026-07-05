@@ -17,6 +17,9 @@
 //!   them as an aware UTC `datetime.datetime`, mirroring the Node `Date` mapping
 //!   (an absolute instant at UTC), with the precise kind retained core-side.
 //! - **Tables ↔ `dict`, arrays ↔ `list`, strings/bools** — obvious.
+//! - **`None`** — a `None`-valued key is dropped (recursively; the 1.x
+//!   `@iarna` semantics), a `None` array element or value itself is rejected.
+//!   See `specs/behaviors/normalization.md` ("Null / undefined handling").
 //!
 //! Errors cross as typed Python exceptions (a `GitsheetsError` hierarchy mirroring
 //! the Node `binding.cjs` classes), each carrying `code`/`status`/
@@ -145,6 +148,12 @@ fn py_to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     if let Ok(d) = obj.cast::<PyDict>() {
         let mut map = IndexMap::new();
         for (k, v) in d.iter() {
+            // A None-valued *key* is dropped, recursively — TOML has no null,
+            // so a cleared optional field IS an absent key (the 1.x @iarna
+            // drop semantics). specs/behaviors/normalization.md, rule 1.
+            if v.is_none() {
+                continue;
+            }
             let key: String = k
                 .extract()
                 .map_err(|_| PyTypeError::new_err("table (dict) keys must be strings"))?;
@@ -154,21 +163,40 @@ fn py_to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     }
     if let Ok(l) = obj.cast::<PyList>() {
         let mut items = Vec::with_capacity(l.len());
-        for item in l.iter() {
+        for (i, item) in l.iter().enumerate() {
+            // A None *element* is rejected — dropping it would shift the rest
+            // of the array. specs/behaviors/normalization.md, rule 2.
+            if item.is_none() {
+                return Err(PyValueError::new_err(
+                    gitsheets_core::null_array_element_msg("None", i),
+                ));
+            }
             items.push(py_to_value(&item)?);
         }
         return Ok(Value::Array(items));
     }
     if let Ok(t) = obj.cast::<PyTuple>() {
         let mut items = Vec::with_capacity(t.len());
-        for item in t.iter() {
+        for (i, item) in t.iter().enumerate() {
+            if item.is_none() {
+                return Err(PyValueError::new_err(
+                    gitsheets_core::null_array_element_msg("None", i),
+                ));
+            }
             items.push(py_to_value(&item)?);
         }
         return Ok(Value::Array(items));
     }
+    // A None *value itself* (a whole record, a scalar position) —
+    // specs/behaviors/normalization.md, rule 3.
+    if obj.is_none() {
+        return Err(PyValueError::new_err(gitsheets_core::null_value_msg(
+            "None",
+        )));
+    }
     let type_name = obj.get_type().name()?.to_string();
     Err(PyTypeError::new_err(format!(
-        "cannot marshal Python value of type {type_name} to a TOML value (None has no TOML representation)"
+        "cannot marshal Python value of type {type_name} to a TOML value"
     )))
 }
 

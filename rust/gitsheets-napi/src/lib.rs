@@ -13,6 +13,10 @@
 //!   them as JS `Date` (matching `@iarna` v1.x), with the precise kind retained
 //!   core-side. A `Date` round-trips to a `Date`.
 //! - **Tables ↔ plain objects, arrays ↔ arrays, strings/bools** — obvious.
+//! - **Nulls** — a `null`/`undefined`-valued key is dropped (recursively; the
+//!   1.x `@iarna` semantics), a `null`/`undefined` array element or value
+//!   itself is rejected. See `specs/behaviors/normalization.md`
+//!   ("Null / undefined handling").
 //!
 //! Errors cross as **structured, matchable** JS errors (a `code`/`status`/class
 //! discriminant, plus `issues`/`conflictingPaths` payloads), never an opaque
@@ -97,8 +101,29 @@ impl FromNapiValue for JsValue {
             ValueType::String => Value::String(String::from_napi_value(env, napi_val)?),
             ValueType::Object => {
                 if unknown.is_array()? {
-                    let items = Vec::<JsValue>::from_napi_value(env, napi_val)?;
-                    Value::Array(items.into_iter().map(|j| j.0).collect())
+                    let obj = JsObject::from_napi_value(env, napi_val)?;
+                    let len = obj.get_array_length()?;
+                    let mut items = Vec::with_capacity(len as usize);
+                    for i in 0..len {
+                        let el: JsUnknown = obj.get_element(i)?;
+                        // A null/undefined *element* is rejected — dropping it
+                        // (as @iarna v1.x silently did) would shift the rest of
+                        // the array. specs/behaviors/normalization.md, rule 2.
+                        if matches!(
+                            el.get_type()?,
+                            ValueType::Null | ValueType::Undefined
+                        ) {
+                            return Err(Error::new(
+                                Status::InvalidArg,
+                                gitsheets_core::null_array_element_msg(
+                                    "null/undefined",
+                                    i as usize,
+                                ),
+                            ));
+                        }
+                        items.push(JsValue::from_napi_value(env, el.raw())?.0);
+                    }
+                    Value::Array(items)
                 } else if unknown.is_date()? {
                     let date = JsDate::from_napi_value(env, napi_val)?;
                     let ms = date.value_of()?;
@@ -112,6 +137,16 @@ impl FromNapiValue for JsValue {
                         let key_js: JsString = names.get_element(i)?;
                         let key = key_js.into_utf8()?.as_str()?.to_owned();
                         let child: JsUnknown = obj.get_named_property(&key)?;
+                        // A null/undefined-valued *key* is dropped, recursively
+                        // — TOML has no null, so a cleared optional field IS an
+                        // absent key (the 1.x @iarna drop semantics).
+                        // specs/behaviors/normalization.md, rule 1.
+                        if matches!(
+                            child.get_type()?,
+                            ValueType::Null | ValueType::Undefined
+                        ) {
+                            continue;
+                        }
                         let child = JsValue::from_napi_value(env, child.raw())?;
                         map.insert(key, child.0);
                     }
@@ -119,9 +154,17 @@ impl FromNapiValue for JsValue {
                 }
             }
             other => {
+                // A null/undefined *value itself* (a whole record, a scalar
+                // position) — specs/behaviors/normalization.md, rule 3.
+                if matches!(other, ValueType::Null | ValueType::Undefined) {
+                    return Err(Error::new(
+                        Status::InvalidArg,
+                        gitsheets_core::null_value_msg("null/undefined"),
+                    ));
+                }
                 return Err(Error::new(
                     Status::InvalidArg,
-                    format!("cannot marshal JS value of type {other:?} to a TOML value (null/undefined have no TOML representation)"),
+                    format!("cannot marshal JS value of type {other:?} to a TOML value"),
                 ));
             }
         };

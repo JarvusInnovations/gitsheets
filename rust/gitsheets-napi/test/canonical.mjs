@@ -80,3 +80,29 @@ test('a malformed document throws a typed ConfigError', () => {
     },
   );
 });
+
+test('nullish keys serialize byte-identically to the record without them', () => {
+  // The consumer pattern from #232: `.nullable().optional()` schemas with
+  // `?? null` normalization on write. A cleared optional field must produce
+  // the SAME bytes as never setting it — the 1.x @iarna drop semantics.
+  const [withNulls] = serializeRecords([
+    {
+      slug: 'jane',
+      middleName: null,
+      bio: undefined,
+      contact: { email: 'jane@x.org', phone: null },
+      roles: [{ title: 'chair', until: null }],
+    },
+  ]);
+  const [stripped] = serializeRecords([
+    {
+      slug: 'jane',
+      contact: { email: 'jane@x.org' },
+      roles: [{ title: 'chair' }],
+    },
+  ]);
+  assert.equal(withNulls, stripped, 'byte-identical to the pre-stripped record');
+  assert.ok(!withNulls.includes('middleName'), 'no trace of the cleared field');
+  assert.ok(!withNulls.includes('phone'));
+  assert.ok(!withNulls.includes('until'));
+});

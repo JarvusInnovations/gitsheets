@@ -51,6 +51,43 @@ impl Value {
     }
 }
 
+// ── marshal-boundary null diagnostics ────────────────────────────────────────
+//
+// TOML has no `null`, so a host-language null (JS `null`/`undefined`, Python
+// `None`) never crosses the FFI — each binding resolves it during its
+// host→core marshal, per the contract in
+// `specs/behaviors/normalization.md` § "Null / undefined handling":
+//
+// 1. a null-valued **table key** is dropped, recursively (absent key ==
+//    cleared optional field — the 1.x `@iarna/toml` semantics);
+// 2. a null **array element** is an error (dropping an element would silently
+//    shift the remaining elements — a data mutation, not an omission);
+// 3. a null in any other value position (a whole record, a scalar) is an
+//    error.
+//
+// The drop/reject *recursion* necessarily lives in each binding (only the
+// binding can see host values), but the messages are minted here so the
+// contract's diagnostics read identically from every host language.
+
+/// The rejection message for rule 2 — a null array element. `null_name` is the
+/// host language's spelling ("null/undefined", "None").
+pub fn null_array_element_msg(null_name: &str, index: usize) -> String {
+    format!(
+        "cannot marshal {null_name} as an array element (index {index}): TOML arrays cannot \
+         contain nulls, and dropping the element would silently shift the rest of the array — \
+         remove the element instead (null-valued keys are dropped; array elements are not)"
+    )
+}
+
+/// The rejection message for rule 3 — a null where a value itself is required
+/// (a whole record, a scalar position). `null_name` as above.
+pub fn null_value_msg(null_name: &str) -> String {
+    format!(
+        "cannot marshal {null_name} to a TOML value: TOML has no null — null-valued keys are \
+         dropped from records, but a value itself cannot be {null_name}"
+    )
+}
+
 /// The four distinct TOML datetime kinds. They serialize to different bytes, so
 /// the core keeps them distinguishable even though a binding (e.g. Node) may
 /// surface them all as one host type (a JS `Date`).
@@ -156,6 +193,24 @@ mod tests {
                 assert_ne!(a, b, "datetime kinds must render to different bytes");
             }
         }
+    }
+
+    #[test]
+    fn null_diagnostics_name_the_host_null_and_the_index() {
+        let msg = null_array_element_msg("null/undefined", 3);
+        assert!(msg.contains("index 3"), "must name the offending index");
+        assert!(msg.contains("null/undefined"), "must use the host spelling");
+        assert!(
+            msg.contains("remove the element"),
+            "must tell the consumer the actionable fix"
+        );
+
+        let msg = null_value_msg("None");
+        assert!(msg.contains("None"), "must use the host spelling");
+        assert!(
+            msg.contains("null-valued keys are dropped"),
+            "must state the key-drop rule so the boundary reads consistently"
+        );
     }
 
     #[test]
