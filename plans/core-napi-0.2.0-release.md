@@ -19,7 +19,7 @@ Release engineering only; no spec changes.
 
 1. Bump only the consumer side: `packages/gitsheets` dep → `^0.2.0`. The napi package versions are **tag-stamped by the publish workflow** (`npm version $VERSION` from the tag name) and deliberately never committed — committing them breaks the stamp step ("Version not changed", learned the hard way on the first tag attempt).
 2. Tag `core-napi-v0.2.0` on develop (which carries the #241 core changes and the un-bumped 0.1.0 manifests) — the platform packages must exist on npm before the consumer-bump PR's `npm ci` can resolve.
-3. After publish: refresh `package-lock.json` against the live 0.2.0 packages, then merge.
+3. After publish: **sync the workspace manifests to the released version** (main + platform packages + optionalDeps — safe now; stamping only fails when the committed version equals the tag being stamped) and refresh `package-lock.json` against the live 0.2.0 packages, then merge. Without the sync, workspace tests keep resolving the previous platform binaries.
 4. Re-run the release flow as v2.3.1 (v2.3.0's GitHub release exists; its npm publish never landed — v2.3.1 is the npm release of the same content).
 
 ## Validation
