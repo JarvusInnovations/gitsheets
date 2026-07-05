@@ -1,8 +1,9 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs: []
 issues: []
+pr: 247
 ---
 
 # Ship @gitsheets/core-napi 0.2.0 and unblock the gitsheets npm release
@@ -24,10 +25,10 @@ Release engineering only; no spec changes.
 
 ## Validation
 
-- [ ] @gitsheets/core-napi 0.2.0 (+6 platform packages) live on npm
+- [x] @gitsheets/core-napi 0.2.0 (+6 platform packages) live on npm
 - [x] Local fresh linux-x64-gnu build passes the 108-test napi suite
-- [ ] PR CI green with lockfile resolving 0.2.0
-- [ ] gitsheets 2.3.1 on npm; `publish-npm` green
+- [x] PR CI green with lockfile resolving 0.2.0
+- [x] gitsheets 2.3.1 on npm; `publish-npm` green
 
 ## Risks / unknowns
 
