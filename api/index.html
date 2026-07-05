@@ -1670,6 +1670,14 @@
 <td><code>repo.resolveRef(ref)</code></td>
 <td>Resolve a ref or commit hash; returns <code>string \| null</code></td>
 </tr>
+<tr>
+<td><code>repo.refresh()</code></td>
+<td>Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful <code>transact</code> auto-refreshes)</td>
+</tr>
+<tr>
+<td><code>repo.readBlobStream(ref, path)</code></td>
+<td><code>Promise&lt;Readable&gt;</code> — stream a blob&rsquo;s bytes at <code>&lt;ref&gt;:&lt;path&gt;</code>, resolved at call time. Throws <code>RefError</code> / <code>NotFoundError</code></td>
+</tr>
 </tbody>
 </table>
 <p><code>opts.prefix</code> scopes records to a sub-tree under each sheet&rsquo;s configured root — useful for multi-tenant deployments where one git repo holds many tenants under <code>&lt;root&gt;/&lt;tenant&gt;/...</code>. Mirrors the CLI <code>--prefix</code> flag (env <code>GITSHEETS_PREFIX</code>). The sheet&rsquo;s <code>.gitsheets/&lt;name&gt;.toml</code> config file is unaffected — only the record data tree is scoped.</p>
@@ -1700,6 +1708,10 @@
 <tr>
 <td><code>sheet.loadBody(record)</code></td>
 <td><code>Promise&lt;T&gt;</code> — hydrate a body-less record (content-typed sheets)</td>
+</tr>
+<tr>
+<td><code>sheet.refresh()</code></td>
+<td>Rebind this sheet&rsquo;s read snapshot to the current HEAD tree (out-of-band movement; own commits auto-refresh)</td>
 </tr>
 <tr>
 <td><code>sheet.pathForRecord(record)</code></td>
@@ -1764,6 +1776,10 @@
 <tr>
 <td><code>sheet.getAttachments(record)</code></td>
 <td>Map of name → BlobObject</td>
+</tr>
+<tr>
+<td><code>sheet.getAttachmentStream(recordOrPath, name)</code></td>
+<td><code>Promise&lt;Readable \| null&gt;</code> — stream an attachment&rsquo;s bytes without materializing the record</td>
 </tr>
 <tr>
 <td><code>sheet.setAttachment(record, name, blob)</code></td>
@@ -1865,9 +1881,11 @@
 <span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="p">[</span><span class="nx">K</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="nx">keyof</span><span class="w"> </span><span class="nx">V</span><span class="p">]</span><span class="o">:</span><span class="w"> </span><span class="nx">Sheet</span><span class="o">&lt;</span><span class="nx">InferRecord</span><span class="o">&lt;</span><span class="nx">V</span><span class="p">[</span><span class="nx">K</span><span class="p">]</span><span class="o">&gt;&gt;</span><span class="p">;</span>
 <span class="p">}</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">transact</span><span class="o">:</span><span class="w"> </span><span class="kt">StoreTransactFn</span><span class="o">&lt;</span><span class="nx">V</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">refresh</span><span class="o">:</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nb">Promise</span><span class="o">&lt;</span><span class="ow">void</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="p">};</span>
 </code></pre></div>
-<p><code>store.&lt;sheet&gt;</code> for each sheet declared in <code>validators</code>. <code>store.transact(opts, async tx =&gt; ...)</code> mirrors <code>repo.transact</code> with <code>tx.&lt;sheet&gt;</code> aliases that thread validators through.</p>
+<p><code>store.&lt;sheet&gt;</code> for each sheet declared in <code>validators</code>. <code>store.transact(opts, async tx =&gt; ...)</code> mirrors <code>repo.transact</code> with <code>tx.&lt;sheet&gt;</code> aliases that thread validators through. <code>store.refresh()</code> rebinds every sheet to the current HEAD tree (delegates to <code>repo.refresh()</code>).</p>
+<p>Reads through <code>store.&lt;sheet&gt;</code> follow the freshness model: a successful <code>store.transact</code> / <code>repo.transact</code> auto-refreshes, so post-commit reads reflect the committed state — see <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/freshness.md"><code>specs/behaviors/freshness.md</code></a>.</p>
 <p>Sheets not in <code>validators</code> are accessible via <code>repo.openSheet(name)</code> for one-off un-typed access.</p>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/store.md"><code>specs/api/store.md</code></a></p>
 <h2 id="pushdaemon">PushDaemon<a class="headerlink" href="#pushdaemon" title="Permanent link"> ¶</a></h2>
