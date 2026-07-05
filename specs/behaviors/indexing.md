@@ -78,13 +78,13 @@ Without a pre-mutation read (e.g., a brand-new upsert), there's no old key to re
 
 For updates where the record changed identity-fields (the key from `keyFn` differs from before), the old key is removed and the new key is added in one synchronous step.
 
-### On out-of-band ref movement
+### On read-snapshot rebind (ref movement)
 
-If the sheet's underlying ref moves due to a change made outside this `Sheet` instance — another process committed, the data repo was re-clone, etc. — every index on the sheet is marked dirty.
+If the sheet's read snapshot is rebound — automatically after this repository's own commit, or explicitly via `refresh()` after out-of-band movement (see [freshness.md](freshness.md)) — every index on the sheet is marked dirty.
 
 Next `findByIndex(name, ...)` call:
 
-1. Detects the dirty state (by comparing the current ref's commit hash against the hash captured at last build)
+1. Detects the dirty state (by comparing the current snapshot's tree hash against the hash captured at last build)
 2. Discards the existing index for that name
 3. Re-runs the build pipeline
 4. Serves the lookup

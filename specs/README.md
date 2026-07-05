@@ -44,6 +44,7 @@ specs/
     ├── validation.md
     ├── normalization.md
     ├── transactions.md
+    ├── freshness.md
     ├── indexing.md
     ├── push-sync.md
     ├── attachments.md

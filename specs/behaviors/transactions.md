@@ -20,7 +20,7 @@ One open transaction per `Repository` at a time, serialized by an in-process mut
 | Two concurrent `repo.transact` calls from independent async contexts | Second waits on the mutex; runs after the first commits or releases. |
 | **Nested** `repo.transact` — opening one inside another's handler (same async context) | Throws `TransactionError` (`transaction_in_progress`) immediately; it does not queue. Use `tx.sheet(name)` inside the handler instead. |
 | Concurrent `repo.transact` *and* a permissive-mode `Sheet.upsert` outside a transaction | The permissive `upsert` opens its own transaction, contends for the same mutex. |
-| Same-process concurrent reads | Reads don't take the mutex. They see the *committed* state (pre-transaction tree). |
+| Same-process concurrent reads | Reads don't take the mutex. They see the *committed* state (pre-transaction tree). After a successful commit, standing sheets rebind to the new tree — see [freshness.md](freshness.md). |
 
 Multi-process / multi-host writers are explicitly out of scope. If another process commits to the same ref while a transaction is open, the transaction throws `TransactionError` (`parent_moved`) when it tries to commit. Detection is via comparing the parent ref's commit hash at transaction open vs. at commit.
 
