@@ -1220,6 +1220,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v1x-v20-the-rust-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.x → v2.0 (the Rust core)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.x → v2.0 (the Rust core)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-hologit-dependency-is-gone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The hologit dependency is gone
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-nullundefined-valued-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. null/undefined-valued fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-canonical-bytes-re-baseline-one-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Canonical bytes re-baseline (one-time)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1531,6 +1581,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v1x-v20-the-rust-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.x → v2.0 (the Rust core)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.x → v2.0 (the Rust core)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-hologit-dependency-is-gone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The hologit dependency is gone
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-nullundefined-valued-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. null/undefined-valued fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-canonical-bytes-re-baseline-one-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Canonical bytes re-baseline (one-time)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1785,6 +1885,89 @@
 <ul>
 <li><code>hologit</code> bumped from <code>^0.49.1</code> to <code>^0.50.2</code> to pick up <code>TreeObject.clearChildren()</code> (the O(1) primitive backing the new <code>Sheet#clear()</code>).</li>
 </ul>
+<h2 id="v1x-v20-the-rust-core">v1.x → v2.0 (the Rust core)<a class="headerlink" href="#v1x-v20-the-rust-core" title="Permanent link"> ¶</a></h2>
+<p>v2.0 replaces the Node.js engine with the Rust <code>gitsheets-core</code> crate: TOML
+parse/serialize, normalization, validation, path templates, record CRUD, and
+the tree/blob/commit substrate all run natively, and the npm package becomes a
+thin marshalling shell over the <code>@gitsheets/core-napi</code> addon. The API surface
+is intentionally unchanged — but three behavior changes bite real consumers.
+All three surfaced during the first production 1.4.1 → 2.x upgrade; this
+section is what turns &ldquo;16 mystery test failures&rdquo; into &ldquo;read the section, apply
+3 changes.&rdquo;</p>
+<h3 id="1-the-hologit-dependency-is-gone">1. The <code>hologit</code> dependency is gone<a class="headerlink" href="#1-the-hologit-dependency-is-gone" title="Permanent link"> ¶</a></h3>
+<p>2.x drops <code>hologit</code> entirely (tree/blob/commit ops run on <code>holo-tree</code>/gitoxide
+<em>inside</em> the core). Anything that reached into it breaks:</p>
+<ul>
+<li><code>repo.hologitRepo</code> no longer exists.</li>
+<li><code>BlobObject</code> (e.g. <code>BlobObject.write</code>) is no longer importable via gitsheets.</li>
+</ul>
+<p>The replacement for the common pattern — hashing binary content and attaching
+it to a record — is the built-in blob primitive plus the attachment API:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// 1.x</span>
+<span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">BlobObject</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;hologit&#39;</span><span class="p">;</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">blob</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">BlobObject</span><span class="p">.</span><span class="nx">write</span><span class="p">(</span><span class="nx">repo</span><span class="p">.</span><span class="nx">hologitRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">buffer</span><span class="p">);</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">setAttachments</span><span class="p">(</span><span class="nx">record</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s1">&#39;avatar.jpg&#39;</span><span class="o">:</span><span class="w"> </span><span class="nx">blob</span><span class="w"> </span><span class="p">});</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1">// 2.x</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">blob</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">writeBlob</span><span class="p">(</span><span class="nx">buffer</span><span class="p">);</span><span class="w"> </span><span class="c1">// Promise&lt;BlobHandle&gt;</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">setAttachments</span><span class="p">(</span><span class="nx">record</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s1">&#39;avatar.jpg&#39;</span><span class="o">:</span><span class="w"> </span><span class="nx">blob</span><span class="w"> </span><span class="p">});</span>
+</code></pre></div>
+<p><code>repo.writeBlob(buf)</code> hashes the bytes into the object database and returns a
+<code>BlobHandle</code> accepted everywhere a hologit <code>BlobObject</code> used to be
+(<code>setAttachment</code>, <code>setAttachments</code>). <code>getAttachment</code>/<code>getAttachments</code>/
+<code>sheet.attachments()</code> likewise return <code>BlobHandle</code>s with <code>.read()</code>/<code>.stream()</code>.</p>
+<h3 id="2-nullundefined-valued-fields">2. <code>null</code>/<code>undefined</code>-valued fields<a class="headerlink" href="#2-nullundefined-valued-fields" title="Permanent link"> ¶</a></h3>
+<p>TOML has no <code>null</code>, so a cleared optional field and a never-set field are the
+same on-disk state: an absent key. 1.x (<code>@iarna/toml</code>) enforced this by
+silently dropping null-valued keys at serialize time. <strong>The initial 2.x
+releases instead threw on marshal</strong> (<code>cannot marshal JS value of type
+Null/Undefined to a TOML value</code>) — breaking the standard consumer pattern of
+<code>.nullable().optional()</code> schemas with <code>?? null</code> normalization on write.</p>
+<p><strong>Fixed in this release</strong>: the 1.x drop semantics are restored and now
+specced (<a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md#null--undefined-handling"><code>specs/behaviors/normalization.md</code></a>).
+A <code>null</code>/<code>undefined</code>-valued key is dropped, recursively (top-level fields,
+nested tables, and objects inside arrays), before validation and
+serialization — byte-identical to 1.x output, in every binding (Node and
+Python). If you shimmed this with a <code>stripNullish</code> helper at your write
+boundary, you can delete it.</p>
+<p>One deliberate edge-case divergence from 1.x: a <code>null</code>/<code>undefined</code> <strong>array
+element</strong> is an error naming the index (1.x silently dropped elements —
+<code>[1, null, 2]</code> → <code>[1, 2]</code> — which shifts sibling indices and silently changes
+data). Remove the element yourself if that&rsquo;s what you mean. A required field
+set to <code>null</code> fails JSON-Schema validation as <em>missing</em>, same as 1.x.</p>
+<h3 id="3-canonical-bytes-re-baseline-one-time">3. Canonical bytes re-baseline (one-time)<a class="headerlink" href="#3-canonical-bytes-re-baseline-one-time" title="Permanent link"> ¶</a></h3>
+<p>The canonical serializer is now the core&rsquo;s <code>gitsheets-core::canonical</code> (the
+Rust <code>toml</code> crate&rsquo;s formatting over a deep key sort), replacing <code>@iarna/toml</code>.
+A record that was already canonical under 1.x may re-serialize to different —
+but <em>value-identical</em> — bytes, once (<a href="https://github.com/JarvusInnovations/gitsheets/issues/196">#196</a>).
+Three reformat classes, all proven data-lossless and idempotent over a
+~29.5k-record corpus (<a href="https://github.com/JarvusInnovations/gitsheets/pull/205">PR #205</a>):</p>
+<ol>
+<li><strong>Integer digit-group underscores drop</strong> — <code>legacyId = 31_618</code> →
+   <code>legacyId = 31618</code> (the dominant class).</li>
+<li><strong>String requote</strong> — strings containing both <code>"</code> and <code>'</code> move from escaped
+   single-line form to readable triple-quoted <code>"""…"""</code> form.</li>
+<li><strong>Multiline trailing-quote layout</strong> — a multiline string ending in <code>"</code>
+   loses <code>@iarna</code>&rsquo;s line-continuation dance (same value, fewer lines).</li>
+</ol>
+<p>Until you re-baseline, the first 2.x write of a record whose 1.x bytes fall in
+one of these classes shows a spurious-looking (but value-neutral) diff. The
+recommended migration is a <strong>one-time re-serialize commit</strong> over each existing
+repo, which is idempotent (a second run produces zero diff — that&rsquo;s the
+adoption check):</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Re-normalize every *.toml record under a directory, in place.</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>gitsheets-core<span class="w"> </span>--example<span class="w"> </span>normalize_tree<span class="w"> </span>--<span class="w"> </span>path/to/records
+
+git<span class="w"> </span>add<span class="w"> </span>path/to/records
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;chore: re-baseline records to the Rust canonical form&quot;</span>
+
+<span class="c1"># Verify idempotence — a second pass must report 0 files re-normalized:</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>gitsheets-core<span class="w"> </span>--example<span class="w"> </span>normalize_tree<span class="w"> </span>--<span class="w"> </span>path/to/records
+</code></pre></div>
+<p>(Or use <code>git sheet normalize &lt;sheet&gt;</code> per sheet from the CLI.) See the
+<a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md#canonical-form-re-baseline-the-rust-serializer">canonical-form re-baseline notes</a>
+for the full contract.</p>
 <h2 id="going-forward">Going forward<a class="headerlink" href="#going-forward" title="Permanent link"> ¶</a></h2>
 <p>Once migrated, the recipes are the fastest path to common patterns:</p>
 <ul>

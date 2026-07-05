@@ -1659,6 +1659,10 @@
 <td>Run a handler in a single-commit transaction</td>
 </tr>
 <tr>
+<td><code>repo.withLock(fn)</code></td>
+<td>Run <code>fn</code> holding the write lock transact uses — coordinate non-transact git ops. Not reentrant (<code>lock_held</code>)</td>
+</tr>
+<tr>
 <td><code>repo.requireExplicitTransactions()</code></td>
 <td>Switch to strict mode (one-way)</td>
 </tr>
@@ -1782,12 +1786,12 @@
 <td><code>Promise&lt;Readable \| null&gt;</code> — stream an attachment&rsquo;s bytes without materializing the record</td>
 </tr>
 <tr>
-<td><code>sheet.setAttachment(record, name, blob)</code></td>
-<td>Add or replace</td>
+<td><code>sheet.setAttachment(record, name, content)</code></td>
+<td>Add or replace — <code>content</code> may be raw bytes (<code>Buffer</code>/<code>Uint8Array</code>), a UTF-8 <code>string</code>, or a <code>BlobHandle</code></td>
 </tr>
 <tr>
 <td><code>sheet.setAttachments(record, map)</code></td>
-<td>Bulk variant</td>
+<td>Bulk variant; values accept the same types, mixed freely</td>
 </tr>
 <tr>
 <td><code>sheet.deleteAttachment(record, name)</code></td>
@@ -1963,7 +1967,7 @@
 </tr>
 <tr>
 <td><code>TransactionError</code></td>
-<td><code>transaction_in_progress</code>, <code>transaction_required</code>, <code>parent_moved</code>, <code>commit_failed</code>, <code>push_daemon_running</code>, <code>transaction_closed</code></td>
+<td><code>transaction_in_progress</code>, <code>transaction_required</code>, <code>parent_moved</code>, <code>commit_failed</code>, <code>push_daemon_running</code>, <code>transaction_closed</code>, <code>lock_held</code></td>
 </tr>
 <tr>
 <td><code>IndexError</code></td>

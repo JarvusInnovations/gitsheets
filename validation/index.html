@@ -1334,6 +1334,7 @@
 </code></pre></div>
 <p>Internally the library calls <code>validator['~standard'].validate(record)</code>. The returned <code>result.value</code> (if the validator transforms) becomes the record that gets normalized + written.</p>
 <p>The Standard Schema layer is <strong>optional</strong>. Without it, only JSON Schema runs.</p>
+<p>Gitsheets&rsquo; declared <code>StandardSchemaV1</code> types mirror the published Standard Schema v1 interface exactly, so a compliant validator (Zod v4, Valibot, ArkType, Effect Schema) assigns to <code>openSheet({ validator })</code> / <code>openStore({ validators })</code> directly — no <code>as</code> cast or wrapper needed.</p>
 <p>For full type inference across reads and writes, use <a href="../concepts/#store"><code>openStore</code></a> instead of <code>openSheet</code> — see the <a href="../recipes/typed-sheet-with-zod/">typed-sheet-with-Zod recipe</a>.</p>
 <h2 id="order-of-operations">Order of operations<a class="headerlink" href="#order-of-operations" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code>1. Record arrives at Sheet.upsert(record) / Sheet.patch(query, partial)
