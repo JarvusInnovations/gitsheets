@@ -12,6 +12,22 @@ A `Sheet<T>` represents one declared sheet in `.gitsheets/<name>.toml`. It owns 
 
 ## Reading
 
+Non-transaction reads resolve against the sheet's **read snapshot** — rebound automatically after each commit by the owning `Repository`, and explicitly via `refresh()`. See [behaviors/freshness.md](../behaviors/freshness.md).
+
+### `sheet.refresh()`
+
+Rebind this sheet's read snapshot to the repository's current `HEAD` tree. Returns `Promise<void>`.
+
+```typescript
+await sheet.refresh();       // pick up out-of-band ref movement
+await sheet.queryAll();      // now reflects the current HEAD tree
+```
+
+- Rebinds **only this sheet** — the "did my row land?" primitive. For every open sheet at once, use `repo.refresh()` / `store.refresh()`.
+- Not needed after this repository's own `repo.transact` — a successful commit auto-refreshes every live sheet.
+- Lazily re-derives records, attachments, config, and index builds from the new tree ([behaviors/freshness.md](../behaviors/freshness.md#what-a-rebind-refreshes)).
+- Throws `TypeError` on a transaction-bound sheet (`tx.sheet(name)`) — those read the transaction's private tree.
+
 ### `sheet.query(filter?, opts?)`
 
 Async iterator yielding records matching `filter`.
@@ -146,7 +162,7 @@ Pairs naturally with `Transaction#finalize`'s no-op detection (see [transaction.
 
 ### `sheet.clone()`
 
-Returns a deep clone of the `Sheet` instance with a cloned data tree. Used to stage a tentative state for diffing / proposing without mutating the original.
+Returns a deep clone of the `Sheet` instance with a cloned data tree. Used to stage a tentative state for diffing / proposing without mutating the original. A clone is a Repository-issued sheet like any other: it participates in the freshness model (auto-refresh on commit, `refresh()`), and is **not** a pinned snapshot — see [behaviors/freshness.md](../behaviors/freshness.md#pinned--historical-reads).
 
 ## Indexing
 
@@ -186,8 +202,8 @@ Throws `IndexError` (`index_unique_conflict`) during a lazy build if uniqueness 
 Binary blobs colocated with a record.
 
 ```typescript
-await sheet.setAttachment(record, 'avatar.jpg', blob);
-await sheet.setAttachments(record, { 'avatar.jpg': blob1, 'avatar-128.jpg': blob2 });
+await sheet.setAttachment(record, 'avatar.jpg', bufferOrBlob);
+await sheet.setAttachments(record, { 'avatar.jpg': buffer1, 'avatar-128.jpg': blob2 });
 
 const attachments = await sheet.getAttachments(record); // current low-level surface
 const avatar = await sheet.getAttachment(record, 'avatar.jpg');
@@ -195,6 +211,17 @@ const avatar = await sheet.getAttachment(record, 'avatar.jpg');
 await sheet.deleteAttachment(record, 'avatar.jpg');     // throws NotFoundError if missing
 await sheet.deleteAttachments(record);                  // no-op if record has no attachment dir
 ```
+
+`setAttachment` / `setAttachments` values accept raw bytes (`Buffer` / `Uint8Array`), UTF-8 `string` content, or a `BlobHandle` from `repo.writeBlob` — the raw-bytes form makes the common "here are the bytes, attach them" case one call. See [behaviors/attachments.md](../behaviors/attachments.md#sheetsetattachmentrecord-name-content).
+
+Streaming read without materializing the record:
+
+```typescript
+const stream = await sheet.getAttachmentStream('janedoe', 'avatar.jpg'); // Readable | null
+stream?.pipe(httpResponse);
+```
+
+`getAttachmentStream(recordOrPath, name)` accepts a record object or a rendered record path (like `getAttachment`), returns a Node `Readable` over the attachment's bytes, or `null` when the attachment is absent — resolved through the sheet's read snapshot. See [behaviors/attachments.md](../behaviors/attachments.md#streaming-reads-by-keypath).
 
 Iterator surface:
 
@@ -221,12 +248,12 @@ for await (const change of sheet.diffFrom('HEAD~1', { records: true, patches: tr
   // change.srcHash / change.dstHash        // blob hashes (null on add/delete)
   // change.src / change.dst                // parsed records (records: true)
   // change.patch                           // RFC 6902 JSON Patch ops (patches: true)
-  // change.srcBlob / change.dstBlob        // hologit BlobObject handles (blobs: true)
+  // change.srcBlob / change.dstBlob        // gitsheets BlobHandle handles (blobs: true)
 }
 ```
 
 - `srcCommitHash` accepts a commit hash, a tree hash, or a ref name (`'HEAD~1'`, `'main'`). Defaults to the empty tree — every current record yields `status: 'added'`.
-- `opts.blobs?: boolean` — attach `srcBlob` / `dstBlob` (hologit `BlobObject`) handles.
+- `opts.blobs?: boolean` — attach `srcBlob` / `dstBlob` (gitsheets `BlobHandle`) handles.
 - `opts.records?: boolean` — parse src/dst TOML into records.
 - `opts.patches?: boolean` — produce an RFC 6902 JSON Patch (`Operation[]`) from src to dst. Add and delete entries get a single-op patch (`add` / `remove` on the root); modify entries get the full op sequence.
 
@@ -247,6 +274,7 @@ See [api/errors.md](errors.md). Common: `ValidationError`, `NotFoundError`, `Pat
 - [behaviors/validation.md](../behaviors/validation.md)
 - [behaviors/normalization.md](../behaviors/normalization.md)
 - [behaviors/transactions.md](../behaviors/transactions.md)
+- [behaviors/freshness.md](../behaviors/freshness.md)
 - [behaviors/indexing.md](../behaviors/indexing.md)
 - [behaviors/patch-semantics.md](../behaviors/patch-semantics.md)
 - [behaviors/attachments.md](../behaviors/attachments.md)

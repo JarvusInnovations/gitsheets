@@ -4,11 +4,13 @@
 // remaining git shell-outs are genuine porcelain (ref resolution, sheet
 // discovery, author config). See specs/api/repository.md.
 
-import { execFile } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { execFile, spawn } from 'node:child_process';
+import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { addon, callCore, CoreTransaction } from './core.js';
-import { ConfigError, RefError, TransactionError } from './errors.js';
+import { ConfigError, NotFoundError, RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
 import {
   PushDaemon,
@@ -30,6 +32,15 @@ import type { StandardSchemaV1 } from './validation.js';
 import { EMPTY_TREE_HASH, makeBlobHandle, type BlobHandle } from './working-tree.js';
 
 const exec = promisify(execFile);
+
+/**
+ * Marks async contexts that hold the repository write lock via
+ * `repo.withLock`. Used to detect self-deadlock shapes (withLock-in-withLock,
+ * transact-in-withLock) and throw TransactionError('lock_held') instead of
+ * queueing forever. Module-level like `transactionContext` — the stored value
+ * is the Repository whose lock is held.
+ */
+const lockContext = new AsyncLocalStorage<Repository>();
 
 export interface OpenRepoOptions {
   /** Path to a `.git` directory. If omitted, discovered from the cwd upward. */
@@ -79,6 +90,13 @@ export class Repository {
   readonly #gitDir: string;
   readonly #mutex = new Mutex();
   readonly #postCommitHooks: Array<(commitHash: string) => void> = [];
+  /**
+   * Every live non-transaction Sheet this Repository has issued, held weakly
+   * so registration imposes no lifecycle obligation on consumers. Rebound to
+   * the current HEAD tree by {@link refresh} (and the transact auto-refresh).
+   * See specs/behaviors/freshness.md.
+   */
+  readonly #sheetRegistry = new Set<WeakRef<Sheet>>();
   #strictMode = false;
   #pushDaemon: PushDaemon | null = null;
 
@@ -109,6 +127,118 @@ export class Repository {
   /** Switch to strict mode — mutations outside repo.transact throw. One-way. */
   requireExplicitTransactions(): void {
     this.#strictMode = true;
+  }
+
+  /**
+   * @internal — called from the Sheet constructor so every non-transaction
+   * Sheet this Repository issues (openSheet / openSheets / openStore /
+   * Sheet.clone) participates in the freshness model. Weakly held.
+   */
+  registerSheet(sheet: Sheet): void {
+    this.#sheetRegistry.add(new WeakRef(sheet));
+  }
+
+  /**
+   * @internal — the tree hash non-transaction reads currently resolve
+   * against: HEAD's tree, or the empty tree on a fresh repo. Used by
+   * Sheet.refresh to rebind a single sheet.
+   */
+  async currentReadTree(): Promise<string> {
+    return this.#resolveReadTree();
+  }
+
+  /**
+   * Rebind every live Sheet this Repository has issued to the current HEAD
+   * tree. The consumer's tool after out-of-band ref movement; not needed
+   * after this repository's own transact (a successful commit auto-refreshes).
+   * See specs/behaviors/freshness.md.
+   */
+  async refresh(): Promise<void> {
+    const tree = await this.#resolveReadTree();
+    this.#rebindLiveSheets(tree);
+  }
+
+  #rebindLiveSheets(tree: string): void {
+    for (const ref of this.#sheetRegistry) {
+      const sheet = ref.deref();
+      if (sheet === undefined) {
+        this.#sheetRegistry.delete(ref);
+        continue;
+      }
+      sheet.rebindReadTree(tree);
+    }
+  }
+
+  /**
+   * Stream a blob's bytes by `<ref>:<path>`, resolved at call time —
+   * independent of any Sheet's read snapshot. Returns a Node Readable piped
+   * from `git cat-file blob`; the blob is never fully buffered by gitsheets.
+   *
+   * Throws RefError(ref_not_found) when `ref` doesn't resolve to a tree-ish,
+   * NotFoundError(record_not_found) when `path` is absent under the ref's
+   * tree or names a non-blob. See specs/api/repository.md and
+   * specs/behaviors/attachments.md#streaming-reads-by-keypath.
+   */
+  async readBlobStream(ref: string, path: string): Promise<Readable> {
+    const spec = `${ref}:${path}`;
+    let type: string | null = null;
+    try {
+      const { stdout } = await exec('git', ['cat-file', '-t', spec], { cwd: this.#gitDir });
+      type = stdout.trim() || null;
+    } catch {
+      type = null;
+    }
+    if (type === null) {
+      // Distinguish a bad ref from a missing path for typed errors.
+      const refResolves = await revParseVerify(this.#gitDir, `${ref}^{tree}`);
+      if (!refResolves) {
+        throw new RefError('ref_not_found', `readBlobStream: ref does not resolve: ${ref}`);
+      }
+      throw new NotFoundError('record_not_found', `readBlobStream: no object at ${spec}`);
+    }
+    if (type !== 'blob') {
+      throw new NotFoundError(
+        'record_not_found',
+        `readBlobStream: object at ${spec} is a ${type}, not a blob`,
+      );
+    }
+    const child = spawn('git', ['cat-file', 'blob', spec], { cwd: this.#gitDir });
+    child.stdin.end();
+    return child.stdout;
+  }
+
+  /**
+   * Run `fn` while holding the repository's write lock — the same in-process
+   * mutex that serializes repo.transact. For coordinating non-transact git
+   * operations (external fetch + ref reset, hot reloads, raw plumbing) so
+   * consumers don't need a parallel lock shadowing gitsheets' own.
+   *
+   * Contends FIFO with transactions from other async contexts; released when
+   * `fn` settles (a throw propagates after release). NOT reentrant: calling
+   * withLock inside withLock, withLock inside a transact handler, or transact
+   * (incl. permissive-mode mutations) inside withLock throws
+   * TransactionError('lock_held') instead of deadlocking.
+   * See specs/api/repository.md#repowithlockfn.
+   */
+  async withLock<T>(fn: () => T | Promise<T>): Promise<T> {
+    if (lockContext.getStore() === this) {
+      throw new TransactionError(
+        'lock_held',
+        'repo.withLock inside repo.withLock would deadlock — the write lock is not reentrant',
+      );
+    }
+    if (transactionContext.getStore() !== undefined) {
+      throw new TransactionError(
+        'lock_held',
+        'repo.withLock inside a transaction handler would deadlock — the transaction already holds the write lock',
+      );
+    }
+    const release = await this.#mutex.acquire();
+    try {
+      return await lockContext.run(this, () => fn());
+    } finally {
+      release();
+    }
   }
 
   /** Resolve a ref or commit hash. Returns the full commit hash or null. */
@@ -199,6 +329,15 @@ export class Repository {
         'nested repo.transact is not allowed — use tx.sheet(name) inside the handler',
       );
     }
+    if (lockContext.getStore() === this) {
+      // Queueing would self-deadlock: the caller's own async context already
+      // holds the write lock via repo.withLock. (Permissive-mode Sheet
+      // mutations auto-open transactions, so they hit this guard too.)
+      throw new TransactionError(
+        'lock_held',
+        'repo.transact inside repo.withLock would deadlock — the write lock is already held by this context and is not reentrant',
+      );
+    }
 
     const normalized = Transaction.normalizeOptions(opts);
     const author = await resolveAuthor(this.#gitDir, normalized.author);
@@ -240,6 +379,11 @@ export class Repository {
       }
       const result = await tx.finalize(value);
       if (result.commitHash !== null) {
+        // Auto-refresh: rebind every live sheet to the post-commit HEAD tree
+        // (read-your-writes — specs/behaviors/freshness.md). Resolved from
+        // HEAD rather than the result tree so a commit onto a non-HEAD branch
+        // doesn't shift HEAD-bound sheets.
+        this.#rebindLiveSheets(await this.#resolveReadTree());
         for (const hook of this.#postCommitHooks) {
           try {
             hook(result.commitHash);
@@ -350,6 +494,18 @@ export class Repository {
 /** Convenience factory: `openRepo({ gitDir? })`. */
 export async function openRepo(opts: OpenRepoOptions = {}): Promise<Repository> {
   return Repository.open(opts);
+}
+
+/** True when `git rev-parse --verify --quiet <rev>` resolves. */
+async function revParseVerify(gitDir: string, rev: string): Promise<boolean> {
+  try {
+    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', rev], {
+      cwd: gitDir,
+    });
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** Resolve a ref/commit-ish to its full commit hash via git rev-parse; null on failure. */

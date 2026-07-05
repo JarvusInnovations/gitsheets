@@ -216,6 +216,107 @@ Patch release. Two fixes in service of snapshot-importer-style workflows.
 
 - `hologit` bumped from `^0.49.1` to `^0.50.2` to pick up `TreeObject.clearChildren()` (the O(1) primitive backing the new `Sheet#clear()`).
 
+## v1.x → v2.0 (the Rust core)
+
+v2.0 replaces the Node.js engine with the Rust `gitsheets-core` crate: TOML
+parse/serialize, normalization, validation, path templates, record CRUD, and
+the tree/blob/commit substrate all run natively, and the npm package becomes a
+thin marshalling shell over the `@gitsheets/core-napi` addon. The API surface
+is intentionally unchanged — but three behavior changes bite real consumers.
+All three surfaced during the first production 1.4.1 → 2.x upgrade; this
+section is what turns "16 mystery test failures" into "read the section, apply
+3 changes."
+
+### 1. The `hologit` dependency is gone
+
+2.x drops `hologit` entirely (tree/blob/commit ops run on `holo-tree`/gitoxide
+*inside* the core). Anything that reached into it breaks:
+
+- `repo.hologitRepo` no longer exists.
+- `BlobObject` (e.g. `BlobObject.write`) is no longer importable via gitsheets.
+
+The replacement for the common pattern — hashing binary content and attaching
+it to a record — is the built-in blob primitive plus the attachment API:
+
+```typescript
+// 1.x
+import { BlobObject } from 'hologit';
+
+const blob = await BlobObject.write(repo.hologitRepo, buffer);
+await sheet.setAttachments(record, { 'avatar.jpg': blob });
+```
+
+```typescript
+// 2.x
+const blob = await repo.writeBlob(buffer); // Promise<BlobHandle>
+await sheet.setAttachments(record, { 'avatar.jpg': blob });
+```
+
+`repo.writeBlob(buf)` hashes the bytes into the object database and returns a
+`BlobHandle` accepted everywhere a hologit `BlobObject` used to be
+(`setAttachment`, `setAttachments`). `getAttachment`/`getAttachments`/
+`sheet.attachments()` likewise return `BlobHandle`s with `.read()`/`.stream()`.
+
+### 2. `null`/`undefined`-valued fields
+
+TOML has no `null`, so a cleared optional field and a never-set field are the
+same on-disk state: an absent key. 1.x (`@iarna/toml`) enforced this by
+silently dropping null-valued keys at serialize time. **The initial 2.x
+releases instead threw on marshal** (`cannot marshal JS value of type
+Null/Undefined to a TOML value`) — breaking the standard consumer pattern of
+`.nullable().optional()` schemas with `?? null` normalization on write.
+
+**Fixed in this release**: the 1.x drop semantics are restored and now
+specced ([`specs/behaviors/normalization.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md#null--undefined-handling)).
+A `null`/`undefined`-valued key is dropped, recursively (top-level fields,
+nested tables, and objects inside arrays), before validation and
+serialization — byte-identical to 1.x output, in every binding (Node and
+Python). If you shimmed this with a `stripNullish` helper at your write
+boundary, you can delete it.
+
+One deliberate edge-case divergence from 1.x: a `null`/`undefined` **array
+element** is an error naming the index (1.x silently dropped elements —
+`[1, null, 2]` → `[1, 2]` — which shifts sibling indices and silently changes
+data). Remove the element yourself if that's what you mean. A required field
+set to `null` fails JSON-Schema validation as *missing*, same as 1.x.
+
+### 3. Canonical bytes re-baseline (one-time)
+
+The canonical serializer is now the core's `gitsheets-core::canonical` (the
+Rust `toml` crate's formatting over a deep key sort), replacing `@iarna/toml`.
+A record that was already canonical under 1.x may re-serialize to different —
+but *value-identical* — bytes, once ([#196](https://github.com/JarvusInnovations/gitsheets/issues/196)).
+Three reformat classes, all proven data-lossless and idempotent over a
+~29.5k-record corpus ([PR #205](https://github.com/JarvusInnovations/gitsheets/pull/205)):
+
+1. **Integer digit-group underscores drop** — `legacyId = 31_618` →
+   `legacyId = 31618` (the dominant class).
+2. **String requote** — strings containing both `"` and `'` move from escaped
+   single-line form to readable triple-quoted `"""…"""` form.
+3. **Multiline trailing-quote layout** — a multiline string ending in `"`
+   loses `@iarna`'s line-continuation dance (same value, fewer lines).
+
+Until you re-baseline, the first 2.x write of a record whose 1.x bytes fall in
+one of these classes shows a spurious-looking (but value-neutral) diff. The
+recommended migration is a **one-time re-serialize commit** over each existing
+repo, which is idempotent (a second run produces zero diff — that's the
+adoption check):
+
+```bash
+# Re-normalize every *.toml record under a directory, in place.
+cargo run -p gitsheets-core --example normalize_tree -- path/to/records
+
+git add path/to/records
+git commit -m "chore: re-baseline records to the Rust canonical form"
+
+# Verify idempotence — a second pass must report 0 files re-normalized:
+cargo run -p gitsheets-core --example normalize_tree -- path/to/records
+```
+
+(Or use `git sheet normalize <sheet>` per sheet from the CLI.) See the
+[canonical-form re-baseline notes](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md#canonical-form-re-baseline-the-rust-serializer)
+for the full contract.
+
 ## Going forward
 
 Once migrated, the recipes are the fastest path to common patterns:

@@ -6,7 +6,8 @@ A record may have any number of **attachments** — binary blobs colocated with 
 
 ## Applies To
 
-- [api/sheet.md](../api/sheet.md) — `getAttachment`, `getAttachments`, `setAttachment`, `setAttachments`, `deleteAttachment`, `deleteAttachments`, `attachments` (iterator)
+- [api/sheet.md](../api/sheet.md) — `getAttachment`, `getAttachments`, `getAttachmentStream`, `setAttachment`, `setAttachments`, `deleteAttachment`, `deleteAttachments`, `attachments` (iterator)
+- [api/repository.md](../api/repository.md) — `readBlobStream`
 - [behaviors/path-templates.md](path-templates.md) — query traversal skips attachment subtrees
 
 ## Storage layout
@@ -30,25 +31,35 @@ The attachment name typically encodes the type via extension (`.jpg`, `.pdf`, `.
 
 ## API
 
-### `sheet.setAttachment(record, name, blob)`
+### `sheet.setAttachment(record, name, content)`
 
 Stage a single attachment.
 
 ```typescript
-const blob = await repo.writeBlobFromFile('/path/to/avatar.jpg');
+// one call from raw bytes — no repo.writeBlob pre-step:
+await sheet.setAttachment(record, 'avatar.jpg', uploadedBuffer);
+
+// or from an already-written blob handle:
+const blob = await repo.writeBlob(bytes);
 await sheet.setAttachment(record, 'avatar.jpg', blob);
 ```
 
-`blob` is a hologit `BlobObject` (or whatever the new substrate provides — see the implementation note below). Helper methods exist for creating blobs from files, buffers, or streams.
+`content` accepts any of:
+
+| Value type | Interpretation |
+| --- | --- |
+| `Buffer` / `Uint8Array` | Raw bytes — written to the object store as part of staging ([#234](https://github.com/JarvusInnovations/gitsheets/issues/234)) |
+| `string` | UTF-8 text — encoded and written as bytes |
+| `BlobHandle` | An already-written object-store blob (from `repo.writeBlob` or a diff) — reused by hash, no re-write |
 
 ### `sheet.setAttachments(record, map)`
 
-Stage multiple attachments at once.
+Stage multiple attachments at once. Values accept the same types as `setAttachment` — mixing is fine:
 
 ```typescript
 await sheet.setAttachments(record, {
-  'avatar.jpg': avatarBlob,
-  'avatar-128.jpg': thumbnailBlob,
+  'avatar.jpg': avatarBuffer,        // raw bytes
+  'avatar-128.jpg': thumbnailBlob,   // BlobHandle
 });
 ```
 
@@ -58,7 +69,7 @@ Returns a blob map keyed by attachment name. Used for browsing.
 
 ```typescript
 const attachments = await sheet.getAttachments(record);
-// → { 'avatar.jpg': BlobObject, 'avatar-128.jpg': BlobObject }
+// → { 'avatar.jpg': AttachmentBlobHandle, 'avatar-128.jpg': AttachmentBlobHandle }
 ```
 
 Returns `null` if the record has no attachment directory.
@@ -93,6 +104,26 @@ await sheet.deleteAttachments(record);
 ```
 
 **No-op** when the record has no attachment directory — idempotent, mirroring the cascade behavior on `Sheet.delete(record)`. The transaction is not marked mutated in the no-op case (so a transaction that does nothing else still completes without a commit).
+
+## Streaming reads by key/path
+
+Two surfaces stream an attachment's bytes **without materializing its record** — for HTTP handlers serving blobs (avatars, uploads) where "load the record, then get the attachment" is pure overhead:
+
+### `sheet.getAttachmentStream(recordOrPath, name)`
+
+```typescript
+const stream = await sheet.getAttachmentStream('janedoe', 'avatar.jpg');
+if (stream === null) reply.code(404);
+else stream.pipe(reply.raw);
+```
+
+Accepts a record object or a rendered record path (like `getAttachment`); returns `Promise<Readable | null>` — `null` when the attachment is absent, mirroring `getAttachment`. Resolves through the sheet's read snapshot ([freshness.md](freshness.md)), so it reflects this repository's commits without re-opening the sheet.
+
+### `repo.readBlobStream(ref, path)`
+
+The repository-level primitive for consumers whose attachment key **is** the tree path (`<sheetRoot>/<recordPath>/<name>`): resolves `<ref>:<path>` at call time — no sheet, no snapshot — and returns `Promise<Readable>`. Throws `RefError` (`ref_not_found`) / `NotFoundError` (`record_not_found`) rather than returning `null`, since the caller named an explicit ref. See [api/repository.md](../api/repository.md#reporeadblobstreamref-path).
+
+Both are backed by a streamed `git cat-file blob` read — bytes are piped, never fully buffered by gitsheets.
 
 ## Iterator API
 

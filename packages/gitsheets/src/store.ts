@@ -39,6 +39,13 @@ export type Store<V extends ValidatorMap = ValidatorMap> = {
   readonly [K in keyof V]: Sheet<InferRecord<V[K]>>;
 } & {
   readonly transact: StoreTransactFn<V>;
+  /**
+   * Rebind every sheet to the repository's current HEAD tree — delegates to
+   * `repo.refresh()`. Use after out-of-band ref movement; not needed after
+   * this store's own transact (a successful commit auto-refreshes).
+   * See specs/behaviors/freshness.md.
+   */
+  readonly refresh: () => Promise<void>;
 };
 
 /** tx object passed into Store.transact's handler. */
@@ -109,5 +116,7 @@ export async function openStore<V extends ValidatorMap = ValidatorMap>(
     return repo.transact(txOpts, innerHandler);
   };
 
-  return Object.assign(Object.create(null), sheets, { transact }) as Store<V>;
+  const refresh = (): Promise<void> => repo.refresh();
+
+  return Object.assign(Object.create(null), sheets, { transact, refresh }) as Store<V>;
 }

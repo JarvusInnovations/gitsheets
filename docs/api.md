@@ -80,9 +80,12 @@ const store = await openStore(repo, {
 | `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix` |
 | `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix` |
 | `repo.transact(opts, handler)` | Run a handler in a single-commit transaction |
+| `repo.withLock(fn)` | Run `fn` holding the write lock transact uses — coordinate non-transact git ops. Not reentrant (`lock_held`) |
 | `repo.requireExplicitTransactions()` | Switch to strict mode (one-way) |
 | `repo.startPushDaemon(opts)` | Start async push to a configured remote |
 | `repo.resolveRef(ref)` | Resolve a ref or commit hash; returns `string \| null` |
+| `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` auto-refreshes) |
+| `repo.readBlobStream(ref, path)` | `Promise<Readable>` — stream a blob's bytes at `<ref>:<path>`, resolved at call time. Throws `RefError` / `NotFoundError` |
 
 `opts.prefix` scopes records to a sub-tree under each sheet's configured root — useful for multi-tenant deployments where one git repo holds many tenants under `<root>/<tenant>/...`. Mirrors the CLI `--prefix` flag (env `GITSHEETS_PREFIX`). The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped.
 
@@ -100,6 +103,7 @@ const store = await openStore(repo, {
 | `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` — honors `opts.signal`, `opts.withBody` |
 | `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` — honors `opts.signal`, `opts.withBody` |
 | `sheet.loadBody(record)` | `Promise<T>` — hydrate a body-less record (content-typed sheets) |
+| `sheet.refresh()` | Rebind this sheet's read snapshot to the current HEAD tree (out-of-band movement; own commits auto-refresh) |
 | `sheet.pathForRecord(record)` | `Promise<string>` — rendered path, no write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` — canonical form, no write |
 
@@ -122,10 +126,11 @@ All write methods route through a transaction — permissive mode auto-opens one
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.getAttachment(record, name)` | One attachment's BlobObject or null |
-| `sheet.getAttachments(record)` | Map of name → BlobObject |
-| `sheet.setAttachment(record, name, blob)` | Add or replace |
-| `sheet.setAttachments(record, map)` | Bulk variant |
+| `sheet.getAttachment(record, name)` | One attachment's `AttachmentBlobHandle` or null |
+| `sheet.getAttachments(record)` | Map of name → `AttachmentBlobHandle` |
+| `sheet.getAttachmentStream(recordOrPath, name)` | `Promise<Readable \| null>` — stream an attachment's bytes without materializing the record |
+| `sheet.setAttachment(record, name, content)` | Add or replace — `content` may be raw bytes (`Buffer`/`Uint8Array`), a UTF-8 `string`, or a `BlobHandle` |
+| `sheet.setAttachments(record, map)` | Bulk variant; values accept the same types, mixed freely |
 | `sheet.deleteAttachment(record, name)` | Remove a single attachment; throws `NotFoundError` if missing |
 | `sheet.deleteAttachments(record)` | Remove all attachments; idempotent no-op when no attachment dir |
 | `sheet.attachments(record)` | `AsyncGenerator<AttachmentEntry>` yielding `{name, mimeType, blob}` with `.read()` / `.stream()` |
@@ -177,10 +182,13 @@ type Store<V extends ValidatorMap> = {
   readonly [K in keyof V]: Sheet<InferRecord<V[K]>>;
 } & {
   readonly transact: StoreTransactFn<V>;
+  readonly refresh: () => Promise<void>;
 };
 ```
 
-`store.<sheet>` for each sheet declared in `validators`. `store.transact(opts, async tx => ...)` mirrors `repo.transact` with `tx.<sheet>` aliases that thread validators through.
+`store.<sheet>` for each sheet declared in `validators`. `store.transact(opts, async tx => ...)` mirrors `repo.transact` with `tx.<sheet>` aliases that thread validators through. `store.refresh()` rebinds every sheet to the current HEAD tree (delegates to `repo.refresh()`).
+
+Reads through `store.<sheet>` follow the freshness model: a successful `store.transact` / `repo.transact` auto-refreshes, so post-commit reads reflect the committed state — see [`specs/behaviors/freshness.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/freshness.md).
 
 Sheets not in `validators` are accessible via `repo.openSheet(name)` for one-off un-typed access.
 
@@ -224,7 +232,7 @@ Subclasses:
 | --- | --- |
 | `ConfigError` | `config_missing`, `config_invalid` |
 | `ValidationError` | `validation_failed` (carries `issues: ValidationIssue[]`) |
-| `TransactionError` | `transaction_in_progress`, `transaction_required`, `parent_moved`, `commit_failed`, `push_daemon_running`, `transaction_closed` |
+| `TransactionError` | `transaction_in_progress`, `transaction_required`, `parent_moved`, `commit_failed`, `push_daemon_running`, `transaction_closed`, `lock_held` |
 | `IndexError` | `index_unique_conflict`, `index_not_defined` (carries `conflictingPaths`) |
 | `RefError` | `ref_not_found`, `not_an_ancestor` |
 | `PathTemplateError` | `path_render_failed`, `path_invalid_chars` |

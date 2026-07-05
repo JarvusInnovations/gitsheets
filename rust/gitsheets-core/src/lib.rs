@@ -47,7 +47,7 @@ pub use record::{
 };
 pub use sheet::{Sheet, StageOutcome, UpsertCandidate, WillChange};
 pub use transaction::{Author, Transaction, TransactionOptions, TransactionResult};
-pub use value::{Datetime, DatetimeKind, Value};
+pub use value::{null_array_element_msg, null_value_msg, Datetime, DatetimeKind, Value};
 
 /// Identity over a batch of records — the minimal exercise of the value type
 /// across a bulk boundary. Bindings call this to prove a whole array of records

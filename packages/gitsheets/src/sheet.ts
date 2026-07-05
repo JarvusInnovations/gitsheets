@@ -463,6 +463,14 @@ export interface AttachmentEntry {
   readonly blob: AttachmentBlobHandle;
 }
 
+/**
+ * Value accepted by `Sheet.setAttachment` / `setAttachments`: raw bytes
+ * (`Buffer` / `Uint8Array`), UTF-8 `string` content, or an already-written
+ * `BlobHandle` from `repo.writeBlob` (reused by hash, no re-write).
+ * See specs/behaviors/attachments.md (#234).
+ */
+export type AttachmentContent = string | Buffer | Uint8Array | BlobHandle;
+
 // Minimum-viable MIME map — covers the bulk of typical attachment uses
 // (images, audio, video, docs). Unknown extensions get application/octet-stream.
 const MIME_BY_EXT: Readonly<Record<string, string>> = {
@@ -741,7 +749,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #name: string;
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
-  readonly #readRef: string | undefined;
+  /**
+   * Non-transactional read snapshot — mutable: rebound to the current HEAD
+   * tree by the owning Repository's refresh/auto-refresh, or by
+   * {@link refresh}. See specs/behaviors/freshness.md.
+   */
+  #readRef: string | undefined;
   readonly #dataBase: string;
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
   readonly #prefix: string;
@@ -757,6 +770,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#dataBase = (opts.dataBase ?? '').replace(/^\/+|\/+$/g, '');
     this.#validator = opts.validator;
     this.#prefix = (opts.prefix ?? '').replace(/^\/+|\/+$/g, '');
+    if (this.#transaction === undefined) {
+      // Participate in the freshness model: the Repository rebinds every live
+      // non-tx sheet after each of its own commits, and on repo.refresh().
+      this.#repo.registerSheet(this as unknown as Sheet);
+    }
   }
 
   /** The git dir this sheet reads/writes through. */
@@ -811,10 +829,43 @@ export class Sheet<T extends RecordLike = RecordLike> {
     return this.#transaction !== undefined;
   }
 
+  /**
+   * Rebind this sheet's read snapshot to the repository's current HEAD tree.
+   * Only this sheet — the "did my row land?" primitive; use `repo.refresh()`
+   * or `store.refresh()` to rebind every open sheet at once. Not needed after
+   * this repository's own `repo.transact` (a successful commit
+   * auto-refreshes). See specs/behaviors/freshness.md.
+   *
+   * Throws TypeError on a transaction-bound sheet — those read the
+   * transaction's private in-progress tree and are never rebound.
+   */
+  async refresh(): Promise<void> {
+    if (this.#transaction !== undefined) {
+      throw new TypeError(
+        'Sheet.refresh() is not available on a transaction-bound Sheet — it reads the transaction’s private tree',
+      );
+    }
+    this.rebindReadTree(await this.#repo.currentReadTree());
+  }
+
+  /**
+   * @internal — swap the read snapshot to `tree` and lazily re-derive
+   * everything downstream: the memoized config drops (re-read from the new
+   * tree on next access) and index builds invalidate via the existing
+   * `treeHashAtBuild` comparison in `#ensureIndexBuilt`. No-op when the tree
+   * hasn't moved, or on a transaction-bound sheet.
+   */
+  rebindReadTree(tree: string): void {
+    if (this.#transaction !== undefined) return;
+    if (this.#readRef === tree) return;
+    this.#readRef = tree;
+    this.#configPromise = undefined;
+  }
+
   async readConfig(): Promise<SheetConfig> {
-    // A Sheet reads a single, immutable tree ref (the open snapshot, or the tx
-    // parent), so its config never changes over the instance's lifetime.
-    // Memoize to avoid a `git rev-parse` per call on hot write/query loops.
+    // A Sheet reads a stable snapshot tree ref (rebound only via
+    // rebindReadTree, which resets this memo), so config is memoized to avoid
+    // a `git rev-parse` per call on hot write/query loops.
     if (this.#configPromise === undefined) {
       this.#configPromise = loadConfig(this.#gitDir, this.#configTreeRef(), this.#configPath);
     }
@@ -1443,6 +1494,21 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
+   * Stream an attachment's bytes without materializing the record. Accepts a
+   * record object or a rendered record path (like `getAttachment`); returns a
+   * Node Readable over the blob's bytes, or `null` when the attachment is
+   * absent. Resolved through the sheet's read snapshot — fresh after this
+   * repository's own commits (auto-refresh) or an explicit `refresh()`.
+   *
+   * See specs/behaviors/attachments.md#streaming-reads-by-keypath.
+   */
+  async getAttachmentStream(record: T | string, name: string): Promise<Readable | null> {
+    const blob = await this.getAttachment(record, name);
+    if (blob === null) return null;
+    return makeAttachmentBlobHandle(this.#gitDir, blob.hash).stream();
+  }
+
+  /**
    * Async iterator over a record's attachments. Each yielded item carries
    * `name`, an extension-inferred `mimeType`, and a `blob` handle with
    * `.read()` (returns `Buffer`) and `.stream()` (returns a Readable).
@@ -1470,14 +1536,14 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async setAttachment(
     record: T | string,
     name: string,
-    blob: string | BlobHandle,
+    content: AttachmentContent,
   ): Promise<void> {
-    await this.setAttachments(record, { [name]: blob });
+    await this.setAttachments(record, { [name]: content });
   }
 
   async setAttachments(
     record: T | string,
-    attachments: Record<string, string | BlobHandle>,
+    attachments: Record<string, AttachmentContent>,
   ): Promise<void> {
     if (this.#transaction === undefined) {
       this.#checkStrictMode();
@@ -1498,12 +1564,21 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#ensureCoreSheetOpened();
     const map: Record<string, string> = {};
     for (const [aName, content] of Object.entries(attachments)) {
-      // A string is hashed as its UTF-8 bytes; a BlobHandle already names an
-      // ODB blob (from repo.writeBlob or a diff), so reuse its hash directly.
+      // Raw bytes (Buffer/Uint8Array) and strings (UTF-8 bytes) are written to
+      // the object store here — the one-call attachment write (#234). A
+      // BlobHandle already names an ODB blob (from repo.writeBlob or a diff),
+      // so its hash is reused directly.
       map[aName] =
         typeof content === 'string'
           ? callCore(() => addon.writeBlob(this.#gitDir, Buffer.from(content, 'utf8')))
-          : content.hash;
+          : content instanceof Uint8Array
+            ? callCore(() =>
+                addon.writeBlob(
+                  this.#gitDir,
+                  Buffer.isBuffer(content) ? content : Buffer.from(content),
+                ),
+              )
+            : content.hash;
     }
     callCore(() => this.#transaction!.coreTx.setAttachments(this.#name, recordPath, map));
   }
