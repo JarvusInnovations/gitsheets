@@ -298,3 +298,39 @@ test('templateFieldNames matches the host Template.getFieldNames', () => {
   console.log('\n  getFieldNames parity (rust === host):');
   for (const c of log) console.log(`    OK  ${c.t}  ->  [${c.actual.join(', ')}]`);
 });
+
+// ── date-bucketed sheet: posts, template ${{ publishedAt: YYYY/MM }}/${{ slug }} ─
+
+test('recordQueryCandidates prunes a date-bucketed walk when the field is supplied', () => {
+  const { gitDir } = freshRepo();
+  const POSTS = [
+    { path: '2025/12/c', record: { publishedAt: new Date('2025-12-31T09:00:00Z'), slug: 'c' } },
+    { path: '2026/03/a', record: { publishedAt: new Date('2026-03-09T12:00:00Z'), slug: 'a' } },
+    { path: '2026/04/b', record: { publishedAt: new Date('2026-04-01T00:00:00Z'), slug: 'b' } },
+  ];
+  const tree = seed(gitDir, 'posts', POSTS);
+  const template = '${{ publishedAt: YYYY/MM }}/${{ slug }}';
+
+  // Bucketed field supplied → the walk descends the exact rendered partition.
+  const pruned = recordQueryCandidates(
+    gitDir, tree, 'posts', template,
+    { publishedAt: new Date('2026-03-09T12:00:00Z') },
+    '.toml',
+  );
+  assert.deepEqual(pruned, ['2026/03/a']);
+
+  // Absent → the bucket segments are wildcards.
+  const all = recordQueryCandidates(gitDir, tree, 'posts', template, {}, '.toml');
+  assert.deepEqual(all, ['2025/12/c', '2026/03/a', '2026/04/b']);
+
+  // A datetime equality filter both prunes AND matches end to end.
+  const out = recordQuery(
+    gitDir, tree, 'posts', template,
+    { publishedAt: new Date('2026-03-09T12:00:00Z') },
+    '.toml',
+  );
+  assert.deepEqual(out.map((r) => r.path), ['2026/03/a']);
+
+  // getFieldNames surfaces the bucket's field for query derivation.
+  assert.deepEqual(templateFieldNames(template), ['publishedAt', 'slug']);
+});
