@@ -83,6 +83,13 @@ dprint-plugin-markdown = "=0.22.1"
 # (no runtime data load). Held to 2.0.x because boa_engine 0.21.1 pins
 # `icu_normalizer ~2.0`; a newer icu_collator would diverge that shared dep.
 icu_collator = "=2.0.0"
+# ── date-bucket path keys (declarative `${{ field: YYYY/MM/DD }}` rendering) ─
+# Calendar math for date-bucket path segments: UTC normalization of offset
+# datetimes, ISO 8601 string parsing, and ISO-8601 week / week-based-year
+# (`iso_week()`) for the `YYYY/WW` format — deliberately NOT hand-rolled and
+# NOT routed through the boa engine, so bucket paths are UTC-deterministic on
+# every host. default-features off: no clock/TZ lookup — the core never
+# consults host time or timezone. Already in-tree transitively (gix, bindings).
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 
 [dev-dependencies]
