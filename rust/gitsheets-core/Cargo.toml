@@ -83,6 +83,7 @@ dprint-plugin-markdown = "=0.22.1"
 # (no runtime data load). Held to 2.0.x because boa_engine 0.21.1 pins
 # `icu_normalizer ~2.0`; a newer icu_collator would diverge that shared dep.
 icu_collator = "=2.0.0"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # Throwaway git repos for the record-CRUD + diff integration tests.
