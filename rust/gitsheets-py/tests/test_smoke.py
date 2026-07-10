@@ -390,3 +390,48 @@ def test_index_conflict_error_carries_paths():
     with pytest.raises(gitsheets.IndexError) as ei:
         gitsheets.simulate_core_error("index_unique_conflict")
     assert ei.value.conflicting_paths == ["people/by-email/a@b.com"]
+
+
+# ── date-bucket path keys ──────────────────────────────────────────────────────
+# specs/behaviors/path-templates.md "Date-bucket references": UTC-always,
+# closed format enum, ISO week-based year for YYYY/WW. The same core renders
+# these for every binding — the expected paths here are byte-identical to the
+# Node suite's (rust/gitsheets-napi/test/path-template.mjs).
+
+
+def test_date_bucket_renders_each_format_utc():
+    when = dt.datetime(2026, 3, 9, 12, 0, 0, tzinfo=dt.timezone.utc)
+    record = {"publishedAt": when, "slug": "post"}
+    assert gitsheets.render_paths_batch("${{ publishedAt: YYYY }}/${{ slug }}", [record]) == ["2026/post"]
+    assert gitsheets.render_paths_batch("${{ publishedAt: YYYY/MM }}/${{ slug }}", [record]) == ["2026/03/post"]
+    assert gitsheets.render_paths_batch("${{ publishedAt: YYYY/MM/DD }}/${{ slug }}", [record]) == [
+        "2026/03/09/post"
+    ]
+    assert gitsheets.render_paths_batch("${{ publishedAt: YYYY/WW }}/${{ slug }}", [record]) == ["2026/11/post"]
+
+
+def test_date_bucket_normalizes_offsets_to_utc_and_accepts_strings():
+    # 23:30 at -05:00 is 04:30 the NEXT day in UTC.
+    offset = dt.datetime(2025, 12, 31, 23, 30, 0, tzinfo=dt.timezone(dt.timedelta(hours=-5)))
+    assert gitsheets.render_paths_batch("${{ d: YYYY/MM/DD }}", [{"d": offset}]) == ["2026/01/01"]
+    # ISO 8601 strings work identically.
+    assert gitsheets.render_paths_batch("${{ d: YYYY/MM/DD }}", [{"d": "2025-12-31T23:30:00-05:00"}]) == [
+        "2026/01/01"
+    ]
+    assert gitsheets.render_paths_batch("${{ d: YYYY/MM }}", [{"d": "2026-01-02"}]) == ["2026/01"]
+
+
+def test_date_bucket_iso_week_year_boundaries():
+    # Jan 1 in W53 of the prior ISO year; late December in W01 of the next.
+    assert gitsheets.render_paths_batch("${{ d: YYYY/WW }}", [{"d": "2027-01-01"}]) == ["2026/53"]
+    assert gitsheets.render_paths_batch("${{ d: YYYY/WW }}", [{"d": "2024-12-30"}]) == ["2025/01"]
+
+
+def test_date_bucket_invalid_format_raises_config_error():
+    with pytest.raises(gitsheets.ConfigError):
+        gitsheets.render_paths_batch("${{ d: YYYY-MM }}/${{ slug }}", [{"d": "2026-03-09", "slug": "x"}])
+
+
+def test_date_bucket_wrong_type_raises_path_template_error():
+    with pytest.raises(gitsheets.PathTemplateError):
+        gitsheets.render_paths_batch("${{ d: YYYY }}", [{"d": 42}])
