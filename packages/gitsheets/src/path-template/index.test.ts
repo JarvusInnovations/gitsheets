@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { PathTemplateError } from '../errors.js';
+import { ConfigError, PathTemplateError } from '../errors.js';
 import {
   Template,
   type PathTemplateBlob,
@@ -345,5 +345,188 @@ describe('Template.queryTree', () => {
       found.push(r.path);
     }
     expect(found.sort()).toEqual(['2026/active--1', '2026/closed--2']);
+  });
+});
+
+// --- Date-bucket references (specs/behaviors/path-templates.md § "Date-bucket references") ---
+
+describe('Template date buckets — rendering', () => {
+  const at = new Date('2026-03-09T12:00:00Z');
+
+  it('renders each format of the closed enum', () => {
+    expect(Template.fromString('${{ publishedAt: YYYY }}/${{ slug }}').render({ publishedAt: at, slug: 'hi' }))
+      .toBe('2026/hi');
+    expect(Template.fromString('${{ publishedAt: YYYY/MM }}/${{ slug }}').render({ publishedAt: at, slug: 'hi' }))
+      .toBe('2026/03/hi');
+    expect(Template.fromString('${{ publishedAt: YYYY/MM/DD }}/${{ slug }}').render({ publishedAt: at, slug: 'hi' }))
+      .toBe('2026/03/09/hi');
+    // 2026-03-09 is a Monday in ISO week 11 of week-year 2026.
+    expect(Template.fromString('${{ publishedAt: YYYY/WW }}/${{ slug }}').render({ publishedAt: at, slug: 'hi' }))
+      .toBe('2026/11/hi');
+  });
+
+  it('zero-pads MM, DD, and WW to two digits', () => {
+    const jan2 = new Date('2026-01-02T00:00:00Z');
+    expect(Template.fromString('${{ d: YYYY/MM/DD }}').render({ d: jan2 })).toBe('2026/01/02');
+    expect(Template.fromString('${{ d: YYYY/WW }}').render({ d: jan2 })).toBe('2026/01');
+  });
+
+  it('YYYY/WW uses the ISO week-based year, not the calendar year', () => {
+    // January 1 belonging to week 53 of the PRIOR ISO year.
+    expect(Template.fromString('${{ d: YYYY/WW }}').render({ d: new Date('2027-01-01T00:00:00Z') }))
+      .toBe('2026/53');
+    expect(Template.fromString('${{ d: YYYY }}').render({ d: new Date('2027-01-01T00:00:00Z') }))
+      .toBe('2027');
+    // Late December belonging to week 1 of the NEXT ISO year.
+    expect(Template.fromString('${{ d: YYYY/WW }}').render({ d: new Date('2024-12-30T00:00:00Z') }))
+      .toBe('2025/01');
+  });
+
+  it('renders in UTC regardless of host timezone (Date instants)', () => {
+    // 23:30-05:00 is 04:30 the NEXT day in UTC; a Date is an instant, so
+    // the bucket must land on the UTC date on every host.
+    expect(Template.fromString('${{ d: YYYY/MM/DD }}').render({ d: new Date('2025-12-31T23:30:00-05:00') }))
+      .toBe('2026/01/01');
+  });
+
+  it('accepts ISO 8601 strings', () => {
+    expect(Template.fromString('${{ d: YYYY/MM }}').render({ d: '2026-03-09' })).toBe('2026/03');
+    // Explicit offset normalizes to UTC.
+    expect(Template.fromString('${{ d: YYYY/MM/DD }}').render({ d: '2025-12-31T23:30:00-05:00' }))
+      .toBe('2026/01/01');
+    // Offset-less datetime string reads at face value — never host-TZ parsed.
+    expect(Template.fromString('${{ d: YYYY/MM/DD }}').render({ d: '2026-03-09T23:59:59' }))
+      .toBe('2026/03/09');
+  });
+
+  it('may be the entire path (daily-rollup identity)', () => {
+    expect(Template.fromString('${{ day: YYYY/MM/DD }}').render({ day: '2026-03-09' }))
+      .toBe('2026/03/09');
+  });
+
+  it('composes anywhere in the template', () => {
+    const t = Template.fromString('posts/${{ region }}/${{ d: YYYY/MM }}/${{ slug }}');
+    expect(t.render({ region: 'us', d: '2026-03-09', slug: 'x' })).toBe('posts/us/2026/03/x');
+  });
+
+  it('reads dotted fields from nested objects', () => {
+    const t = Template.fromString('${{ meta.publishedAt: YYYY/MM }}/${{ slug }}');
+    expect(t.render({ meta: { publishedAt: '2026-03-09' }, slug: 'x' })).toBe('2026/03/x');
+  });
+
+  it('getFieldNames includes the bucket base field once', () => {
+    expect(Template.fromString('${{ publishedAt: YYYY/MM/DD }}/${{ slug }}').getFieldNames())
+      .toEqual(['publishedAt', 'slug']);
+    expect(Template.fromString('${{ meta.publishedAt: YYYY/MM }}/${{ slug }}').getFieldNames())
+      .toEqual(['meta', 'slug']);
+  });
+});
+
+describe('Template date buckets — rejections', () => {
+  it('missing field follows the missing-field rule (path_render_failed)', () => {
+    const t = Template.fromString('${{ d: YYYY/MM }}/${{ slug }}');
+    expect(() => t.render({ slug: 'x' })).toThrowError(PathTemplateError);
+    try {
+      t.render({ slug: 'x' });
+    } catch (err) {
+      expect((err as PathTemplateError).code).toBe('path_render_failed');
+    }
+  });
+
+  it('wrong-typed values fail the render naming the field', () => {
+    const t = Template.fromString('${{ d: YYYY/MM }}');
+    for (const d of [42, true, { nested: 1 }, ['2026-03-09']]) {
+      try {
+        t.render({ d });
+        expect.unreachable('render should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(PathTemplateError);
+        expect((err as PathTemplateError).code).toBe('path_render_failed');
+        expect((err as PathTemplateError).message).toContain('"d"');
+      }
+    }
+  });
+
+  it('unparseable and unreal date strings fail the render', () => {
+    const t = Template.fromString('${{ d: YYYY }}');
+    for (const d of ['not-a-date', '2026-02-30', '2026-13-01', '2026-03-09T99:00:00']) {
+      expect(() => t.render({ d })).toThrowError(PathTemplateError);
+    }
+  });
+
+  it('an unknown format is ConfigError(config_invalid) at parse (sheet-open) time', () => {
+    for (const bad of ['YYYY-MM', 'MM/DD', 'YYYY/MM/DD/HH', 'yyyy', 'WW', '']) {
+      try {
+        Template.fromString(`\${{ d: ${bad} }}/\${{ slug }}`);
+        expect.unreachable(`format ${JSON.stringify(bad)} should have thrown`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        expect((err as ConfigError).code).toBe('config_invalid');
+        expect((err as ConfigError).message).toContain('YYYY/MM/DD');
+      }
+    }
+  });
+
+  it('a bucket must stand alone in its path segment', () => {
+    for (const bad of [
+      'posts-${{ d: YYYY }}',
+      '${{ d: YYYY }}.draft',
+      '${{ d: YYYY }}${{ slug }}',
+      '${{ slug }}-${{ d: YYYY/MM }}',
+    ]) {
+      try {
+        Template.fromString(bad);
+        expect.unreachable(`template ${JSON.stringify(bad)} should have thrown`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConfigError);
+        expect((err as ConfigError).code).toBe('config_invalid');
+      }
+    }
+  });
+
+  it('does not hijack non-bucket colon expressions (ternaries still work)', () => {
+    const t = Template.fromString("${{ status === 'live' ? 'published' : 'drafts' }}/${{ slug }}");
+    expect(t.render({ status: 'live', slug: 'x' })).toBe('published/x');
+    expect(t.render({ status: 'draft', slug: 'x' })).toBe('drafts/x');
+  });
+});
+
+describe('Template date buckets — queryTree', () => {
+  const bucketTree = (): FakeTree =>
+    new FakeTree({
+      '2026': new FakeTree({
+        '03': new FakeTree({ 'a.toml': new FakeBlob('a') }),
+        '04': new FakeTree({ 'b.toml': new FakeBlob('b') }),
+      }),
+      '2025': new FakeTree({
+        '12': new FakeTree({ 'c.toml': new FakeBlob('c') }),
+      }),
+    });
+
+  it('descends the exact rendered bucket path when the field is supplied', async () => {
+    const t = Template.fromString('${{ publishedAt: YYYY/MM }}/${{ slug }}');
+    const found = [];
+    for await (const r of t.queryTree(bucketTree(), { publishedAt: new Date('2026-03-09T12:00:00Z') })) {
+      found.push(r.path);
+    }
+    expect(found).toEqual(['2026/03/a']);
+  });
+
+  it('treats bucket segments as wildcards when the field is absent', async () => {
+    const t = Template.fromString('${{ publishedAt: YYYY/MM }}/${{ slug }}');
+    const found = [];
+    for await (const r of t.queryTree(bucketTree(), {})) {
+      found.push(r.path);
+    }
+    expect(found.sort()).toEqual(['2025/12/c', '2026/03/a', '2026/04/b']);
+  });
+
+  it('widens (never throws) on a wrong-typed query value', async () => {
+    const t = Template.fromString('${{ publishedAt: YYYY/MM }}/${{ slug }}');
+    const found = [];
+    for await (const r of t.queryTree(bucketTree(), { publishedAt: 42 })) {
+      found.push(r.path);
+    }
+    expect(found.sort()).toEqual(['2025/12/c', '2026/03/a', '2026/04/b']);
   });
 });
