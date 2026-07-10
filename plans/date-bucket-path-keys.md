@@ -1,9 +1,10 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/path-templates.md
 issues: [252]
+pr: 253
 ---
 
 # Plan: declarative date-bucket path keys
@@ -87,18 +88,18 @@ Out of scope:
 
 ## Validation
 
-- [ ] `cargo test` green across the workspace, including new core cases: each
+- [x] `cargo test` green across the workspace, including new core cases: each
   format; zero-padding; ISO week-year boundaries (2027-01-01 → `2026/53`,
   2024-12-30 → `2025/01`); offset-datetime UTC conversion; string vs datetime
   inputs; wrong-type and unparseable-string rejection; invalid-format
   `config_invalid` at compile; bucket-must-stand-alone rejection; bucket
   pruning + wildcard walk in `query.rs`
-- [ ] napi suite green (`node --test`), including bucket parity vs the
+- [x] napi suite green (`node --test`), including bucket parity vs the
   reference renderer and the error-path cases
-- [ ] Package vitest suite green, including TS `Template` bucket cases and an
+- [x] Package vitest suite green, including TS `Template` bucket cases and an
   end-to-end bucketed sheet upsert/query through the core
-- [ ] `npm run type-check` clean
-- [ ] `docs/path-templates.md` documents the bucket forms with day/month/week
+- [x] `npm run type-check` clean
+- [x] `docs/path-templates.md` documents the bucket forms with day/month/week
   examples
 
 ## Risks / unknowns
@@ -119,8 +120,39 @@ Out of scope:
 
 ## Notes
 
-(Populated at closeout.)
+- Verified totals at closeout: core 184 (`cargo test`, 18 new bucket cases) +
+  clippy `-D warnings` clean, napi 113 (`node --test`, 5 new), vitest 361
+  (gitsheets, 23 new) + 118 (gitsheets-axi), pytest 36 (5 new), type-check
+  clean.
+- **Rider fix shipped with this plan**: the 0.2.0 manifest-sync lockfile
+  refresh had pinned a nested *registry* copy of `@gitsheets/core-napi` under
+  `packages/gitsheets/node_modules`, so all core-routed vitest ran against
+  the published binaries — masking any core behavior change (this branch's
+  e2e tests failed against it until fixed). Resolved with a targeted
+  `npm uninstall`/`npm install -w gitsheets` that drops the nested lockfile
+  entry; the workspace link now resolves everywhere, matching what the CI
+  workflow comment already claimed. Watch for the nested entry reappearing
+  on future post-release lockfile refreshes.
+- Query-time semantics decided during implementation (specced): a
+  wrong-typed / unparseable query value on a bucketed field degrades to a
+  wildcard walk (record-level filter still applies) rather than erroring —
+  consistent with how opaque filter values widen the walk. Write-time stays
+  a hard `PathTemplateError`.
+- Datetime equality filters now enter `prune_record` (they were previously
+  stripped). Plain `${{ field }}` references still treat datetimes as
+  un-renderable; bucket and UTC-accessor expression components can now prune
+  on them. Results identical, strictly better pruning; divergence note in
+  `query.rs` updated.
+- Dotted bucket fields (`${{ meta.publishedAt: YYYY/MM }}`) read nested
+  tables; `getFieldNames` contributes the base segment, matching the
+  expression scan's member-access behavior.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Tracked as: range-pruned queries (date-range filters mapped onto bounded
+  subtree walks) — the follow-up the declarative bucket form enables; noted
+  in the spec's "Query traversal semantics" and on
+  [#252](https://github.com/JarvusInnovations/gitsheets/issues/252).
+- Tracked as: bare `Date`-in-path `.toString()` rendering remains a wart for
+  non-bucket references (host-formatted, TZ-dependent) — recorded in the
+  spec's rejected-alternative note.
