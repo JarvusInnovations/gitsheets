@@ -3,7 +3,7 @@
 
 import { runInNewContext } from 'node:vm';
 
-import { PathTemplateError } from '../errors.js';
+import { ConfigError, PathTemplateError } from '../errors.js';
 
 // --- Public types ---
 
@@ -44,7 +44,25 @@ interface ExpressionPart {
   readonly evaluate: (record: RecordLike) => unknown;
 }
 
-type Part = LiteralPart | FieldPart | ExpressionPart;
+/**
+ * One path segment of a date-bucket reference (`${{ field: YYYY/MM/DD }}`).
+ * The parser expands a bucket token into one `bucket` part per format part,
+ * each its own component, so a `YYYY/MM/DD` bucket creates three real tree
+ * levels. `YYYY` in a `YYYY/WW` bucket is the ISO *week-based* year
+ * (`isoYYYY`) — a different value from the calendar year near year
+ * boundaries. See specs/behaviors/path-templates.md § "Date-bucket
+ * references".
+ */
+interface BucketPart {
+  readonly kind: 'bucket';
+  /** The referenced field, split on `.` (dotted references read nested objects). */
+  readonly field: readonly string[];
+  readonly unit: BucketUnit;
+}
+
+type BucketUnit = 'YYYY' | 'MM' | 'DD' | 'isoYYYY' | 'WW';
+
+type Part = LiteralPart | FieldPart | ExpressionPart | BucketPart;
 
 interface Component {
   readonly parts: readonly Part[];
@@ -126,25 +144,229 @@ function stringifyValue(value: unknown): string | undefined {
   return undefined;
 }
 
-function renderPart(part: Part, record: RecordLike): string | undefined {
+function renderPart(part: Part, record: RecordLike, strict: boolean): string | undefined {
   switch (part.kind) {
     case 'literal':
       return part.text;
     case 'field':
       return stringifyValue(record[part.name]);
+    case 'bucket': {
+      const date = bucketDate(record, part.field, strict);
+      return date === undefined ? undefined : renderBucketUnit(date, part.unit);
+    }
     case 'expression':
       return stringifyValue(part.evaluate(record));
   }
 }
 
-function renderComponent(c: Component, record: RecordLike): string | undefined {
+/**
+ * Render a component to text, or `undefined` (un-renderable). `strict` is
+ * true for full-record `render` — where a date-bucket field holding a
+ * non-date value throws `PathTemplateError` — and false for `queryTree`
+ * planning, where a bad bucket value degrades to un-renderable so the walk
+ * widens instead of erroring (matching how opaque filter values widen the
+ * walk).
+ */
+function renderComponent(c: Component, record: RecordLike, strict: boolean): string | undefined {
   let out = '';
   for (const part of c.parts) {
-    const piece = renderPart(part, record);
+    const piece = renderPart(part, record, strict);
     if (piece === undefined) return undefined;
     out += piece;
   }
   return out;
+}
+
+// --- Date buckets (specs/behaviors/path-templates.md § "Date-bucket references") ---
+
+/**
+ * The closed format enum. Deliberately not a format language: anything else
+ * in the format position is `ConfigError('config_invalid')` at sheet-open.
+ */
+const BUCKET_FORMATS: Record<string, readonly BucketUnit[]> = {
+  'YYYY': ['YYYY'],
+  'YYYY/MM': ['YYYY', 'MM'],
+  'YYYY/MM/DD': ['YYYY', 'MM', 'DD'],
+  'YYYY/WW': ['isoYYYY', 'WW'],
+};
+
+const BUCKET_FIELD_SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Recognize a date-bucket *attempt*: `<field(.dotted)?> : <format>`. Format
+ * validation against the closed enum happens at the call site, so an unknown
+ * format is `config_invalid` rather than falling through to the expression
+ * compiler.
+ *
+ * Recognizing this shape breaks no working template: `(field: ...)` is a JS
+ * labeled statement inside the renderer's `return (...)` wrapper — a
+ * guaranteed syntax error — so the colon-after-identifier space was dead.
+ */
+function splitBucketAttempt(
+  source: string,
+): { field: readonly string[]; format: string } | undefined {
+  const idx = source.indexOf(':');
+  if (idx === -1) return undefined;
+  const head = source.slice(0, idx).trim();
+  if (head === '') return undefined;
+  const field = head.split('.');
+  if (!field.every((seg) => BUCKET_FIELD_SEGMENT_RE.test(seg))) return undefined;
+  return { field, format: source.slice(idx + 1).trim() };
+}
+
+/** A UTC calendar date — the value a bucket partitions on. */
+interface UtcDate {
+  readonly year: number;
+  readonly month: number;
+  readonly day: number;
+}
+
+// ISO 8601 shapes accepted for bucket string values, mirroring the core
+// (chrono): RFC 3339 offsets only (`Z` or `±hh:mm`), seconds required in
+// datetimes, optional fraction.
+const BUCKET_DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const BUCKET_DATETIME_RE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2})?$/;
+
+/** Is `y-m-d` a real proleptic-Gregorian calendar date? */
+function isRealDate(year: number, month: number, day: number): boolean {
+  const t = new Date(Date.UTC(year, month - 1, day));
+  return (
+    t.getUTCFullYear() === year && t.getUTCMonth() === month - 1 && t.getUTCDate() === day
+  );
+}
+
+/**
+ * Resolve a (possibly dotted) bucket field against `record` and reduce it to
+ * the **UTC calendar date** the bucket partitions on. **UTC always**: a JS
+ * `Date` (an absolute instant) is read through its UTC accessors; a string
+ * with an explicit offset is normalized to UTC; offset-less strings are read
+ * at face value — never via `new Date(string)`, which would consult the host
+ * timezone. Absent field → `undefined` (un-renderable); present-but-not-a-
+ * date → throws in strict mode, `undefined` otherwise.
+ */
+function bucketDate(
+  record: RecordLike,
+  field: readonly string[],
+  strict: boolean,
+): UtcDate | undefined {
+  let current: unknown = record;
+  for (const seg of field) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as RecordLike)[seg];
+    if (current === undefined) return undefined;
+  }
+  const fail = (detail: string): undefined => {
+    if (strict) {
+      throw new PathTemplateError(
+        'path_render_failed',
+        `date-bucket reference: ${detail}`,
+      );
+    }
+    return undefined;
+  };
+  const name = field.join('.');
+
+  if (current instanceof Date) {
+    if (Number.isNaN(current.getTime())) {
+      return fail(`field "${name}" is an invalid Date`);
+    }
+    return {
+      year: current.getUTCFullYear(),
+      month: current.getUTCMonth() + 1,
+      day: current.getUTCDate(),
+    };
+  }
+
+  if (typeof current === 'string') {
+    const dateOnly = BUCKET_DATE_ONLY_RE.exec(current);
+    if (dateOnly) {
+      const [, y, m, d] = dateOnly;
+      const year = Number(y);
+      const month = Number(m);
+      const day = Number(d);
+      if (!isRealDate(year, month, day)) {
+        return fail(`field "${name}" value ${JSON.stringify(current)} is not a real date`);
+      }
+      return { year, month, day };
+    }
+    const dt = BUCKET_DATETIME_RE.exec(current);
+    if (dt) {
+      const [, y, m, d, hh, mm, ss, offset] = dt;
+      const year = Number(y);
+      const month = Number(m);
+      const day = Number(d);
+      if (
+        !isRealDate(year, month, day) ||
+        Number(hh) > 23 ||
+        Number(mm) > 59 ||
+        Number(ss) > 60
+      ) {
+        return fail(
+          `field "${name}" value ${JSON.stringify(current)} is not a real date or time`,
+        );
+      }
+      if (offset === undefined) {
+        // Offset-less datetime: face value, no TZ math.
+        return { year, month, day };
+      }
+      // Explicit offset (Z or ±hh:mm): normalize the instant to UTC.
+      const epoch = Date.parse(current);
+      if (Number.isNaN(epoch)) {
+        return fail(`field "${name}" value ${JSON.stringify(current)} is not parseable`);
+      }
+      const at = new Date(epoch);
+      return {
+        year: at.getUTCFullYear(),
+        month: at.getUTCMonth() + 1,
+        day: at.getUTCDate(),
+      };
+    }
+    return fail(
+      `field "${name}" value ${JSON.stringify(current)} is not an ISO 8601 date or datetime`,
+    );
+  }
+
+  return fail(
+    `field "${name}" has type ${Array.isArray(current) ? 'array' : typeof current} — ` +
+      'date-bucket fields accept Date values or ISO 8601 strings',
+  );
+}
+
+/**
+ * ISO-8601 week and week-based year of a UTC date (nearest-Thursday rule).
+ * Must agree exactly with chrono's `iso_week()` in the core — covered by the
+ * boundary-date parity tests.
+ */
+function isoWeekOf(d: UtcDate): { year: number; week: number } {
+  const t = new Date(Date.UTC(d.year, d.month - 1, d.day));
+  const dayNum = (t.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
+  t.setUTCDate(t.getUTCDate() - dayNum + 3); // this ISO week's Thursday
+  const isoYear = t.getUTCFullYear();
+  const jan1 = Date.UTC(isoYear, 0, 1);
+  const week = Math.floor((t.getTime() - jan1) / 86_400_000 / 7) + 1;
+  return { year: isoYear, week };
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+const pad4 = (n: number): string => String(n).padStart(4, '0');
+
+/** Render one bucket unit, zero-padded (`MM`/`DD`/`WW` two digits, years four). */
+function renderBucketUnit(date: UtcDate, unit: BucketUnit): string {
+  switch (unit) {
+    case 'YYYY':
+      return pad4(date.year);
+    case 'MM':
+      return pad2(date.month);
+    case 'DD':
+      return pad2(date.day);
+    case 'isoYYYY':
+      return pad4(isoWeekOf(date).year);
+    case 'WW':
+      return pad2(isoWeekOf(date).week);
+  }
 }
 
 // --- Parser ---
@@ -189,6 +411,42 @@ function parseTemplateString(source: string): readonly Component[] {
       }
       exprSource = exprSource.trim();
       i += 2;
+
+      // Date-bucket reference — recognized BEFORE the expression fallback
+      // (specs/behaviors/path-templates.md § "Date-bucket references").
+      const bucket = splitBucketAttempt(exprSource);
+      if (bucket !== undefined) {
+        const units = BUCKET_FORMATS[bucket.format];
+        if (units === undefined) {
+          throw new ConfigError(
+            'config_invalid',
+            `invalid date-bucket format ${JSON.stringify(bucket.format)} in ` +
+              `"\${{ ${exprSource} }}" — supported formats: YYYY, YYYY/MM, YYYY/MM/DD, YYYY/WW`,
+          );
+        }
+        // A bucket expands into multiple real segments, so it must stand
+        // alone in its path segment: nothing already in the segment (any
+        // pending literal was flushed above), and a `/` or end-of-template
+        // after it.
+        const standaloneBefore = segments[segments.length - 1]!.length === 0;
+        const standaloneAfter = i >= normalized.length || normalized[i] === '/';
+        if (!standaloneBefore || !standaloneAfter) {
+          throw new ConfigError(
+            'config_invalid',
+            `date-bucket reference "\${{ ${exprSource} }}" must stand alone in its ` +
+              'path segment — no literal prefix/suffix or adjacent references',
+          );
+        }
+        for (let u = 0; u < units.length; u++) {
+          if (u > 0) segments.push([]);
+          segments[segments.length - 1]!.push({
+            kind: 'bucket',
+            field: bucket.field,
+            unit: units[u]!,
+          });
+        }
+        continue;
+      }
 
       if (FIELD_NAME_RE.test(exprSource)) {
         const recursive = exprSource.endsWith('/**');
@@ -340,6 +598,10 @@ export class Template {
       for (const p of c.parts) {
         if (p.kind === 'field') {
           seen.add(p.name);
+        } else if (p.kind === 'bucket') {
+          // A bucket contributes its base (top-level) field name — the same
+          // contribution an expression scan would make for a dotted member.
+          seen.add(p.field[0]!);
         } else if (p.kind === 'expression') {
           for (const id of extractIdentifiers(p.source)) {
             seen.add(id);
@@ -361,7 +623,7 @@ export class Template {
     const segments: string[] = [];
     for (let i = 0; i < this.#components.length; i++) {
       const c = this.#components[i]!;
-      const rendered = renderComponent(c, record);
+      const rendered = renderComponent(c, record, true);
       if (rendered === undefined) {
         throw new PathTemplateError(
           'path_render_failed',
@@ -406,7 +668,7 @@ export class Template {
     for (let i = depth; i < numComponents; i++) {
       const isLast = i + 1 === numComponents;
       const c = this.#components[i]!;
-      const rendered = renderComponent(c, query);
+      const rendered = renderComponent(c, query, false);
 
       if (isLast) {
         if (rendered !== undefined) {
