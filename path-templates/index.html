@@ -595,6 +595,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#date-buckets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Date buckets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-queries-use-the-template" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1061,6 +1072,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#date-buckets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Date buckets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-queries-use-the-template" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1133,6 +1155,11 @@ TOML file lives in the data tree.</p>
 <td>The value of <code>record.slug</code></td>
 </tr>
 <tr>
+<td>Date bucket</td>
+<td><code>${{ publishedAt: YYYY/MM/DD }}</code></td>
+<td>UTC date partitions of the field — one directory level per format part</td>
+</tr>
+<tr>
 <td>Expression</td>
 <td><code>${{ slug.toLowerCase() }}</code></td>
 <td>Arbitrary JS expression with record fields in scope</td>
@@ -1161,12 +1188,40 @@ TOML file lives in the data tree.</p>
 <span class="c1"># Composite key (two-level directory)</span>
 <span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ domain }}/${{ username }}&quot;</span>
 
-<span class="c1"># Sharded by date</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt.getFullYear() }}/${{ publishedAt.getMonth() }}/${{ slug }}&quot;</span>
+<span class="c1"># Date-bucketed (2026/03/09/my-post.toml)</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/MM/DD }}/${{ slug }}&quot;</span>
 
 <span class="c1"># Nested path field</span>
 <span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ contentPath/** }}&quot;</span>
 </code></pre></div>
+<h2 id="date-buckets">Date buckets<a class="headerlink" href="#date-buckets" title="Permanent link"> ¶</a></h2>
+<p>A date-bucket reference partitions records by a date field — by day, month,
+year, or ISO week:</p>
+<div class="highlight"><pre><span></span><code><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/MM/DD }}/${{ slug }}&quot;</span><span class="w">   </span><span class="c1"># 2026/03/09/my-post.toml</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/MM }}/${{ slug }}&quot;</span><span class="w">      </span><span class="c1"># 2026/03/my-post.toml</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/WW }}/${{ slug }}&quot;</span><span class="w">      </span><span class="c1"># 2026/11/my-post.toml (ISO week)</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ day: YYYY/MM/DD }}&quot;</span><span class="w">                       </span><span class="c1"># daily rollup: the bucket IS the key</span>
+</code></pre></div>
+<p>The format is a <strong>closed set</strong> — <code>YYYY</code>, <code>YYYY/MM</code>, <code>YYYY/MM/DD</code>, <code>YYYY/WW</code>;
+anything else throws <code>ConfigError(config_invalid)</code> when the sheet is opened.
+Fancier partitioning falls back to the expression form.</p>
+<p>Semantics worth knowing:</p>
+<ul>
+<li><strong>UTC always.</strong> Buckets never consult the host timezone, so the same record
+  produces the same path on every machine. (The expression spelling
+  <code>getFullYear()</code> doesn&rsquo;t have this guarantee — it renders host-local dates.)</li>
+<li><strong><code>YYYY/WW</code> is ISO-8601 week numbering</strong>, and its year part is the ISO
+  <em>week-based</em> year: 2027-01-01 belongs to ISO week 2026-W53 and renders as
+  <code>2026/53</code>.</li>
+<li><strong><code>MM</code>, <code>DD</code>, <code>WW</code> are always two digits</strong> — partitions sort correctly.</li>
+<li>The field may hold a datetime/date value or an ISO 8601 string. One bucket
+  token expands to multiple real directory levels, and must stand alone
+  between slashes.</li>
+<li>Queries that supply the bucketed field (e.g.
+  <code>posts.queryAll({ publishedAt })</code>) descend the exact partition instead of
+  scanning every record; without it, the partition levels are walked like any
+  other unconstrained segment.</li>
+</ul>
 <h2 id="how-queries-use-the-template">How queries use the template<a class="headerlink" href="#how-queries-use-the-template" title="Permanent link"> ¶</a></h2>
 <p>When a query specifies fields the template uses, gitsheets prunes the tree
 walk to only matching subtrees instead of reading every record.</p>
