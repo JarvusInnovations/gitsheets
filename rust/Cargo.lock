@@ -836,6 +836,7 @@ name = "gitsheets-core"
 version = "0.0.0"
 dependencies = [
  "boa_engine",
+ "chrono",
  "dprint-plugin-markdown",
  "gix",
  "holo-tree",

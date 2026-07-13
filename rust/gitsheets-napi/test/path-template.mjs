@@ -38,6 +38,25 @@ const CORPUS = [
   ['${{ (slug || legacyId) }}', { slug: 'realslug', legacyId: 'abc' }],
   // Recursive (field/**) component — value contains slashes.
   ['${{ contentPath/** }}', { contentPath: 'docs/guides/intro' }],
+  // Date-bucket references (UTC-deterministic, rendered natively on both
+  // sides — chrono in the core, UTC accessors in the reference renderer).
+  ['${{ publishedAt: YYYY }}/${{ slug }}', { publishedAt: new Date('2026-03-09T12:00:00Z'), slug: 'post' }],
+  ['${{ publishedAt: YYYY/MM }}/${{ slug }}', { publishedAt: new Date('2026-03-09T12:00:00Z'), slug: 'post' }],
+  ['${{ publishedAt: YYYY/MM/DD }}/${{ slug }}', { publishedAt: new Date('2026-03-09T12:00:00Z'), slug: 'post' }],
+  ['${{ publishedAt: YYYY/WW }}/${{ slug }}', { publishedAt: new Date('2026-03-09T12:00:00Z'), slug: 'post' }],
+  // Offset instant lands on the UTC date (next day) on both sides.
+  ['${{ d: YYYY/MM/DD }}', { d: new Date('2025-12-31T23:30:00-05:00') }],
+  // ISO week-based-year boundaries: Jan 1 in W53 of the prior ISO year,
+  // late December in W01 of the next.
+  ['${{ d: YYYY/WW }}', { d: new Date('2027-01-01T00:00:00Z') }],
+  ['${{ d: YYYY/WW }}', { d: new Date('2024-12-30T00:00:00Z') }],
+  // ISO 8601 string inputs: date-only, offset-less (face value), offset.
+  ['${{ d: YYYY/MM/DD }}', { d: '2026-03-09' }],
+  ['${{ d: YYYY/MM/DD }}', { d: '2026-03-09T23:59:59' }],
+  ['${{ d: YYYY/MM/DD }}', { d: '2025-12-31T23:30:00-05:00' }],
+  // Bucket as the entire path (daily-rollup identity) + dotted field.
+  ['${{ day: YYYY/MM/DD }}', { day: '2026-03-09' }],
+  ['${{ meta.publishedAt: YYYY/MM }}/${{ slug }}', { meta: { publishedAt: '2026-03-09' }, slug: 'post' }],
 ];
 
 test('renderPathsBatch matches the node:vm reference renderer across the corpus', () => {
@@ -100,4 +119,48 @@ test('getFullYear (local-time) parity is reported (TZ-sensitive)', () => {
   const [actual] = renderPathsBatch(template, [record]);
   console.log(`\n  getFullYear local-time parity: node:vm=${expected} boa=${actual} (TZ=${process.env.TZ ?? 'system'})`);
   assert.equal(actual, expected, 'boa local-time year matches node:vm in-process');
+});
+
+// --- Date-bucket cases beyond the render corpus ---
+
+test('date-bucket rendering is pinned to expected UTC values', () => {
+  // Belt and braces beyond ref parity: assert the exact expected paths so a
+  // shared bug in both implementations can't hide.
+  const cases = [
+    ['${{ d: YYYY/MM/DD }}', { d: new Date('2026-03-09T12:00:00Z') }, '2026/03/09'],
+    ['${{ d: YYYY/WW }}', { d: new Date('2027-01-01T00:00:00Z') }, '2026/53'],
+    ['${{ d: YYYY/WW }}', { d: new Date('2024-12-30T00:00:00Z') }, '2025/01'],
+    ['${{ d: YYYY/MM/DD }}', { d: new Date('2025-12-31T23:30:00-05:00') }, '2026/01/01'],
+    ['${{ d: YYYY/MM }}', { d: '2026-01-02' }, '2026/01'],
+  ];
+  for (const [template, record, expected] of cases) {
+    assert.deepEqual(renderPathsBatch(template, [record]), [expected], template);
+  }
+});
+
+test('an unknown date-bucket format fails identically (config_invalid)', () => {
+  for (const bad of ['YYYY-MM', 'MM/DD', 'YYYY/MM/DD/HH', 'yyyy']) {
+    const template = `\${{ d: ${bad} }}/\${{ slug }}`;
+    assert.throws(() => refRender(template, { d: '2026-03-09', slug: 'x' }), (e) => e.code === 'config_invalid');
+    assert.throws(() => renderPathsBatch(template, [{ d: '2026-03-09', slug: 'x' }]), (e) => e.code === 'config_invalid');
+  }
+});
+
+test('a non-standalone date bucket fails identically (config_invalid)', () => {
+  for (const template of ['posts-${{ d: YYYY }}', '${{ d: YYYY }}${{ slug }}']) {
+    assert.throws(() => refRender(template, { d: '2026-03-09', slug: 'x' }), (e) => e.code === 'config_invalid');
+    assert.throws(() => renderPathsBatch(template, [{ d: '2026-03-09', slug: 'x' }]), (e) => e.code === 'config_invalid');
+  }
+});
+
+test('a wrong-typed or unparseable bucket value fails identically (path_render_failed)', () => {
+  for (const d of [42, true, 'not-a-date', '2026-02-30']) {
+    assert.throws(() => refRender('${{ d: YYYY }}', { d }), (e) => e.code === 'path_render_failed');
+    assert.throws(() => renderPathsBatch('${{ d: YYYY }}', [{ d }]), (e) => e.code === 'path_render_failed');
+  }
+});
+
+test('a missing bucket field follows the missing-field rule identically', () => {
+  assert.throws(() => refRender('${{ d: YYYY/MM }}/${{ slug }}', { slug: 'x' }), (e) => e.code === 'path_render_failed');
+  assert.throws(() => renderPathsBatch('${{ d: YYYY/MM }}/${{ slug }}', [{ slug: 'x' }]), (e) => e.code === 'path_render_failed');
 });

@@ -51,6 +51,103 @@ function stringifyValue(value) {
   return undefined;
 }
 
+// --- Date buckets (transcribed from the production renderer; spec:
+// specs/behaviors/path-templates.md § "Date-bucket references") ---
+
+const BUCKET_FORMATS = {
+  'YYYY': ['YYYY'],
+  'YYYY/MM': ['YYYY', 'MM'],
+  'YYYY/MM/DD': ['YYYY', 'MM', 'DD'],
+  'YYYY/WW': ['isoYYYY', 'WW'],
+};
+
+const BUCKET_FIELD_SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
+
+function splitBucketAttempt(source) {
+  const idx = source.indexOf(':');
+  if (idx === -1) return undefined;
+  const head = source.slice(0, idx).trim();
+  if (head === '') return undefined;
+  const field = head.split('.');
+  if (!field.every((seg) => BUCKET_FIELD_SEGMENT_RE.test(seg))) return undefined;
+  return { field, format: source.slice(idx + 1).trim() };
+}
+
+const BUCKET_DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const BUCKET_DATETIME_RE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2})?$/;
+
+function isRealDate(year, month, day) {
+  const t = new Date(Date.UTC(year, month - 1, day));
+  return t.getUTCFullYear() === year && t.getUTCMonth() === month - 1 && t.getUTCDate() === day;
+}
+
+// Strict-only (refRender renders full records): wrong type / unparseable
+// throws; absent field returns undefined (un-renderable).
+function bucketDate(record, field) {
+  let current = record;
+  for (const seg of field) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = current[seg];
+    if (current === undefined) return undefined;
+  }
+  const name = field.join('.');
+  const fail = (detail) => {
+    throw new RefPathError('path_render_failed', `date-bucket reference: ${detail}`);
+  };
+  if (current instanceof Date) {
+    if (Number.isNaN(current.getTime())) fail(`field "${name}" is an invalid Date`);
+    return { year: current.getUTCFullYear(), month: current.getUTCMonth() + 1, day: current.getUTCDate() };
+  }
+  if (typeof current === 'string') {
+    const dateOnly = BUCKET_DATE_ONLY_RE.exec(current);
+    if (dateOnly) {
+      const [, y, m, d] = dateOnly;
+      const year = Number(y), month = Number(m), day = Number(d);
+      if (!isRealDate(year, month, day)) fail(`field "${name}" value ${JSON.stringify(current)} is not a real date`);
+      return { year, month, day };
+    }
+    const dt = BUCKET_DATETIME_RE.exec(current);
+    if (dt) {
+      const [, y, m, d, hh, mm, ss, offset] = dt;
+      const year = Number(y), month = Number(m), day = Number(d);
+      if (!isRealDate(year, month, day) || Number(hh) > 23 || Number(mm) > 59 || Number(ss) > 60) {
+        fail(`field "${name}" value ${JSON.stringify(current)} is not a real date or time`);
+      }
+      if (offset === undefined) return { year, month, day };
+      const epoch = Date.parse(current);
+      if (Number.isNaN(epoch)) fail(`field "${name}" value ${JSON.stringify(current)} is not parseable`);
+      const at = new Date(epoch);
+      return { year: at.getUTCFullYear(), month: at.getUTCMonth() + 1, day: at.getUTCDate() };
+    }
+    fail(`field "${name}" value ${JSON.stringify(current)} is not an ISO 8601 date or datetime`);
+  }
+  fail(`field "${name}" has type ${Array.isArray(current) ? 'array' : typeof current}`);
+}
+
+function isoWeekOf(d) {
+  const t = new Date(Date.UTC(d.year, d.month - 1, d.day));
+  const dayNum = (t.getUTCDay() + 6) % 7;
+  t.setUTCDate(t.getUTCDate() - dayNum + 3);
+  const isoYear = t.getUTCFullYear();
+  const jan1 = Date.UTC(isoYear, 0, 1);
+  const week = Math.floor((t.getTime() - jan1) / 86_400_000 / 7) + 1;
+  return { year: isoYear, week };
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const pad4 = (n) => String(n).padStart(4, '0');
+
+function renderBucketUnit(date, unit) {
+  switch (unit) {
+    case 'YYYY': return pad4(date.year);
+    case 'MM': return pad2(date.month);
+    case 'DD': return pad2(date.day);
+    case 'isoYYYY': return pad4(isoWeekOf(date).year);
+    case 'WW': return pad2(isoWeekOf(date).week);
+  }
+}
+
 function parseTemplate(source) {
   const normalized = source.replace(/^\/+/, '').replace(/\/+$/, '');
   if (normalized === '') throw new RefPathError('path_render_failed', 'path template is empty');
@@ -77,6 +174,23 @@ function parseTemplate(source) {
       }
       exprSource = exprSource.trim();
       i += 2;
+      const bucket = splitBucketAttempt(exprSource);
+      if (bucket !== undefined) {
+        const units = BUCKET_FORMATS[bucket.format];
+        if (units === undefined) {
+          throw new RefPathError('config_invalid', `invalid date-bucket format ${JSON.stringify(bucket.format)}`);
+        }
+        const standaloneBefore = segments[segments.length - 1].length === 0;
+        const standaloneAfter = i >= normalized.length || normalized[i] === '/';
+        if (!standaloneBefore || !standaloneAfter) {
+          throw new RefPathError('config_invalid', 'date-bucket reference must stand alone in its path segment');
+        }
+        for (let u = 0; u < units.length; u++) {
+          if (u > 0) segments.push([]);
+          segments[segments.length - 1].push({ kind: 'bucket', field: bucket.field, unit: units[u] });
+        }
+        continue;
+      }
       if (FIELD_NAME_RE.test(exprSource)) {
         const recursive = exprSource.endsWith('/**');
         const name = recursive ? exprSource.slice(0, -3) : exprSource;
@@ -125,6 +239,10 @@ function renderPart(part, record) {
       return part.text;
     case 'field':
       return stringifyValue(record[part.name]);
+    case 'bucket': {
+      const date = bucketDate(record, part.field);
+      return date === undefined ? undefined : renderBucketUnit(date, part.unit);
+    }
     case 'expression':
       return stringifyValue(part.evaluate(record));
   }

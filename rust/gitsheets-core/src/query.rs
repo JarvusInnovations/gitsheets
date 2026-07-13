@@ -38,10 +38,13 @@
 //! so an integer filter does not equal a float-stored field. This is the same
 //! bytes-authority int/float distinction the value type carries everywhere.
 //!
-//! *Datetime as a path/prune field* — a datetime field renders to `None` in the
-//! core path layer (see `path_template`), so a component keyed on a datetime is
-//! treated as un-renderable and the walk expands rather than prunes — fewer
-//! records pruned, identical final results.
+//! *Datetime as a path/prune field* — a datetime field renders to `None` for a
+//! plain `${{ field }}` reference (see `path_template`), so such a component
+//! keyed on a datetime is treated as un-renderable and the walk expands rather
+//! than prunes — fewer records pruned, identical final results. Datetime
+//! equality values DO enter the prune record (see [`prune_record`]) so that
+//! date-*bucket* components (`${{ field: YYYY/MM/DD }}`) — and expression
+//! components using UTC accessors — prune to the exact rendered path.
 
 use holo_tree::{Child, MutableTree, ObjectId};
 
@@ -137,17 +140,27 @@ fn predicate_error(field: &str, e: SnippetError) -> Error {
 
 /// The scalar equality fields of a filter, as a `Value::Table` — the partial
 /// "record" the template renders against for pruning. Only top-level scalar
-/// equality clauses contribute (predicates, nested filters, arrays, and
-/// datetimes render to nothing / un-renderable, so they widen the walk exactly
-/// as the host's `queryTree` does when it renders the full query object and a
+/// equality clauses contribute (predicates, nested filters, and arrays render
+/// to nothing / un-renderable, so they widen the walk exactly as the host's
+/// `queryTree` does when it renders the full query object and a
 /// function/object/array value stringifies to `undefined`).
+///
+/// Datetimes are included so a datetime-valued equality filter prunes a
+/// date-*bucket* component to its exact rendered path (spec:
+/// "Date-bucket references § Query traversal semantics"). A plain
+/// `${{ field }}` reference still treats a datetime as un-renderable
+/// (`field_to_string` → `None`), preserving the walk-widening behavior there.
 pub fn prune_record(filter: &Filter) -> Value {
     let mut map = indexmap::IndexMap::new();
     for (key, pred) in &filter.0 {
         if let FilterPred::Equals(v) = pred {
             if matches!(
                 v,
-                Value::String(_) | Value::Integer(_) | Value::Float(_) | Value::Boolean(_)
+                Value::String(_)
+                    | Value::Integer(_)
+                    | Value::Float(_)
+                    | Value::Boolean(_)
+                    | Value::Datetime(_)
             ) {
                 map.insert(key.clone(), v.clone());
             }
@@ -422,6 +435,57 @@ mod tests {
                 .unwrap();
         let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["bob"]);
+    }
+
+    #[test]
+    fn date_bucket_prunes_when_field_supplied_and_wildcards_when_absent() {
+        // Bucketed template: one bucket token = two real tree levels.
+        let (_d, repo) = temp_repo();
+        let mut tree = MutableTree::empty();
+        let dt = |s: &str| Value::Datetime(s.parse().unwrap());
+        let items = vec![
+            ("2026/03/a".to_string(), rec(&[("publishedAt", dt("2026-03-09T12:00:00Z")), ("slug", s("a"))])),
+            ("2026/04/b".to_string(), rec(&[("publishedAt", dt("2026-04-01T00:00:00Z")), ("slug", s("b"))])),
+            ("2025/12/c".to_string(), rec(&[("publishedAt", dt("2025-12-31T09:00:00Z")), ("slug", s("c"))])),
+        ];
+        let hash = write_records(&repo, &mut tree, "posts", &items, TOML_EXTENSION)
+            .unwrap()
+            .tree_hash;
+        let mut tree = resolve_tree(&repo, &hash).unwrap();
+        let mut eng = Engine::new().unwrap();
+        let template =
+            Template::compile("${{ publishedAt: YYYY/MM }}/${{ slug }}", &mut eng).unwrap();
+
+        // Datetime equality filter reaches the bucket components via
+        // prune_record and descends the exact rendered bucket path.
+        let q = rec(&[("publishedAt", dt("2026-03-09T12:00:00Z"))]);
+        let paths =
+            query_candidate_paths(&repo, &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION)
+                .unwrap();
+        assert_eq!(paths, vec!["2026/03/a"]);
+
+        // No bucket field in the query → bucket segments are wildcards.
+        let all = query_candidate_paths(
+            &repo,
+            &mut tree,
+            "posts",
+            &template,
+            &Value::Table(IndexMap::new()),
+            &mut eng,
+            TOML_EXTENSION,
+        )
+        .unwrap();
+        assert_eq!(all, vec!["2025/12/c", "2026/03/a", "2026/04/b"]);
+
+        // End-to-end: a datetime equality filter both prunes AND matches
+        // (core datetime equality is structural).
+        let mut filter = Filter::new();
+        filter.push("publishedAt", FilterPred::Equals(dt("2026-03-09T12:00:00Z")));
+        let out =
+            query_records(&repo, &mut tree, "posts", &template, &filter, &mut eng, TOML_EXTENSION)
+                .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "2026/03/a");
     }
 
     #[test]
