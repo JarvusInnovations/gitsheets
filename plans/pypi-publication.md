@@ -5,6 +5,9 @@ specs:
   - specs/behaviors/distribution.md
   - specs/api/python-binding.md
 issues: [255]
+awaits:
+  - "PyPI pending publisher for project `gitsheets` (repo JarvusInnovations/gitsheets, workflow python-publish.yml, environment pypi) — manual, maintainer's pypi.org account; then tag py-v0.1.0 from a rust-core-green develop commit"
+pr: 259
 ---
 
 # Publish the Python binding to PyPI
@@ -28,11 +31,27 @@ Take `rust/gitsheets-py` from builds-in-CI to `pip install gitsheets`: the `py-v
 
 ## Validation
 
-- [ ] Workflow builds all six wheels + sdist green on a dry-run (workflow_dispatch, publish skipped)
-- [ ] Version-mismatch guard proven (deliberate mismatch fails)
-- [ ] Pending publisher configured (manual step recorded here when done)
-- [ ] `py-v0.1.0` published; `pip install gitsheets` works on a clean machine; import + a transact round-trip succeeds
-- [ ] CLAUDE.md documents the track
+- [x] Workflow builds all six wheels + sdist green on a dry-run (publish skipped) —
+  PR #259's `python-publish` run
+  <https://github.com/JarvusInnovations/gitsheets/actions/runs/29218719524>. Wheels
+  are smoke-tested by installing them and running the binding suite (except musl —
+  can't install on the glibc host — and macOS x86_64, cross-compiled on the arm64
+  runner because Intel macos-13 runners are retired/unschedulable, matching
+  core-napi.yml's pattern); the sdist by a compile-from-source install. Note:
+  `workflow_dispatch` only registers once the file is on the default branch, so
+  the workflow also carries a `pull_request`-paths trigger (mirroring
+  core-napi.yml) — that is the dry-run used here; the `guard-tag` dispatch input
+  works post-merge.
+- [x] Version-mismatch guard proven (deliberate mismatch fails) — the guard script
+  run verbatim with `TAG=py-v9.9.9` exits 1 with a `::error` annotation while
+  `TAG=py-v0.1.0` and the no-tag dry-run pass (transcript in PR #259).
+- [ ] Pending publisher configured (manual step recorded here when done) —
+  pypi.org → publishing → project `gitsheets`, owner `JarvusInnovations`, repo
+  `gitsheets`, workflow `python-publish.yml`, environment `pypi`.
+- [ ] `py-v0.1.0` published; `pip install gitsheets` works on a clean machine;
+  import + a transact round-trip succeeds — awaits the pending publisher; then
+  tag `py-v0.1.0` on a rust-core-green develop commit.
+- [x] CLAUDE.md documents the track
 
 ## Risks / unknowns
 
