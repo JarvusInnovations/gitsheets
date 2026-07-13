@@ -1,7 +1,11 @@
 [package]
 name = "gitsheets-py"
 description = "Python (pyo3) binding for gitsheets-core: marshals records between Python and the Rust core with full TOML type fidelity."
-version.workspace = true
+# Own version, NOT workspace-inherited: this is the released PyPI version.
+# maturin reads it (pyproject.toml declares `dynamic = ["version"]`), and a
+# `py-v*` release tag must match it exactly — python-publish.yml fails loudly
+# on mismatch. See specs/behaviors/distribution.md.
+version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

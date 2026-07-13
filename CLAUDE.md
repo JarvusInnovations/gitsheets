@@ -75,8 +75,10 @@ See [specs/architecture.md](specs/architecture.md) for the full stack rationale.
 
 ## Releases
 
-Two npm release tracks ship from this repo on **separate, prefix-namespaced git-tag
-tracks** — keep them distinct, and mind the ordering rule:
+Three release tracks (two npm, one PyPI) ship from this repo on **separate,
+prefix-namespaced git-tag tracks** — keep them distinct, and mind the ordering rule.
+`specs/behaviors/distribution.md` is the source of truth for the tracks and their
+deliberately-different version-source rules:
 
 - **`gitsheets`** (the JS package) — released on **`v*`** tags via the develop→main
   Release-PR flow (`release-prepare`/`-validate`/`-publish` workflows; use the
@@ -86,6 +88,14 @@ tracks** — keep them distinct, and mind the ordering rule:
   **`core-napi-v*`** tags via `core-napi.yml`: native per-platform builds + npm
   trusted publishing (OIDC). Never tag the addon with a bare `v*` — that namespace
   belongs to the JS package.
+- **`gitsheets` on PyPI** (the Python binding) — released on **`py-v*`** tags via
+  `python-publish.yml`: abi3 wheels + sdist, PyPI trusted publishing (OIDC).
+  **The version is COMMITTED in `rust/gitsheets-py/Cargo.toml`** (maturin reads it)
+  and the tag must match it exactly — the workflow's guard job fails the run on
+  mismatch. This deliberately inverts the napi track's tag-stamped rule (see
+  `specs/behaviors/distribution.md`): bump the committed version on develop first,
+  then tag `py-v<that-version>` from a commit where `rust-core.yml` is green (the
+  cross-binding byte-parity gate). Never tag the binding with a bare `v*`.
 
 Rules learned the hard way (v2.3.0's failed publish — see
 `plans/core-napi-0.2.0-release.md`):
@@ -110,7 +120,9 @@ Rules learned the hard way (v2.3.0's failed publish — see
 
 Sequence for a batch that touches core: merge the feature PRs → tag `core-napi-v*`
 on develop → wait for the 7 packages to land on npm → PR the manifest/lockfile sync →
-merge → run the release-flow skill on the auto-opened `Release: v*` PR.
+merge → run the release-flow skill on the auto-opened `Release: v*` PR. The `py-v*`
+track is independent of this npm sequencing (it builds the core from source at the
+tagged commit) but shares the parity gate: only tag rust-core-green commits.
 
 ## Tooling
 
