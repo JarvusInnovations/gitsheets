@@ -10,7 +10,10 @@
 #                             rust-cross image, which is x86_64-hosted)
 #   x86_64 musllinux_1_2    → ubuntu-latest   (container build; the musl wheel
 #                             can't install on the glibc host, so no smoke)
-#   x86_64 macOS            → macos-13        (Intel runner)
+#   x86_64 macOS            → macos-14        (cross-compiled on the Apple
+#                             Silicon runner, like core-napi.yml — Intel
+#                             macos-13 runners are retired/unschedulable, so
+#                             the x86_64 wheel builds cross and skips smoke)
 #   aarch64 macOS           → macos-14        (Apple Silicon runner)
 #   x86_64 Windows          → windows-latest
 #
@@ -111,9 +114,14 @@ jobs:
             manylinux: musllinux_1_2
             test: false # musl wheel can't install on the glibc host
           - platform: macos-x86_64
-            host: macos-13
+            # Cross-compiled on the Apple Silicon runner (core-napi.yml's
+            # pattern): GitHub's Intel macos-13 runners are retired — the job
+            # queues indefinitely. The arm64 host can't run the x86_64 wheel,
+            # so no smoke; the abi3 build logic is covered by the smoked
+            # platforms.
+            host: macos-14
             target: x86_64-apple-darwin
-            test: true
+            test: false
           - platform: macos-arm64
             host: macos-14
             target: aarch64-apple-darwin
