@@ -22,9 +22,12 @@
 #
 # Triggers:
 #   - push of a `py-v*` tag → build wheels + sdist, then publish to PyPI
+#   - pull_request touching the binding or this workflow → build + smoke
+#     everything (no publish), like core-napi.yml's PR builds
 #   - workflow_dispatch     → dry-run: build + smoke everything, SKIP publish.
 #     The optional `guard-tag` input simulates a tag against the version guard
-#     (e.g. `py-v9.9.9` proves a mismatch fails the run).
+#     (e.g. `py-v9.9.9` proves a mismatch fails the run). Note GitHub only
+#     accepts dispatches once the workflow exists on the default branch.
 #
 # Publish auth: PyPI TRUSTED PUBLISHING (OIDC) — no token, matching the repo's
 # npm workflows. One-time bootstrap: PyPI supports PENDING publishers, so the
@@ -41,6 +44,10 @@ on:
   push:
     tags:
       - 'py-v*'
+  pull_request:
+    paths:
+      - 'rust/gitsheets-py/**'
+      - '.github/workflows/python-publish.yml'
   workflow_dispatch:
     inputs:
       guard-tag:
