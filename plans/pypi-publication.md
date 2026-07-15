@@ -1,12 +1,10 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/distribution.md
   - specs/api/python-binding.md
 issues: [255]
-awaits:
-  - "PyPI pending publisher for project `gitsheets` (repo JarvusInnovations/gitsheets, workflow python-publish.yml, environment pypi) — manual, maintainer's pypi.org account; then tag py-v0.1.0 from a rust-core-green develop commit"
 pr: 259
 ---
 
@@ -45,12 +43,17 @@ Take `rust/gitsheets-py` from builds-in-CI to `pip install gitsheets`: the `py-v
 - [x] Version-mismatch guard proven (deliberate mismatch fails) — the guard script
   run verbatim with `TAG=py-v9.9.9` exits 1 with a `::error` annotation while
   `TAG=py-v0.1.0` and the no-tag dry-run pass (transcript in PR #259).
-- [ ] Pending publisher configured (manual step recorded here when done) —
-  pypi.org → publishing → project `gitsheets`, owner `JarvusInnovations`, repo
-  `gitsheets`, workflow `python-publish.yml`, environment `pypi`.
-- [ ] `py-v0.1.0` published; `pip install gitsheets` works on a clean machine;
-  import + a transact round-trip succeeds — awaits the pending publisher; then
-  tag `py-v0.1.0` on a rust-core-green develop commit.
+- [x] Pending publisher configured (maintainer, pypi.org: project `gitsheets`,
+  owner `JarvusInnovations`, repo `gitsheets`, workflow `python-publish.yml`,
+  environment `pypi`).
+- [x] `py-v0.1.0` published; `pip install gitsheets` works on a clean machine;
+  import + a transact round-trip succeeds — tag `py-v0.1.0` pushed on develop head
+  (`python-publish.yml` green), `gitsheets 0.1.0` live on PyPI with 6 abi3 wheels +
+  sdist. Cold-verified: `uv add gitsheets` on a clean box pulled the prebuilt
+  `cp39-abi3-manylinux_2_28_x86_64` wheel (no source compile), and a throwaway app
+  ran a real transaction — upsert → single commit, canonical TOML at the templated
+  path, read-back via `record_read`/`record_list`, schema violation raised
+  `ValidationError` before commit, attachments + delete committed atomically.
 - [x] CLAUDE.md documents the track
 
 ## Risks / unknowns
@@ -60,8 +63,25 @@ Take `rust/gitsheets-py` from builds-in-CI to `pip install gitsheets`: the `py-v
 
 ## Notes
 
-_(populated at closeout)_
+- Shipped `gitsheets 0.1.0` on PyPI (<https://pypi.org/project/gitsheets/>) via the
+  `py-v0.1.0` tag → `python-publish.yml` → OIDC trusted publishing. Six abi3 wheels
+  (manylinux x64/aarch64, musllinux x64, macOS x64/arm64, Windows x64) + sdist.
+- Tag was cut from the develop head; `rust-core.yml` at that commit sat in an
+  approval-gated `action_required` state, but the commit (#259 merge) changed only
+  the publish workflow + docs + version — no `gitsheets-core` change — so parity was
+  substantively identical to the green run one commit earlier, and `python-publish.yml`
+  builds the sdist from core source + runs the binding suite as its own gate.
+- macOS x86_64 wheel cross-compiles on `macos-14` (arm64): Intel `macos-13` runners are
+  retired/unschedulable — same accommodation `core-napi.yml` already makes.
+- **Spec drift caught by the cold smoke test and fixed here**: `specs/api/python-binding.md`
+  described reads as "through opened sheets", but the shipped 0.x reads are module-level
+  batch functions (`record_read`/`record_list`/`record_query`) over `(git_dir, tree_ref,
+  base, ...)`. Spec corrected to the actual writer + batch-read split.
 
 ## Follow-ups
 
-_(populated at closeout)_
+- No `.pyi` type stub ships in the wheel — introspection works via `help()`/docstrings
+  but a stub would help first-time consumers; worth a tracked issue.
+- The 0.x read surface is deliberately batch-first, not the OO `Store`/`Sheet` API of the
+  Node/TS docs — a higher-level idiomatic Python read layer is a possible post-0.x want
+  (relates to the #240 freshness work).
