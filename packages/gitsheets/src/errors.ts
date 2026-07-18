@@ -9,6 +9,12 @@ export interface ValidationIssue {
   readonly code?: string;
   /** The contract name, when the failing branch is a declared contract composed via `allOf`. */
   readonly contract?: string;
+  /**
+   * The record's sheet-relative path, in a multi-record conformance report
+   * (`ContractError.issues` from consumer-side contract verification — see
+   * specs/behaviors/contracts.md "Consumer verification").
+   */
+  readonly record?: string;
 }
 
 const STATUS_BY_CODE = {

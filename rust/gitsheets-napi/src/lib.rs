@@ -326,6 +326,24 @@ pub struct JsValidationIssue {
     /// The contract name, when the failing branch is a declared contract
     /// composed via `allOf` (specs/behaviors/contracts.md).
     pub contract: Option<String>,
+    /// The record's sheet-relative path, in a multi-record conformance
+    /// report (`ContractError.issues` from consumer-side contract
+    /// verification — specs/behaviors/contracts.md "Consumer verification").
+    pub record: Option<String>,
+}
+
+/// Marshal a core `ValidationIssue` to its napi wire shape. Shared by
+/// [`validate_batch`] and [`verify_sheet_contract`].
+fn issue_to_js(issue: gitsheets_core::ValidationIssue) -> JsValidationIssue {
+    JsValidationIssue {
+        path: issue.path,
+        message: issue.message,
+        source: issue.source.as_str().to_string(),
+        schema_path: issue.schema_path,
+        code: issue.code,
+        contract: issue.contract,
+        record: issue.record,
+    }
 }
 
 /// Render a path template against a **batch** of records, returning one path per
@@ -373,18 +391,7 @@ pub fn validate_batch(
     };
     let mut out = Vec::with_capacity(records.len());
     for record in records {
-        let issues = compiled
-            .validate(&record.0)
-            .into_iter()
-            .map(|issue| JsValidationIssue {
-                path: issue.path,
-                message: issue.message,
-                source: issue.source.as_str().to_string(),
-                schema_path: issue.schema_path,
-                code: issue.code,
-                contract: issue.contract,
-            })
-            .collect();
+        let issues = compiled.validate(&record.0).into_iter().map(issue_to_js).collect();
         out.push(issues);
     }
     Ok(out)
@@ -423,6 +430,93 @@ pub fn canonical_contract_hash(
         },
     };
     gitsheets_core::canonical_contract_hash(core_input).map_err(|err| raise_core_error(&env, &err))
+}
+
+/// The result of a successful [`verify_sheet_contract`] call — the wire shape
+/// for `sheet.contractVerification` minus `tree` (the JS binding attaches that
+/// from the read snapshot it already resolved to open the sheet).
+#[napi(object)]
+pub struct JsConformanceReport {
+    pub name: String,
+    /// `"declared"` or `"structural"` — which rung passed.
+    pub rung: String,
+    pub conforming: bool,
+    pub issues: Vec<JsValidationIssue>,
+}
+
+/// Consumer-side contract verification — the two-rung ladder behind
+/// `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
+/// verification", specs/api/repository.md `opts.contract`). Opens `sheetName`
+/// read-only against `treeRef` (config read + effective-schema compile, same
+/// as any other read), then verifies it against `schema` — parsed data, or
+/// text with `format` naming which text form (mirrors
+/// `canonicalContractHash`'s input handling: no format auto-detection). A
+/// verification failure (both rungs missed, or the attempted rung missed in
+/// `declared`/`structural` mode) surfaces as `ContractError(contract_unsatisfied)`
+/// carrying the conformance report in `issues`.
+#[allow(clippy::too_many_arguments)]
+#[napi]
+pub fn verify_sheet_contract(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+    prefix: String,
+    schema: Either<String, JsValue>,
+    format: Option<String>,
+    mode: Option<String>,
+) -> Result<JsConformanceReport> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree =
+        record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let sheet = match CoreSheet::open(&repo, &mut tree, &sheet_name, &config_path, &open_root, &prefix)
+    {
+        Ok(s) => s,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+
+    let core_input = match schema {
+        Either::B(value) => gitsheets_core::ContractHashInput::Data(value.0),
+        Either::A(text) => match format.as_deref() {
+            Some("json") => gitsheets_core::ContractHashInput::Json(text),
+            Some("toml") => gitsheets_core::ContractHashInput::Toml(text),
+            Some(other) => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    format!("verifySheetContract: unknown format {other:?} — expected 'json' or 'toml'"),
+                ))
+            }
+            None => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    "verifySheetContract: pass { format: 'json' | 'toml' } when schema is a string",
+                ))
+            }
+        },
+    };
+    let verify_mode = match mode.as_deref() {
+        None | Some("verify") => gitsheets_core::VerifyMode::Verify,
+        Some("declared") => gitsheets_core::VerifyMode::Declared,
+        Some("structural") => gitsheets_core::VerifyMode::Structural,
+        Some(other) => {
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                format!("verifySheetContract: unknown mode {other:?} — expected 'verify', 'declared', or 'structural'"),
+            ))
+        }
+    };
+
+    match gitsheets_core::verify_sheet_contract(&repo, &mut tree, &open_root, &sheet, core_input, verify_mode) {
+        Ok(report) => Ok(JsConformanceReport {
+            name: report.name,
+            rung: report.rung.as_str().to_string(),
+            conforming: report.conforming,
+            issues: report.issues.into_iter().map(issue_to_js).collect(),
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
 }
 
 /// Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
@@ -1161,6 +1255,9 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
             }
             if let Some(c) = &issue.contract {
                 io.set_named_property("contract", env.create_string(c)?)?;
+            }
+            if let Some(r) = &issue.record {
+                io.set_named_property("record", env.create_string(r)?)?;
             }
             arr.set_element(i as u32, io)?;
         }

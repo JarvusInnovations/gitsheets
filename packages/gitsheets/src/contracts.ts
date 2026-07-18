@@ -10,9 +10,60 @@
 // rung-1 (declared-identity) verification.
 
 import { addon, callCore } from './core.js';
+import type { ValidationIssue } from './errors.js';
 
 /** Text format for a `string` input to {@link canonicalContractHash}. */
 export type ContractDocumentFormat = 'json' | 'toml';
+
+/**
+ * Consumer verification modes — the two-rung ladder in
+ * specs/behaviors/contracts.md "Consumer verification":
+ *
+ * - `'verify'` (default) — rung 1 (declared identity), falling back to rung 2
+ *   (structural) on a miss.
+ * - `'declared'` — rung 1 only; never reads records. A miss throws
+ *   immediately.
+ * - `'structural'` — rung 2 only (duck typing; ignores any declaration).
+ */
+export type ContractVerificationMode = 'verify' | 'declared' | 'structural';
+
+/**
+ * The result of a successful consumer verification — `sheet.contractVerification`
+ * (specs/api/repository.md `opts.contract`). `rung` names which guarantee was
+ * actually obtained; `tree` is the read-snapshot tree hash it's pinned to.
+ */
+export interface ConformanceReport {
+  readonly name: string;
+  readonly rung: 'declared' | 'structural';
+  readonly tree: string;
+  readonly conforming: boolean;
+  readonly issues: readonly ValidationIssue[];
+}
+
+/**
+ * `openSheet(name, { contract })` options — consumer-side contract
+ * verification per specs/behaviors/contracts.md "Consumer verification".
+ */
+export interface OpenSheetContractOptions {
+  /** The contract document the consumer holds: parsed data, or JSON/TOML text. */
+  readonly schema: unknown;
+  /**
+   * Required when `schema` is a string — matches {@link canonicalContractHash}:
+   * there is no format auto-detection.
+   */
+  readonly format?: ContractDocumentFormat;
+  /** Default `'verify'`. */
+  readonly mode?: ContractVerificationMode;
+  /**
+   * Advisory drift signal for rung-2 (structural) verified sheets: invoked
+   * with a regressed conformance report when a rebind to a changed tree
+   * (specs/behaviors/freshness.md) finds the sheet no longer conforms. Reads
+   * are never blocked by drift — this is a signal, not a gate. Not invoked
+   * for rung-1 (declared) verified sheets — write-time enforcement makes
+   * that guarantee good going forward, by construction.
+   */
+  readonly onDrift?: (report: ConformanceReport) => void;
+}
 
 export interface CanonicalContractHashOptions {
   /**

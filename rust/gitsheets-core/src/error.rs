@@ -43,6 +43,11 @@ pub struct ValidationIssue {
     /// sheet's own `[gitsheet.schema]` branch, and always `None` for a sheet
     /// that declares no contracts.
     pub contract: Option<String>,
+    /// The record's sheet-relative path, in a multi-record conformance report
+    /// (`ContractError.issues` from `contracts-consumer-verify`'s rung-2
+    /// structural validation — see `specs/behaviors/contracts.md` "Consumer
+    /// verification"). `None` for a single-record write-time issue.
+    pub record: Option<String>,
 }
 
 /// The error class a variant maps to on the Node surface. These names match the
@@ -400,6 +405,7 @@ mod tests {
                 schema_path: Some("#/properties/email/pattern".into()),
                 code: Some("pattern".into()),
                 contract: None,
+                record: None,
             }],
         };
         assert_eq!(err.issues().len(), 1);
@@ -428,6 +434,7 @@ mod tests {
                 schema_path: Some("#/properties/email/pattern".into()),
                 code: Some("pattern".into()),
                 contract: Some("example.com/c/v1".into()),
+                record: Some("people/jane".into()),
             }],
         };
         assert_eq!(err.issues().len(), 1);

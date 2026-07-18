@@ -167,6 +167,11 @@ module.exports = {
   CoreTransaction: addon.CoreTransaction,
   coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
   coreCheckValidators: wrap(addon.coreCheckValidators),
+  // Consumer-side contract verification — the two-rung ladder behind
+  // `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
+  // verification"). A verification failure raises a typed
+  // ContractError(contract_unsatisfied) carrying the conformance report.
+  verifySheetContract: wrap(addon.verifySheetContract),
   // Markdown / mdx content-type codec. serialize/parse can raise a typed
   // ValidationError/ConfigError; the H1 + normalize helpers are pure. Body
   // NORMALIZATION is native — `markdownSerialize` runs the embedded

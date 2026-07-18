@@ -38,7 +38,10 @@ pub mod value;
 pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};
 pub use codec::{extract_first_h1, normalize_body, rewrite_leading_h1};
 pub use config::{FieldConfig, FormatConfig, FormatKind, SheetConfig, SortDir, SortRule};
-pub use contract::{canonical_contract_hash, contract_path, validate_name as validate_contract_name, ContractHashInput};
+pub use contract::{
+    canonical_contract_hash, contract_path, validate_name as validate_contract_name,
+    verify_sheet_contract, ConformanceReport, ContractHashInput, Rung, VerifyMode,
+};
 pub use diff::{apply_merge_patch, create_patch, MergePatch, PatchOp, PatchOpKind, PatchValue};
 pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
 pub use index::{MultiIndex, UniqueIndex};
@@ -78,6 +81,7 @@ pub fn example_error(code: &str) -> Option<Error> {
                 schema_path: Some("#/properties/email/pattern".into()),
                 code: Some("pattern".into()),
                 contract: None,
+                record: None,
             }],
         },
         "transaction_in_progress" => Error::TransactionInProgress { message: msg },
@@ -114,6 +118,7 @@ pub fn example_error(code: &str) -> Option<Error> {
                 schema_path: Some("#/properties/email/pattern".into()),
                 code: Some("pattern".into()),
                 contract: Some("example.com/contracts/v1".into()),
+                record: Some("people/jane".into()),
             }],
         },
         _ => return None,

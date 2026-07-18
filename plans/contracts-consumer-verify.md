@@ -1,11 +1,12 @@
 ---
-status: planned
+status: done
 depends: [contracts-core]
 specs:
   - specs/behaviors/contracts.md
   - specs/api/repository.md
   - specs/api/errors.md
 issues: []
+pr: 267
 ---
 
 # Plan: consumer-side contract verification — the two-rung ladder in `openSheet`
@@ -78,20 +79,20 @@ contract maps (follow-up if demanded).
 
 ## Validation
 
-- [ ] Rung-1 verification of a declaring sheet passes with zero record reads
+- [x] Rung-1 verification of a declaring sheet passes with zero record reads
       and reports `rung: 'declared'`
-- [ ] Against a producer implementing a newer, data-compatible contract
+- [x] Against a producer implementing a newer, data-compatible contract
       version, `verify` mode falls through and passes with
       `rung: 'structural'`
-- [ ] Against a non-conforming sheet, `openSheet` throws
+- [x] Against a non-conforming sheet, `openSheet` throws
       `ContractError('contract_unsatisfied')` whose `issues` name each failing
       record path, field, and the contract
-- [ ] `declared` mode refuses (without reading records) any sheet not
+- [x] `declared` mode refuses (without reading records) any sheet not
       declaring the byte-identical contract; `structural` mode verifies a
       contract-unaware sheet (duck typing)
-- [ ] After a drift-inducing commit in the producer, `onDrift` fires with a
+- [x] After a drift-inducing commit in the producer, `onDrift` fires with a
       regressed report and in-flight reads are unaffected
-- [ ] The motivating pair works end-to-end as a test: a consumer holding a
+- [x] The motivating pair works end-to-end as a test: a consumer holding a
       contract wires to a fixture "meal-bank" sheet in another repo, rung-1
       verifies, reads records typed by the contract
 
@@ -112,8 +113,74 @@ contract maps (follow-up if demanded).
 
 ## Notes
 
-(populated at closeout)
+- **Spec amendment**: `specs/api/repository.md`'s `opts.contract` example
+  listed `schema: object | string` with no `format` field, even though both
+  this plan's Approach and `specs/behaviors/contracts.md` say the input
+  handling "matches `canonicalContractHash`'s" — which requires an explicit
+  `format: 'json' | 'toml'` for text input, with no auto-detection. Added
+  `format?` to the documented shape (required when `schema` is a string), and
+  expanded the documented `sheet.contractVerification` shape from `{ name,
+  rung, tree }` to the full `{ name, rung, tree, conforming, issues }` the
+  implementation returns — the same conformance-report shape `onDrift`
+  receives on a regression (always `conforming: true` / `issues: []` on a
+  successful handle, since a failed verification throws rather than returning
+  a non-conforming report).
+- **Freshness / non-`HEAD`-refs finding** (the plan's flagged risk):
+  `Repository`'s rebind path (`#resolveReadTree`) is unconditionally
+  `HEAD^{tree}` — there is no `ref` option on `openRepo`/`openSheet` today. A
+  "cross-repo consumer reading a ref outside `refs/heads/`" achieves that only
+  by pointing `openRepo({ gitDir })` at a distinct git directory/worktree whose
+  *own* `HEAD` is checked out to the ref of interest. Since the single rebind
+  path (`repo.refresh()` / the post-commit auto-refresh in `repo.transact`)
+  operates purely in terms of "that repository's `HEAD`" regardless of what
+  ref `HEAD` is attached to, the drift hook riding `Sheet.rebindReadTree` sees
+  every rebind there is — there is no separate non-`HEAD`-ref path that could
+  bypass it. No code change was needed; there's nothing to build against a
+  case the library doesn't support yet. Worth revisiting if/when a pinned-ref
+  `openSheet` surface is ever added.
+- **Rung-2 cost on large sheets** — not empirically measured against a
+  large corpus in this plan (the test fixtures are human-cadence-sized, per
+  the design's own target scale). The full-corpus-scan design is unchanged
+  from the plan's Approach; a persisted verification cache keyed by tree hash
+  remains the identified mitigation if this bites in practice, same as
+  contracts-core's own analogous follow-up
+  ([#266](https://github.com/JarvusInnovations/gitsheets/issues/266) for
+  compiled-contract caching).
+- **Drift re-check reuses the full rung-2 scan** — `Sheet`'s lazy drift
+  re-verification (`#checkDriftAfterRebind`) re-runs the *same*
+  `verify_sheet_contract` call against the new tree, i.e. a fresh full-corpus
+  structural scan per rebind for a rung-2-verified sheet with `onDrift`
+  registered. Correct and simple; a future optimization could diff only the
+  paths that changed between the old and new tree instead. Not built here —
+  no drift performance issue observed at the test scale.
+- **`resolve_contract_document`** was factored out of the existing
+  `canonical_contract_hash` (rather than added fresh) so both the identity
+  primitive and the new verification path parse a supplied document through
+  the identical `ContractHashInput` handling — no behavioral difference
+  introduced, no re-tested edge cases beyond what `canonical_contract_hash`'s
+  existing suite already covers.
 
 ## Follow-ups
 
-(populated at closeout)
+- **Python parity** — `verify_sheet_contract` in `gitsheets-core` is fully
+  binding-agnostic, but `rust/gitsheets-py`'s `openSheet` surface doesn't
+  thread `opts.contract` through yet. Deliberately out of scope for this plan
+  (per Scope); a follow-up plan should mirror the Node binding's
+  `verifySheetContract` napi shape onto the pyo3 surface once there's a
+  consumer.
+- **`openSheets`/`openStore` contract maps** — verifying every sheet a Store
+  opens against a map of contracts in one call, rather than per-sheet
+  `openSheet({ contract })`. Explicitly deferred in Scope; revisit if a
+  multi-sheet consumer wants it.
+- **Persisted verification cache** — if rung-2's full-corpus scan cost
+  becomes a real bottleneck at wiring time (see Notes), a cache keyed by data
+  subtree hash (mirroring the existing per-sheet index-build cache pattern in
+  `rust/gitsheets-core/src/sheet.rs`) is the identified fix — sampling is
+  explicitly ruled out (silent partial guarantees).
+- **`contracts test` CLI command** — the CLI-facing half of consumer
+  verification (`specs/behaviors/contracts.md` mentions it alongside
+  `openSheet(name, { contract })`) is producer/CLI tooling, out of scope here
+  per [`contracts-cli`](contracts-cli.md); that plan (or a new one) should
+  reuse `gitsheets_core::verify_sheet_contract` directly — it takes an
+  already-opened `Sheet`, so no core changes should be needed to wire it into
+  a CLI command.
