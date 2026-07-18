@@ -37,6 +37,17 @@ pub struct ValidationIssue {
     pub source: IssueSource,
     pub schema_path: Option<String>,
     pub code: Option<String>,
+    /// The contract name, when the failing schema branch is a declared
+    /// contract composed via `allOf` (see `specs/behaviors/contracts.md`
+    /// "Composition and enforcement"). `None` for an issue raised by the
+    /// sheet's own `[gitsheet.schema]` branch, and always `None` for a sheet
+    /// that declares no contracts.
+    pub contract: Option<String>,
+    /// The record's sheet-relative path, in a multi-record conformance report
+    /// (`ContractError.issues` from `contracts-consumer-verify`'s rung-2
+    /// structural validation — see `specs/behaviors/contracts.md` "Consumer
+    /// verification"). `None` for a single-record write-time issue.
+    pub record: Option<String>,
 }
 
 /// The error class a variant maps to on the Node surface. These names match the
@@ -50,6 +61,7 @@ pub enum ErrorClass {
     RefError,
     PathTemplateError,
     NotFoundError,
+    ContractError,
 }
 
 impl ErrorClass {
@@ -62,6 +74,7 @@ impl ErrorClass {
             ErrorClass::RefError => "RefError",
             ErrorClass::PathTemplateError => "PathTemplateError",
             ErrorClass::NotFoundError => "NotFoundError",
+            ErrorClass::ContractError => "ContractError",
         }
     }
 }
@@ -123,6 +136,26 @@ pub enum Error {
     // ── NotFoundError ────────────────────────────────────────────────────
     /// `record_not_found` — operation against a path that doesn't exist.
     RecordNotFound { message: String },
+
+    // ── ContractError ────────────────────────────────────────────────────
+    /// `contract_missing` — `implements` names a contract with no vendored
+    /// document at its derived path.
+    ContractMissing { message: String, contract: String },
+    /// `contract_invalid` — the contract document violates a document
+    /// requirement (compile failure, `$id`/path mismatch, non-canonical
+    /// bytes, external `$ref`, null-bearing keyword, closed for extension).
+    ContractInvalid { message: String, contract: String },
+    /// `contract_unsatisfied` — consumer verification failed both rungs,
+    /// carrying the conformance report. The code is reserved here by the
+    /// error-marshalling architecture; the consumer verification ladder
+    /// itself (`openSheet(name, { contract })` / `contracts test`) is a
+    /// separate, later plan — nothing in this crate constructs this variant
+    /// yet.
+    ContractUnsatisfied {
+        message: String,
+        contract: String,
+        issues: Vec<ValidationIssue>,
+    },
 }
 
 impl Error {
@@ -146,6 +179,9 @@ impl Error {
             Error::PathRenderFailed { .. } => "path_render_failed",
             Error::PathInvalidChars { .. } => "path_invalid_chars",
             Error::RecordNotFound { .. } => "record_not_found",
+            Error::ContractMissing { .. } => "contract_missing",
+            Error::ContractInvalid { .. } => "contract_invalid",
+            Error::ContractUnsatisfied { .. } => "contract_unsatisfied",
         }
     }
 
@@ -168,6 +204,9 @@ impl Error {
                 ErrorClass::PathTemplateError
             }
             Error::RecordNotFound { .. } => ErrorClass::NotFoundError,
+            Error::ContractMissing { .. }
+            | Error::ContractInvalid { .. }
+            | Error::ContractUnsatisfied { .. } => ErrorClass::ContractError,
         }
     }
 
@@ -177,10 +216,13 @@ impl Error {
             Error::ConfigMissing { .. }
             | Error::ConfigInvalid { .. }
             | Error::CommitFailed { .. }
-            | Error::IndexNotDefined { .. } => 500,
+            | Error::IndexNotDefined { .. }
+            | Error::ContractMissing { .. }
+            | Error::ContractInvalid { .. } => 500,
             Error::ValidationFailed { .. }
             | Error::PathRenderFailed { .. }
-            | Error::PathInvalidChars { .. } => 422,
+            | Error::PathInvalidChars { .. }
+            | Error::ContractUnsatisfied { .. } => 422,
             Error::TransactionInProgress { .. }
             | Error::TransactionRequired { .. }
             | Error::ParentMoved { .. }
@@ -210,15 +252,32 @@ impl Error {
             | Error::NotAnAncestor { message }
             | Error::PathRenderFailed { message }
             | Error::PathInvalidChars { message }
-            | Error::RecordNotFound { message } => message,
+            | Error::RecordNotFound { message }
+            | Error::ContractMissing { message, .. }
+            | Error::ContractInvalid { message, .. }
+            | Error::ContractUnsatisfied { message, .. } => message,
         }
     }
 
-    /// Validation issues, present only for [`Error::ValidationFailed`].
+    /// Validation issues, present for [`Error::ValidationFailed`] and (the
+    /// conformance report) [`Error::ContractUnsatisfied`].
     pub fn issues(&self) -> &[ValidationIssue] {
         match self {
             Error::ValidationFailed { issues, .. } => issues,
+            Error::ContractUnsatisfied { issues, .. } => issues,
             _ => &[],
+        }
+    }
+
+    /// The contract name in scope, present only for the `ContractError`
+    /// variants (`contract_missing` / `contract_invalid` /
+    /// `contract_unsatisfied`).
+    pub fn contract(&self) -> Option<&str> {
+        match self {
+            Error::ContractMissing { contract, .. }
+            | Error::ContractInvalid { contract, .. }
+            | Error::ContractUnsatisfied { contract, .. } => Some(contract),
+            _ => None,
         }
     }
 
@@ -299,6 +358,34 @@ mod tests {
                 ErrorClass::NotFoundError,
                 404,
             ),
+            (
+                Error::ContractMissing {
+                    message: "x".into(),
+                    contract: "example.com/c/v1".into(),
+                },
+                "contract_missing",
+                ErrorClass::ContractError,
+                500,
+            ),
+            (
+                Error::ContractInvalid {
+                    message: "x".into(),
+                    contract: "example.com/c/v1".into(),
+                },
+                "contract_invalid",
+                ErrorClass::ContractError,
+                500,
+            ),
+            (
+                Error::ContractUnsatisfied {
+                    message: "x".into(),
+                    contract: "example.com/c/v1".into(),
+                    issues: vec![],
+                },
+                "contract_unsatisfied",
+                ErrorClass::ContractError,
+                422,
+            ),
         ];
         for (err, code, class, status) in cases {
             assert_eq!(err.code(), *code);
@@ -317,9 +404,40 @@ mod tests {
                 source: IssueSource::JsonSchema,
                 schema_path: Some("#/properties/email/pattern".into()),
                 code: Some("pattern".into()),
+                contract: None,
+                record: None,
             }],
         };
         assert_eq!(err.issues().len(), 1);
         assert_eq!(err.issues()[0].source.as_str(), "json-schema");
+    }
+
+    #[test]
+    fn contract_error_carries_the_contract_name() {
+        let err = Error::ContractMissing {
+            message: "x".into(),
+            contract: "example.com/c/v1".into(),
+        };
+        assert_eq!(err.contract(), Some("example.com/c/v1"));
+        assert_eq!(Error::RecordNotFound { message: "x".into() }.contract(), None);
+    }
+
+    #[test]
+    fn contract_unsatisfied_carries_its_conformance_report() {
+        let err = Error::ContractUnsatisfied {
+            message: "bad".into(),
+            contract: "example.com/c/v1".into(),
+            issues: vec![ValidationIssue {
+                path: vec!["email".into()],
+                message: "must match pattern".into(),
+                source: IssueSource::JsonSchema,
+                schema_path: Some("#/properties/email/pattern".into()),
+                code: Some("pattern".into()),
+                contract: Some("example.com/c/v1".into()),
+                record: Some("people/jane".into()),
+            }],
+        };
+        assert_eq!(err.issues().len(), 1);
+        assert_eq!(err.issues()[0].contract.as_deref(), Some("example.com/c/v1"));
     }
 }

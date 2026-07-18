@@ -4,14 +4,15 @@
 
 Records are validated on every write through two stacked layers, in order:
 
-1. **JSON Schema** — declared in `.gitsheets/<sheet>.toml`, **persisted with the data**. Framework-agnostic. The shape contract the repo carries.
+1. **JSON Schema** — declared in `.gitsheets/<sheet>.toml`, **persisted with the data**. Framework-agnostic. The shape contract the repo carries. When the sheet declares contracts ([behaviors/contracts.md](contracts.md)), the effective schema at this layer is `allOf: [<each vendored contract>, <[gitsheet.schema]>]` — contract conformance is enforced here, by construction, on every write.
 2. **Standard Schema** _(optional, consumer-supplied)_ — runs after JSON Schema, **lives in consumer code**. Adds branded types, refinements, transforms.
 
-A failure at either layer throws `ValidationError`. Validation runs synchronously inside `Sheet.upsert` / `Sheet.patch`, before any tree mutation.
+A failure at either layer throws `ValidationError`. Validation runs synchronously inside `Sheet.upsert` / `Sheet.patch`, before any tree mutation. Issues arising from a contract branch of the `allOf` identify the contract by name, so a failing write says which obligation it violated.
 
 ## Applies To
 
-- [`.gitsheets/<sheet>.toml`](../concepts.md#sheet) — `[gitsheet.schema]` block
+- [`.gitsheets/<sheet>.toml`](../concepts.md#sheet) — `[gitsheet.schema]` block, `implements` key
+- [behaviors/contracts.md](contracts.md) — contract composition at the JSON Schema layer
 - [api/sheet.md](../api/sheet.md) — `upsert`, `patch`
 - [api/repository.md](../api/repository.md) — `openSheet(name, { validator? })`
 - [api/store.md](../api/store.md) — `openStore(repo, { validators? })`
@@ -113,7 +114,7 @@ gitsheets' exported `StandardSchemaV1<Input, Output>` type (and every result/iss
 ## Order
 
 1. Record arrives at `Sheet.upsert(record)` (or `Sheet.patch(query, partial)` after the merge step).
-2. JSON Schema validation. On failure: `ValidationError` with all JSON Schema issues. No transform.
+2. JSON Schema validation — the effective schema (declared contracts composed via `allOf` with `[gitsheet.schema]`; see [behaviors/contracts.md](contracts.md)). On failure: `ValidationError` with all JSON Schema issues. No transform.
 3. Standard Schema validation (if configured). On failure: `ValidationError` with all Standard Schema issues. Record may be transformed.
 4. Canonical normalization (see [behaviors/normalization.md](normalization.md)).
 5. Path render + write.

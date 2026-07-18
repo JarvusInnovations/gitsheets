@@ -70,6 +70,15 @@ class NotFoundError extends GitsheetsError {
   }
 }
 
+class ContractError extends GitsheetsError {
+  constructor(message, opts = {}) {
+    super(message, opts);
+    this.name = 'ContractError';
+    if (opts.contract !== undefined) this.contract = opts.contract;
+    if (opts.issues !== undefined) this.issues = opts.issues;
+  }
+}
+
 const CLASS_BY_NAME = {
   ConfigError,
   ValidationError,
@@ -78,6 +87,7 @@ const CLASS_BY_NAME = {
   RefError,
   PathTemplateError,
   NotFoundError,
+  ContractError,
 };
 
 // Map a structured error raised by the addon onto its typed class. The mapping
@@ -87,6 +97,7 @@ function mapCoreError(raw) {
   const opts = { code: raw.code, status: raw.status, cause: raw };
   if (raw.issues !== undefined) opts.issues = raw.issues;
   if (raw.conflictingPaths !== undefined) opts.conflictingPaths = raw.conflictingPaths;
+  if (raw.contract !== undefined) opts.contract = raw.contract;
   return new Cls(raw.message, opts);
 }
 
@@ -113,6 +124,10 @@ module.exports = {
   // PathTemplateError; schema compilation raises a typed ConfigError.
   renderPathsBatch: wrap(addon.renderPathsBatch),
   validateBatch: wrap(addon.validateBatch),
+  // The contract identity primitive (specs/behaviors/contracts.md "Canonical
+  // form" / "Contract identity"): canonicalize → SHA-256 hex. A string input
+  // with no/invalid `format` raises a typed ConfigError.
+  canonicalContractHash: wrap(addon.canonicalContractHash),
   runComparator: wrap(addon.runComparator),
   // Native locale array sort (declarative `sort = true`) — the ICU collator
   // matching V8 `localeCompare`. Pure (no structured errors), so unwrapped.
@@ -152,6 +167,11 @@ module.exports = {
   CoreTransaction: addon.CoreTransaction,
   coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
   coreCheckValidators: wrap(addon.coreCheckValidators),
+  // Consumer-side contract verification — the two-rung ladder behind
+  // `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
+  // verification"). A verification failure raises a typed
+  // ContractError(contract_unsatisfied) carrying the conformance report.
+  verifySheetContract: wrap(addon.verifySheetContract),
   // Markdown / mdx content-type codec. serialize/parse can raise a typed
   // ValidationError/ConfigError; the H1 + normalize helpers are pure. Body
   // NORMALIZATION is native — `markdownSerialize` runs the embedded
@@ -175,4 +195,5 @@ module.exports = {
   RefError,
   PathTemplateError,
   NotFoundError,
+  ContractError,
 };

@@ -49,6 +49,14 @@ use crate::value::Value;
 /// A schema compiled once (on sheet-open) and reused to validate every record.
 pub struct CompiledSchema {
     validator: Validator,
+    /// Contract names in `allOf` branch order, when this compiled schema is a
+    /// contract composition (`specs/behaviors/contracts.md` "Composition and
+    /// enforcement"); empty for a bare `[gitsheet.schema]` compile. Used by
+    /// [`Self::validate`] to tag an issue's `contract` field by its `allOf`
+    /// branch index — empty here means every issue's `contract` is `None`,
+    /// so a sheet with no `implements` is byte/behavior-identical to before
+    /// contracts existed.
+    contract_names: Vec<String>,
 }
 
 impl CompiledSchema {
@@ -67,15 +75,26 @@ impl CompiledSchema {
     pub fn compile(schema: &Value) -> Result<Self> {
         let json = value_to_json(schema);
         reject_unknown_keywords(&json)?;
-        let validator = jsonschema::options()
-            .with_draft(Draft::Draft7)
-            .should_validate_formats(true)
-            .should_ignore_unknown_formats(true)
-            .build(&json)
-            .map_err(|e| Error::ConfigInvalid {
-                message: format!("[gitsheet.schema] failed to compile: {e}"),
-            })?;
-        Ok(CompiledSchema { validator })
+        Ok(CompiledSchema {
+            validator: build_validator(&json)?,
+            contract_names: Vec::new(),
+        })
+    }
+
+    /// Build a compiled schema from an already-checked composed `allOf`
+    /// document — the contract-composition path
+    /// ([`crate::contract::compile_effective_schema`]). Each `allOf` branch
+    /// (every declared contract, plus the local `[gitsheet.schema]`) has
+    /// already individually passed strict-mode + document-requirement checks
+    /// before being wrapped, so this skips re-running [`reject_unknown_keywords`]
+    /// on the whole tree. `contract_names` is the ordered list of declared
+    /// contract names, aligned with the first N `allOf` branches (the final
+    /// branch is always the local schema).
+    pub(crate) fn compile_composed(json: Json, contract_names: Vec<String>) -> Result<Self> {
+        Ok(CompiledSchema {
+            validator: build_validator(&json)?,
+            contract_names,
+        })
     }
 
     /// Validate one record, returning every issue (empty ⇒ valid). The caller
@@ -87,6 +106,7 @@ impl CompiledSchema {
         for err in self.validator.iter_errors(&json) {
             let instance_path = err.instance_path().as_str().to_string();
             let schema_path = err.schema_path().as_str().to_string();
+            let contract = self.contract_for_schema_path(&schema_path);
             issues.push(ValidationIssue {
                 path: split_pointer(&instance_path),
                 message: err.to_string(),
@@ -94,9 +114,29 @@ impl CompiledSchema {
                 schema_path: Some(format!("#{schema_path}")),
                 // ajv's `keyword` is the last schemaPath segment — same here.
                 code: keyword_from_schema_path(&schema_path),
+                contract,
+                // Single-record write-time validation — no multi-record report.
+                record: None,
             });
         }
         issues
+    }
+
+    /// Which declared contract (if any) a failing `allOf` branch belongs to,
+    /// by parsing the `/allOf/<i>` prefix `jsonschema` reports in
+    /// `schema_path` for an `allOf`-composed validator. `None` when this
+    /// schema isn't a contract composition, or the branch index is the final
+    /// (local-schema) branch.
+    fn contract_for_schema_path(&self, schema_path: &str) -> Option<String> {
+        if self.contract_names.is_empty() {
+            return None;
+        }
+        let mut parts = schema_path.trim_start_matches('/').split('/');
+        if parts.next() != Some("allOf") {
+            return None;
+        }
+        let idx: usize = parts.next()?.parse().ok()?;
+        self.contract_names.get(idx).cloned()
     }
 
     /// Validate, returning `Ok(())` when valid or [`Error::ValidationFailed`]
@@ -112,6 +152,22 @@ impl CompiledSchema {
             })
         }
     }
+}
+
+/// Build a `jsonschema` [`Validator`] from an already-vocabulary-checked JSON
+/// document, configured to mirror the host `ajv` setup (see the module docs):
+/// Draft 7 pinned, formats asserted, unknown formats ignored (not rejected). A
+/// build failure (bad regex, malformed structure, an incoherent composition)
+/// is [`Error::ConfigInvalid`].
+fn build_validator(json: &Json) -> Result<Validator> {
+    jsonschema::options()
+        .with_draft(Draft::Draft7)
+        .should_validate_formats(true)
+        .should_ignore_unknown_formats(true)
+        .build(json)
+        .map_err(|e| Error::ConfigInvalid {
+            message: format!("schema failed to compile: {e}"),
+        })
 }
 
 /// Split a JSON-Pointer instance path (`/address/city`, `/tags/0`) into segment
@@ -145,7 +201,14 @@ fn keyword_from_schema_path(schema_path: &str) -> Option<String> {
 /// datetime field passes here but the host would see an object. Datetime-typed
 /// schema fields are uncommon (the spec's example schemas are string/number);
 /// the parity fixtures stay JSON-representable and this case is enumerated.
-fn value_to_json(value: &Value) -> Json {
+///
+/// Widened to `pub` (from `pub(crate)`) for `contracts-cli`
+/// (`gitsheets-napi::check_contract_document`): the napi binding marshals a
+/// candidate document from JS as the core [`Value`] (the same `JsValue`
+/// newtype `validate_batch` already uses) and needs this exact conversion
+/// before running [`crate::contract::check_contract_document`] — reusing the
+/// one JSON-shape-of-record-truth rather than a second JS-side conversion.
+pub fn value_to_json(value: &Value) -> Json {
     match value {
         Value::String(s) => Json::String(s.clone()),
         Value::Integer(i) => Json::Number((*i).into()),
@@ -218,50 +281,58 @@ fn keyword_descent(keyword: &str) -> Option<Descent> {
     })
 }
 
-/// Walk a compiled schema and reject any keyword outside [`keyword_descent`]'s
-/// known Draft-07 vocabulary with [`Error::ConfigInvalid`] — the config-time
-/// bucket the host surfaces as `ConfigError(config_invalid)`, restoring ajv
-/// `strict: true`'s unknown-keyword guard. Recurses only through genuine
-/// subschema positions, so `properties` names, `enum`/`const` values, `required`
-/// entries, and `default`s are never misread as keywords.
-fn reject_unknown_keywords(schema: &Json) -> Result<()> {
-    // A subschema may be a boolean (`true`/`false`) — nothing to check there.
+/// Walk every `(keyword, value)` pair in schema position across the whole
+/// document — the root schema and every genuine subschema reached through
+/// [`keyword_descent`]'s known applicators — invoking `visit` for each pair
+/// before descending. Shared skeleton for [`reject_unknown_keywords`] (ajv
+/// `strict: true` parity) and the contract document-requirement checks
+/// (self-containment / openness / null-bearing-keyword rejection — see
+/// [`crate::contract`]): both need the identical "never misread a data
+/// position as a keyword" descent rules the plan calls for
+/// (`plans/contracts-core.md` "Openness detection depth"), just with a
+/// different per-keyword predicate.
+///
+/// A subschema may be a boolean (`true`/`false`) — nothing to visit there. An
+/// *unknown* keyword (one [`keyword_descent`] doesn't recognize) is still
+/// visited — `visit` decides whether that's an error — but the walk can't
+/// descend into its value (unknown shape), so it simply doesn't recurse past
+/// it.
+pub(crate) fn walk_schema(
+    schema: &Json,
+    visit: &mut impl FnMut(&str, &Json) -> Result<()>,
+) -> Result<()> {
     let Json::Object(map) = schema else {
         return Ok(());
     };
     for (key, value) in map {
+        visit(key, value)?;
         let Some(descent) = keyword_descent(key) else {
-            return Err(Error::ConfigInvalid {
-                message: format!(
-                    "[gitsheet.schema] unknown JSON Schema keyword '{key}' \
-                     (strict mode rejects unrecognized keywords)"
-                ),
-            });
+            continue;
         };
         match descent {
             Descent::None => {}
-            Descent::Schema => reject_unknown_keywords(value)?,
+            Descent::Schema => walk_schema(value, visit)?,
             Descent::SchemaArray => {
                 if let Json::Array(items) = value {
                     for item in items {
-                        reject_unknown_keywords(item)?;
+                        walk_schema(item, visit)?;
                     }
                 }
             }
             Descent::SchemaMap => {
                 if let Json::Object(subs) = value {
                     for sub in subs.values() {
-                        reject_unknown_keywords(sub)?;
+                        walk_schema(sub, visit)?;
                     }
                 }
             }
             Descent::Items => match value {
                 Json::Array(items) => {
                     for item in items {
-                        reject_unknown_keywords(item)?;
+                        walk_schema(item, visit)?;
                     }
                 }
-                other => reject_unknown_keywords(other)?,
+                other => walk_schema(other, visit)?,
             },
             Descent::Dependencies => {
                 if let Json::Object(deps) = value {
@@ -269,7 +340,7 @@ fn reject_unknown_keywords(schema: &Json) -> Result<()> {
                         // A string-array dependency carries no subschema; only an
                         // object/bool dependency is a subschema to descend.
                         if !dep.is_array() {
-                            reject_unknown_keywords(dep)?;
+                            walk_schema(dep, visit)?;
                         }
                     }
                 }
@@ -277,6 +348,27 @@ fn reject_unknown_keywords(schema: &Json) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Walk a compiled schema and reject any keyword outside [`keyword_descent`]'s
+/// known Draft-07 vocabulary with [`Error::ConfigInvalid`] — the config-time
+/// bucket the host surfaces as `ConfigError(config_invalid)`, restoring ajv
+/// `strict: true`'s unknown-keyword guard. Recurses only through genuine
+/// subschema positions, so `properties` names, `enum`/`const` values, `required`
+/// entries, and `default`s are never misread as keywords.
+pub(crate) fn reject_unknown_keywords(schema: &Json) -> Result<()> {
+    walk_schema(schema, &mut |key, _value| {
+        if keyword_descent(key).is_none() {
+            Err(Error::ConfigInvalid {
+                message: format!(
+                    "[gitsheet.schema] unknown JSON Schema keyword '{key}' \
+                     (strict mode rejects unrecognized keywords)"
+                ),
+            })
+        } else {
+            Ok(())
+        }
+    })
 }
 
 #[cfg(test)]

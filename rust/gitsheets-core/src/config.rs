@@ -109,6 +109,11 @@ pub struct SheetConfig {
     pub schema: Option<Value>,
     /// The storage format.
     pub format: FormatConfig,
+    /// Declared contract names (`gitsheet.implements`) — see
+    /// `specs/behaviors/contracts.md` "Declaration: implements". Empty when
+    /// the sheet declares no contracts (the default, and the only case for a
+    /// sheet written before contracts existed).
+    pub implements: Vec<String>,
 }
 
 fn as_table(v: &Value) -> Option<&IndexMap<String, Value>> {
@@ -198,6 +203,29 @@ pub fn parse_config(raw: &Value, source: &str) -> Result<SheetConfig> {
     // format
     let format = parse_format(gitsheet.get("format"), source)?;
 
+    // implements (declared contract names — pure intent, validated against
+    // the name rules; resolution against the vendored store happens at
+    // sheet-open, not here, since it needs the committed tree).
+    let mut implements: Vec<String> = Vec::new();
+    if let Some(impl_val) = gitsheet.get("implements") {
+        let Value::Array(items) = impl_val else {
+            return Err(Error::ConfigInvalid {
+                message: format!("{source}: gitsheet.implements must be an array of strings"),
+            });
+        };
+        for item in items {
+            let Value::String(name) = item else {
+                return Err(Error::ConfigInvalid {
+                    message: format!("{source}: gitsheet.implements entries must be strings"),
+                });
+            };
+            crate::contract::validate_name(name).map_err(|e| Error::ConfigInvalid {
+                message: format!("{source}: gitsheet.implements: {}", e.message()),
+            })?;
+            implements.push(name.clone());
+        }
+    }
+
     // Body-field presence rules. (The body↔template *collision* check needs the
     // compiled template's field names, so it lives in `Sheet::open`.)
     if format.body.is_some() {
@@ -222,6 +250,7 @@ pub fn parse_config(raw: &Value, source: &str) -> Result<SheetConfig> {
         fields,
         schema,
         format,
+        implements,
     })
 }
 
@@ -396,6 +425,43 @@ mod tests {
     fn parses_schema_block() {
         let c = cfg("[gitsheet]\npath = '${{ slug }}'\n[gitsheet.schema]\ntype = 'object'\n").unwrap();
         assert!(c.schema.is_some());
+    }
+
+    #[test]
+    fn defaults_implements_to_empty() {
+        let c = cfg("[gitsheet]\npath = '${{ slug }}'\n").unwrap();
+        assert!(c.implements.is_empty());
+    }
+
+    #[test]
+    fn parses_implements_array() {
+        let c = cfg(
+            "[gitsheet]\npath = '${{ slug }}'\nimplements = ['gitsheets.io/meals/v1', 'gitsheets.io/meals/v1.1']\n",
+        )
+        .unwrap();
+        assert_eq!(
+            c.implements,
+            vec!["gitsheets.io/meals/v1".to_string(), "gitsheets.io/meals/v1.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn invalid_contract_name_in_implements_is_config_invalid() {
+        let err = cfg("[gitsheet]\npath = '${{ slug }}'\nimplements = ['no-slash-here']\n").unwrap_err();
+        assert_eq!(err.code(), "config_invalid");
+        assert!(err.message().contains("implements"));
+    }
+
+    #[test]
+    fn implements_non_array_is_config_invalid() {
+        let err = cfg("[gitsheet]\npath = '${{ slug }}'\nimplements = 'oops'\n").unwrap_err();
+        assert_eq!(err.code(), "config_invalid");
+    }
+
+    #[test]
+    fn implements_non_string_entry_is_config_invalid() {
+        let err = cfg("[gitsheet]\npath = '${{ slug }}'\nimplements = [1]\n").unwrap_err();
+        assert_eq!(err.code(), "config_invalid");
     }
 
     #[test]

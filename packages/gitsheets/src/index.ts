@@ -79,6 +79,15 @@ export type {
   PathTemplateQueryResult,
 } from './path-template/index.js';
 
+export { canonicalContractHash } from './contracts.js';
+export type {
+  CanonicalContractHashOptions,
+  ConformanceReport,
+  ContractDocumentFormat,
+  ContractVerificationMode,
+  OpenSheetContractOptions,
+} from './contracts.js';
+
 export { validateRecord } from './validation.js';
 export type {
   JSONSchema,

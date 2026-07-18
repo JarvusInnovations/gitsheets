@@ -16,10 +16,10 @@ import {
 
   // error classes
   GitsheetsError, ConfigError, ValidationError, TransactionError,
-  IndexError, RefError, PathTemplateError, NotFoundError,
+  IndexError, RefError, PathTemplateError, NotFoundError, ContractError,
 
   // utilities
-  mergePatch, validateRecord,
+  mergePatch, validateRecord, canonicalContractHash,
   parseToml, parseConfigToml, stringifyRecord,
   getFormat, hasFormat, registerFormat, resolveFormatConfig,
 
@@ -43,6 +43,8 @@ import type {
   PushDaemonOptions, PushDaemonStatus, PushFailureReason, BackoffConfig,
   JSONSchema, StandardSchemaV1, ValidationIssue, StandardSchemaResult,
   RecordLike, PathTemplateBlob, PathTemplateTree, PathTemplateQueryResult,
+  OpenSheetContractOptions, ContractVerificationMode, ConformanceReport,
+  ContractDocumentFormat, CanonicalContractHashOptions,
 } from 'gitsheets';
 ```
 
@@ -77,7 +79,7 @@ const store = await openStore(repo, {
 
 | Method | Purpose |
 | --- | --- |
-| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix` |
+| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix`, `opts.contract` (verify against a [contract](contracts.md) before returning — result on `sheet.contractVerification`) |
 | `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix` |
 | `repo.transact(opts, handler)` | Run a handler in a single-commit transaction |
 | `repo.withLock(fn)` | Run `fn` holding the write lock transact uses — coordinate non-transact git ops. Not reentrant (`lock_held`) |
@@ -237,6 +239,7 @@ Subclasses:
 | `RefError` | `ref_not_found`, `not_an_ancestor` |
 | `PathTemplateError` | `path_render_failed`, `path_invalid_chars` |
 | `NotFoundError` | `record_not_found` |
+| `ContractError` | `contract_missing`, `contract_invalid`, `contract_unsatisfied` (carries `contract` and, on `contract_unsatisfied`, the conformance report in `issues`) |
 
 Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 
@@ -257,6 +260,10 @@ RFC 7396 JSON Merge Patch as a pure function. Useful when you want the patch sem
 ### `validateRecord({ record, schema, validator? })`
 
 Run the same validation pipeline `Sheet.upsert` uses without going through a Sheet. Useful for pre-flight (UI form submission, CSV ingest, audit passes against legacy records). Returns the possibly-transformed record on success, throws `ValidationError` on failure. See [`specs/behaviors/validation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md).
+
+### `canonicalContractHash(input, options?)`
+
+The [contract](contracts.md) identity primitive: canonicalize a contract document — parsed data, or JSON/TOML text with `{ format }` — through the canonical TOML encoder and return the SHA-256 hex of the resulting bytes. Two parties holding the same logical document compute the same hash regardless of serialization.
 
 ### TOML round-tripping
 

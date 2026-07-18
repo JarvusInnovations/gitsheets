@@ -323,6 +323,27 @@ pub struct JsValidationIssue {
     pub source: String,
     pub schema_path: Option<String>,
     pub code: Option<String>,
+    /// The contract name, when the failing branch is a declared contract
+    /// composed via `allOf` (specs/behaviors/contracts.md).
+    pub contract: Option<String>,
+    /// The record's sheet-relative path, in a multi-record conformance
+    /// report (`ContractError.issues` from consumer-side contract
+    /// verification — specs/behaviors/contracts.md "Consumer verification").
+    pub record: Option<String>,
+}
+
+/// Marshal a core `ValidationIssue` to its napi wire shape. Shared by
+/// [`validate_batch`] and [`verify_sheet_contract`].
+fn issue_to_js(issue: gitsheets_core::ValidationIssue) -> JsValidationIssue {
+    JsValidationIssue {
+        path: issue.path,
+        message: issue.message,
+        source: issue.source.as_str().to_string(),
+        schema_path: issue.schema_path,
+        code: issue.code,
+        contract: issue.contract,
+        record: issue.record,
+    }
 }
 
 /// Render a path template against a **batch** of records, returning one path per
@@ -370,20 +391,241 @@ pub fn validate_batch(
     };
     let mut out = Vec::with_capacity(records.len());
     for record in records {
-        let issues = compiled
-            .validate(&record.0)
-            .into_iter()
-            .map(|issue| JsValidationIssue {
-                path: issue.path,
-                message: issue.message,
-                source: issue.source.as_str().to_string(),
-                schema_path: issue.schema_path,
-                code: issue.code,
-            })
-            .collect();
+        let issues = compiled.validate(&record.0).into_iter().map(issue_to_js).collect();
         out.push(issues);
     }
     Ok(out)
+}
+
+/// The contract identity primitive (specs/behaviors/contracts.md "Canonical
+/// form" / "Contract identity"): canonicalize `input` → SHA-256 hex of the
+/// canonical TOML bytes. `input` is either already-parsed data (a JS
+/// object/array/etc.) or a string, in which case `format` says how to parse
+/// it (`"json"` or `"toml"` — required for a string input; a
+/// `ConfigError(config_invalid)` names the omission). The minimal JS surface
+/// over [`gitsheets_core::contract::canonical_contract_hash`].
+#[napi]
+pub fn canonical_contract_hash(
+    env: Env,
+    input: Either<String, JsValue>,
+    format: Option<String>,
+) -> Result<String> {
+    let core_input = match input {
+        Either::B(value) => gitsheets_core::ContractHashInput::Data(value.0),
+        Either::A(text) => match format.as_deref() {
+            Some("json") => gitsheets_core::ContractHashInput::Json(text),
+            Some("toml") => gitsheets_core::ContractHashInput::Toml(text),
+            Some(other) => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    format!("canonicalContractHash: unknown format {other:?} — expected 'json' or 'toml'"),
+                ))
+            }
+            None => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    "canonicalContractHash: pass { format: 'json' | 'toml' } when input is a string",
+                ))
+            }
+        },
+    };
+    gitsheets_core::canonical_contract_hash(core_input).map_err(|err| raise_core_error(&env, &err))
+}
+// ── contracts-cli surface (specs/api/cli.md "git sheet contracts") ──────────────
+//
+// The CLI's `adopt`/`verify`/`test` commands compose these four thin wrappers
+// over `gitsheets-core::contract` — reusing its name validation, derived-path
+// formula, document-requirement walk, and vendored-tree loader rather than
+// re-implementing any of them host-side. Effective-schema composition itself
+// (`allOf: [<contracts>, <local schema>]`) is the documented, mechanical
+// formula from `specs/behaviors/contracts.md` "Composition and enforcement" —
+// the CLI assembles that array in TS and validates it through the existing
+// `validate_batch`, so no further core/napi surface is needed for it.
+
+/// Validate a contract name (`specs/behaviors/contracts.md` "Contract names
+/// and the derived path") — the same check a sheet's `implements` entries run
+/// through at sheet-open. `contracts adopt` runs it on the name derived from a
+/// candidate document's `$id` before vendoring. Throws
+/// `ConfigError(config_invalid)` naming the violated rule.
+#[napi]
+pub fn validate_contract_name(env: Env, name: String) -> Result<()> {
+    gitsheets_core::validate_contract_name(&name).map_err(|err| raise_core_error(&env, &err))
+}
+
+/// The derived vendored path for a contract name — mechanical, no manifest:
+/// `.gitsheets/contracts/<name>.toml`. The minimal JS surface over
+/// [`gitsheets_core::contract_path`].
+#[napi]
+pub fn contract_path(name: String) -> String {
+    gitsheets_core::contract_path(&name)
+}
+
+/// Enforce the contract document requirements
+/// (`specs/behaviors/contracts.md` "Contract document requirements") against a
+/// NOT-yet-vendored candidate document — `contracts adopt`'s pre-vendor gate.
+///
+/// `input` is either already-parsed data (a JS object) or a string, in which
+/// case `format` says how to parse it — mirrors `canonicalContractHash`'s
+/// shape exactly, for the same reason: a **JSON-text** input is parsed with
+/// `serde_json::from_str` directly (preserving a literal JSON `null`),
+/// deliberately NOT via the `JsValue`/core-`Value` marshalling boundary,
+/// which silently *drops* null-valued keys per the type-fidelity rules at the
+/// top of this file. Requirement 4 (no null-bearing keywords — `default:
+/// null`, `const: null`, a null in `enum`) can only ever be violated by a
+/// JSON-sourced document (TOML has no null literal at all), so routing
+/// through the null-dropping path would make that check silently unreachable
+/// for exactly the input shape it exists to catch. A TOML-text or
+/// already-parsed-data input has no such hazard (nothing they carry can be a
+/// TOML/core `Value` null in the first place), so those still go through the
+/// shared `value_to_json` conversion.
+/// Throws `ContractError(contract_invalid)` naming the violated rule.
+#[napi]
+pub fn check_contract_document(
+    env: Env,
+    name: String,
+    input: Either<String, JsValue>,
+    format: Option<String>,
+) -> Result<()> {
+    let json: serde_json::Value = match input {
+        Either::B(value) => gitsheets_core::validation::value_to_json(&value.0),
+        Either::A(text) => match format.as_deref() {
+            Some("json") => serde_json::from_str(&text).map_err(|e| {
+                napi::Error::new(
+                    Status::InvalidArg,
+                    format!("checkContractDocument: JSON parse failed: {e}"),
+                )
+            })?,
+            Some("toml") => {
+                let value = gitsheets_core::parse(&text).map_err(|err| raise_core_error(&env, &err))?;
+                gitsheets_core::validation::value_to_json(&value)
+            }
+            Some(other) => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    format!("checkContractDocument: unknown format {other:?} — expected 'json' or 'toml'"),
+                ))
+            }
+            None => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    "checkContractDocument: pass { format: 'json' | 'toml' } when input is a string",
+                ))
+            }
+        },
+    };
+    gitsheets_core::contract::check_contract_document(&name, &json)
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// Load a vendored contract document `name` from the committed tree at
+/// `treeRef` (scoped under `openRoot`), returning it as JSON text on success.
+/// The minimal JS surface over [`gitsheets_core::contract::load_contract`] —
+/// runs the exact compile-time check (byte-canonical, document requirements,
+/// `$id`↔path) `Sheet::open` composition relies on, so `contracts verify` /
+/// `contracts adopt --sheet` get the identical guarantee. Throws
+/// `ContractError('contract_missing' | 'contract_invalid')` on failure.
+#[napi]
+pub fn contract_load(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    open_root: String,
+    name: String,
+) -> Result<String> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree =
+        record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let json = gitsheets_core::contract::load_contract(&repo, &mut tree, &open_root, &name)
+        .map_err(|err| raise_core_error(&env, &err))?;
+    Ok(json.to_string())
+}
+
+
+/// The result of a successful [`verify_sheet_contract`] call — the wire shape
+/// for `sheet.contractVerification` minus `tree` (the JS binding attaches that
+/// from the read snapshot it already resolved to open the sheet).
+#[napi(object)]
+pub struct JsConformanceReport {
+    pub name: String,
+    /// `"declared"` or `"structural"` — which rung passed.
+    pub rung: String,
+    pub conforming: bool,
+    pub issues: Vec<JsValidationIssue>,
+}
+
+/// Consumer-side contract verification — the two-rung ladder behind
+/// `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
+/// verification", specs/api/repository.md `opts.contract`). Opens `sheetName`
+/// read-only against `treeRef` (config read + effective-schema compile, same
+/// as any other read), then verifies it against `schema` — parsed data, or
+/// text with `format` naming which text form (mirrors
+/// `canonicalContractHash`'s input handling: no format auto-detection). A
+/// verification failure (both rungs missed, or the attempted rung missed in
+/// `declared`/`structural` mode) surfaces as `ContractError(contract_unsatisfied)`
+/// carrying the conformance report in `issues`.
+#[allow(clippy::too_many_arguments)]
+#[napi]
+pub fn verify_sheet_contract(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+    prefix: String,
+    schema: Either<String, JsValue>,
+    format: Option<String>,
+    mode: Option<String>,
+) -> Result<JsConformanceReport> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree =
+        record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let sheet = match CoreSheet::open(&repo, &mut tree, &sheet_name, &config_path, &open_root, &prefix)
+    {
+        Ok(s) => s,
+        Err(err) => return Err(raise_core_error(&env, &err)),
+    };
+
+    let core_input = match schema {
+        Either::B(value) => gitsheets_core::ContractHashInput::Data(value.0),
+        Either::A(text) => match format.as_deref() {
+            Some("json") => gitsheets_core::ContractHashInput::Json(text),
+            Some("toml") => gitsheets_core::ContractHashInput::Toml(text),
+            Some(other) => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    format!("verifySheetContract: unknown format {other:?} — expected 'json' or 'toml'"),
+                ))
+            }
+            None => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    "verifySheetContract: pass { format: 'json' | 'toml' } when schema is a string",
+                ))
+            }
+        },
+    };
+    let verify_mode = match mode.as_deref() {
+        None | Some("verify") => gitsheets_core::VerifyMode::Verify,
+        Some("declared") => gitsheets_core::VerifyMode::Declared,
+        Some("structural") => gitsheets_core::VerifyMode::Structural,
+        Some(other) => {
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                format!("verifySheetContract: unknown mode {other:?} — expected 'verify', 'declared', or 'structural'"),
+            ))
+        }
+    };
+
+    match gitsheets_core::verify_sheet_contract(&repo, &mut tree, &open_root, &sheet, core_input, verify_mode) {
+        Ok(report) => Ok(JsConformanceReport {
+            name: report.name,
+            rung: report.rung.as_str().to_string(),
+            conforming: report.conforming,
+            issues: report.issues.into_iter().map(issue_to_js).collect(),
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
 }
 
 /// Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
@@ -1120,6 +1362,12 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
             if let Some(c) = &issue.code {
                 io.set_named_property("code", env.create_string(c)?)?;
             }
+            if let Some(c) = &issue.contract {
+                io.set_named_property("contract", env.create_string(c)?)?;
+            }
+            if let Some(r) = &issue.record {
+                io.set_named_property("record", env.create_string(r)?)?;
+            }
             arr.set_element(i as u32, io)?;
         }
         obj.set_named_property("issues", arr)?;
@@ -1132,6 +1380,10 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
             arr.set_element(i as u32, env.create_string(p)?)?;
         }
         obj.set_named_property("conflictingPaths", arr)?;
+    }
+
+    if let Some(contract) = err.contract() {
+        obj.set_named_property("contract", env.create_string(contract)?)?;
     }
 
     env.throw(obj)?;
@@ -1517,6 +1769,35 @@ impl CoreTransaction {
         tx.mark_mutated();
         Ok(hash)
     }
+    /// Delete a raw file at `path` (repo-root-relative) in this transaction's
+    /// private tree *(mutating)* — `write_file`'s inverse. Returns whether a
+    /// blob existed at `path` before the delete. Used by `contracts prune` to
+    /// remove undeclared vendored contract documents; deep (slash-separated)
+    /// paths are supported directly via `MutableTree::delete_child_deep`.
+    #[napi]
+    pub fn delete_file(&mut self, env: Env, path: String) -> Result<bool> {
+        let Self { inner, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let existed = {
+            let (repo, tree) = tx.split();
+            match tree.delete_child_deep(repo, &path) {
+                Ok(existed) => existed,
+                Err(e) => {
+                    let core_err = gitsheets_core::Error::CommitFailed {
+                        message: format!("delete_file {path:?} failed: {e}"),
+                    };
+                    return Err(raise_core_error(&env, &core_err));
+                }
+            }
+        };
+        if existed {
+            tx.mark_mutated();
+        }
+        Ok(existed)
+    }
+
 
     /// The blob-hash map of a record's attachments (`name → hash`, sorted by
     /// name), or `null` when the record has no attachment directory. Read-only.

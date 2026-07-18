@@ -232,3 +232,27 @@ def test_embedded_engine_comparator_identical_across_bindings():
     py = gitsheets.run_comparator(rule, a, b)
     node = _run_node("comparator", rule, json.dumps(a), json.dumps(b))
     assert py == node["result"]
+
+
+def test_canonical_contract_hash_identical_across_bindings():
+    """canonical_contract_hash agrees across Python and Node, and across the
+    three input forms (parsed data, JSON text, TOML text) within each binding —
+    the identity primitive specs/behaviors/contracts.md builds `contracts-cli`
+    and `contracts-consumer-verify` on.
+    """
+    name = "example.com/c/v1"
+    data = {"$id": f"https://{name}", "type": "object"}
+    json_text = json.dumps(data)
+    toml_text = f"'$id' = 'https://{name}'\ntype = 'object'\n"
+
+    py_data = gitsheets.canonical_contract_hash(data)
+    py_json = gitsheets.canonical_contract_hash(json_text, format="json")
+    py_toml = gitsheets.canonical_contract_hash(toml_text, format="toml")
+    assert py_data == py_json == py_toml
+
+    node_data = _run_node("contract-hash", "data", json.dumps(data))["hash"]
+    node_json = _run_node("contract-hash", "json", json_text)["hash"]
+    node_toml = _run_node("contract-hash", "toml", toml_text)["hash"]
+    assert node_data == node_json == node_toml
+
+    assert py_data == node_data, "contract identity diverged across bindings"

@@ -159,6 +159,39 @@ Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '$
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
 ```
 
+### `git sheet contracts <subcommand>`
+
+Manage schema contracts ([behaviors/contracts.md](../behaviors/contracts.md)). All state these commands write lives under `.gitsheets/contracts/`; sheet configs are never rewritten by tooling — adding a name to `implements` is the author's edit.
+
+#### `git sheet contracts adopt <source> [--sheet <name>]...`
+
+Read a contract document from `<source>` (local file path or HTTPS URL; JSON or TOML), enforce the [document requirements](../behaviors/contracts.md#contract-document-requirements), canonicalize, and vendor it at its derived path. Records provenance in `.gitsheets/contracts/sources.toml`. With `--sheet`, also validates **every existing record** of each named sheet against the new effective schema and refuses adoption (per-record issues on stderr) until the data conforms — the author adds the name to `implements` only after adopt succeeds.
+
+```bash
+git sheet contracts adopt https://raw.githubusercontent.com/org/contracts/main/meals/v1.schema.json --sheet meal-bank
+git sheet contracts adopt ./meals-v1.schema.json
+```
+
+#### `git sheet contracts verify [<sheet>]...`
+
+Offline conformance gate (CI-friendly; no network). For the named sheets (default: all declaring sheets): every declared name resolves to a vendored document; each document satisfies the document requirements, is byte-canonical, and its `$id` matches its path; every record validates against the sheet's effective schema. Warns when a declaring sheet's local schema sets `additionalProperties: false`. Non-zero exit on any failure.
+
+#### `git sheet contracts test <sheet> --against <file-or-name>`
+
+Consumer-side structural check (rung 2 of [consumer verification](../behaviors/contracts.md#consumer-verification)) from the CLI: validate `<sheet>`'s records against an arbitrary contract document (a file, or the name of a vendored contract). Reports conformance per record; non-zero exit on failure. Works against sheets that declare nothing — duck typing.
+
+#### `git sheet contracts sync [<name>]...`
+
+Re-fetch each contract's recorded source and report drift between upstream and vendored bytes. **Never rewrites a vendored contract** — published versions are immutable; upstream drift is a finding to investigate, not a change to pull.
+
+#### `git sheet contracts export <name>`
+
+Emit the vendored contract as interchange JSON on stdout, for the wider JSON Schema toolchain.
+
+#### `git sheet contracts prune [--dry-run]`
+
+List (and with confirmation, remove) vendored documents no sheet declares.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -170,6 +203,7 @@ git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
 | 64 | `ConfigError` |
 | 65 | `RefError` (not-found) |
 | 66 | `NotFoundError` |
+| 67 | `ContractError` |
 | 69 | `TransactionError` |
 | 70 | `IndexError` |
 

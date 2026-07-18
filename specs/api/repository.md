@@ -32,12 +32,26 @@ const users = await repo.openSheet('users', {
   root?: string,              // default: '.'
   prefix?: string,            // optional sub-prefix under the sheet's configured root
   validator?: StandardSchema, // optional Standard Schema validator
+  contract?: {                // consumer-side contract verification — behaviors/contracts.md
+    schema: object | string,  // the contract document the consumer holds (parsed data, or JSON/TOML text)
+    format?: 'json' | 'toml', // required when `schema` is a string — no format auto-detection (matches canonicalContractHash)
+    mode?: 'verify' | 'declared' | 'structural',   // default: 'verify'
+    onDrift?: (report: ConformanceReport) => void, // advisory drift signal (structural-verified sheets only)
+  },
 });
 ```
 
 `opts.prefix` scopes record reads/writes to `<configRoot>/<prefix>/<rendered-path>.<ext>`. Useful for multi-tenant sub-tree partitioning. The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped. Mirrors the CLI `--prefix` global flag (env `GITSHEETS_PREFIX`). See [api/cli.md](cli.md#global-flags) for the CLI surface.
 
 Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolved root.
+
+**`opts.contract`** verifies the sheet against a contract document the consumer holds, per the two-rung ladder in [behaviors/contracts.md](../behaviors/contracts.md#consumer-verification). The document is canonicalized and hashed by the core regardless of input form. Modes:
+
+- `'verify'` (default) — rung 1 (declared identity), falling back to rung 2 (structural validation of all records). Failure of both: `ContractError('contract_unsatisfied')` carrying the conformance report.
+- `'declared'` — rung 1 only; never reads records. Miss: `ContractError('contract_unsatisfied')`.
+- `'structural'` — rung 2 only (duck typing; ignores any declaration).
+
+`sheet.contractVerification` on the returned handle reports `{ name, rung: 'declared' | 'structural', tree, conforming, issues }` — which guarantee you actually got, and the tree hash it's pinned to (`conforming`/`issues` are the same conformance-report shape `onDrift` receives; always `conforming: true` / `issues: []` on the handle you get back, since a failed verification throws rather than returning a non-conforming report). For structural-verified sheets, a rebind to a changed tree ([behaviors/freshness.md](../behaviors/freshness.md)) triggers an advisory re-verification: `onDrift` is invoked with the report if conformance regressed. Reads are never blocked by drift — refusal belongs at wiring time only.
 
 ### `repo.openSheets(opts?)`
 
@@ -125,7 +139,6 @@ const result = await repo.withLock(async () => {
 - **Not reentrant — deliberately.** The lock has no hold-count. Calling `repo.withLock` inside a `withLock` callback, calling `repo.withLock` inside a `repo.transact` handler (the transaction already holds the lock), or calling `repo.transact` (or any permissive-mode mutation, which auto-opens a transaction) inside a `withLock` callback would self-deadlock — each is detected via async-context tracking and throws `TransactionError` (`lock_held`) instead of hanging.
 - The lock is **in-process, per-`Repository`-instance** — the same scope as the transaction mutex ([behaviors/transactions.md](../behaviors/transactions.md#single-writer-model)). It does not coordinate across processes or across two `Repository` instances opened on the same git dir.
 
-
 ### `repo.requireExplicitTransactions()`
 
 Opt into strict mode. After this is called on a `Repository`, calling `Sheet.upsert` / `delete` / `patch` outside a transaction throws `TransactionError` with `code: 'transaction_required'`.
@@ -187,6 +200,9 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit |
 | `ConfigError` | `config_missing` | `.gitsheets/<name>.toml` not found in `openSheet` |
 | `ConfigError` | `config_invalid` | Sheet config TOML is malformed |
+| `ContractError` | `contract_missing` | `implements` names a contract with no vendored document in the committed tree |
+| `ContractError` | `contract_invalid` | Vendored contract violates document requirements (compile, `$id`/path, canonical form, openness, self-containment) |
+| `ContractError` | `contract_unsatisfied` | `openSheet` with `opts.contract` failed verification (carries conformance report) |
 
 ## Examples
 

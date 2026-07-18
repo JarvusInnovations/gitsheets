@@ -33,6 +33,17 @@ export interface JsValidationIssue {
   source: string
   schemaPath?: string
   code?: string
+  /**
+   * The contract name, when the failing branch is a declared contract
+   * composed via `allOf` (specs/behaviors/contracts.md).
+   */
+  contract?: string
+  /**
+   * The record's sheet-relative path, in a multi-record conformance
+   * report (`ContractError.issues` from consumer-side contract
+   * verification — specs/behaviors/contracts.md "Consumer verification").
+   */
+  record?: string
 }
 /**
  * Render a path template against a **batch** of records, returning one path per
@@ -53,6 +64,87 @@ export declare function renderPathsBatch(template: string, records: Array<JsValu
  * compile surfaces as a structured, typed `ConfigError` (`config_invalid`).
  */
 export declare function validateBatch(schema: JsValue, records: Array<JsValue>): Array<Array<JsValidationIssue>>
+/**
+ * The contract identity primitive (specs/behaviors/contracts.md "Canonical
+ * form" / "Contract identity"): canonicalize `input` → SHA-256 hex of the
+ * canonical TOML bytes. `input` is either already-parsed data (a JS
+ * object/array/etc.) or a string, in which case `format` says how to parse
+ * it (`"json"` or `"toml"` — required for a string input; a
+ * `ConfigError(config_invalid)` names the omission). The minimal JS surface
+ * over [`gitsheets_core::contract::canonical_contract_hash`].
+ */
+export declare function canonicalContractHash(input: string | JsValue, format?: string | undefined | null): string
+/**
+ * Validate a contract name (`specs/behaviors/contracts.md` "Contract names
+ * and the derived path") — the same check a sheet's `implements` entries run
+ * through at sheet-open. `contracts adopt` runs it on the name derived from a
+ * candidate document's `$id` before vendoring. Throws
+ * `ConfigError(config_invalid)` naming the violated rule.
+ */
+export declare function validateContractName(name: string): void
+/**
+ * The derived vendored path for a contract name — mechanical, no manifest:
+ * `.gitsheets/contracts/<name>.toml`. The minimal JS surface over
+ * [`gitsheets_core::contract_path`].
+ */
+export declare function contractPath(name: string): string
+/**
+ * Enforce the contract document requirements
+ * (`specs/behaviors/contracts.md` "Contract document requirements") against a
+ * NOT-yet-vendored candidate document — `contracts adopt`'s pre-vendor gate.
+ *
+ * `input` is either already-parsed data (a JS object) or a string, in which
+ * case `format` says how to parse it — mirrors `canonicalContractHash`'s
+ * shape exactly, for the same reason: a **JSON-text** input is parsed with
+ * `serde_json::from_str` directly (preserving a literal JSON `null`),
+ * deliberately NOT via the `JsValue`/core-`Value` marshalling boundary,
+ * which silently *drops* null-valued keys per the type-fidelity rules at the
+ * top of this file. Requirement 4 (no null-bearing keywords — `default:
+ * null`, `const: null`, a null in `enum`) can only ever be violated by a
+ * JSON-sourced document (TOML has no null literal at all), so routing
+ * through the null-dropping path would make that check silently unreachable
+ * for exactly the input shape it exists to catch. A TOML-text or
+ * already-parsed-data input has no such hazard (nothing they carry can be a
+ * TOML/core `Value` null in the first place), so those still go through the
+ * shared `value_to_json` conversion.
+ * Throws `ContractError(contract_invalid)` naming the violated rule.
+ */
+export declare function checkContractDocument(name: string, input: string | JsValue, format?: string | undefined | null): void
+/**
+ * Load a vendored contract document `name` from the committed tree at
+ * `treeRef` (scoped under `openRoot`), returning it as JSON text on success.
+ * The minimal JS surface over [`gitsheets_core::contract::load_contract`] —
+ * runs the exact compile-time check (byte-canonical, document requirements,
+ * `$id`↔path) `Sheet::open` composition relies on, so `contracts verify` /
+ * `contracts adopt --sheet` get the identical guarantee. Throws
+ * `ContractError('contract_missing' | 'contract_invalid')` on failure.
+ */
+export declare function contractLoad(gitDir: string, treeRef: string, openRoot: string, name: string): string
+/**
+ * The result of a successful [`verify_sheet_contract`] call — the wire shape
+ * for `sheet.contractVerification` minus `tree` (the JS binding attaches that
+ * from the read snapshot it already resolved to open the sheet).
+ */
+export interface JsConformanceReport {
+  name: string
+  /** `"declared"` or `"structural"` — which rung passed. */
+  rung: string
+  conforming: boolean
+  issues: Array<JsValidationIssue>
+}
+/**
+ * Consumer-side contract verification — the two-rung ladder behind
+ * `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
+ * verification", specs/api/repository.md `opts.contract`). Opens `sheetName`
+ * read-only against `treeRef` (config read + effective-schema compile, same
+ * as any other read), then verifies it against `schema` — parsed data, or
+ * text with `format` naming which text form (mirrors
+ * `canonicalContractHash`'s input handling: no format auto-detection). A
+ * verification failure (both rungs missed, or the attempted rung missed in
+ * `declared`/`structural` mode) surfaces as `ContractError(contract_unsatisfied)`
+ * carrying the conformance report in `issues`.
+ */
+export declare function verifySheetContract(gitDir: string, treeRef: string, sheetName: string, configPath: string, openRoot: string, prefix: string, schema: string | JsValue, format?: string | undefined | null, mode?: string | undefined | null): JsConformanceReport
 /**
  * Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
  * run it once against `a`/`b`, returning its numeric result. The direct
@@ -384,6 +476,14 @@ export declare class CoreTransaction {
    * else. `path` is repo-root-relative. Returns the written blob hash.
    */
   writeFile(path: string, content: string): string
+  /**
+   * Delete a raw file at `path` (repo-root-relative) in this transaction's
+   * private tree *(mutating)* — `write_file`'s inverse. Returns whether a
+   * blob existed at `path` before the delete. Used by `contracts prune` to
+   * remove undeclared vendored contract documents; deep (slash-separated)
+   * paths are supported directly via `MutableTree::delete_child_deep`.
+   */
+  deleteFile(path: string): boolean
   /**
    * The blob-hash map of a record's attachments (`name → hash`, sorted by
    * name), or `null` when the record has no attachment directory. Read-only.

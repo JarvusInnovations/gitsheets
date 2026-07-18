@@ -5,6 +5,7 @@
 //   record-write <fixture>            → { treeHash, blobHashes }
 //   commit <gitDir>                   → { commitHash, treeHash, refName }
 //   comparator <rule> <aJson> <bJson> → { result }
+//   contract-hash <kind> <input>      → { hash } — kind: data|json|toml
 //
 // The binding.cjs path comes from $GITSHEETS_NAPI_BINDING. Fixtures are authored
 // here as native JS values (the whole point: the same logical data, expressed in
@@ -110,6 +111,11 @@ if (op === 'record-write') {
   const a = JSON.parse(args[1]);
   const b = JSON.parse(args[2]);
   out({ result: binding.runComparator(rule, a, b) });
+} else if (op === 'contract-hash') {
+  const kind = args[0]; // 'data' | 'json' | 'toml'
+  const input = kind === 'data' ? JSON.parse(args[1]) : args[1];
+  const format = kind === 'data' ? undefined : kind;
+  out({ hash: binding.canonicalContractHash(input, format) });
 } else {
   process.stderr.write(`unknown op: ${op}\n`);
   process.exit(2);

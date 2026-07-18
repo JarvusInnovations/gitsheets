@@ -24,6 +24,7 @@ nav:
   - Guides:
       - Path templates: path-templates.md
       - Validation: validation.md
+      - Contracts: contracts.md
       - CLI: cli.md
       - API reference: api.md
       - gitsheets-axi (agent CLI): axi.md

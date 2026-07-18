@@ -24,6 +24,26 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 - **What:** Accept and emit YAML in CLI ingest / export, alongside the existing JSON / TOML / CSV.
 - **Why deferred:** Long-standing backlog request with no concrete current consumer.
 
+### Contract source shorthand + vanity-name resolution
+
+- **What:** Richer `contracts adopt`/`sync` source forms beyond v1's local-path and HTTPS URL: git-native refs with a host-defaulted shorthand (`owner/repo/path@ref`, GitHub Actions-style), and vanity-name resolution (a name like `gitsheets.io/meals/v1` dereferencing to a backing source, Go-modules-style). Pure resolution sugar — identity, pinning, and enforcement are already location-free ([behaviors/contracts.md](behaviors/contracts.md)).
+- **Why deferred:** The kernel works with vendored files and raw URLs alone; the shorthand grammar can arrive later without breaking anything since it desugars to the same (source, bytes) pair.
+
+### Contract registry as a gitsheet + succession metadata
+
+- **What:** A contract registry that is itself a gitsheets repo — contracts as records in a built-in contracts sheet (validated on write by a meta-contract: `$id` present, self-contained, open), served read-only over git transport. Succession/deprecation signaling (`supersededBy`) lives here — it cannot live in contract documents, which are immutable ([behaviors/contracts.md](behaviors/contracts.md#canonical-form)).
+- **Why deferred:** Speculative until multiple independent producers/consumers exist; the motivating consumer pair works with consumer-authored, repo-hosted contracts.
+
+### Contract `$ref` closure vendoring
+
+- **What:** Allow contract documents to `$ref` other contracts, with adoption vendoring the transitive closure and identity accounting for resolution.
+- **Why deferred:** v1 requires contracts to be self-contained — closure identity semantics are subtle, and no consumer needs composition-by-reference yet.
+
+### Contract assertions beyond record shape
+
+- **What:** Contracts asserting sheet-level semantics — path-template/key structure (a consumer doing keyed lookups depends on `${{ slug }}` semantics), required indexes.
+- **Why deferred:** Record schema covers the motivating cases; key-semantics assertions are where scope creep would live. Needs concrete consumer demand first.
+
 ### Persisted indexes
 
 - **What:** Allow secondary indices (currently in-memory only) to materialize to disk under a `.gitsheets/.indexes/` tree, so consumers don't pay rebuild cost across restarts.

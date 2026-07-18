@@ -10,6 +10,7 @@ import { hideBin } from 'yargs/helpers';
 
 import {
   ConfigError,
+  ContractError,
   GitsheetsError,
   IndexError,
   NotFoundError,
@@ -31,18 +32,10 @@ import {
   type InputFormat,
   type OutputFormat,
 } from './formats.js';
+import { registerContractsCommands } from './contracts.js';
+import { buildTxOpts, type GlobalArgs } from './shared.js';
 
-interface GlobalArgs {
-  gitDir?: string;
-  root?: string;
-  prefix?: string;
-  ref?: string;
-  commitTo?: string;
-  message?: string;
-  authorName?: string;
-  authorEmail?: string;
-  trailer?: Record<string, string>;
-}
+export type { GlobalArgs } from './shared.js';
 
 interface UpsertArgs extends GlobalArgs {
   sheet: string;
@@ -106,6 +99,7 @@ function exitCodeForError(err: unknown): number {
   if (err instanceof ConfigError) return 64;
   if (err instanceof RefError) return 65;
   if (err instanceof NotFoundError) return 66;
+  if (err instanceof ContractError) return 67;
   if (err instanceof TransactionError) return 69;
   if (err instanceof IndexError) return 70;
   if (err instanceof GitsheetsError) return 1;
@@ -119,7 +113,17 @@ function reportError(err: unknown): void {
     out.write(`  code:   ${err.code}\n`);
     if (err instanceof ValidationError && err.issues.length > 0) {
       for (const i of err.issues) {
-        out.write(`  issue:  ${i.path.join('.') || '<root>'}: ${i.message} (${i.source})\n`);
+        out.write(
+          `  issue:  ${i.path.join('.') || '<root>'}: ${i.message} (${i.source})` +
+            `${i.contract ? ` [${i.contract}]` : ''}\n`,
+        );
+      }
+    }
+    if (err instanceof ContractError && err.issues && err.issues.length > 0) {
+      for (const i of err.issues) {
+        out.write(
+          `  issue:  ${i.path.join('.') || '<root>'}: ${i.message}${i.contract ? ` [${i.contract}]` : ''}\n`,
+        );
       }
     }
     if (err.cause !== undefined) {
@@ -177,31 +181,6 @@ async function loadRepoAndSheet(
   if (argv.prefix) sheetOpts.prefix = argv.prefix;
   const sheet = await repo.openSheet(argv.sheet, sheetOpts);
   return { repo, sheet };
-}
-
-function buildTxOpts(argv: GlobalArgs, defaultMessage: string): {
-  message: string;
-  author?: { name: string; email: string };
-  trailers?: Record<string, string>;
-  parent?: string;
-  branch?: string;
-} {
-  const opts: {
-    message: string;
-    author?: { name: string; email: string };
-    trailers?: Record<string, string>;
-    parent?: string;
-    branch?: string;
-  } = { message: argv.message ?? defaultMessage };
-  if (argv.authorName && argv.authorEmail) {
-    opts.author = { name: argv.authorName, email: argv.authorEmail };
-  }
-  if (argv.trailer && Object.keys(argv.trailer).length > 0) {
-    opts.trailers = argv.trailer;
-  }
-  if (argv.ref) opts.parent = argv.ref;
-  if (argv.commitTo) opts.branch = argv.commitTo;
-  return opts;
 }
 
 // --- Commands ---
@@ -1064,6 +1043,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       "Convert a pre-v1.0 [gitsheet.fields] config to a v1.0 [gitsheet.schema] config",
       (y) => y.positional('sheet', { type: 'string', demandOption: true }),
       runMigrateConfig,
+    )
+    .command(
+      'contracts',
+      'Manage schema contracts: adopt, verify, test, sync, export, prune (see specs/behaviors/contracts.md)',
+      (y) => registerContractsCommands(y),
     )
     .fail((msg, err) => {
       if (err) {
