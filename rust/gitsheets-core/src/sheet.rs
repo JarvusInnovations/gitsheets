@@ -40,6 +40,7 @@ use crate::canonical;
 use crate::codec;
 use crate::collator;
 use crate::config::{self, SheetConfig, SortRule};
+use crate::contract;
 use crate::engine::{Engine, SnippetError, SnippetHandle};
 use crate::error::{Error, Result};
 use crate::index::{MultiIndex, UniqueIndex};
@@ -180,10 +181,19 @@ impl Sheet {
             }
         }
 
-        let schema = match &config.schema {
-            Some(s) => Some(CompiledSchema::compile(s)?),
-            None => None,
-        };
+        // Effective schema: bare `[gitsheet.schema]` when the sheet declares no
+        // contracts (byte/behavior-identical to a pre-contracts sheet), or
+        // `allOf: [<each declared contract>, [gitsheet.schema]]` when
+        // `implements` is non-empty (specs/behaviors/contracts.md
+        // "Composition and enforcement"). A declared contract that's missing
+        // or invalid surfaces here as `ContractError`, at sheet-open.
+        let schema = contract::compile_effective_schema(
+            repo,
+            tree,
+            open_root,
+            &config.implements,
+            &config.schema,
+        )?;
 
         // Build the array-field sort plan once, in config-field order. `sort =
         // true` is native ICU collation (no engine snippet); raw-JS and relational
@@ -1383,5 +1393,261 @@ mod tests {
         sheet.delete_at_path(&repo, &mut tree, "jane").unwrap();
         assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
         assert!(sheet.list(&repo, &mut tree, true).unwrap().is_empty());
+    }
+
+    // ── schema contracts (specs/behaviors/contracts.md) ──────────────────────
+
+    fn config_with_implements(path: &str, root: &str, implements: &[&str], schema: Option<Value>) -> Value {
+        let mut gs = IndexMap::new();
+        gs.insert("path".to_string(), s(path));
+        gs.insert("root".to_string(), s(root));
+        gs.insert(
+            "implements".to_string(),
+            Value::Array(implements.iter().map(|n| s(n)).collect()),
+        );
+        if let Some(schema) = schema {
+            gs.insert("schema".to_string(), schema);
+        }
+        let mut top = IndexMap::new();
+        top.insert("gitsheet".to_string(), Value::Table(gs));
+        Value::Table(top)
+    }
+
+    /// Vendor a contract document at its derived path, through the canonical
+    /// encoder (so it's canonical bytes — matching how `contracts adopt`
+    /// would commit it).
+    fn write_contract(repo: &gix::Repository, tree: &mut MutableTree, name: &str, doc: Value) {
+        let text = canonical::serialize(&doc).unwrap();
+        let full = format!(".gitsheets/contracts/{name}.toml");
+        tree.write_child(repo, &full, &text).unwrap();
+    }
+
+    fn contract_doc(id: &str, required: &[&str], properties: Value) -> Value {
+        let mut m = IndexMap::new();
+        m.insert("$id".to_string(), s(id));
+        m.insert("type".to_string(), s("object"));
+        m.insert(
+            "required".to_string(),
+            Value::Array(required.iter().map(|f| s(f)).collect()),
+        );
+        m.insert("properties".to_string(), properties);
+        Value::Table(m)
+    }
+
+    fn string_properties(fields: &[&str]) -> Value {
+        let mut m = IndexMap::new();
+        for name in fields {
+            let mut p = IndexMap::new();
+            p.insert("type".to_string(), s("string"));
+            m.insert((*name).to_string(), Value::Table(p));
+        }
+        Value::Table(m)
+    }
+
+    #[test]
+    fn implements_naming_an_absent_contract_fails_sheet_open() {
+        let (_d, repo) = temp_repo();
+        let name = "example.com/ghost/v1";
+        let mut tree =
+            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
+        let err = Sheet::open(&repo, &mut tree, "people", ".gitsheets/people.toml", ".", "")
+            .err()
+            .unwrap();
+        assert_eq!(err.code(), "contract_missing");
+        assert_eq!(err.contract(), Some(name));
+    }
+
+    #[test]
+    fn contract_document_requirement_violation_fails_sheet_open() {
+        let (_d, repo) = temp_repo();
+        let name = "example.com/bad/v1";
+        let mut tree =
+            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
+        // $id mismatched against the derived path — a document-requirement
+        // violation, checked at sheet-open (re-check-on-compile).
+        let mut m = IndexMap::new();
+        m.insert("$id".to_string(), s("https://example.com/bad/v2"));
+        m.insert("type".to_string(), s("object"));
+        write_contract(&repo, &mut tree, name, Value::Table(m));
+        let err = Sheet::open(&repo, &mut tree, "people", ".gitsheets/people.toml", ".", "")
+            .err()
+            .unwrap();
+        assert_eq!(err.code(), "contract_invalid");
+    }
+
+    #[test]
+    fn contract_required_field_missing_names_the_contract() {
+        let (_d, repo) = temp_repo();
+        let name = "example.com/people/v1";
+        let mut tree =
+            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
+        write_contract(
+            &repo,
+            &mut tree,
+            name,
+            contract_doc(&format!("https://{name}"), &["email"], string_properties(&["email"])),
+        );
+        let mut sheet = open(&repo, &mut tree);
+
+        let r = rec(&[("slug", s("jane"))]); // missing the contract-required `email`
+        let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
+        assert_eq!(err.code(), "validation_failed");
+        let issue = err
+            .issues()
+            .iter()
+            .find(|i| i.code.as_deref() == Some("required"))
+            .expect("a required-keyword issue");
+        assert_eq!(issue.contract.as_deref(), Some(name));
+
+        // A conforming write (with an extra LOCAL field the contract never
+        // mentions — no local schema declared here, so anything else is
+        // allowed) succeeds.
+        let ok = rec(&[("slug", s("jane")), ("email", s("jane@x.org")), ("extra", s("z"))]);
+        sheet.prepare_upsert(&repo, &mut tree, &ok, None, false).unwrap();
+    }
+
+    #[test]
+    fn contract_and_local_schema_both_failing_report_both_issues() {
+        let (_d, repo) = temp_repo();
+        let name = "example.com/people/v1";
+        let mut local_schema_fields = IndexMap::new();
+        local_schema_fields.insert("type".to_string(), s("object"));
+        local_schema_fields.insert("required".to_string(), Value::Array(vec![s("fullName")]));
+        let mut tree = tree_with_config(
+            &repo,
+            config_with_implements(
+                "${{ slug }}",
+                "people",
+                &[name],
+                Some(Value::Table(local_schema_fields)),
+            ),
+        );
+        write_contract(
+            &repo,
+            &mut tree,
+            name,
+            contract_doc(&format!("https://{name}"), &["email"], string_properties(&["email"])),
+        );
+        let mut sheet = open(&repo, &mut tree);
+
+        // Missing both the contract-required `email` AND the local-required
+        // `fullName`.
+        let r = rec(&[("slug", s("jane"))]);
+        let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
+        let issues = err.issues();
+        assert!(
+            issues.iter().any(|i| i.contract.as_deref() == Some(name)),
+            "a contract-attributed issue: {issues:?}"
+        );
+        assert!(
+            issues.iter().any(|i| i.contract.is_none()),
+            "a local-schema issue with no contract attribution: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn multi_contract_composition_enforces_every_declared_contract() {
+        let (_d, repo) = temp_repo();
+        let name1 = "example.com/a/v1";
+        let name2 = "example.com/b/v1";
+        let mut tree = tree_with_config(
+            &repo,
+            config_with_implements("${{ slug }}", "people", &[name1, name2], None),
+        );
+        write_contract(
+            &repo,
+            &mut tree,
+            name1,
+            contract_doc(&format!("https://{name1}"), &["a"], string_properties(&["a"])),
+        );
+        write_contract(
+            &repo,
+            &mut tree,
+            name2,
+            contract_doc(&format!("https://{name2}"), &["b"], string_properties(&["b"])),
+        );
+        let mut sheet = open(&repo, &mut tree);
+
+        // Missing both declared contracts' required fields → both attributed.
+        let r = rec(&[("slug", s("jane"))]);
+        let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
+        let issues = err.issues();
+        assert!(issues.iter().any(|i| i.contract.as_deref() == Some(name1)));
+        assert!(issues.iter().any(|i| i.contract.as_deref() == Some(name2)));
+
+        // Conforming write, with an extra field neither contract mentions,
+        // succeeds — contracts stay open by construction.
+        let ok = rec(&[("slug", s("jane")), ("a", s("x")), ("b", s("y")), ("extra", s("z"))]);
+        sheet.prepare_upsert(&repo, &mut tree, &ok, None, false).unwrap();
+    }
+
+    #[test]
+    fn contract_default_keyword_is_annotation_only_like_local_schema() {
+        // `default` is a pass-through JSON-Schema annotation (Draft-07 never
+        // mutates the instance) — a contract's `default` must behave exactly
+        // like a `[gitsheet.schema]` default does today: present in the
+        // compiled schema, never injected into the written record.
+        let (_d, repo) = temp_repo();
+        let name = "example.com/people/v1";
+        let mut role_schema = IndexMap::new();
+        role_schema.insert("type".to_string(), s("string"));
+        role_schema.insert("default".to_string(), s("member"));
+        let mut props = IndexMap::new();
+        props.insert("role".to_string(), Value::Table(role_schema));
+        let doc = contract_doc(&format!("https://{name}"), &[], Value::Table(props));
+
+        let mut tree =
+            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
+        write_contract(&repo, &mut tree, name, doc);
+        let mut sheet = open(&repo, &mut tree);
+
+        let r = rec(&[("slug", s("jane"))]); // omits `role` entirely
+        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        assert!(
+            !cand.next_text.contains("role"),
+            "a contract default must not get injected into the written record: {}",
+            cand.next_text
+        );
+    }
+
+    #[test]
+    fn two_sheets_declaring_the_same_contract_both_enforce_it() {
+        let (_d, repo) = temp_repo();
+        let name = "example.com/shared/v1";
+        let mut tree = MutableTree::empty();
+        write_records(
+            &repo,
+            &mut tree,
+            ".gitsheets",
+            &[
+                (
+                    "people".into(),
+                    config_with_implements("${{ slug }}", "people", &[name], None),
+                ),
+                (
+                    "projects".into(),
+                    config_with_implements("${{ slug }}", "projects", &[name], None),
+                ),
+            ],
+            TOML_EXTENSION,
+        )
+        .unwrap();
+        tree.write(&repo).unwrap();
+        write_contract(
+            &repo,
+            &mut tree,
+            name,
+            contract_doc(&format!("https://{name}"), &["tag"], string_properties(&["tag"])),
+        );
+
+        let mut people = Sheet::open(&repo, &mut tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
+        let mut projects =
+            Sheet::open(&repo, &mut tree, "projects", ".gitsheets/projects.toml", ".", "").unwrap();
+
+        let bad = rec(&[("slug", s("x"))]); // missing the shared contract's `tag`
+        let err1 = people.prepare_upsert(&repo, &mut tree, &bad, None, false).err().unwrap();
+        let err2 = projects.prepare_upsert(&repo, &mut tree, &bad, None, false).err().unwrap();
+        assert_eq!(err1.issues()[0].contract.as_deref(), Some(name));
+        assert_eq!(err2.issues()[0].contract.as_deref(), Some(name));
     }
 }

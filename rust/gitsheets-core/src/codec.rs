@@ -230,6 +230,7 @@ fn serialize_markdown(record: &Value, format: &FormatConfig) -> Result<String> {
                         source: IssueSource::JsonSchema,
                         schema_path: None,
                         code: None,
+                        contract: None,
                     }],
                 });
             }

@@ -21,6 +21,7 @@ pub mod canonical;
 pub mod codec;
 pub mod collator;
 pub mod config;
+pub mod contract;
 pub mod diff;
 pub mod engine;
 pub mod error;
@@ -37,6 +38,7 @@ pub mod value;
 pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};
 pub use codec::{extract_first_h1, normalize_body, rewrite_leading_h1};
 pub use config::{FieldConfig, FormatConfig, FormatKind, SheetConfig, SortDir, SortRule};
+pub use contract::{canonical_contract_hash, contract_path, validate_name as validate_contract_name, ContractHashInput};
 pub use diff::{apply_merge_patch, create_patch, MergePatch, PatchOp, PatchOpKind, PatchValue};
 pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
 pub use index::{MultiIndex, UniqueIndex};
@@ -75,6 +77,7 @@ pub fn example_error(code: &str) -> Option<Error> {
                 source: IssueSource::JsonSchema,
                 schema_path: Some("#/properties/email/pattern".into()),
                 code: Some("pattern".into()),
+                contract: None,
             }],
         },
         "transaction_in_progress" => Error::TransactionInProgress { message: msg },
@@ -93,6 +96,26 @@ pub fn example_error(code: &str) -> Option<Error> {
         "path_render_failed" => Error::PathRenderFailed { message: msg },
         "path_invalid_chars" => Error::PathInvalidChars { message: msg },
         "record_not_found" => Error::RecordNotFound { message: msg },
+        "contract_missing" => Error::ContractMissing {
+            message: msg,
+            contract: "example.com/contracts/v1".into(),
+        },
+        "contract_invalid" => Error::ContractInvalid {
+            message: msg,
+            contract: "example.com/contracts/v1".into(),
+        },
+        "contract_unsatisfied" => Error::ContractUnsatisfied {
+            message: msg,
+            contract: "example.com/contracts/v1".into(),
+            issues: vec![ValidationIssue {
+                path: vec!["email".into()],
+                message: "must match pattern".into(),
+                source: IssueSource::JsonSchema,
+                schema_path: Some("#/properties/email/pattern".into()),
+                code: Some("pattern".into()),
+                contract: Some("example.com/contracts/v1".into()),
+            }],
+        },
         _ => return None,
     })
 }
@@ -130,6 +153,9 @@ mod tests {
             "path_render_failed",
             "path_invalid_chars",
             "record_not_found",
+            "contract_missing",
+            "contract_invalid",
+            "contract_unsatisfied",
         ] {
             let err = example_error(code).expect("known code");
             assert_eq!(err.code(), code);
