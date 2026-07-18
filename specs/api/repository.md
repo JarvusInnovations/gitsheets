@@ -34,6 +34,7 @@ const users = await repo.openSheet('users', {
   validator?: StandardSchema, // optional Standard Schema validator
   contract?: {                // consumer-side contract verification — behaviors/contracts.md
     schema: object | string,  // the contract document the consumer holds (parsed data, or JSON/TOML text)
+    format?: 'json' | 'toml', // required when `schema` is a string — no format auto-detection (matches canonicalContractHash)
     mode?: 'verify' | 'declared' | 'structural',   // default: 'verify'
     onDrift?: (report: ConformanceReport) => void, // advisory drift signal (structural-verified sheets only)
   },
@@ -50,7 +51,7 @@ Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolve
 - `'declared'` — rung 1 only; never reads records. Miss: `ContractError('contract_unsatisfied')`.
 - `'structural'` — rung 2 only (duck typing; ignores any declaration).
 
-`sheet.contractVerification` on the returned handle reports `{ name, rung: 'declared' | 'structural', tree }` — which guarantee you actually got, and the tree hash it's pinned to. For structural-verified sheets, a rebind to a changed tree ([behaviors/freshness.md](../behaviors/freshness.md)) triggers an advisory re-verification: `onDrift` is invoked with the report if conformance regressed. Reads are never blocked by drift — refusal belongs at wiring time only.
+`sheet.contractVerification` on the returned handle reports `{ name, rung: 'declared' | 'structural', tree, conforming, issues }` — which guarantee you actually got, and the tree hash it's pinned to (`conforming`/`issues` are the same conformance-report shape `onDrift` receives; always `conforming: true` / `issues: []` on the handle you get back, since a failed verification throws rather than returning a non-conforming report). For structural-verified sheets, a rebind to a changed tree ([behaviors/freshness.md](../behaviors/freshness.md)) triggers an advisory re-verification: `onDrift` is invoked with the report if conformance regressed. Reads are never blocked by drift — refusal belongs at wiring time only.
 
 ### `repo.openSheets(opts?)`
 
