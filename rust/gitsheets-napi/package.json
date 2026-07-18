@@ -1,6 +1,6 @@
 {
   "name": "@gitsheets/core-napi",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Node.js native binding for gitsheets-core — the FFI marshalling boundary.",
   "main": "binding.cjs",
   "types": "index.d.ts",
@@ -33,12 +33,12 @@
     "index.d.ts"
   ],
   "optionalDependencies": {
-    "@gitsheets/core-napi-darwin-arm64": "0.3.0",
-    "@gitsheets/core-napi-darwin-x64": "0.3.0",
-    "@gitsheets/core-napi-linux-arm64-gnu": "0.3.0",
-    "@gitsheets/core-napi-linux-x64-gnu": "0.3.0",
-    "@gitsheets/core-napi-linux-x64-musl": "0.3.0",
-    "@gitsheets/core-napi-win32-x64-msvc": "0.3.0"
+    "@gitsheets/core-napi-darwin-arm64": "0.4.0",
+    "@gitsheets/core-napi-darwin-x64": "0.4.0",
+    "@gitsheets/core-napi-linux-arm64-gnu": "0.4.0",
+    "@gitsheets/core-napi-linux-x64-gnu": "0.4.0",
+    "@gitsheets/core-napi-linux-x64-musl": "0.4.0",
+    "@gitsheets/core-napi-win32-x64-msvc": "0.4.0"
   },
   "scripts": {
     "artifacts": "napi artifacts",
