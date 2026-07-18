@@ -31,7 +31,7 @@ try {
     `gitsheets-napi addon not built — run \`npm run build:debug\` first.\n  cause: ${err.message}`,
   );
 }
-const { CoreTransaction, canonicalContractHash, serializeRecords } = binding;
+const { CoreTransaction, canonicalContractHash, serializeRecords, verifySheetContract } = binding;
 
 const CONTRACT_NAME = 'example.com/people/v1';
 
@@ -179,4 +179,133 @@ test('canonicalContractHash requires a format when given a string', () => {
   // A binding-level argument-validation error (not a structured core error):
   // there is no format auto-detection.
   assert.throws(() => canonicalContractHash('a = 1\n'), /format/);
+});
+
+// ── verifySheetContract: the two-rung consumer verification ladder ──────────
+
+function writeRecord(dir, root, slug, fields) {
+  const recordDir = join(dir, root);
+  mkdirSync(recordDir, { recursive: true });
+  writeFileSync(join(recordDir, `${slug}.toml`), serializeRecords([{ slug, ...fields }])[0]);
+}
+
+test('verifySheetContract: rung 1 passes when the sheet declares the byte-identical contract', () => {
+  const { dir, gitDir } = setupRepo(SHEET_WITH_IMPLEMENTS, CONFORMING_CONTRACT);
+  try {
+    execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD']); // sanity: committed
+    const doc = { $id: `https://${CONTRACT_NAME}`, type: 'object', required: ['email'], properties: { email: { type: 'string' } } };
+    const report = verifySheetContract(
+      gitDir,
+      'HEAD',
+      'people',
+      '.gitsheets/people.toml',
+      '.',
+      '',
+      doc,
+    );
+    assert.equal(report.name, CONTRACT_NAME);
+    assert.equal(report.rung, 'declared');
+    assert.equal(report.conforming, true);
+    assert.deepEqual(report.issues, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('verifySheetContract: declared mode fails fast without reading records', () => {
+  const { dir, gitDir } = setupRepo(SHEET_WITH_IMPLEMENTS, CONFORMING_CONTRACT);
+  try {
+    // A garbage record that would blow up parsing if declared mode ever fell
+    // back to reading records. Must be committed — verifySheetContract reads
+    // the committed tree, not the working directory.
+    mkdirSync(join(dir, 'people'), { recursive: true });
+    writeFileSync(join(dir, 'people/garbage.toml'), 'not [ valid toml');
+    execFileSync('git', ['-C', dir, 'add', 'people']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add garbage record']);
+
+    // A document with a DIFFERENT name than the sheet declares → rung-1 miss.
+    const otherDoc = { $id: 'https://example.com/other/v1', type: 'object' };
+    assert.throws(
+      () =>
+        verifySheetContract(
+          gitDir,
+          'HEAD',
+          'people',
+          '.gitsheets/people.toml',
+          '.',
+          '',
+          otherDoc,
+          undefined,
+          'declared',
+        ),
+      (err) => err.code === 'contract_unsatisfied' && err.name === 'ContractError',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('verifySheetContract: structural mode duck-types a contract-unaware sheet', () => {
+  const NO_IMPLEMENTS = "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n";
+  const { dir, gitDir } = setupRepo(NO_IMPLEMENTS);
+  try {
+    writeRecord(dir, 'people', 'jane', { email: 'jane@x.org' });
+    execFileSync('git', ['-C', dir, 'add', 'people']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add jane']);
+
+    const doc = {
+      $id: `https://${CONTRACT_NAME}`,
+      type: 'object',
+      required: ['email'],
+      properties: { email: { type: 'string' } },
+    };
+    const report = verifySheetContract(
+      gitDir,
+      'HEAD',
+      'people',
+      '.gitsheets/people.toml',
+      '.',
+      '',
+      doc,
+      undefined,
+      'structural',
+    );
+    assert.equal(report.rung, 'structural');
+    assert.equal(report.conforming, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('verifySheetContract: rung 2 failure reports record + field issues naming the contract', () => {
+  const NO_IMPLEMENTS = "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n";
+  const { dir, gitDir } = setupRepo(NO_IMPLEMENTS);
+  try {
+    writeRecord(dir, 'people', 'jane', { email: 'jane@x.org' });
+    writeRecord(dir, 'people', 'bob', {}); // missing email
+    execFileSync('git', ['-C', dir, 'add', 'people']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add people']);
+
+    const doc = {
+      $id: `https://${CONTRACT_NAME}`,
+      type: 'object',
+      required: ['email'],
+      properties: { email: { type: 'string' } },
+    };
+    assert.throws(
+      () =>
+        verifySheetContract(gitDir, 'HEAD', 'people', '.gitsheets/people.toml', '.', '', doc),
+      (err) => {
+        assert.equal(err.code, 'contract_unsatisfied');
+        assert.equal(err.contract, CONTRACT_NAME);
+        const issue = err.issues.find((i) => i.record === 'bob');
+        assert.equal(issue.contract, CONTRACT_NAME);
+        assert.equal(issue.code, 'required');
+        assert.equal(err.issues.some((i) => i.record === 'jane'), false);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

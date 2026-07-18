@@ -38,6 +38,12 @@ export interface JsValidationIssue {
    * composed via `allOf` (specs/behaviors/contracts.md).
    */
   contract?: string
+  /**
+   * The record's sheet-relative path, in a multi-record conformance
+   * report (`ContractError.issues` from consumer-side contract
+   * verification — specs/behaviors/contracts.md "Consumer verification").
+   */
+  record?: string
 }
 /**
  * Render a path template against a **batch** of records, returning one path per
@@ -68,6 +74,31 @@ export declare function validateBatch(schema: JsValue, records: Array<JsValue>):
  * over [`gitsheets_core::contract::canonical_contract_hash`].
  */
 export declare function canonicalContractHash(input: string | JsValue, format?: string | undefined | null): string
+/**
+ * The result of a successful [`verify_sheet_contract`] call — the wire shape
+ * for `sheet.contractVerification` minus `tree` (the JS binding attaches that
+ * from the read snapshot it already resolved to open the sheet).
+ */
+export interface JsConformanceReport {
+  name: string
+  /** `"declared"` or `"structural"` — which rung passed. */
+  rung: string
+  conforming: boolean
+  issues: Array<JsValidationIssue>
+}
+/**
+ * Consumer-side contract verification — the two-rung ladder behind
+ * `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
+ * verification", specs/api/repository.md `opts.contract`). Opens `sheetName`
+ * read-only against `treeRef` (config read + effective-schema compile, same
+ * as any other read), then verifies it against `schema` — parsed data, or
+ * text with `format` naming which text form (mirrors
+ * `canonicalContractHash`'s input handling: no format auto-detection). A
+ * verification failure (both rungs missed, or the attempted rung missed in
+ * `declared`/`structural` mode) surfaces as `ContractError(contract_unsatisfied)`
+ * carrying the conformance report in `issues`.
+ */
+export declare function verifySheetContract(gitDir: string, treeRef: string, sheetName: string, configPath: string, openRoot: string, prefix: string, schema: string | JsValue, format?: string | undefined | null, mode?: string | undefined | null): JsConformanceReport
 /**
  * Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
  * run it once against `a`/`b`, returning its numeric result. The direct
