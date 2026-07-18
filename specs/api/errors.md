@@ -22,6 +22,10 @@ export class IndexError extends GitsheetsError {
 export class RefError extends GitsheetsError {}
 export class PathTemplateError extends GitsheetsError {}
 export class NotFoundError extends GitsheetsError {}
+export class ContractError extends GitsheetsError {
+  readonly contract?: string;          // contract name, when one is in scope
+  readonly issues?: ValidationIssue[]; // conformance report on contract_unsatisfied
+}
 ```
 
 Every gitsheets exception extends `GitsheetsError`. Consumer catch blocks can typically use:
@@ -62,6 +66,9 @@ try {
 | `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
 | `NotFoundError` | `record_not_found` | 404 | `delete` / `patch` / etc. against a path that doesn't exist |
+| `ContractError` | `contract_missing` | 500 | `implements` names a contract with no vendored document at its derived path |
+| `ContractError` | `contract_invalid` | 500 | Contract document violates [document requirements](../behaviors/contracts.md#contract-document-requirements) (compile, `$id`/path, canonical form, openness, self-containment, TOML data model) |
+| `ContractError` | `contract_unsatisfied` | 422 | Consumer verification failed both rungs (carries the conformance report in `issues`) |
 
 The `code` strings are stable. New scenarios get new codes; existing codes never change meaning.
 
@@ -74,6 +81,8 @@ interface ValidationIssue {
   source: 'json-schema' | 'standard-schema';
   schemaPath?: string;     // JSON Schema pointer when source === 'json-schema'
   code?: string;           // schema-keyword name (e.g., 'required', 'pattern')
+  contract?: string;       // contract name, when the failing schema branch is a declared contract (behaviors/contracts.md)
+  record?: string;         // record path, in multi-record conformance reports (ContractError.issues)
 }
 ```
 
