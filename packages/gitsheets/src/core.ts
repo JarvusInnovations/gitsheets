@@ -18,6 +18,7 @@ import { createRequire } from 'node:module';
 import type * as CoreAddon from '@gitsheets/core-napi';
 import {
   ConfigError,
+  ContractError,
   GitsheetsError,
   IndexError,
   NotFoundError,
@@ -72,6 +73,7 @@ interface StructuredCoreError {
   readonly gitsheetsClass: string;
   readonly issues?: readonly ValidationIssue[];
   readonly conflictingPaths?: readonly string[];
+  readonly contract?: string;
 }
 
 function isStructuredCoreError(raw: unknown): raw is StructuredCoreError {
@@ -122,6 +124,16 @@ export function mapCoreError(raw: StructuredCoreError): GitsheetsError {
       );
     case 'NotFoundError':
       return new NotFoundError('record_not_found', raw.message, { cause: raw });
+    case 'ContractError':
+      return new ContractError(
+        code as 'contract_missing' | 'contract_invalid' | 'contract_unsatisfied',
+        raw.message,
+        {
+          cause: raw,
+          ...(raw.contract !== undefined ? { contract: raw.contract } : {}),
+          ...(raw.issues !== undefined ? { issues: raw.issues } : {}),
+        },
+      );
     default:
       return new GitsheetsError(code, raw.message, { cause: raw });
   }
