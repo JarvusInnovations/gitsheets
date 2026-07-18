@@ -1,5 +1,6 @@
 ---
-status: planned
+status: done
+pr: 268
 depends: [contracts-core]
 specs:
   - specs/behaviors/contracts.md
@@ -80,18 +81,18 @@ surface ([`contracts-consumer-verify`](contracts-consumer-verify.md));
 
 ## Validation
 
-- [ ] `adopt` of the same document from JSON-over-HTTPS and a local TOML file
+- [x] `adopt` of the same document from JSON-over-HTTPS and a local TOML file
       produces byte-identical vendored files and records both sources
-- [ ] `adopt --sheet` against a sheet with a non-conforming existing record
+- [x] `adopt --sheet` against a sheet with a non-conforming existing record
       refuses, streams the per-record issues, and leaves the tree untouched
-- [ ] `verify` passes on a conforming fixture repo, fails (exit 67) on each
+- [x] `verify` passes on a conforming fixture repo, fails (exit 67) on each
       seeded defect class, and warns on a closed local schema without failing
-- [ ] `contracts test` passes against a contract-unaware sheet whose records
+- [x] `contracts test` passes against a contract-unaware sheet whose records
       conform, and reports per-record issues against one whose records don't
-- [ ] `sync` reports drift when the upstream fixture changes and never
+- [x] `sync` reports drift when the upstream fixture changes and never
       modifies the vendored file
-- [ ] `export <name> | contracts adopt -` round-trips to identical bytes
-- [ ] `prune --dry-run` lists exactly the undeclared vendored documents
+- [x] `export <name> | contracts adopt -` round-trips to identical bytes
+- [x] `prune --dry-run` lists exactly the undeclared vendored documents
 
 ## Risks / unknowns
 
@@ -108,8 +109,60 @@ surface ([`contracts-consumer-verify`](contracts-consumer-verify.md));
 
 ## Notes
 
-(populated at closeout)
+- Built two new thin `gitsheets-core`/`gitsheets-napi` surfaces rather than
+  re-implementing their logic host-side, per the plan's "reuse, not reinvent"
+  building blocks: `contract::check_contract_document` (a new pub wrapper
+  around the existing private `check_document_requirements` +
+  `reject_unknown_keywords`, for a not-yet-vendored candidate) and a
+  `contractLoad` napi binding surfacing `load_contract` end-to-end
+  (byte-canonical + document-requirement + `$id`↔path, exactly what `verify`
+  needs). Also added `CoreTransaction.deleteFile` (napi + JS) — `writeFile`'s
+  inverse, needed for `prune` — via `MutableTree::delete_child_deep`.
+- `checkContractDocument`'s napi signature is `Either<String, JsValue> +
+  format` (mirroring `canonicalContractHash`), not a plain `JsValue`: a
+  JSON-text input is parsed via `serde_json::from_str` directly, preserving a
+  literal `null`. Routing through the `JsValue`/core-`Value` marshalling
+  boundary would silently drop null-valued keys (the documented type-fidelity
+  rule), making the "no null-bearing keywords" document requirement
+  unreachable for exactly the JSON-sourced input it exists to catch. Caught by
+  reasoning through the marshalling contract, not by a failing test — worth
+  flagging as a general hazard for any future napi surface that needs to see
+  a real JSON `null`.
+- The effective-schema `allOf` array (contracts + local schema) is assembled
+  host-side in TS, not in the core — it's the one documented, mechanical
+  formula (specs/behaviors/contracts.md "Composition and enforcement") that
+  doesn't need a dedicated core entry point, since it's just an array literal
+  handed to the already-exposed `validateBatch`.
+- `prune` gained a `--yes` flag (not in the original spec text) to skip the
+  removal confirmation prompt non-interactively/in scripts and tests — the
+  spec says "needs confirmation" without dictating the mechanism, so this
+  isn't a spec amendment, just a filled-in gap.
+- The plan's Risks note ("document the resolution (union) in the file's
+  header comment" for `sources.toml`) isn't honored as a literal file
+  comment: the canonical TOML encoder strips comments on every rewrite, same
+  as every other config file this CLI rewrites (`init`/`infer`/
+  `migrate-config`). Documented as a source comment in `contracts.ts` instead.
+- Test coverage: `packages/gitsheets/src/cli/cli-contracts.test.ts` (17
+  tests) covers every Validation bullet above. The HTTPS leg of `adopt`/`sync`
+  is exercised with `fetch` mocked (`vi.stubGlobal`) rather than a real
+  network call, per this plan's Risks note allowing a "unit seam" fallback —
+  `readSource`'s URL branch (timeout, non-2xx handling) is exercised through
+  the full CLI path, just with the network substituted.
 
 ## Follow-ups
 
-(populated at closeout)
+- **`gitsheets-axi` parity** (deliberately out of scope here, per Risks):
+  agents will want `contracts verify`/`test` surfaced through the axi
+  interface. Needs its own plan.
+- **`sources.toml` merge-conflict resolution is undocumented in-repo** beyond
+  a source comment — if this becomes a real pain point, consider a
+  `--merge-sources` flag or a dedicated `contracts sources` subcommand rather
+  than relying on git's default table-level merge behavior.
+- No dedicated `rust/gitsheets-napi/test/contracts.mjs` boundary tests were
+  added for the four new napi functions (`validateContractName`,
+  `contractPath`, `checkContractDocument`, `contractLoad`) or
+  `CoreTransaction.deleteFile` — they're exercised indirectly through the
+  full CLI test suite (which passed, including the `check_contract_document`
+  null-preservation behavior via the JSON-adopt tests) and through
+  `gitsheets-core`'s own unit tests, but a future pass could add direct
+  boundary coverage matching the existing `contracts.mjs` style.
