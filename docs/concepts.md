@@ -186,6 +186,19 @@ The Standard Schema layer can **transform** the record (lower-casing, defaulting
 
 See [validation](validation.md) for the full pipeline.
 
+## Contract
+
+A named, versioned, **immutable** JSON Schema document a sheet declares it `implements`. The document is vendored into the repo (canonical TOML under `.gitsheets/contracts/`) and composed into the sheet's write-time validation via `allOf` — so every record the sheet ever commits conforms, by construction. A consumer holding the same document verifies the sheet mechanically: by content identity (fast; guarantees future writes too) or by validating the records themselves (works against any sheet; guarantees the present). The unit of cross-system sheet interoperability.
+
+```toml
+[gitsheet]
+root = 'meals'
+path = '${{ slug }}'
+implements = ['gitsheets.io/meals/v1']
+```
+
+See the [contracts guide](contracts.md).
+
 ## Content-typed sheets (markdown / mdx)
 
 A sheet's `[gitsheet.format]` block can switch its on-disk storage from
