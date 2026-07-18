@@ -113,7 +113,10 @@ function reportError(err: unknown): void {
     out.write(`  code:   ${err.code}\n`);
     if (err instanceof ValidationError && err.issues.length > 0) {
       for (const i of err.issues) {
-        out.write(`  issue:  ${i.path.join('.') || '<root>'}: ${i.message} (${i.source})\n`);
+        out.write(
+          `  issue:  ${i.path.join('.') || '<root>'}: ${i.message} (${i.source})` +
+            `${i.contract ? ` [${i.contract}]` : ''}\n`,
+        );
       }
     }
     if (err instanceof ContractError && err.issues && err.issues.length > 0) {
