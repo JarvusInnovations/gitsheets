@@ -294,6 +294,26 @@ fn check_no_null_bearing_keywords(name: &str, json: &Json) -> Result<()> {
     })
 }
 
+/// Enforce the [document requirements](../../../specs/behaviors/contracts.md#contract-document-requirements)
+/// against a NOT-yet-vendored candidate document — `contracts-cli adopt`'s
+/// pre-vendor gate. Exactly the checks [`load_contract`] runs on an
+/// already-vendored document (self-contained, open, TOML-data-model-only,
+/// `$id`↔name, Draft-07 strict compile), minus the canonical-bytes-reencode
+/// check: `adopt` CANONICALIZES the candidate itself before vendoring it, so
+/// there is no pre-existing "vendored bytes" to compare against yet — the
+/// written file is canonical by construction (see
+/// `specs/behaviors/contracts.md` "Canonical form").
+pub fn check_contract_document(name: &str, json: &Json) -> Result<()> {
+    check_document_requirements(name, json)?;
+    // Draft-07, strictly compiled: unknown keywords fail compilation, the same
+    // as `[gitsheet.schema]` and `load_contract`.
+    validation::reject_unknown_keywords(json).map_err(|e| Error::ContractInvalid {
+        message: format!("contract {name:?}: {}", e.message()),
+        contract: name.to_string(),
+    })?;
+    Ok(())
+}
+
 // ── composition ────────────────────────────────────────────────────────────────
 
 /// Build a sheet's effective compiled JSON Schema, per
@@ -854,6 +874,35 @@ mod tests {
         });
         let err = validation::reject_unknown_keywords(&doc).unwrap_err();
         assert_eq!(err.code(), "config_invalid");
+    }
+
+    #[test]
+    fn check_contract_document_passes_a_conforming_candidate() {
+        let name = "example.com/c/v1";
+        check_contract_document(name, &valid_doc(name)).unwrap();
+    }
+
+    #[test]
+    fn check_contract_document_rejects_unknown_keywords_like_load_contract() {
+        let name = "example.com/c/v1";
+        let mut doc = valid_doc(name);
+        doc.as_object_mut()
+            .unwrap()
+            .insert("frobnicate".into(), Json::Bool(true));
+        let err = check_contract_document(name, &doc).unwrap_err();
+        assert_eq!(err.code(), "contract_invalid");
+    }
+
+    #[test]
+    fn check_contract_document_rejects_a_closed_candidate() {
+        let name = "example.com/c/v1";
+        let mut doc = valid_doc(name);
+        doc.as_object_mut()
+            .unwrap()
+            .insert("additionalProperties".into(), Json::Bool(false));
+        let err = check_contract_document(name, &doc).unwrap_err();
+        assert_eq!(err.code(), "contract_invalid");
+        assert!(err.message().contains("additionalProperties"));
     }
 
     // ── loading from a committed tree ──────────────────────────────────────────

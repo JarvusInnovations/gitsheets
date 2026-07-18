@@ -24,6 +24,7 @@ toml = "0.8"
 # date components). The JS `Date` surface is a host concern, so this lives in
 # the binding, not the core.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+serde_json = "1"
 
 [build-dependencies]
 napi-build = "2"

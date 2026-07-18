@@ -204,6 +204,22 @@ export class Transaction {
   }
 
   /**
+   * @internal — Delete a raw file at `path` (repo-root-relative) in this
+   * transaction's tree — `writeFile`'s inverse. Returns whether a blob existed
+   * at `path` before the delete. Used by `contracts prune`. Marks the
+   * transaction mutated only when something was actually removed.
+   */
+  deleteFile(path: string): boolean {
+    if (this.#closed) {
+      throw new TransactionError(
+        'transaction_closed',
+        'transaction is already closed — obtain a fresh Transaction via repo.transact',
+      );
+    }
+    return callCore(() => this.#coreTx.deleteFile(path));
+  }
+
+  /**
    * Finalize the transaction. Returns the commit hash + tree hash, or nulls if
    * no mutations occurred. Throws TransactionError(parent_moved) on optimistic
    * concurrency conflict. After finalize the transaction is closed.
