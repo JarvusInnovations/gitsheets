@@ -212,6 +212,21 @@ Migration table (matches [`specs/behaviors/validation.md`](https://github.com/Ja
 | `sort: ...` | `[gitsheet.fields.<name>.sort]` (unchanged) |
 | `trueValues: [...]`, `falseValues: [...]` | Warning to stderr — move to CSV-ingest helper |
 
+### `gitsheets contracts <subcommand>`
+
+Manage [schema contracts](contracts.md) — vendored, immutable JSON Schema documents that sheets declare via `implements` and that compose into write-time validation. All writes land under `.gitsheets/contracts/`; sheet configs are never rewritten by tooling.
+
+```bash
+gitsheets contracts adopt <source> [--sheet <name>]...     # vendor a document (file, https:// URL, or - for stdin)
+gitsheets contracts verify [<sheet>]...                    # offline CI gate: documents + records all conform
+gitsheets contracts test <sheet> --against <file-or-name>  # structural check against any sheet (duck typing)
+gitsheets contracts sync [<name>]...                       # re-fetch recorded sources, report drift — never rewrites
+gitsheets contracts export <name>                          # vendored contract as interchange JSON on stdout
+gitsheets contracts prune [--dry-run] [--yes]              # remove vendored documents no sheet declares
+```
+
+`adopt --sheet` validates every existing record of the named sheet(s) against the would-be effective schema and refuses (tree untouched) until the data conforms. `verify` additionally warns when a declaring sheet's local schema sets `additionalProperties: false` (which can reject contract-conforming records under `allOf` composition). See the [contracts guide](contracts.md) for the full workflow.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -223,6 +238,7 @@ Migration table (matches [`specs/behaviors/validation.md`](https://github.com/Ja
 | 64 | `ConfigError` |
 | 65 | `RefError` |
 | 66 | `NotFoundError` |
+| 67 | `ContractError` |
 | 69 | `TransactionError` |
 | 70 | `IndexError` |
 
