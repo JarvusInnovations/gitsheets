@@ -431,6 +431,115 @@ pub fn canonical_contract_hash(
     };
     gitsheets_core::canonical_contract_hash(core_input).map_err(|err| raise_core_error(&env, &err))
 }
+// ── contracts-cli surface (specs/api/cli.md "git sheet contracts") ──────────────
+//
+// The CLI's `adopt`/`verify`/`test` commands compose these four thin wrappers
+// over `gitsheets-core::contract` — reusing its name validation, derived-path
+// formula, document-requirement walk, and vendored-tree loader rather than
+// re-implementing any of them host-side. Effective-schema composition itself
+// (`allOf: [<contracts>, <local schema>]`) is the documented, mechanical
+// formula from `specs/behaviors/contracts.md` "Composition and enforcement" —
+// the CLI assembles that array in TS and validates it through the existing
+// `validate_batch`, so no further core/napi surface is needed for it.
+
+/// Validate a contract name (`specs/behaviors/contracts.md` "Contract names
+/// and the derived path") — the same check a sheet's `implements` entries run
+/// through at sheet-open. `contracts adopt` runs it on the name derived from a
+/// candidate document's `$id` before vendoring. Throws
+/// `ConfigError(config_invalid)` naming the violated rule.
+#[napi]
+pub fn validate_contract_name(env: Env, name: String) -> Result<()> {
+    gitsheets_core::validate_contract_name(&name).map_err(|err| raise_core_error(&env, &err))
+}
+
+/// The derived vendored path for a contract name — mechanical, no manifest:
+/// `.gitsheets/contracts/<name>.toml`. The minimal JS surface over
+/// [`gitsheets_core::contract_path`].
+#[napi]
+pub fn contract_path(name: String) -> String {
+    gitsheets_core::contract_path(&name)
+}
+
+/// Enforce the contract document requirements
+/// (`specs/behaviors/contracts.md` "Contract document requirements") against a
+/// NOT-yet-vendored candidate document — `contracts adopt`'s pre-vendor gate.
+///
+/// `input` is either already-parsed data (a JS object) or a string, in which
+/// case `format` says how to parse it — mirrors `canonicalContractHash`'s
+/// shape exactly, for the same reason: a **JSON-text** input is parsed with
+/// `serde_json::from_str` directly (preserving a literal JSON `null`),
+/// deliberately NOT via the `JsValue`/core-`Value` marshalling boundary,
+/// which silently *drops* null-valued keys per the type-fidelity rules at the
+/// top of this file. Requirement 4 (no null-bearing keywords — `default:
+/// null`, `const: null`, a null in `enum`) can only ever be violated by a
+/// JSON-sourced document (TOML has no null literal at all), so routing
+/// through the null-dropping path would make that check silently unreachable
+/// for exactly the input shape it exists to catch. A TOML-text or
+/// already-parsed-data input has no such hazard (nothing they carry can be a
+/// TOML/core `Value` null in the first place), so those still go through the
+/// shared `value_to_json` conversion.
+/// Throws `ContractError(contract_invalid)` naming the violated rule.
+#[napi]
+pub fn check_contract_document(
+    env: Env,
+    name: String,
+    input: Either<String, JsValue>,
+    format: Option<String>,
+) -> Result<()> {
+    let json: serde_json::Value = match input {
+        Either::B(value) => gitsheets_core::validation::value_to_json(&value.0),
+        Either::A(text) => match format.as_deref() {
+            Some("json") => serde_json::from_str(&text).map_err(|e| {
+                napi::Error::new(
+                    Status::InvalidArg,
+                    format!("checkContractDocument: JSON parse failed: {e}"),
+                )
+            })?,
+            Some("toml") => {
+                let value = gitsheets_core::parse(&text).map_err(|err| raise_core_error(&env, &err))?;
+                gitsheets_core::validation::value_to_json(&value)
+            }
+            Some(other) => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    format!("checkContractDocument: unknown format {other:?} — expected 'json' or 'toml'"),
+                ))
+            }
+            None => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    "checkContractDocument: pass { format: 'json' | 'toml' } when input is a string",
+                ))
+            }
+        },
+    };
+    gitsheets_core::contract::check_contract_document(&name, &json)
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// Load a vendored contract document `name` from the committed tree at
+/// `treeRef` (scoped under `openRoot`), returning it as JSON text on success.
+/// The minimal JS surface over [`gitsheets_core::contract::load_contract`] —
+/// runs the exact compile-time check (byte-canonical, document requirements,
+/// `$id`↔path) `Sheet::open` composition relies on, so `contracts verify` /
+/// `contracts adopt --sheet` get the identical guarantee. Throws
+/// `ContractError('contract_missing' | 'contract_invalid')` on failure.
+#[napi]
+pub fn contract_load(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    open_root: String,
+    name: String,
+) -> Result<String> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree =
+        record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let json = gitsheets_core::contract::load_contract(&repo, &mut tree, &open_root, &name)
+        .map_err(|err| raise_core_error(&env, &err))?;
+    Ok(json.to_string())
+}
+
 
 /// The result of a successful [`verify_sheet_contract`] call — the wire shape
 /// for `sheet.contractVerification` minus `tree` (the JS binding attaches that
@@ -1660,6 +1769,35 @@ impl CoreTransaction {
         tx.mark_mutated();
         Ok(hash)
     }
+    /// Delete a raw file at `path` (repo-root-relative) in this transaction's
+    /// private tree *(mutating)* — `write_file`'s inverse. Returns whether a
+    /// blob existed at `path` before the delete. Used by `contracts prune` to
+    /// remove undeclared vendored contract documents; deep (slash-separated)
+    /// paths are supported directly via `MutableTree::delete_child_deep`.
+    #[napi]
+    pub fn delete_file(&mut self, env: Env, path: String) -> Result<bool> {
+        let Self { inner, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let existed = {
+            let (repo, tree) = tx.split();
+            match tree.delete_child_deep(repo, &path) {
+                Ok(existed) => existed,
+                Err(e) => {
+                    let core_err = gitsheets_core::Error::CommitFailed {
+                        message: format!("delete_file {path:?} failed: {e}"),
+                    };
+                    return Err(raise_core_error(&env, &core_err));
+                }
+            }
+        };
+        if existed {
+            tx.mark_mutated();
+        }
+        Ok(existed)
+    }
+
 
     /// The blob-hash map of a record's attachments (`name → hash`, sorted by
     /// name), or `null` when the record has no attachment directory. Read-only.

@@ -201,7 +201,14 @@ fn keyword_from_schema_path(schema_path: &str) -> Option<String> {
 /// datetime field passes here but the host would see an object. Datetime-typed
 /// schema fields are uncommon (the spec's example schemas are string/number);
 /// the parity fixtures stay JSON-representable and this case is enumerated.
-pub(crate) fn value_to_json(value: &Value) -> Json {
+///
+/// Widened to `pub` (from `pub(crate)`) for `contracts-cli`
+/// (`gitsheets-napi::check_contract_document`): the napi binding marshals a
+/// candidate document from JS as the core [`Value`] (the same `JsValue`
+/// newtype `validate_batch` already uses) and needs this exact conversion
+/// before running [`crate::contract::check_contract_document`] — reusing the
+/// one JSON-shape-of-record-truth rather than a second JS-side conversion.
+pub fn value_to_json(value: &Value) -> Json {
     match value {
         Value::String(s) => Json::String(s.clone()),
         Value::Integer(i) => Json::Number((*i).into()),
