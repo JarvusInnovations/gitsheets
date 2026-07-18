@@ -94,10 +94,14 @@ An optional, library-side background task that pushes new commits to a configure
 
 Two layers run on every write, in order:
 
-1. **JSON Schema** (persisted in `.gitsheets/<sheet>.toml`) — the shape contract that travels with the repo.
+1. **JSON Schema** (persisted in `.gitsheets/<sheet>.toml`) — the shape contract that travels with the repo. When the sheet declares contracts, they compose into this layer via `allOf`.
 2. **Standard Schema** (consumer-supplied, optional) — richer validation: branded types, refinements, transforms.
 
 See [behaviors/validation.md](behaviors/validation.md).
+
+## Contract
+
+A named, versioned, immutable JSON Schema document that a sheet **implements** — vendored into the repo in canonical TOML form under `.gitsheets/contracts/` and composed into the sheet's write-time validation, so conformance is enforced by construction. A consumer holding the same document can verify a sheet mechanically: by content identity (fast, guarantees future writes) or by structural validation of records (works against any sheet, guarantees the present). The unit of cross-system sheet interoperability. See [behaviors/contracts.md](behaviors/contracts.md).
 
 ## Canonical normalization
 
