@@ -30,6 +30,11 @@ jsonschema = { version = "0.46.7", default-features = false }
 # JSON value type the `jsonschema` crate validates against; the core marshals
 # its `Value` to/from it for the shape-validation pass.
 serde_json = "1"
+# SHA-256 for the contract identity primitive (`canonical_contract_hash`):
+# canonical TOML bytes → SHA-256 hex (specs/behaviors/contracts.md "Contract
+# identity"). Deliberately a plain content hash, NOT git's blob SHA-1 — contract
+# identity is independent of any repo's object-hash algorithm.
+sha2 = "0.10"
 
 # ── record-engine-core (the holo-tree substrate seam) ────────────────────────
 # Mutable in-memory git trees (read/write/delete blobs, commit, ref CAS). The

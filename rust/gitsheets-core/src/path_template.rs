@@ -463,7 +463,11 @@ fn render_bucket_unit(date: &NaiveDate, unit: BucketUnit) -> String {
 
 // ── invalid-character rejection ───────────────────────────────────────────────
 
-fn is_windows_invalid(c: char) -> bool {
+/// Whether `c` is a filesystem-illegal character (Windows-invalid or a
+/// control character). Shared with the contract-name path-segment rules
+/// (`specs/behaviors/contracts.md` "Contract names and the derived path"),
+/// which reuse this exact character set — see [`crate::contract`].
+pub(crate) fn is_windows_invalid(c: char) -> bool {
     matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') || (c as u32) < 0x20
 }
 

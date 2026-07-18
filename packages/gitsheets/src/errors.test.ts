@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ConfigError,
+  ContractError,
   GitsheetsError,
   IndexError,
   NotFoundError,
@@ -22,6 +23,7 @@ describe('GitsheetsError hierarchy', () => {
       new RefError('ref_not_found', 'x'),
       new PathTemplateError('path_render_failed', 'x'),
       new NotFoundError('record_not_found', 'x'),
+      new ContractError('contract_missing', 'x'),
     ];
 
     for (const err of instances) {
@@ -40,6 +42,7 @@ describe('GitsheetsError hierarchy', () => {
     expect(new RefError('not_an_ancestor', 'x').name).toBe('RefError');
     expect(new PathTemplateError('path_invalid_chars', 'x').name).toBe('PathTemplateError');
     expect(new NotFoundError('record_not_found', 'x').name).toBe('NotFoundError');
+    expect(new ContractError('contract_invalid', 'x').name).toBe('ContractError');
   });
 
   it('preserves the constructor message', () => {
@@ -99,6 +102,9 @@ describe('code → status mapping', () => {
       () => new PathTemplateError('path_invalid_chars', 'x'),
     ],
     ['record_not_found', 404, () => new NotFoundError('record_not_found', 'x')],
+    ['contract_missing', 500, () => new ContractError('contract_missing', 'x')],
+    ['contract_invalid', 500, () => new ContractError('contract_invalid', 'x')],
+    ['contract_unsatisfied', 422, () => new ContractError('contract_unsatisfied', 'x')],
   ])('%s → %i', (code, expectedStatus, build) => {
     const err = build();
     expect(err.code).toBe(code);

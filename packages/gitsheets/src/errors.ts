@@ -7,6 +7,8 @@ export interface ValidationIssue {
   readonly source: 'json-schema' | 'standard-schema';
   readonly schemaPath?: string;
   readonly code?: string;
+  /** The contract name, when the failing branch is a declared contract composed via `allOf`. */
+  readonly contract?: string;
 }
 
 const STATUS_BY_CODE = {
@@ -27,6 +29,9 @@ const STATUS_BY_CODE = {
   path_render_failed: 422,
   path_invalid_chars: 422,
   record_not_found: 404,
+  contract_missing: 500,
+  contract_invalid: 500,
+  contract_unsatisfied: 422,
 } as const satisfies Record<string, number>;
 
 export type GitsheetsErrorCode = keyof typeof STATUS_BY_CODE;
@@ -125,5 +130,25 @@ export type NotFoundErrorCode = 'record_not_found';
 export class NotFoundError extends GitsheetsError {
   constructor(code: NotFoundErrorCode, message: string, options?: GitsheetsErrorOptions) {
     super(code, message, options);
+  }
+}
+
+export type ContractErrorCode = 'contract_missing' | 'contract_invalid' | 'contract_unsatisfied';
+
+interface ContractErrorOptions extends GitsheetsErrorOptions {
+  /** The contract name in scope, when known. */
+  readonly contract?: string;
+  /** The conformance report, present on `contract_unsatisfied`. */
+  readonly issues?: readonly ValidationIssue[];
+}
+
+export class ContractError extends GitsheetsError {
+  readonly contract?: string;
+  readonly issues?: readonly ValidationIssue[];
+
+  constructor(code: ContractErrorCode, message: string, options?: ContractErrorOptions) {
+    super(code, message, options?.cause === undefined ? undefined : { cause: options.cause });
+    if (options?.contract !== undefined) this.contract = options.contract;
+    if (options?.issues !== undefined) this.issues = options.issues;
   }
 }

@@ -33,6 +33,7 @@ IndexError = _core.IndexError  # noqa: A001 — intentional: gitsheets.IndexErro
 RefError = _core.RefError
 PathTemplateError = _core.PathTemplateError
 NotFoundError = _core.NotFoundError
+ContractError = _core.ContractError
 
 # Stateful classes.
 CompiledDefinition = _core.CompiledDefinition
@@ -44,6 +45,7 @@ parse_records = _core.parse_records
 serialize_records = _core.serialize_records
 render_paths_batch = _core.render_paths_batch
 validate_batch = _core.validate_batch
+canonical_contract_hash = _core.canonical_contract_hash
 run_comparator = _core.run_comparator
 record_read = _core.record_read
 record_write = _core.record_write
@@ -76,6 +78,7 @@ __all__ = [
     "RefError",
     "PathTemplateError",
     "NotFoundError",
+    "ContractError",
     "CompiledDefinition",
     "CoreTransaction",
     "Transaction",
@@ -86,6 +89,7 @@ __all__ = [
     "serialize_records",
     "render_paths_batch",
     "validate_batch",
+    "canonical_contract_hash",
     "run_comparator",
     "record_read",
     "record_write",

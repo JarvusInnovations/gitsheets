@@ -310,13 +310,14 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, coreDiscoverSheets, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
+const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, canonicalContractHash, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, coreDiscoverSheets, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
 
 module.exports.roundtrip = roundtrip
 module.exports.parseRecords = parseRecords
 module.exports.serializeRecords = serializeRecords
 module.exports.renderPathsBatch = renderPathsBatch
 module.exports.validateBatch = validateBatch
+module.exports.canonicalContractHash = canonicalContractHash
 module.exports.runComparator = runComparator
 module.exports.collatorSort = collatorSort
 module.exports.CompiledDefinition = CompiledDefinition

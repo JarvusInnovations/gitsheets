@@ -323,6 +323,9 @@ pub struct JsValidationIssue {
     pub source: String,
     pub schema_path: Option<String>,
     pub code: Option<String>,
+    /// The contract name, when the failing branch is a declared contract
+    /// composed via `allOf` (specs/behaviors/contracts.md).
+    pub contract: Option<String>,
 }
 
 /// Render a path template against a **batch** of records, returning one path per
@@ -379,11 +382,47 @@ pub fn validate_batch(
                 source: issue.source.as_str().to_string(),
                 schema_path: issue.schema_path,
                 code: issue.code,
+                contract: issue.contract,
             })
             .collect();
         out.push(issues);
     }
     Ok(out)
+}
+
+/// The contract identity primitive (specs/behaviors/contracts.md "Canonical
+/// form" / "Contract identity"): canonicalize `input` → SHA-256 hex of the
+/// canonical TOML bytes. `input` is either already-parsed data (a JS
+/// object/array/etc.) or a string, in which case `format` says how to parse
+/// it (`"json"` or `"toml"` — required for a string input; a
+/// `ConfigError(config_invalid)` names the omission). The minimal JS surface
+/// over [`gitsheets_core::contract::canonical_contract_hash`].
+#[napi]
+pub fn canonical_contract_hash(
+    env: Env,
+    input: Either<String, JsValue>,
+    format: Option<String>,
+) -> Result<String> {
+    let core_input = match input {
+        Either::B(value) => gitsheets_core::ContractHashInput::Data(value.0),
+        Either::A(text) => match format.as_deref() {
+            Some("json") => gitsheets_core::ContractHashInput::Json(text),
+            Some("toml") => gitsheets_core::ContractHashInput::Toml(text),
+            Some(other) => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    format!("canonicalContractHash: unknown format {other:?} — expected 'json' or 'toml'"),
+                ))
+            }
+            None => {
+                return Err(napi::Error::new(
+                    Status::InvalidArg,
+                    "canonicalContractHash: pass { format: 'json' | 'toml' } when input is a string",
+                ))
+            }
+        },
+    };
+    gitsheets_core::canonical_contract_hash(core_input).map_err(|err| raise_core_error(&env, &err))
 }
 
 /// Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
@@ -1120,6 +1159,9 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
             if let Some(c) = &issue.code {
                 io.set_named_property("code", env.create_string(c)?)?;
             }
+            if let Some(c) = &issue.contract {
+                io.set_named_property("contract", env.create_string(c)?)?;
+            }
             arr.set_element(i as u32, io)?;
         }
         obj.set_named_property("issues", arr)?;
@@ -1132,6 +1174,10 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
             arr.set_element(i as u32, env.create_string(p)?)?;
         }
         obj.set_named_property("conflictingPaths", arr)?;
+    }
+
+    if let Some(contract) = err.contract() {
+        obj.set_named_property("contract", env.create_string(contract)?)?;
     }
 
     env.throw(obj)?;

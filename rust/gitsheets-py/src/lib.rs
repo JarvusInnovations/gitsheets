@@ -70,6 +70,7 @@ create_exception!(_gitsheets, IndexError, GitsheetsError);
 create_exception!(_gitsheets, RefError, GitsheetsError);
 create_exception!(_gitsheets, PathTemplateError, GitsheetsError);
 create_exception!(_gitsheets, NotFoundError, GitsheetsError);
+create_exception!(_gitsheets, ContractError, GitsheetsError);
 
 /// Map a structured core error onto its typed Python exception, attaching the
 /// `code`/`status`/`gitsheets_class` discriminants and any `issues` /
@@ -86,6 +87,7 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
         "RefError" => RefError::new_err(message),
         "PathTemplateError" => PathTemplateError::new_err(message),
         "NotFoundError" => NotFoundError::new_err(message),
+        "ContractError" => ContractError::new_err(message),
         _ => GitsheetsError::new_err(message),
     };
     let value = pyerr.value(py);
@@ -103,6 +105,7 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
             let _ = d.set_item("source", issue.source.as_str());
             let _ = d.set_item("schema_path", issue.schema_path.clone());
             let _ = d.set_item("code", issue.code.clone());
+            let _ = d.set_item("contract", issue.contract.clone());
             let _ = list.append(d);
         }
         let _ = value.setattr("issues", list);
@@ -110,6 +113,9 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
     let paths = err.conflicting_paths();
     if !paths.is_empty() {
         let _ = value.setattr("conflicting_paths", paths.to_vec());
+    }
+    if let Some(contract) = err.contract() {
+        let _ = value.setattr("contract", contract);
     }
     pyerr
 }
@@ -434,11 +440,46 @@ fn validate_batch<'py>(
             d.set_item("source", issue.source.as_str())?;
             d.set_item("schema_path", issue.schema_path)?;
             d.set_item("code", issue.code)?;
+            d.set_item("contract", issue.contract)?;
             issues.append(d)?;
         }
         out.append(issues)?;
     }
     Ok(out)
+}
+
+/// The contract identity primitive (specs/behaviors/contracts.md "Canonical
+/// form" / "Contract identity"): canonicalize `input` → SHA-256 hex of the
+/// canonical TOML bytes. `input` is either already-parsed data (a Python
+/// object) or a `str`, in which case `format` says how to parse it (`"json"`
+/// or `"toml"` — required for a string input). The minimal Python surface
+/// over `gitsheets_core::contract::canonical_contract_hash`.
+#[pyfunction]
+#[pyo3(signature = (input, *, format=None))]
+fn canonical_contract_hash(
+    py: Python<'_>,
+    input: &Bound<'_, PyAny>,
+    format: Option<&str>,
+) -> PyResult<String> {
+    let core_input = if let Ok(text) = input.extract::<String>() {
+        match format {
+            Some("json") => gitsheets_core::ContractHashInput::Json(text),
+            Some("toml") => gitsheets_core::ContractHashInput::Toml(text),
+            Some(other) => {
+                return Err(PyValueError::new_err(format!(
+                    "canonical_contract_hash: unknown format {other:?} — expected 'json' or 'toml'"
+                )))
+            }
+            None => {
+                return Err(PyValueError::new_err(
+                    "canonical_contract_hash: pass format='json'|'toml' when input is a str",
+                ))
+            }
+        }
+    } else {
+        gitsheets_core::ContractHashInput::Data(py_to_value(input)?)
+    };
+    gitsheets_core::canonical_contract_hash(core_input).map_err(|err| raise_core_error(py, &err))
 }
 
 /// Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
@@ -1380,6 +1421,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("RefError", py.get_type::<RefError>())?;
     m.add("PathTemplateError", py.get_type::<PathTemplateError>())?;
     m.add("NotFoundError", py.get_type::<NotFoundError>())?;
+    m.add("ContractError", py.get_type::<ContractError>())?;
 
     // Stateful classes.
     m.add_class::<CompiledDefinition>()?;
@@ -1391,6 +1433,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(serialize_records, m)?)?;
     m.add_function(wrap_pyfunction!(render_paths_batch, m)?)?;
     m.add_function(wrap_pyfunction!(validate_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(canonical_contract_hash, m)?)?;
     m.add_function(wrap_pyfunction!(run_comparator, m)?)?;
     m.add_function(wrap_pyfunction!(record_read, m)?)?;
     m.add_function(wrap_pyfunction!(record_write, m)?)?;

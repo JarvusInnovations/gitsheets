@@ -1,11 +1,12 @@
 ---
-status: planned
+status: done
 depends: []
 specs:
   - specs/behaviors/contracts.md
   - specs/behaviors/validation.md
   - specs/api/errors.md
 issues: []
+pr: 265
 ---
 
 # Plan: contracts core — declaration, vendored store, composed enforcement
@@ -77,21 +78,21 @@ closure, sheet-level assertions).
 
 ## Validation
 
-- [ ] A sheet declaring a vendored contract rejects a non-conforming write with
+- [x] A sheet declaring a vendored contract rejects a non-conforming write with
       `ValidationError` whose issue names the contract; a conforming write with
       extra local fields succeeds
-- [ ] `implements` naming an absent contract fails sheet-open with
+- [x] `implements` naming an absent contract fails sheet-open with
       `ContractError('contract_missing')`
-- [ ] Each document-requirement violation (bad `$id`, external `$ref`,
+- [x] Each document-requirement violation (bad `$id`, external `$ref`,
       `additionalProperties: false`, null-bearing keyword, non-canonical bytes,
       unknown keyword) fails with `ContractError('contract_invalid')` and a
       message naming the rule
-- [ ] Two sheets declaring the same name compose the same single vendored
+- [x] Two sheets declaring the same name compose the same single vendored
       document
-- [ ] `canonical_contract_hash` yields identical hashes for the same document
+- [x] `canonical_contract_hash` yields identical hashes for the same document
       supplied as JSON text, TOML text, and parsed data — in both Node and
       Python
-- [ ] Existing validation/normalization test suites pass unchanged (sheets with
+- [x] Existing validation/normalization test suites pass unchanged (sheets with
       no `implements` are byte-for-byte unaffected)
 
 ## Risks / unknowns
@@ -109,8 +110,67 @@ closure, sheet-level assertions).
 
 ## Notes
 
-(populated at closeout)
+- **Composition is a literal `allOf` wrapper, compiled once.** The effective
+  schema is `{"allOf": [contract1_json, …, contractN_json,
+  local_json_or_{}]}`, built via a new `CompiledSchema::compile_composed`
+  alongside the existing `CompiledSchema::compile`. A sheet with no
+  `implements` still compiles the bare `[gitsheet.schema]` with no wrapper at
+  all — this is what makes "zero regression" exact rather than approximate:
+  `schema_path` strings for a non-contract sheet never gain an `/allOf/N`
+  prefix that didn't exist before this plan.
+- **`ValidationIssue.contract` attribution is schema-path parsing, not a
+  second validation pass.** `CompiledSchema` carries the declared contract
+  names in `allOf` order; a failing issue's `jsonschema`-reported `schema_path`
+  (e.g. `/allOf/0/properties/slug/pattern`) is parsed for a leading
+  `/allOf/<i>` and mapped back to the name at that index. Index == the local
+  schema's position (always last) → `None`.
+- **Per-contract strict-mode (unknown-keyword) checking happens at
+  `load_contract` time, per contract — not once on the composed tree.**
+  Otherwise an unknown keyword inside a contract branch would surface as a
+  generic `ConfigError` rather than `ContractError` naming that contract. The
+  local schema's own strict-mode check is unchanged (still `ConfigError`).
+  The unknown-keyword walker (`reject_unknown_keywords`) was refactored into a
+  generic `walk_schema(schema, visit)` so the contract document-requirement
+  checks (self-containment / openness / null-bearing keywords) reuse its exact
+  descent rules instead of duplicating the "never misread a data position as a
+  keyword" logic.
+- **`canonical_contract_hash`'s JSON-text input path is the first place raw
+  JSON (with real `null`) enters the core directly**, via a new `json_to_value`
+  in `contract.rs`. It applies the identical null-handling contract every
+  binding's host→core marshal already applies (drop a null-valued table key
+  recursively; reject a null array element or a null value itself), reusing
+  the existing `null_array_element_msg`/`null_value_msg` diagnostic helpers.
+  Consequence: `const: null` / `enum` containing `null` / `default: null` can
+  never actually occur in a document loaded from the **committed vendored
+  TOML** path (TOML has no null, so `Value` has no null variant) — only
+  `type: 'null'` (a string) is reachable that way. The null-bearing-keyword
+  checker (`check_no_null_bearing_keywords`) is still written to catch all
+  four forms because it operates on the generic `serde_json::Value` the same
+  document-requirement checks would run against once the (out-of-scope) CLI
+  `adopt` path feeds raw JSON text in directly; the plan's own tests exercise
+  those three unreachable-via-TOML forms by constructing `serde_json::Value`
+  fixtures directly, bypassing TOML entirely.
+- **No `Sheet::open` / binding signature changes.** Contract resolution reuses
+  the `open_root` parameter already threaded through every caller; `implements`
+  is just another field the existing config parse discovers. Every binding
+  change is additive (a new `ContractError` class + `contract` payload field +
+  one new function), which is why zero existing napi/py/JS tests needed
+  updates beyond the new coverage.
+- **Bindings needed almost no per-class plumbing.** Both napi's
+  `throw_structured_error` and Python's `raise_core_error` are already generic
+  over `err.class().as_str()`/`err.code()`; adding `ContractError` was one
+  match arm plus threading the new `contract`/`issue.contract` fields through
+  the existing marshalling — no new dispatch machinery.
+- Test evidence (full detail in the PR body): `cargo test -p gitsheets-core`
+  222 passed + 4 corpus-parity; `cargo clippy --workspace --all-targets -- -D
+  warnings` clean; napi `npm test` 119 passed (114 pre-existing + 5 new);
+  Python `pytest` 42 passed; `npm test --workspaces --if-present` at repo root
+  (gitsheets 364, gitsheets-axi 118, gitsheets-napi 119) all green.
 
 ## Follow-ups
 
-(populated at closeout)
+- Issue [#266](https://github.com/JarvusInnovations/gitsheets/issues/266) —
+  cache the compiled contract JSON by blob OID across sheet-opens (the plan's
+  own "Canonical-bytes check cost" risk — a performance optimization, not a
+  correctness gap; today every `Sheet::open` re-parses/re-canonicalizes/
+  re-checks every declared contract from scratch).
