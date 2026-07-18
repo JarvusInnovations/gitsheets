@@ -33,6 +33,11 @@ export interface JsValidationIssue {
   source: string
   schemaPath?: string
   code?: string
+  /**
+   * The contract name, when the failing branch is a declared contract
+   * composed via `allOf` (specs/behaviors/contracts.md).
+   */
+  contract?: string
 }
 /**
  * Render a path template against a **batch** of records, returning one path per
@@ -53,6 +58,16 @@ export declare function renderPathsBatch(template: string, records: Array<JsValu
  * compile surfaces as a structured, typed `ConfigError` (`config_invalid`).
  */
 export declare function validateBatch(schema: JsValue, records: Array<JsValue>): Array<Array<JsValidationIssue>>
+/**
+ * The contract identity primitive (specs/behaviors/contracts.md "Canonical
+ * form" / "Contract identity"): canonicalize `input` → SHA-256 hex of the
+ * canonical TOML bytes. `input` is either already-parsed data (a JS
+ * object/array/etc.) or a string, in which case `format` says how to parse
+ * it (`"json"` or `"toml"` — required for a string input; a
+ * `ConfigError(config_invalid)` names the omission). The minimal JS surface
+ * over [`gitsheets_core::contract::canonical_contract_hash`].
+ */
+export declare function canonicalContractHash(input: string | JsValue, format?: string | undefined | null): string
 /**
  * Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
  * run it once against `a`/`b`, returning its numeric result. The direct

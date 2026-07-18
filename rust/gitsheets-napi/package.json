@@ -45,7 +45,7 @@
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
     "prepublishOnly": "napi prepublish -t npm --skip-gh-release",
-    "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs test/path-template.mjs test/validation-parity.mjs test/engine-parity.mjs test/collator-parity.mjs test/record-crud.mjs test/record-query.mjs test/record-index.mjs test/sheet-store.mjs test/sheet-markdown.mjs test/sheet-attachments.mjs",
+    "test": "node --test test/roundtrip.mjs test/errors.mjs test/canonical.mjs test/path-template.mjs test/validation-parity.mjs test/engine-parity.mjs test/collator-parity.mjs test/record-crud.mjs test/record-query.mjs test/record-index.mjs test/sheet-store.mjs test/sheet-markdown.mjs test/sheet-attachments.mjs test/contracts.mjs",
     "bench": "node bench/query-bench.mjs",
     "version": "napi version"
   },
