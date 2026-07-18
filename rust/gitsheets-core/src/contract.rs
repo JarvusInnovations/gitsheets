@@ -24,10 +24,10 @@ use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 
 use crate::canonical;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationIssue};
 use crate::path_template::is_windows_invalid;
 use crate::record;
-use crate::sheet::join_path;
+use crate::sheet::{join_path, Sheet};
 use crate::validation::{self, CompiledSchema};
 use crate::value::{self, Value};
 
@@ -368,18 +368,230 @@ pub enum ContractHashInput {
 /// encoder (`specs/behaviors/contracts.md` "Canonical form": "Byte-equality ≡
 /// data-equality").
 pub fn canonical_contract_hash(input: ContractHashInput) -> Result<String> {
-    let value = match input {
-        ContractHashInput::Data(v) => v,
-        ContractHashInput::Toml(s) => canonical::parse(&s)?,
+    let value = resolve_contract_document(input)?;
+    let bytes = canonical::serialize(&value)?;
+    Ok(sha256_hex(bytes.as_bytes()))
+}
+
+/// Resolve a [`ContractHashInput`] (parsed data, JSON text, or TOML text) into
+/// the core [`Value`] it denotes — the shared first step of
+/// [`canonical_contract_hash`] and consumer-side verification
+/// ([`verify_sheet_contract`]), both of which need the parsed document before
+/// they diverge (one hashes it, the other also compiles it as a schema and
+/// reads its `$id`).
+pub fn resolve_contract_document(input: ContractHashInput) -> Result<Value> {
+    match input {
+        ContractHashInput::Data(v) => Ok(v),
+        ContractHashInput::Toml(s) => canonical::parse(&s),
         ContractHashInput::Json(s) => {
             let json: Json = serde_json::from_str(&s).map_err(|e| Error::ConfigInvalid {
                 message: format!("JSON parse failed: {e}"),
             })?;
-            json_to_value(&json)?
+            json_to_value(&json)
         }
-    };
-    let bytes = canonical::serialize(&value)?;
-    Ok(sha256_hex(bytes.as_bytes()))
+    }
+}
+
+// ── consumer verification: the two-rung ladder ────────────────────────────────
+//
+// `specs/behaviors/contracts.md` "Consumer verification": a consumer holding a
+// contract document verifies a target sheet it has opened (already compiled —
+// `implements` resolved, effective schema composed) via rung 1 (declared
+// identity: name membership + vendored-byte identity) falling through, on a
+// miss, to rung 2 (structural: every record validates against the consumer's
+// document ALONE, ignoring the sheet's own declarations/local schema).
+
+/// Which rungs [`verify_sheet_contract`] attempts. `specs/api/repository.md`
+/// `opts.contract.mode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifyMode {
+    /// Rung 1, falling back to rung 2 on a miss. The default.
+    Verify,
+    /// Rung 1 only — strict, never reads records. A miss is
+    /// `contract_unsatisfied` immediately.
+    Declared,
+    /// Rung 2 only — duck typing; ignores `implements` entirely.
+    Structural,
+}
+
+/// Which rung a verification actually passed at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rung {
+    /// Rung 1: the sheet declares the contract's name AND the vendored bytes
+    /// are byte-identical to the consumer's document. Verified present *and*
+    /// future — write-time enforcement guarantees it forever.
+    Declared,
+    /// Rung 2: every current record validates against the consumer's document
+    /// alone. Verified only for the tree hash checked — pure duck typing.
+    Structural,
+}
+
+impl Rung {
+    /// The wire string used on binding surfaces (`sheet.contractVerification.rung`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Rung::Declared => "declared",
+            Rung::Structural => "structural",
+        }
+    }
+}
+
+/// The result of a successful [`verify_sheet_contract`] — mirrors
+/// `sheet.contractVerification` in `specs/api/repository.md` (minus `tree`,
+/// which the binding attaches from the read snapshot it already resolved to
+/// open the sheet).
+#[derive(Clone, Debug)]
+pub struct ConformanceReport {
+    pub name: String,
+    pub rung: Rung,
+    /// Always `true` on `Ok` — [`verify_sheet_contract`] returns
+    /// `Err(Error::ContractUnsatisfied)` (carrying its own `issues`) on
+    /// failure rather than an `Ok` report with `conforming: false`. Kept as an
+    /// explicit field (rather than implied by `Ok`/`Err`) because the same
+    /// shape is reused host-side to describe a *regressed* drift re-check,
+    /// where `conforming` is `false`.
+    pub conforming: bool,
+    pub issues: Vec<ValidationIssue>,
+}
+
+/// Extract the contract name from a document's `$id` (`specs/behaviors/
+/// contracts.md` "Contract name": the `$id` with the `https://` scheme
+/// stripped). The consumer's own document is expected to already be a valid
+/// contract (mirrored — perhaps freshly authored — from one that was
+/// vendored and validated elsewhere), so this only checks the one thing
+/// `verify_sheet_contract` actually needs: a well-formed `$id` to derive
+/// identity from. A malformed/missing `$id` is the caller's input error.
+fn contract_name_from_document(json: &Json) -> Result<String> {
+    let id = json
+        .as_object()
+        .and_then(|o| o.get("$id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::ConfigInvalid {
+            message: "contract document is missing a required string \"$id\" (a consumer-held \
+                      document must carry the same $id its contract name derives from)"
+                .to_string(),
+        })?;
+    id.strip_prefix("https://")
+        .map(str::to_string)
+        .ok_or_else(|| Error::ConfigInvalid {
+            message: format!(
+                "contract document $id {id:?} does not have the required \"https://\" scheme"
+            ),
+        })
+}
+
+/// Read the vendored contract text at its derived path, if present. Unlike
+/// [`load_contract`] this does NOT re-check document requirements or
+/// canonical-bytes — by the time a caller has a successfully-`Sheet::open`ed
+/// sheet in hand, every contract it `implements` already passed those checks
+/// once at open time. A miss here (absent, not UTF-8) degrades to a rung-1
+/// miss rather than an error — "mismatch is evidence to check, not grounds to
+/// refuse" (`specs/behaviors/contracts.md` principles) applies just as much to
+/// a vendored-read hiccup as to a hash mismatch.
+fn read_vendored_text(
+    repo: &gix::Repository,
+    tree: &mut MutableTree,
+    open_root: &str,
+    name: &str,
+) -> Option<String> {
+    let full_path = format!("{}.toml", join_path(&[open_root, ".gitsheets/contracts", name]));
+    let bytes = tree.read_blob(repo, &full_path).ok().flatten()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// Verify `sheet` (already opened against `tree`) against the consumer's
+/// `document`, per `specs/behaviors/contracts.md` "Consumer verification":
+///
+/// - **Rung 1** (skipped in [`VerifyMode::Structural`]): `sheet`'s `implements`
+///   names the document's contract AND the vendored bytes at the derived path
+///   (under `open_root`) are canonical-hash-identical to `document`. Pass →
+///   `Ok` with [`Rung::Declared`], **zero records read**.
+/// - **Rung 2** (skipped in [`VerifyMode::Declared`]): every record of `sheet`
+///   validates against `document` alone (not composed with the sheet's own
+///   schema/contracts — pure duck typing). Pass → `Ok` with
+///   [`Rung::Structural`].
+/// - Both rungs miss (or the attempted rung misses, in `Declared`/`Structural`
+///   mode) → [`Error::ContractUnsatisfied`] carrying the conformance report:
+///   an empty `issues` list for a `Declared`-mode miss (it never reads
+///   records to produce field-level issues), or one [`ValidationIssue`] per
+///   failing field per record (tagged `record`/`contract`) for a rung-2 miss.
+pub fn verify_sheet_contract(
+    repo: &gix::Repository,
+    tree: &mut MutableTree,
+    open_root: &str,
+    sheet: &Sheet,
+    document: ContractHashInput,
+    mode: VerifyMode,
+) -> Result<ConformanceReport> {
+    let value = resolve_contract_document(document)?;
+    let json = validation::value_to_json(&value);
+    let name = contract_name_from_document(&json)?;
+
+    if !matches!(mode, VerifyMode::Structural) {
+        let declared = sheet.config().implements.iter().any(|n| n == &name);
+        if declared {
+            if let Some(vendored_text) = read_vendored_text(repo, tree, open_root, &name) {
+                let vendored_hash =
+                    canonical_contract_hash(ContractHashInput::Toml(vendored_text))?;
+                let consumer_hash = canonical_contract_hash(ContractHashInput::Data(value.clone()))?;
+                if vendored_hash == consumer_hash {
+                    return Ok(ConformanceReport {
+                        name,
+                        rung: Rung::Declared,
+                        conforming: true,
+                        issues: Vec::new(),
+                    });
+                }
+            }
+        }
+        if matches!(mode, VerifyMode::Declared) {
+            return Err(Error::ContractUnsatisfied {
+                message: format!(
+                    "sheet {:?} does not declare contract {name:?} with a byte-identical vendored \
+                     document — declared mode never falls back to structural validation",
+                    sheet.name()
+                ),
+                contract: name,
+                issues: Vec::new(),
+            });
+        }
+        // Rung-1 miss: evidence to check, not grounds to refuse — fall through
+        // to rung 2 (e.g. the producer implements a newer, data-compatible
+        // version).
+    }
+
+    // Rung 2 — structural: compile the CONSUMER's document alone (never
+    // composed with the sheet's own schema/contracts) and validate every
+    // current record against it.
+    let compiled = CompiledSchema::compile(&value)?;
+    let records = sheet.list(repo, tree, true)?;
+    let mut issues = Vec::new();
+    for (path, record) in &records {
+        for mut issue in compiled.validate(record) {
+            issue.contract = Some(name.clone());
+            issue.record = Some(path.clone());
+            issues.push(issue);
+        }
+    }
+    if issues.is_empty() {
+        Ok(ConformanceReport {
+            name,
+            rung: Rung::Structural,
+            conforming: true,
+            issues: Vec::new(),
+        })
+    } else {
+        Err(Error::ContractUnsatisfied {
+            message: format!(
+                "sheet {:?} does not structurally conform to contract {name:?}: {} issue(s) \
+                 across its records",
+                sheet.name(),
+                issues.len()
+            ),
+            contract: name,
+            issues,
+        })
+    }
 }
 
 /// Marshal a `serde_json::Value` into the core [`Value`], applying the same
@@ -787,5 +999,208 @@ mod tests {
         let err =
             canonical_contract_hash(ContractHashInput::Json(r#"{"a":[1,null]}"#.into())).unwrap_err();
         assert_eq!(err.code(), "config_invalid");
+    }
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+    use crate::record::{write_records, TOML_EXTENSION};
+
+    fn temp_repo() -> (tempfile::TempDir, gix::Repository) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = gix::init(dir.path()).unwrap();
+        (dir, repo)
+    }
+
+    /// Vendor `doc` at contract `name`'s derived path, through the same
+    /// canonical encoder `load_contract`'s canonical-bytes check compares
+    /// against.
+    fn vendor_contract(repo: &gix::Repository, tree: &mut MutableTree, name: &str, doc: &Json) {
+        let value = json_to_value(doc).unwrap();
+        let bytes = canonical::serialize(&value).unwrap();
+        let path = contract_path(name);
+        tree.write_child(repo, &path, &bytes).unwrap();
+    }
+
+    fn sheet_config(implements: &[&str]) -> Value {
+        let mut gs = IndexMap::new();
+        gs.insert("path".to_string(), Value::String("${{ slug }}".into()));
+        gs.insert("root".to_string(), Value::String("people".into()));
+        if !implements.is_empty() {
+            gs.insert(
+                "implements".to_string(),
+                Value::Array(
+                    implements
+                        .iter()
+                        .map(|n| Value::String((*n).to_string()))
+                        .collect(),
+                ),
+            );
+        }
+        let mut top = IndexMap::new();
+        top.insert("gitsheet".to_string(), Value::Table(gs));
+        Value::Table(top)
+    }
+
+    fn write_config(repo: &gix::Repository, tree: &mut MutableTree, config: Value) {
+        write_records(repo, tree, ".gitsheets", &[("people".into(), config)], TOML_EXTENSION)
+            .unwrap();
+    }
+
+    fn write_record(repo: &gix::Repository, tree: &mut MutableTree, slug: &str, fields: &[(&str, &str)]) {
+        let mut m = IndexMap::new();
+        m.insert("slug".to_string(), Value::String(slug.to_string()));
+        for (k, v) in fields {
+            m.insert((*k).to_string(), Value::String((*v).to_string()));
+        }
+        let value = Value::Table(m);
+        let bytes = canonical::serialize(&value).unwrap();
+        tree.write_child(repo, &format!("people/{slug}.toml"), &bytes).unwrap();
+    }
+
+    fn open_people(repo: &gix::Repository, tree: &mut MutableTree) -> Sheet {
+        Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap()
+    }
+
+    const NAME: &str = "example.com/people/v1";
+    const NAME_V1_1: &str = "example.com/people/v1.1";
+
+    fn consumer_doc(name: &str, required: &[&str]) -> Json {
+        serde_json::json!({
+            "$id": format!("https://{name}"),
+            "type": "object",
+            "required": required,
+        })
+    }
+
+    #[test]
+    fn rung1_passes_with_zero_record_reads() {
+        let (_d, repo) = temp_repo();
+        let mut tree = MutableTree::empty();
+        write_config(&repo, &mut tree, sheet_config(&[NAME]));
+        let doc = consumer_doc(NAME, &["email"]);
+        vendor_contract(&repo, &mut tree, NAME, &doc);
+        // A garbage record that would blow up `Sheet::list` if rung 1 ever
+        // fell through to reading records — proves the zero-record-read claim.
+        tree.write_child(&repo, "people/garbage.toml", "not [ valid toml").unwrap();
+        let sheet = open_people(&repo, &mut tree);
+
+        let report = verify_sheet_contract(
+            &repo,
+            &mut tree,
+            ".",
+            &sheet,
+            ContractHashInput::Data(json_to_value(&doc).unwrap()),
+            VerifyMode::Verify,
+        )
+        .unwrap();
+        assert_eq!(report.name, NAME);
+        assert_eq!(report.rung, Rung::Declared);
+        assert!(report.conforming);
+        assert!(report.issues.is_empty());
+    }
+
+    #[test]
+    fn rung1_miss_on_a_newer_producer_version_falls_through_to_rung2_pass() {
+        let (_d, repo) = temp_repo();
+        let mut tree = MutableTree::empty();
+        // Producer declares the NEWER, data-compatible version…
+        write_config(&repo, &mut tree, sheet_config(&[NAME_V1_1]));
+        let doc_v1_1 = consumer_doc(NAME_V1_1, &["email"]);
+        vendor_contract(&repo, &mut tree, NAME_V1_1, &doc_v1_1);
+        write_record(&repo, &mut tree, "jane", &[("email", "jane@x.org")]);
+        let sheet = open_people(&repo, &mut tree);
+
+        // …but the consumer still holds v1 — a rung-1 miss (name not
+        // declared) that falls through to a rung-2 pass (the data satisfies
+        // v1 too).
+        let doc_v1 = consumer_doc(NAME, &["email"]);
+        let report = verify_sheet_contract(
+            &repo,
+            &mut tree,
+            ".",
+            &sheet,
+            ContractHashInput::Data(json_to_value(&doc_v1).unwrap()),
+            VerifyMode::Verify,
+        )
+        .unwrap();
+        assert_eq!(report.rung, Rung::Structural);
+        assert!(report.conforming);
+    }
+
+    #[test]
+    fn rung2_failure_reports_record_and_field_level_issues() {
+        let (_d, repo) = temp_repo();
+        let mut tree = MutableTree::empty();
+        write_config(&repo, &mut tree, sheet_config(&[])); // contract-unaware
+        write_record(&repo, &mut tree, "jane", &[("email", "jane@x.org")]);
+        write_record(&repo, &mut tree, "bob", &[]); // missing email
+        let sheet = open_people(&repo, &mut tree);
+
+        let doc = consumer_doc(NAME, &["email"]);
+        let err = verify_sheet_contract(
+            &repo,
+            &mut tree,
+            ".",
+            &sheet,
+            ContractHashInput::Data(json_to_value(&doc).unwrap()),
+            VerifyMode::Verify,
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "contract_unsatisfied");
+        assert_eq!(err.contract(), Some(NAME));
+        let issues = err.issues();
+        assert!(issues.iter().any(|i| i.record.as_deref() == Some("bob")
+            && i.contract.as_deref() == Some(NAME)
+            && i.code.as_deref() == Some("required")));
+        assert!(!issues.iter().any(|i| i.record.as_deref() == Some("jane")));
+    }
+
+    #[test]
+    fn declared_mode_fails_fast_without_reading_records() {
+        let (_d, repo) = temp_repo();
+        let mut tree = MutableTree::empty();
+        write_config(&repo, &mut tree, sheet_config(&[])); // not declared
+        tree.write_child(&repo, "people/garbage.toml", "not [ valid toml").unwrap();
+        let sheet = open_people(&repo, &mut tree);
+
+        let doc = consumer_doc(NAME, &["email"]);
+        let err = verify_sheet_contract(
+            &repo,
+            &mut tree,
+            ".",
+            &sheet,
+            ContractHashInput::Data(json_to_value(&doc).unwrap()),
+            VerifyMode::Declared,
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "contract_unsatisfied");
+        assert!(
+            err.issues().is_empty(),
+            "declared mode never scans records — no per-record issues"
+        );
+    }
+
+    #[test]
+    fn structural_mode_ignores_declarations_and_duck_types() {
+        let (_d, repo) = temp_repo();
+        let mut tree = MutableTree::empty();
+        write_config(&repo, &mut tree, sheet_config(&[])); // no implements at all
+        write_record(&repo, &mut tree, "jane", &[("email", "jane@x.org")]);
+        let sheet = open_people(&repo, &mut tree);
+
+        let doc = consumer_doc(NAME, &["email"]);
+        let report = verify_sheet_contract(
+            &repo,
+            &mut tree,
+            ".",
+            &sheet,
+            ContractHashInput::Data(json_to_value(&doc).unwrap()),
+            VerifyMode::Structural,
+        )
+        .unwrap();
+        assert_eq!(report.rung, Rung::Structural);
+        assert!(report.conforming);
     }
 }

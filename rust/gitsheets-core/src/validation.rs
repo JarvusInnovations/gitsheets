@@ -115,6 +115,8 @@ impl CompiledSchema {
                 // ajv's `keyword` is the last schemaPath segment — same here.
                 code: keyword_from_schema_path(&schema_path),
                 contract,
+                // Single-record write-time validation — no multi-record report.
+                record: None,
             });
         }
         issues

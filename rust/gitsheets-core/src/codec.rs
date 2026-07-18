@@ -231,6 +231,7 @@ fn serialize_markdown(record: &Value, format: &FormatConfig) -> Result<String> {
                         schema_path: None,
                         code: None,
                         contract: None,
+                        record: None,
                     }],
                 });
             }
