@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -458,6 +458,8 @@
       
         
       
+        
+      
     
     
     
@@ -549,6 +551,34 @@
     
   
     Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
   
 
     
@@ -883,6 +913,17 @@
     <span class="md-ellipsis">
       
         validateRecord({ record, schema, validator? })
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#canonicalcontracthashinput-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        canonicalContractHash(input, options?)
       
     </span>
   </a>
@@ -1510,6 +1551,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#canonicalcontracthashinput-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        canonicalContractHash(input, options?)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#toml-round-tripping" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1596,10 +1648,10 @@
 
 <span class="w">  </span><span class="c1">// error classes</span>
 <span class="w">  </span><span class="nx">GitsheetsError</span><span class="p">,</span><span class="w"> </span><span class="nx">ConfigError</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidationError</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionError</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">IndexError</span><span class="p">,</span><span class="w"> </span><span class="nx">RefError</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateError</span><span class="p">,</span><span class="w"> </span><span class="nx">NotFoundError</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">IndexError</span><span class="p">,</span><span class="w"> </span><span class="nx">RefError</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateError</span><span class="p">,</span><span class="w"> </span><span class="nx">NotFoundError</span><span class="p">,</span><span class="w"> </span><span class="nx">ContractError</span><span class="p">,</span>
 
 <span class="w">  </span><span class="c1">// utilities</span>
-<span class="w">  </span><span class="nx">mergePatch</span><span class="p">,</span><span class="w"> </span><span class="nx">validateRecord</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">mergePatch</span><span class="p">,</span><span class="w"> </span><span class="nx">validateRecord</span><span class="p">,</span><span class="w"> </span><span class="nx">canonicalContractHash</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">parseToml</span><span class="p">,</span><span class="w"> </span><span class="nx">parseConfigToml</span><span class="p">,</span><span class="w"> </span><span class="nx">stringifyRecord</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">getFormat</span><span class="p">,</span><span class="w"> </span><span class="nx">hasFormat</span><span class="p">,</span><span class="w"> </span><span class="nx">registerFormat</span><span class="p">,</span><span class="w"> </span><span class="nx">resolveFormatConfig</span><span class="p">,</span>
 
@@ -1620,6 +1672,8 @@
 <span class="w">  </span><span class="nx">PushDaemonOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">PushDaemonStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">PushFailureReason</span><span class="p">,</span><span class="w"> </span><span class="nx">BackoffConfig</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">JSONSchema</span><span class="p">,</span><span class="w"> </span><span class="nx">StandardSchemaV1</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidationIssue</span><span class="p">,</span><span class="w"> </span><span class="nx">StandardSchemaResult</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">RecordLike</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateBlob</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateTree</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateQueryResult</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">OpenSheetContractOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">ContractVerificationMode</span><span class="p">,</span><span class="w"> </span><span class="nx">ConformanceReport</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">ContractDocumentFormat</span><span class="p">,</span><span class="w"> </span><span class="nx">CanonicalContractHashOptions</span><span class="p">,</span>
 <span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
 </code></pre></div>
 <p>No deep imports (<code>gitsheets/lib/Sheet</code>) — the implementation can rearrange <code>packages/gitsheets/src/</code> freely without notice. The package-root surface is the only stable API.</p>
@@ -1648,7 +1702,7 @@
 <tbody>
 <tr>
 <td><code>repo.openSheet&lt;T&gt;(name, opts?)</code></td>
-<td>Sheet handle; <code>opts.validator</code> (Standard Schema), <code>opts.root</code>, <code>opts.prefix</code></td>
+<td>Sheet handle; <code>opts.validator</code> (Standard Schema), <code>opts.root</code>, <code>opts.prefix</code>, <code>opts.contract</code> (verify against a <a href="../contracts/">contract</a> before returning — result on <code>sheet.contractVerification</code>)</td>
 </tr>
 <tr>
 <td><code>repo.openSheets(opts?)</code></td>
@@ -1985,6 +2039,10 @@
 <td><code>NotFoundError</code></td>
 <td><code>record_not_found</code></td>
 </tr>
+<tr>
+<td><code>ContractError</code></td>
+<td><code>contract_missing</code>, <code>contract_invalid</code>, <code>contract_unsatisfied</code> (carries <code>contract</code> and, on <code>contract_unsatisfied</code>, the conformance report in <code>issues</code>)</td>
+</tr>
 </tbody>
 </table>
 <p>Consumers switch on <code>instanceof</code> or <code>err.code</code> — never on <code>err.message</code>.</p>
@@ -1997,6 +2055,8 @@
 <p>RFC 7396 JSON Merge Patch as a pure function. Useful when you want the patch semantic without going through <code>Sheet.patch</code>. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/patch-semantics.md"><code>specs/behaviors/patch-semantics.md</code></a>.</p>
 <h3 id="validaterecord-record-schema-validator"><code>validateRecord({ record, schema, validator? })</code><a class="headerlink" href="#validaterecord-record-schema-validator" title="Permanent link"> ¶</a></h3>
 <p>Run the same validation pipeline <code>Sheet.upsert</code> uses without going through a Sheet. Useful for pre-flight (UI form submission, CSV ingest, audit passes against legacy records). Returns the possibly-transformed record on success, throws <code>ValidationError</code> on failure. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/validation.md"><code>specs/behaviors/validation.md</code></a>.</p>
+<h3 id="canonicalcontracthashinput-options"><code>canonicalContractHash(input, options?)</code><a class="headerlink" href="#canonicalcontracthashinput-options" title="Permanent link"> ¶</a></h3>
+<p>The <a href="../contracts/">contract</a> identity primitive: canonicalize a contract document — parsed data, or JSON/TOML text with <code>{ format }</code> — through the canonical TOML encoder and return the SHA-256 hex of the resulting bytes. Two parties holding the same logical document compute the same hash regardless of serialization.</p>
 <h3 id="toml-round-tripping">TOML round-tripping<a class="headerlink" href="#toml-round-tripping" title="Permanent link"> ¶</a></h3>
 <table>
 <thead>
@@ -2109,7 +2169,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@8.5.0/dist/mermaid.min.js"></script>
       

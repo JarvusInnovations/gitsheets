@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -576,6 +576,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#content-typed-sheets-markdown-mdx" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -646,6 +657,8 @@
   
     
     
+      
+        
       
         
       
@@ -745,6 +758,34 @@
     
   
     Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
   
 
     
@@ -1243,6 +1284,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#content-typed-sheets-markdown-mdx" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1459,6 +1511,14 @@ ${{ a }}/${{ b }}           # path segments separated by `/`
 <p>Failure at either layer throws <code>ValidationError</code> with a structured <code>issues</code> array. The <code>source</code> field on each issue identifies which layer raised it.</p>
 <p>The Standard Schema layer can <strong>transform</strong> the record (lower-casing, defaulting, parsing) — the transformed value is what gets normalized + written.</p>
 <p>See <a href="../validation/">validation</a> for the full pipeline.</p>
+<h2 id="contract">Contract<a class="headerlink" href="#contract" title="Permanent link"> ¶</a></h2>
+<p>A named, versioned, <strong>immutable</strong> JSON Schema document a sheet declares it <code>implements</code>. The document is vendored into the repo (canonical TOML under <code>.gitsheets/contracts/</code>) and composed into the sheet&rsquo;s write-time validation via <code>allOf</code> — so every record the sheet ever commits conforms, by construction. A consumer holding the same document verifies the sheet mechanically: by content identity (fast; guarantees future writes too) or by validating the records themselves (works against any sheet; guarantees the present). The unit of cross-system sheet interoperability.</p>
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;meals&#39;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;${{ slug }}&#39;</span>
+<span class="n">implements</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;gitsheets.io/meals/v1&#39;</span><span class="p">]</span>
+</code></pre></div>
+<p>See the <a href="../contracts/">contracts guide</a>.</p>
 <h2 id="content-typed-sheets-markdown-mdx">Content-typed sheets (markdown / mdx)<a class="headerlink" href="#content-typed-sheets-markdown-mdx" title="Permanent link"> ¶</a></h2>
 <p>A sheet&rsquo;s <code>[gitsheet.format]</code> block can switch its on-disk storage from
 <code>.toml</code> to <code>.md</code> files with TOML frontmatter and a designated body field.
@@ -1594,7 +1654,7 @@ git<span class="w"> </span>log<span class="w"> </span>--author<span class="o">=<
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@8.5.0/dist/mermaid.min.js"></script>
       
