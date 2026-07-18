@@ -9,13 +9,16 @@ import type { Readable } from 'node:stream';
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
 import { addon, callCore, CoreTransaction } from './core.js';
+import type { ConformanceReport, OpenSheetContractOptions } from './contracts.js';
 import {
   ConfigError,
+  ContractError,
   IndexError,
   NotFoundError,
   PathTemplateError,
   RefError,
   TransactionError,
+  type ValidationIssue,
 } from './errors.js';
 import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
@@ -760,6 +763,17 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #prefix: string;
   readonly #indexes = new Map<string, IndexState<T>>();
   #configPromise: Promise<SheetConfig> | undefined;
+  /** Set by {@link verifyContract} on a successful `openSheet({ contract })`. */
+  #contractVerification: ConformanceReport | undefined;
+  /** The contract options this sheet was opened with, kept for drift re-checks. */
+  #contractOptions: OpenSheetContractOptions | undefined;
+  /**
+   * Incremented on every {@link rebindReadTree}; a lazy drift re-check
+   * captures it and bails if it's stale by the time the (async) re-verify
+   * settles, so a burst of rebinds can't invoke `onDrift` out of order or
+   * pile up overlapping re-checks.
+   */
+  #driftToken = 0;
 
   constructor(opts: SheetConstructorOptions<T>) {
     this.#repo = opts.repo;
@@ -830,6 +844,102 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
+   * The result of consumer-side contract verification, when this sheet was
+   * opened with `openSheet(name, { contract })` — `{ name, rung, tree }`, per
+   * specs/api/repository.md. `undefined` when no `contract` option was given.
+   * See specs/behaviors/contracts.md "Consumer verification".
+   */
+  get contractVerification(): ConformanceReport | undefined {
+    return this.#contractVerification;
+  }
+
+  /**
+   * @internal — run consumer-side contract verification (the two-rung
+   * ladder) against this sheet's current read snapshot and set
+   * {@link contractVerification} on success. Called by
+   * `Repository.openSheet({ contract })` before the handle is returned to the
+   * consumer. Throws `ContractError('contract_unsatisfied')` on failure —
+   * both rungs missed (`verify` mode), or the one attempted rung missed
+   * (`declared`/`structural` mode).
+   */
+  async verifyContract(opts: OpenSheetContractOptions): Promise<void> {
+    this.#contractOptions = opts;
+    const treeRef = this.#configTreeRef();
+    const report = this.#runVerify(opts, treeRef);
+    this.#contractVerification = { ...report, tree: treeRef };
+  }
+
+  /** Run the napi verification call once against `treeRef`. Typed errors propagate via `callCore`. */
+  #runVerify(
+    opts: OpenSheetContractOptions,
+    treeRef: string,
+  ): Omit<ConformanceReport, 'tree'> {
+    const raw = callCore(() =>
+      addon.verifySheetContract(
+        this.#gitDir,
+        treeRef,
+        this.#name,
+        this.#configPath,
+        this.#dataBase,
+        this.#prefix,
+        opts.schema as never,
+        opts.format,
+        opts.mode,
+      ),
+    );
+    return {
+      name: raw.name,
+      rung: raw.rung as 'declared' | 'structural',
+      conforming: raw.conforming,
+      // The generated addon type widens `source` to `string`; narrow it back
+      // to the wire union `ValidationIssue` promises.
+      issues: raw.issues.map((issue) => ({
+        ...issue,
+        source: issue.source as ValidationIssue['source'],
+      })),
+    };
+  }
+
+  /**
+   * Advisory drift re-check (specs/behaviors/contracts.md "Consumer
+   * verification": "re-verification is advisory, not blocking"): fired
+   * (never awaited by the caller) after a rebind moves a rung-2
+   * (structural-verified) sheet to a new tree, when the consumer registered
+   * `onDrift`. Reads are never gated on this — a throw here is swallowed
+   * after invoking `onDrift` with the regressed report; a success (still
+   * conforming) is silently a no-op.
+   */
+  #checkDriftAfterRebind(tree: string): void {
+    const verification = this.#contractVerification;
+    const opts = this.#contractOptions;
+    const onDrift = opts?.onDrift;
+    if (verification === undefined || opts === undefined || onDrift === undefined) return;
+    if (verification.rung !== 'structural') return; // rung-1 holds by construction, forever
+    const token = ++this.#driftToken;
+    void Promise.resolve().then(() => {
+      if (token !== this.#driftToken) return; // superseded by a later rebind
+      try {
+        const report = this.#runVerify(opts, tree);
+        this.#contractVerification = { ...report, tree };
+        // Still conforming — not a regression, nothing to signal.
+      } catch (err) {
+        if (token !== this.#driftToken) return;
+        if (err instanceof ContractError) {
+          onDrift({
+            name: verification.name,
+            rung: verification.rung,
+            tree,
+            conforming: false,
+            issues: err.issues ?? [],
+          });
+        }
+        // A non-ContractError (e.g. a transient read failure) is not a
+        // conformance signal — swallow it; drift is advisory, never fatal.
+      }
+    });
+  }
+
+  /**
    * Rebind this sheet's read snapshot to the repository's current HEAD tree.
    * Only this sheet — the "did my row land?" primitive; use `repo.refresh()`
    * or `store.refresh()` to rebind every open sheet at once. Not needed after
@@ -854,12 +964,18 @@ export class Sheet<T extends RecordLike = RecordLike> {
    * tree on next access) and index builds invalidate via the existing
    * `treeHashAtBuild` comparison in `#ensureIndexBuilt`. No-op when the tree
    * hasn't moved, or on a transaction-bound sheet.
+   *
+   * For a rung-2 (structural) contract-verified sheet with an `onDrift`
+   * callback, also schedules a lazy, advisory re-verification against the new
+   * tree (specs/behaviors/contracts.md "Consumer verification") — never
+   * awaited here, never blocking this call or subsequent reads.
    */
   rebindReadTree(tree: string): void {
     if (this.#transaction !== undefined) return;
     if (this.#readRef === tree) return;
     this.#readRef = tree;
     this.#configPromise = undefined;
+    this.#checkDriftAfterRebind(tree);
   }
 
   async readConfig(): Promise<SheetConfig> {

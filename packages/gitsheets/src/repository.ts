@@ -10,6 +10,7 @@ import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { addon, callCore, CoreTransaction } from './core.js';
+import type { OpenSheetContractOptions } from './contracts.js';
 import { ConfigError, NotFoundError, RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
 import {
@@ -61,6 +62,14 @@ export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
   readonly prefix?: string;
   /** Standard Schema validator; runs after the persisted JSON Schema. */
   readonly validator?: StandardSchemaV1<unknown, T>;
+  /**
+   * Consumer-side contract verification (the two-rung ladder) — verifies this
+   * sheet against a contract document the consumer holds before the handle is
+   * returned. See specs/behaviors/contracts.md "Consumer verification" and
+   * specs/api/repository.md. Throws `ContractError('contract_unsatisfied')`
+   * on failure.
+   */
+  readonly contract?: OpenSheetContractOptions;
 }
 
 /** Options for {@link Repository.openSheets}. No `validator` — use {@link openStore} for that. */
@@ -284,6 +293,12 @@ export class Repository {
     const sheet = new Sheet<T>(sheetOpts);
     // Eagerly validate config exists by reading once.
     await sheet.readConfig();
+    if (opts.contract !== undefined) {
+      // Runs before the handle is returned — see specs/api/repository.md
+      // `opts.contract` and specs/behaviors/contracts.md "Consumer
+      // verification". Throws ContractError(contract_unsatisfied) on failure.
+      await sheet.verifyContract(opts.contract);
+    }
     return sheet;
   }
 
