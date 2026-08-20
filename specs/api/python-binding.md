@@ -16,6 +16,13 @@ The 0.x releases are honestly scoped as a **transactional writer with parity-pro
 
 **Reads** — module-level batch functions over a git dir + tree, taking `(git_dir, tree_ref, base, ...)` and returning records directly: `record_read`, `record_list`, `record_query`, `record_query_candidates`, alongside lower-level primitives (`parse_records`, `serialize_records`, `render_paths_batch`, `validate_batch`, `write_blob`, `create_patch`/`apply_merge_patch`/`diff_records`, `core_discover_sheets`, `record_index_unique`/`record_index_multi`). This is a batch-first FFI boundary — intentionally not the object-oriented `openRepo`/`Store`/`Sheet` API the Node/TS docs describe. Consumers coming from the JS surface should expect the writer + batch-read shape, which the bundled README states up front.
 
+**Contracts** ([behaviors/contracts.md](../behaviors/contracts.md)) — the same three surfaces the Node binding carries, in the batch-first shape:
+
+- Write-time enforcement of `implements` rides the shared core — nothing Python-specific; a contract-violating `upsert` raises the Python `ValidationError` with contract-attributed issues, byte-identically to Node.
+- `canonical_contract_hash(document, format=None)` — the identity primitive: parsed data (a `dict`), or JSON/TOML text with an explicit `format` (`'json'` | `'toml'`, no auto-detection — matching the Node surface). A JSON-text input preserves literal `null`s so the null-bearing-keyword requirement stays checkable.
+- `verify_sheet_contract(git_dir, tree_ref, sheet, document, format=None, mode='verify', config_path=None, root='.', prefix='')` — consumer-side verification, the module-level equivalent of Node's `openSheet(name, { contract })`: runs the two-rung ladder ([behaviors/contracts.md § Consumer verification](../behaviors/contracts.md#consumer-verification)) against the sheet at the given tree and returns the conformance report (`{name, rung, conforming, issues}` plus the verified tree hash). Failure raises `ContractError` with code `contract_unsatisfied` carrying the per-record issues. Modes `'verify'` | `'declared'` | `'structural'`, same semantics as Node. There is no drift callback — the batch surface has no live-rebind model to hook; consumers re-verify by calling again against a new tree.
+- `ContractError` in the exception taxonomy with the stable codes `contract_missing` / `contract_invalid` / `contract_unsatisfied`.
+
 ## Known gaps (documented, tracked, not blockers for 0.x)
 
 Per [#240](https://github.com/JarvusInnovations/gitsheets/issues/240): no freshness model (`refresh`/auto-refresh after commit) and no streaming blob reads. No push daemon. These reach parity as #240 lands; the 0.x README states them plainly.
