@@ -18,6 +18,8 @@ dynamic = ["version"]
 
 [project.urls]
 Repository = "https://github.com/JarvusInnovations/gitsheets"
+Documentation = "https://jarvusinnovations.github.io/gitsheets/"
+Changelog = "https://github.com/JarvusInnovations/gitsheets/releases"
 
 [project.optional-dependencies]
 # The consumer-validator hook is validator-agnostic (any callable / Pydantic
