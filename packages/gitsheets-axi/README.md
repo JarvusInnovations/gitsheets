@@ -19,7 +19,7 @@ Requires Node.js ≥ 20 and a `gitsheets`-managed git repository. Lockstep-versi
 ## When to use this vs. `gitsheets`
 
 | Scenario | Use |
-|---|---|
+| --- | --- |
 | Agent reading or mutating records via shell | `gitsheets-axi` |
 | Writing TypeScript that imports the library | [`gitsheets`](https://www.npmjs.com/package/gitsheets) |
 | Authoring `.gitsheets/<name>.toml` configs | Either (configs are shared) |
@@ -43,11 +43,35 @@ gitsheets-axi init <sheet> [--path <template>] [--schema <file>] [--force]
 gitsheets-axi infer <sheet>
 gitsheets-axi migrate-config <sheet>
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
+gitsheets-axi contracts [list]
+gitsheets-axi contracts verify [<sheet>...]
+gitsheets-axi contracts test <sheet> --against <file-or-name>
 gitsheets-axi push [--remote r] [--branch b]
 gitsheets-axi setup hooks
 ```
 
 Run any command with `--help` for its flags + examples. Every command runs `--help` against itself, not the top-level manual.
+
+## Schema contracts
+
+`contracts` is read-only — a sheet's own vendoring, adoption, and sync stay
+human-CLI-only (`git sheet contracts adopt|sync|prune`); adoption is a
+reviewed, committed act, not an agent loop step.
+
+- `contracts list` — every vendored contract (name, canonical hash, declaring
+  sheets) plus every sheet's own `implements` declaration.
+- `contracts verify [<sheet>...]` — the offline producer gate: for each
+  sheet that declares `implements`, checks every named contract resolves and
+  every existing record conforms to it (plus the sheet's own schema).
+  Outcome per sheet is `ok` / `warning` (a closed local schema that could
+  reject conforming contract data) / `failed` / `skipped` (no declared
+  contracts). Exits non-zero with `CONTRACT_UNSATISFIED` on any failure.
+- `contracts test <sheet> --against <file-or-name>` — rung-2 (structural)
+  consumer verification: does every record of `<sheet>` conform to an
+  arbitrary schema document (a file, or a vendored contract name)? Works on
+  any sheet, whether or not it declares that contract — pure duck typing.
+
+See [`specs/behaviors/contracts.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/contracts.md) for the full model.
 
 ## Idempotency contract
 
@@ -106,7 +130,7 @@ code: VALIDATION_FAILED
 help[1]: Run `gitsheets-axi sheets view users` to see the schema
 ```
 
-Stable codes: `VALIDATION_FAILED`, `NOT_FOUND`, `CONFIG_INVALID`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `NOT_A_REPOSITORY`, `INVALID_JSON`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `TRANSACTION_ERROR`, `CONFIG_EXISTS`, `NO_RECORDS`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`.
+Stable codes: `VALIDATION_FAILED`, `NOT_FOUND`, `CONFIG_INVALID`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `NOT_A_REPOSITORY`, `INVALID_JSON`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `TRANSACTION_ERROR`, `CONFIG_EXISTS`, `NO_RECORDS`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`, `CONTRACT_UNSATISFIED`, `CONTRACT_MISSING`, `CONTRACT_INVALID`.
 
 Exit codes: `0` for success (incl. no-ops), `2` for validation/usage errors, `1` for everything else.
 

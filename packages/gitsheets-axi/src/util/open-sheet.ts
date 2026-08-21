@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { AxiError } from 'axi-sdk-js';
-import { ConfigError, type Repository, type Sheet } from 'gitsheets';
+import { ConfigError, type OpenSheetContractOptions, type Repository, type Sheet } from 'gitsheets';
 
 import { translateError } from '../errors.js';
 
@@ -13,11 +13,16 @@ import { translateError } from '../errors.js';
  * committed git tree, not the working tree, so a freshly-authored config must
  * be committed before any record command can see it. This is a common first-run
  * trap — author the config, run upsert, get an opaque "not found".
+ *
+ * `opts.contract` passes through to `openSheet`'s consumer-side contract
+ * verification (`contracts test` uses this) — a `ContractError` it throws
+ * still lands in `translateError` below, which maps it (and any conformance
+ * issues it carries) to a `CONTRACT_*` AxiError.
  */
 export async function openSheetForCommand(
   repo: Repository,
   name: string,
-  opts: { prefix?: string } = {},
+  opts: { prefix?: string; contract?: OpenSheetContractOptions } = {},
 ): Promise<Sheet> {
   try {
     return await repo.openSheet(name, opts);
