@@ -1,6 +1,7 @@
 import { AxiError } from 'axi-sdk-js';
 import {
   ConfigError,
+  ContractError,
   GitsheetsError,
   IndexError,
   NotFoundError,
@@ -35,6 +36,21 @@ export function translateError(error: unknown): AxiError {
 
   if (error instanceof NotFoundError) {
     return new AxiError(error.message, 'NOT_FOUND', []);
+  }
+
+  if (error instanceof ContractError) {
+    // error.code is 'contract_missing' | 'contract_invalid' | 'contract_unsatisfied'
+    // — the CONTRACT_* code vocabulary `contracts verify`/`test` document.
+    // `issues` (present on contract_unsatisfied) carry the same
+    // path/message/contract/record shape ValidationError.issues do; fold the
+    // first into the message and the rest into hints, same as below.
+    const issues = formatContractIssues(error.issues);
+    const hasIssues = error.issues !== undefined && error.issues.length > 0;
+    return new AxiError(
+      hasIssues ? `${error.message}: ${issues[0]}` : error.message,
+      error.code.toUpperCase(),
+      hasIssues ? issues.slice(1) : [],
+    );
   }
 
   if (error instanceof ConfigError) {
@@ -79,5 +95,18 @@ function formatValidationIssues(
   return issues.map((issue) => {
     const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
     return `${path}: ${issue.message}`;
+  });
+}
+
+/** Like {@link formatValidationIssues}, plus the `record`/`contract` tags a conformance report's issues carry. */
+function formatContractIssues(
+  issues: readonly ValidationIssue[] | undefined,
+): string[] {
+  if (!issues || issues.length === 0) return ['(no issue details)'];
+  return issues.map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
+    const record = issue.record ? `${issue.record} ` : '';
+    const contract = issue.contract ? ` [${issue.contract}]` : '';
+    return `${record}${path}: ${issue.message}${contract}`;
   });
 }

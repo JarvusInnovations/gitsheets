@@ -21,6 +21,7 @@ import { initCommand, INIT_HELP } from './commands/init.js';
 import { inferCommand, INFER_HELP } from './commands/infer.js';
 import { migrateConfigCommand, MIGRATE_CONFIG_HELP } from './commands/migrate-config.js';
 import { attachmentCommand, ATTACHMENT_HELP } from './commands/attachment.js';
+import { contractsCommand, CONTRACTS_HELP } from './commands/contracts.js';
 import { pushCommand, PUSH_HELP } from './commands/push.js';
 import { setupCommand, SETUP_HELP } from './commands/setup.js';
 
@@ -31,12 +32,12 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[19]:
+commands[20]:
   (none)=home, sheets, query, count,
   distinct, read, upsert, patch, rename,
   delete, check, diff, normalize,
   init, infer, migrate-config,
-  attachment, push, setup
+  attachment, contracts, push, setup
 flags[2]:
   --help, -v/-V/--version
 examples:
@@ -50,6 +51,7 @@ examples:
   gitsheets-axi check users users/jane.toml --fix
   gitsheets-axi diff posts HEAD~10
   gitsheets-axi attachment list users jane
+  gitsheets-axi contracts verify
   gitsheets-axi setup hooks
 `;
 
@@ -70,6 +72,7 @@ const COMMAND_HELP: Record<string, string> = {
   infer: INFER_HELP,
   'migrate-config': MIGRATE_CONFIG_HELP,
   attachment: ATTACHMENT_HELP,
+  contracts: CONTRACTS_HELP,
   push: PUSH_HELP,
   setup: SETUP_HELP,
 };
@@ -93,6 +96,7 @@ const COMMANDS: Record<string, CommandFn> = {
   infer: inferCommand,
   'migrate-config': migrateConfigCommand,
   attachment: attachmentCommand,
+  contracts: contractsCommand,
   push: pushCommand,
   setup: setupCommand,
 };
