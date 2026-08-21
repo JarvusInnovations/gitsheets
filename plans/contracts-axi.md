@@ -4,7 +4,7 @@ depends: []
 specs:
   - specs/behaviors/contracts.md
 issues: []
-pr: https://github.com/JarvusInnovations/gitsheets/pull/278
+pr: 278
 ---
 
 # Plan: contract affordances for gitsheets-axi
