@@ -27,6 +27,7 @@ import {
   MIGRATE_CONFIG_HELP,
 } from '../src/commands/migrate-config.js';
 import { attachmentCommand, ATTACHMENT_HELP } from '../src/commands/attachment.js';
+import { contractsCommand, CONTRACTS_HELP } from '../src/commands/contracts.js';
 import { pushCommand, PUSH_HELP } from '../src/commands/push.js';
 import { setupCommand, SETUP_HELP } from '../src/commands/setup.js';
 
@@ -47,6 +48,7 @@ const COMMAND_HELP: Record<string, string> = {
   infer: INFER_HELP,
   'migrate-config': MIGRATE_CONFIG_HELP,
   attachment: ATTACHMENT_HELP,
+  contracts: CONTRACTS_HELP,
   push: PUSH_HELP,
   setup: SETUP_HELP,
 };
@@ -68,6 +70,7 @@ const COMMANDS = {
   infer: inferCommand,
   'migrate-config': migrateConfigCommand,
   attachment: attachmentCommand,
+  contracts: contractsCommand,
   push: pushCommand,
   setup: setupCommand,
 } as Record<

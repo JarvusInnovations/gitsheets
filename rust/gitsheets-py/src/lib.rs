@@ -106,6 +106,7 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
             let _ = d.set_item("schema_path", issue.schema_path.clone());
             let _ = d.set_item("code", issue.code.clone());
             let _ = d.set_item("contract", issue.contract.clone());
+            let _ = d.set_item("record", issue.record.clone());
             let _ = list.append(d);
         }
         let _ = value.setattr("issues", list);
@@ -480,6 +481,114 @@ fn canonical_contract_hash(
         gitsheets_core::ContractHashInput::Data(py_to_value(input)?)
     };
     gitsheets_core::canonical_contract_hash(core_input).map_err(|err| raise_core_error(py, &err))
+}
+
+/// Consumer-side contract verification — the two-rung ladder behind Node's
+/// `openSheet(name, { contract })`, in this binding's batch-first shape
+/// (specs/behaviors/contracts.md "Consumer verification",
+/// specs/api/python-binding.md "Contracts"). Opens `sheet` read-only against
+/// `tree_ref` (config read + effective-schema compile, same as any other
+/// read) — defaulting `config_path` to `<root>/.gitsheets/<sheet>.toml` when
+/// omitted, mirroring `Repository.openSheet`'s default — then verifies it
+/// against `document`: parsed data (a `dict`), or text with an explicit
+/// `format` (`'json'` | `'toml'`, no auto-detection — matching
+/// `canonical_contract_hash`). Returns the conformance report as a dict
+/// (`name`, `rung`, `conforming`, `issues`, `tree`). Modes: `'verify'` (rung
+/// 1, fall back to rung 2 — the default), `'declared'` (rung 1 only, never
+/// reads records), `'structural'` (rung 2 only — pure duck typing, ignores
+/// `implements`). A verification failure (both rungs missed, or the
+/// attempted rung missed in `declared`/`structural` mode) raises
+/// `ContractError('contract_unsatisfied')` with the per-record issues
+/// attached (`record`/`contract` keys alongside the usual
+/// `path`/`message`/`source` — the same shape `ValidationError.issues`
+/// carries).
+#[pyfunction]
+#[pyo3(signature = (git_dir, tree_ref, sheet, document, format=None, mode="verify", config_path=None, root=".", prefix=""))]
+#[allow(clippy::too_many_arguments)]
+fn verify_sheet_contract<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    tree_ref: String,
+    sheet: String,
+    document: &Bound<'py, PyAny>,
+    format: Option<&str>,
+    mode: &str,
+    config_path: Option<String>,
+    root: &str,
+    prefix: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let core_input = if let Ok(text) = document.extract::<String>() {
+        match format {
+            Some("json") => gitsheets_core::ContractHashInput::Json(text),
+            Some("toml") => gitsheets_core::ContractHashInput::Toml(text),
+            Some(other) => {
+                return Err(PyValueError::new_err(format!(
+                    "verify_sheet_contract: unknown format {other:?} — expected 'json' or 'toml'"
+                )))
+            }
+            None => {
+                return Err(PyValueError::new_err(
+                    "verify_sheet_contract: pass format='json'|'toml' when document is a str",
+                ))
+            }
+        }
+    } else {
+        gitsheets_core::ContractHashInput::Data(py_to_value(document)?)
+    };
+
+    let verify_mode = match mode {
+        "verify" => gitsheets_core::VerifyMode::Verify,
+        "declared" => gitsheets_core::VerifyMode::Declared,
+        "structural" => gitsheets_core::VerifyMode::Structural,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "verify_sheet_contract: unknown mode {other:?} — expected 'verify', 'declared', or 'structural'"
+            )))
+        }
+    };
+
+    // Default config_path mirrors `Repository.openSheet`'s
+    // `joinTreePath(root, '.gitsheets', \`${name}.toml\`)`.
+    let resolved_config_path = config_path.unwrap_or_else(|| {
+        gitsheets_core::sheet::join_path(&[root, ".gitsheets", &format!("{sheet}.toml")])
+    });
+
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    let core_sheet = CoreSheet::open(&repo, &mut tree, &sheet, &resolved_config_path, root, prefix)
+        .map_err(|e| raise_core_error(py, &e))?;
+
+    match gitsheets_core::verify_sheet_contract(
+        &repo,
+        &mut tree,
+        root,
+        &core_sheet,
+        core_input,
+        verify_mode,
+    ) {
+        Ok(report) => {
+            let d = PyDict::new(py);
+            d.set_item("name", report.name)?;
+            d.set_item("rung", report.rung.as_str())?;
+            d.set_item("conforming", report.conforming)?;
+            let issues = PyList::empty(py);
+            for issue in report.issues {
+                let id = PyDict::new(py);
+                id.set_item("path", issue.path)?;
+                id.set_item("message", issue.message)?;
+                id.set_item("source", issue.source.as_str())?;
+                id.set_item("schema_path", issue.schema_path)?;
+                id.set_item("code", issue.code)?;
+                id.set_item("contract", issue.contract)?;
+                id.set_item("record", issue.record)?;
+                issues.append(id)?;
+            }
+            d.set_item("issues", issues)?;
+            d.set_item("tree", tree_ref)?;
+            Ok(d)
+        }
+        Err(err) => Err(raise_core_error(py, &err)),
+    }
 }
 
 /// Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
@@ -1434,6 +1543,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_paths_batch, m)?)?;
     m.add_function(wrap_pyfunction!(validate_batch, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_contract_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_sheet_contract, m)?)?;
     m.add_function(wrap_pyfunction!(run_comparator, m)?)?;
     m.add_function(wrap_pyfunction!(record_read, m)?)?;
     m.add_function(wrap_pyfunction!(record_write, m)?)?;

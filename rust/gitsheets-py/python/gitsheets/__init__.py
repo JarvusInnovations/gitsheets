@@ -46,6 +46,7 @@ serialize_records = _core.serialize_records
 render_paths_batch = _core.render_paths_batch
 validate_batch = _core.validate_batch
 canonical_contract_hash = _core.canonical_contract_hash
+verify_sheet_contract = _core.verify_sheet_contract
 run_comparator = _core.run_comparator
 record_read = _core.record_read
 record_write = _core.record_write
@@ -90,6 +91,7 @@ __all__ = [
     "render_paths_batch",
     "validate_batch",
     "canonical_contract_hash",
+    "verify_sheet_contract",
     "run_comparator",
     "record_read",
     "record_write",
