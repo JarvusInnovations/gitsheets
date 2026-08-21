@@ -1213,24 +1213,24 @@ TOML file lives in the data tree.</p>
 </table>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># Simple unique-field key</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ slug }}&quot;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ slug }}"</span>
 
 <span class="c1"># Composite key (two-level directory)</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ domain }}/${{ username }}&quot;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ domain }}/${{ username }}"</span>
 
 <span class="c1"># Date-bucketed (2026/03/09/my-post.toml)</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/MM/DD }}/${{ slug }}&quot;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ publishedAt: YYYY/MM/DD }}/${{ slug }}"</span>
 
 <span class="c1"># Nested path field</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ contentPath/** }}&quot;</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ contentPath/** }}"</span>
 </code></pre></div>
 <h2 id="date-buckets">Date buckets<a class="headerlink" href="#date-buckets" title="Permanent link"> ¶</a></h2>
 <p>A date-bucket reference partitions records by a date field — by day, month,
 year, or ISO week:</p>
-<div class="highlight"><pre><span></span><code><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/MM/DD }}/${{ slug }}&quot;</span><span class="w">   </span><span class="c1"># 2026/03/09/my-post.toml</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/MM }}/${{ slug }}&quot;</span><span class="w">      </span><span class="c1"># 2026/03/my-post.toml</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ publishedAt: YYYY/WW }}/${{ slug }}&quot;</span><span class="w">      </span><span class="c1"># 2026/11/my-post.toml (ISO week)</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ day: YYYY/MM/DD }}&quot;</span><span class="w">                       </span><span class="c1"># daily rollup: the bucket IS the key</span>
+<div class="highlight"><pre><span></span><code><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ publishedAt: YYYY/MM/DD }}/${{ slug }}"</span><span class="w">   </span><span class="c1"># 2026/03/09/my-post.toml</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ publishedAt: YYYY/MM }}/${{ slug }}"</span><span class="w">      </span><span class="c1"># 2026/03/my-post.toml</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ publishedAt: YYYY/WW }}/${{ slug }}"</span><span class="w">      </span><span class="c1"># 2026/11/my-post.toml (ISO week)</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ day: YYYY/MM/DD }}"</span><span class="w">                       </span><span class="c1"># daily rollup: the bucket IS the key</span>
 </code></pre></div>
 <p>The format is a <strong>closed set</strong> — <code>YYYY</code>, <code>YYYY/MM</code>, <code>YYYY/MM/DD</code>, <code>YYYY/WW</code>;
 anything else throws <code>ConfigError(config_invalid)</code> when the sheet is opened.
@@ -1256,7 +1256,7 @@ Fancier partitioning falls back to the expression form.</p>
 <p>When a query specifies fields the template uses, gitsheets prunes the tree
 walk to only matching subtrees instead of reading every record.</p>
 <div class="highlight"><pre><span></span><code><span class="c1">// Walks only the `af.mil/` subtree</span>
-<span class="kd">const</span><span class="w"> </span><span class="nx">found</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">users</span><span class="p">.</span><span class="nx">queryAll</span><span class="p">({</span><span class="w"> </span><span class="nx">domain</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;af.mil&#39;</span><span class="w"> </span><span class="p">});</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">found</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">users</span><span class="p">.</span><span class="nx">queryAll</span><span class="p">({</span><span class="w"> </span><span class="nx">domain</span><span class="o">:</span><span class="w"> </span><span class="s1">'af.mil'</span><span class="w"> </span><span class="p">});</span>
 </code></pre></div>
 <p>A query that doesn&rsquo;t supply path-template fields walks every record — still
 O(records), but more I/O than the pruned form. Equality predicates on
@@ -1268,7 +1268,7 @@ path-template fields are the fast path; function-valued filters (e.g.,
 <code>PathTemplateError(path_invalid_chars)</code>. A non-recursive component
 producing a value with <code>/</code> is also rejected for the same reason.</p>
 <p>If you want slugification, do it in the template:</p>
-<div class="highlight"><pre><span></span><code><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;${{ name.toLowerCase().replace(/[^a-z0-9]+/g, &#39;-&#39;) }}&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"${{ name.toLowerCase().replace(/[^a-z0-9]+/g, '-') }}"</span>
 </code></pre></div>
 
 

@@ -1277,12 +1277,12 @@ TOML frontmatter.</p>
 <h2 id="sheet-config">Sheet config<a class="headerlink" href="#sheet-config" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># .gitsheets/posts.toml</span>
 <span class="k">[gitsheet]</span>
-<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;posts&#39;</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;${{ slug }}&#39;</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'posts'</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ slug }}'</span>
 
 <span class="k">[gitsheet.format]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;markdown&#39;</span>
-<span class="n">body</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;body&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'markdown'</span>
+<span class="n">body</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'body'</span>
 
 <span class="c1"># Optional: tighten markdownlint for prose vs the library defaults</span>
 <span class="k">[gitsheet.format.markdownlint]</span>
@@ -1292,27 +1292,27 @@ TOML frontmatter.</p>
 <span class="n">MD024</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="w">        </span><span class="c1"># allow duplicate headings (common in long posts)</span>
 
 <span class="k">[gitsheet.schema]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;object&#39;</span>
-<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;slug&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;title&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;body&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;publishedAt&#39;</span><span class="p">]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'object'</span>
+<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'slug'</span><span class="p">,</span><span class="w"> </span><span class="s1">'title'</span><span class="p">,</span><span class="w"> </span><span class="s1">'body'</span><span class="p">,</span><span class="w"> </span><span class="s1">'publishedAt'</span><span class="p">]</span>
 
 <span class="k">[gitsheet.schema.properties.slug]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;^[a-z0-9-]+$&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'^[a-z0-9-]+$'</span>
 
 <span class="k">[gitsheet.schema.properties.title]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
 <span class="n">minLength</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 
 <span class="k">[gitsheet.schema.properties.body]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
 
 <span class="k">[gitsheet.schema.properties.publishedAt]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;date-time&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'date-time'</span>
 
 <span class="k">[gitsheet.schema.properties.tags]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;array&#39;</span>
-<span class="n">items</span><span class="p">.</span><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'array'</span>
+<span class="n">items</span><span class="p">.</span><span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
 </code></pre></div>
 <h2 id="on-disk">On disk<a class="headerlink" href="#on-disk" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code>posts/
@@ -1323,9 +1323,9 @@ TOML frontmatter.</p>
 <p>Each file is a markdown document with frontmatter:</p>
 <div class="highlight"><pre><span></span><code>+++
 publishedAt = 2026-05-16T10:00:00Z
-slug = &quot;hello-world&quot;
-tags = [ &quot;intro&quot;, &quot;meta&quot; ]
-title = &quot;Hello, world&quot;
+slug = "hello-world"
+tags = [ "intro", "meta" ]
+title = "Hello, world"
 +++
 
 <span class="gh"># Hello, world</span>
@@ -1336,9 +1336,9 @@ This is the first post. Body content here.
 <p>The on-disk file above has the title duplicated: once in frontmatter, once as the body&rsquo;s H1. Without help, an author has to keep those in sync — and gets ugly diffs when one drifts.</p>
 <p>Opt into title-from-H1 extraction with <code>[gitsheet.format].title</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet.format]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;markdown&#39;</span>
-<span class="n">body</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;body&#39;</span>
-<span class="n">title</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;title&#39;</span><span class="w">        </span><span class="c1"># ← the body&#39;s first H1 is denormalized into this field</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'markdown'</span>
+<span class="n">body</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'body'</span>
+<span class="n">title</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'title'</span><span class="w">        </span><span class="c1"># ← the body's first H1 is denormalized into this field</span>
 </code></pre></div>
 <p>Now the body is the source of truth for the title. The library:</p>
 <ul>
@@ -1349,27 +1349,27 @@ This is the first post. Body content here.
 </ul>
 <div class="highlight"><pre><span></span><code><span class="c1">// Set or rename the title via the body — title is derived on write</span>
 <span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span>
-<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;# Hello, world\n\nFirst post body.&#39;</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'hello-world'</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">'# Hello, world\n\nFirst post body.'</span><span class="p">,</span>
 <span class="p">});</span>
 
-<span class="c1">// Rename via `patch({title})` — the library rewrites the body&#39;s H1 for you</span>
-<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">patch</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;A new title&#39;</span><span class="w"> </span><span class="p">});</span>
-<span class="c1">// → body becomes &#39;# A new title\n\nFirst post body.&#39;</span>
+<span class="c1">// Rename via `patch({title})` — the library rewrites the body's H1 for you</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">patch</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'hello-world'</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">'A new title'</span><span class="w"> </span><span class="p">});</span>
+<span class="c1">// → body becomes '# A new title\n\nFirst post body.'</span>
 
 <span class="c1">// Rename via `patch({body})` — title is re-derived from the new H1</span>
 <span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">patch</span><span class="p">(</span>
-<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="w"> </span><span class="p">},</span>
-<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;# Re-titled\n\nDifferent body.&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'hello-world'</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">'# Re-titled\n\nDifferent body.'</span><span class="w"> </span><span class="p">},</span>
 <span class="p">);</span>
-<span class="c1">// → record.title === &#39;Re-titled&#39;</span>
+<span class="c1">// → record.title === 'Re-titled'</span>
 
-<span class="c1">// upsert with disagreeing title + body throws — the consumer&#39;s assertion is</span>
+<span class="c1">// upsert with disagreeing title + body throws — the consumer's assertion is</span>
 <span class="c1">// self-inconsistent.</span>
 <span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span>
-<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;A&#39;</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;# B\n\nbody&#39;</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'hello-world'</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">'A'</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">'# B\n\nbody'</span><span class="p">,</span>
 <span class="p">});</span><span class="w"> </span><span class="c1">// throws ValidationError</span>
 </code></pre></div>
 <p>The asymmetry between <code>upsert</code> and <code>patch</code> on <code>{title: 'X'}</code> mirrors PUT vs PATCH: <code>upsert</code> is a state assertion (must be self-consistent), <code>patch</code> is a reconciled delta (the operation figures out the rest).</p>
@@ -1386,18 +1386,18 @@ validates + commits:</p>
 </code></pre></div>
 <p><strong>3. Programmatic (Node).</strong> Driving from code — useful for batch
 imports, scheduled publishes, headless CMS flows:</p>
-<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
 
 <span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">();</span>
 <span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">transact</span><span class="p">(</span>
-<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;publish: hello-world&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">author</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Jane&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane@x.org&#39;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">'publish: hello-world'</span><span class="p">,</span><span class="w"> </span><span class="nx">author</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="o">:</span><span class="w"> </span><span class="s1">'Jane'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane@x.org'</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">},</span>
 <span class="w">  </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">sheet</span><span class="p">(</span><span class="s1">&#39;posts&#39;</span><span class="p">).</span><span class="nx">upsert</span><span class="p">({</span>
-<span class="w">      </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="p">,</span>
-<span class="w">      </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Hello, world&#39;</span><span class="p">,</span>
+<span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">sheet</span><span class="p">(</span><span class="s1">'posts'</span><span class="p">).</span><span class="nx">upsert</span><span class="p">({</span>
+<span class="w">      </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'hello-world'</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">title</span><span class="o">:</span><span class="w"> </span><span class="s1">'Hello, world'</span><span class="p">,</span>
 <span class="w">      </span><span class="nx">publishedAt</span><span class="o">:</span><span class="w"> </span><span class="kt">new</span><span class="w"> </span><span class="nb">Date</span><span class="p">(),</span>
-<span class="w">      </span><span class="nx">tags</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;intro&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;meta&#39;</span><span class="p">],</span>
-<span class="w">      </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;# Hello, world\n\nFirst post body.&#39;</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">tags</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s1">'intro'</span><span class="p">,</span><span class="w"> </span><span class="s1">'meta'</span><span class="p">],</span>
+<span class="w">      </span><span class="nx">body</span><span class="o">:</span><span class="w"> </span><span class="s1">'# Hello, world\n\nFirst post body.'</span><span class="p">,</span>
 <span class="w">    </span><span class="p">});</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">);</span>
@@ -1405,8 +1405,8 @@ imports, scheduled publishes, headless CMS flows:</p>
 <h2 id="reading">Reading<a class="headerlink" href="#reading" title="Permanent link"> ¶</a></h2>
 <p>Default reads load the body — this is what you want for rendering a
 single post:</p>
-<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">posts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">&#39;posts&#39;</span><span class="p">);</span>
-<span class="kd">const</span><span class="w"> </span><span class="nx">post</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">posts</span><span class="p">.</span><span class="nx">queryFirst</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;hello-world&#39;</span><span class="w"> </span><span class="p">});</span>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">posts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">'posts'</span><span class="p">);</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">post</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">posts</span><span class="p">.</span><span class="nx">queryFirst</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'hello-world'</span><span class="w"> </span><span class="p">});</span>
 <span class="nx">renderHtml</span><span class="p">(</span><span class="nx">post</span><span class="p">.</span><span class="nx">body</span><span class="p">);</span>
 </code></pre></div>
 <p>For listing pages (index, archives, tag pages) you only need
@@ -1415,7 +1415,7 @@ frontmatter. Skip the body bytes entirely:</p>
 <span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">publishedAt</span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="nx">d</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">d</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="nx">sevenDaysAgo</span><span class="p">()</span><span class="w"> </span><span class="p">},</span>
 <span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">withBody</span><span class="o">:</span><span class="w"> </span><span class="kt">false</span><span class="w"> </span><span class="p">},</span>
 <span class="p">);</span>
-<span class="c1">// recent[i].body is undefined — that&#39;s the point</span>
+<span class="c1">// recent[i].body is undefined — that's the point</span>
 </code></pre></div>
 <p>Hydrate the body on demand when a reader clicks through:</p>
 <div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">full</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">posts</span><span class="p">.</span><span class="nx">loadBody</span><span class="p">(</span><span class="nx">recent</span><span class="p">[</span><span class="mf">0</span><span class="p">]);</span>
@@ -1425,11 +1425,11 @@ frontmatter. Skip the body bytes entirely:</p>
 <p>Indexes always build with body-less reads. For an index keyed on tags,
 slug, or a publishedAt year — anything in the frontmatter — the build
 is cheap regardless of how many large bodies the sheet holds:</p>
-<div class="highlight"><pre><span></span><code><span class="nx">posts</span><span class="p">.</span><span class="nx">defineIndex</span><span class="p">(</span><span class="s1">&#39;byTag&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="nx">post</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span>
+<div class="highlight"><pre><span></span><code><span class="nx">posts</span><span class="p">.</span><span class="nx">defineIndex</span><span class="p">(</span><span class="s1">'byTag'</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="nx">post</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span>
 <span class="w">  </span><span class="nb">Array</span><span class="p">.</span><span class="nx">isArray</span><span class="p">(</span><span class="nx">post</span><span class="p">.</span><span class="nx">tags</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">post</span><span class="p">.</span><span class="nx">tags</span><span class="p">.</span><span class="nx">length</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="nx">post</span><span class="p">.</span><span class="nx">tags</span><span class="p">[</span><span class="mf">0</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="kc">undefined</span><span class="p">,</span>
 <span class="p">);</span>
 
-<span class="kd">const</span><span class="w"> </span><span class="nx">intros</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">posts</span><span class="p">.</span><span class="nx">findByIndex</span><span class="p">(</span><span class="s1">&#39;byTag&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;intro&#39;</span><span class="p">);</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">intros</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">posts</span><span class="p">.</span><span class="nx">findByIndex</span><span class="p">(</span><span class="s1">'byTag'</span><span class="p">,</span><span class="w"> </span><span class="s1">'intro'</span><span class="p">);</span>
 <span class="c1">// intros[i].body is undefined; loadBody when you need it</span>
 </code></pre></div>
 <p>Don&rsquo;t index on body content. The keyFn will see <code>undefined</code> and the
@@ -1443,10 +1443,10 @@ gitsheets<span class="w"> </span>query<span class="w"> </span>posts<span class="
 gitsheets<span class="w"> </span>query<span class="w"> </span>posts<span class="w"> </span>--no-body<span class="w"> </span>--format<span class="o">=</span>csv<span class="w"> </span>--fields<span class="w"> </span>slug<span class="w"> </span>title<span class="w"> </span>publishedAt<span class="w"> </span>tags<span class="w"> </span>&gt;<span class="w"> </span>index.csv
 
 <span class="c1"># Patch only the title — body is preserved automatically</span>
-gitsheets<span class="w"> </span>upsert<span class="w"> </span>posts<span class="w"> </span><span class="s1">&#39;{&quot;slug&quot;:&quot;hello-world&quot;,&quot;title&quot;:&quot;Hi&quot;}&#39;</span><span class="w"> </span>--patch
+gitsheets<span class="w"> </span>upsert<span class="w"> </span>posts<span class="w"> </span><span class="s1">'{"slug":"hello-world","title":"Hi"}'</span><span class="w"> </span>--patch
 
 <span class="c1"># Bulk import from a directory of .md files (one record per file)</span>
-<span class="c1"># (requires custom glue — gitsheets doesn&#39;t yet ingest a directory tree)</span>
+<span class="c1"># (requires custom glue — gitsheets doesn't yet ingest a directory tree)</span>
 </code></pre></div>
 <h2 id="pairing-with-a-static-site-generator">Pairing with a static site generator<a class="headerlink" href="#pairing-with-a-static-site-generator" title="Permanent link"> ¶</a></h2>
 <p>The on-disk layout matches what Hugo, Astro, Eleventy, and Jekyll
@@ -1468,7 +1468,7 @@ the markdown body — they&rsquo;re sibling blobs under the record:</p>
 </code></pre></div>
 <p>The body can reference them with relative markdown links:</p>
 <div class="highlight"><pre><span></span><code>+++
-slug = &quot;hello-world&quot;
+slug = "hello-world"
 +++
 
 <span class="gh"># Hello, world</span>

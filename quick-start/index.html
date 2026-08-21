@@ -1165,29 +1165,29 @@ npm<span class="w"> </span>install<span class="w"> </span>gitsheets<span class="
 <h2 id="declare-a-sheet">Declare a sheet<a class="headerlink" href="#declare-a-sheet" title="Permanent link"> ¶</a></h2>
 <p>Create <code>.gitsheets/users.toml</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
-<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;users&#39;</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;${{ slug }}&#39;</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'users'</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ slug }}'</span>
 
 <span class="k">[gitsheet.schema]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;object&#39;</span>
-<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;slug&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;email&#39;</span><span class="p">]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'object'</span>
+<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'slug'</span><span class="p">,</span><span class="w"> </span><span class="s1">'email'</span><span class="p">]</span>
 <span class="n">additionalProperties</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 
 <span class="k">[gitsheet.schema.properties.slug]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;^[a-z0-9-]+$&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'^[a-z0-9-]+$'</span>
 
 <span class="k">[gitsheet.schema.properties.email]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;email&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'email'</span>
 </code></pre></div>
 <p>Commit it so gitsheets sees it:</p>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>.gitsheets/
-git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;add users sheet&quot;</span>
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"add users sheet"</span>
 </code></pre></div>
 <h2 id="write-your-first-record">Write your first record<a class="headerlink" href="#write-your-first-record" title="Permanent link"> ¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">openStore</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
-<span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">z</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;zod&#39;</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">openStore</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
+<span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">z</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'zod'</span><span class="p">;</span>
 
 <span class="kd">const</span><span class="w"> </span><span class="nx">UserSchema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">z</span><span class="p">.</span><span class="nx">object</span><span class="p">({</span>
 <span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="kt">z.string</span><span class="p">(),</span>
@@ -1202,12 +1202,12 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 
 <span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">transact</span><span class="p">(</span>
 <span class="w">  </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;janedoe: POST /api/users&#39;</span><span class="p">,</span>
-<span class="w">    </span><span class="nx">author</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Jane Doe&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane@x.org&#39;</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nx">trailers</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">Action</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;user.create&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">'janedoe: POST /api/users'</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">author</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="o">:</span><span class="w"> </span><span class="s1">'Jane Doe'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane@x.org'</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">trailers</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">Action</span><span class="o">:</span><span class="w"> </span><span class="s1">'user.create'</span><span class="w"> </span><span class="p">},</span>
 <span class="w">  </span><span class="p">},</span>
 <span class="w">  </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;janedoe&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane@x.org&#39;</span><span class="w"> </span><span class="p">});</span>
+<span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'janedoe'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane@x.org'</span><span class="w"> </span><span class="p">});</span>
 <span class="w">  </span><span class="p">},</span>
 <span class="p">);</span>
 </code></pre></div>
@@ -1215,7 +1215,7 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>log<span class="w"> </span>-1<span class="w"> </span>--format<span class="o">=</span>fuller
 </code></pre></div>
 <h2 id="read-it-back">Read it back<a class="headerlink" href="#read-it-back" title="Permanent link"> ¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">jane</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryFirst</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;janedoe&#39;</span><span class="w"> </span><span class="p">});</span>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">jane</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryFirst</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'janedoe'</span><span class="w"> </span><span class="p">});</span>
 <span class="c1">// jane is z.infer&lt;typeof UserSchema&gt; | undefined</span>
 </code></pre></div>
 <h2 id="what-just-happened">What just happened<a class="headerlink" href="#what-just-happened" title="Permanent link"> ¶</a></h2>

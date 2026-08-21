@@ -1298,29 +1298,29 @@
 <h2 id="persisted-format">Persisted format<a class="headerlink" href="#persisted-format" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># .gitsheets/users.toml</span>
 <span class="k">[gitsheet]</span>
-<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;users&#39;</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;${{ slug }}&#39;</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'users'</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ slug }}'</span>
 
 <span class="k">[gitsheet.schema]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;object&#39;</span>
-<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;slug&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;email&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;fullName&#39;</span><span class="p">]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'object'</span>
+<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'slug'</span><span class="p">,</span><span class="w"> </span><span class="s1">'email'</span><span class="p">,</span><span class="w"> </span><span class="s1">'fullName'</span><span class="p">]</span>
 <span class="n">additionalProperties</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 
 <span class="k">[gitsheet.schema.properties.slug]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;^[a-z0-9][a-z0-9-]{1,49}$&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'^[a-z0-9][a-z0-9-]{1,49}$'</span>
 
 <span class="k">[gitsheet.schema.properties.email]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;email&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'email'</span>
 
 <span class="k">[gitsheet.schema.properties.fullName]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
 <span class="n">minLength</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="n">maxLength</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">120</span>
 
 <span class="k">[gitsheet.schema.properties.bio]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
 <span class="n">maxLength</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10000</span>
 </code></pre></div>
 <p>The <code>[gitsheet.schema]</code> block <strong>is</strong> a JSON Schema, encoded in TOML. Top-level keys map straightforwardly: <code>type</code>, <code>required</code>, <code>additionalProperties</code>, <code>properties.&lt;name&gt;</code>, <code>format</code>, <code>pattern</code>, <code>minLength</code>, etc.</p>
@@ -1344,8 +1344,8 @@
 <p>Compiled validators are cached per schema-object identity, so repeated reads of the same sheet config hit the cache.</p>
 <h2 id="standard-schema-layer">Standard Schema layer<a class="headerlink" href="#standard-schema-layer" title="Permanent link"> ¶</a></h2>
 <p>Consumers pass any <a href="https://standardschema.dev">Standard Schema</a>–compatible validator:</p>
-<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
-<span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">z</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;zod&#39;</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
+<span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">z</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'zod'</span><span class="p">;</span>
 
 <span class="kd">const</span><span class="w"> </span><span class="nx">UserSchema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">z</span><span class="p">.</span><span class="nx">object</span><span class="p">({</span>
 <span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="kt">z.string</span><span class="p">().</span><span class="nx">regex</span><span class="p">(</span><span class="sr">/^[a-z0-9-]+$/</span><span class="p">),</span>
@@ -1355,12 +1355,12 @@
 <span class="p">});</span>
 
 <span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">();</span>
-<span class="kd">const</span><span class="w"> </span><span class="nx">users</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">&#39;users&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">validator</span><span class="o">:</span><span class="w"> </span><span class="kt">UserSchema</span><span class="w"> </span><span class="p">});</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">users</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">'users'</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">validator</span><span class="o">:</span><span class="w"> </span><span class="kt">UserSchema</span><span class="w"> </span><span class="p">});</span>
 
-<span class="c1">// Standard Schema&#39;s transform fires after JSON Schema passes — the email</span>
+<span class="c1">// Standard Schema's transform fires after JSON Schema passes — the email</span>
 <span class="c1">// gets lowercased before the record is normalized and written.</span>
-<span class="k">await</span><span class="w"> </span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Jane@X.ORG&#39;</span><span class="w"> </span><span class="p">});</span>
-<span class="c1">//                                          ↑ written as &#39;jane@x.org&#39;</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'Jane@X.ORG'</span><span class="w"> </span><span class="p">});</span>
+<span class="c1">//                                          ↑ written as 'jane@x.org'</span>
 </code></pre></div>
 <p>Internally the library calls <code>validator['~standard'].validate(record)</code>. The returned <code>result.value</code> (if the validator transforms) becomes the record that gets normalized + written.</p>
 <p>The Standard Schema layer is <strong>optional</strong>. Without it, only JSON Schema runs.</p>
@@ -1369,9 +1369,9 @@
 <h2 id="order-of-operations">Order of operations<a class="headerlink" href="#order-of-operations" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code>1. Record arrives at Sheet.upsert(record) / Sheet.patch(query, partial)
 2. JSON Schema validation
-   ↳ on failure: ValidationError { issues: [{source: &#39;json-schema&#39;, ...}] }
+   ↳ on failure: ValidationError { issues: [{source: 'json-schema', ...}] }
 3. Standard Schema validation (if configured)
-   ↳ on failure: ValidationError { issues: [{source: &#39;standard-schema&#39;, ...}] }
+   ↳ on failure: ValidationError { issues: [{source: 'standard-schema', ...}] }
    ↳ on success: record may be transformed
 4. Canonical normalization (deep key sort, array sort rules)
 5. Path render + write
@@ -1379,23 +1379,23 @@
 <p>Validation <strong>short-circuits</strong>: if JSON Schema fails, Standard Schema doesn&rsquo;t run, so a thrown <code>ValidationError</code> contains issues from the failing layer only. Use the <code>source</code> field on each issue to distinguish them.</p>
 <h2 id="error-shape">Error shape<a class="headerlink" href="#error-shape" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">try</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Bad Slug!&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;not-an-email&#39;</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'Bad Slug!'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'not-an-email'</span><span class="w"> </span><span class="p">});</span>
 <span class="p">}</span><span class="w"> </span><span class="k">catch</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="w"> </span><span class="ow">instanceof</span><span class="w"> </span><span class="nx">ValidationError</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kd">const</span><span class="w"> </span><span class="nx">issue</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="nx">err</span><span class="p">.</span><span class="nx">issues</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">path</span><span class="p">.</span><span class="nx">join</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)</span><span class="si">}</span><span class="sb">: </span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">message</span><span class="si">}</span><span class="sb"> (</span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">source</span><span class="si">}</span><span class="sb">)`</span><span class="p">);</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">path</span><span class="p">.</span><span class="nx">join</span><span class="p">(</span><span class="s1">'.'</span><span class="p">)</span><span class="si">}</span><span class="sb">: </span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">message</span><span class="si">}</span><span class="sb"> (</span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">source</span><span class="si">}</span><span class="sb">)`</span><span class="p">);</span>
 <span class="w">    </span><span class="p">}</span>
-<span class="w">    </span><span class="c1">// slug: must match pattern &quot;^[a-z0-9-]+$&quot; (json-schema)</span>
-<span class="w">    </span><span class="c1">// email: must match format &quot;email&quot; (json-schema)</span>
+<span class="w">    </span><span class="c1">// slug: must match pattern "^[a-z0-9-]+$" (json-schema)</span>
+<span class="w">    </span><span class="c1">// email: must match format "email" (json-schema)</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="kd">interface</span><span class="w"> </span><span class="nx">ValidationIssue</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">path</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">[];</span><span class="w">          </span><span class="c1">// e.g., [&#39;email&#39;] or [&#39;address&#39;, &#39;city&#39;]</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">path</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">[];</span><span class="w">          </span><span class="c1">// e.g., ['email'] or ['address', 'city']</span>
 <span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">         </span><span class="c1">// human-readable</span>
-<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">source</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;json-schema&#39;</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="s1">&#39;standard-schema&#39;</span><span class="p">;</span>
-<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">schemaPath?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">     </span><span class="c1">// JSON Schema pointer when source === &#39;json-schema&#39;</span>
-<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">code?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">           </span><span class="c1">// schema-keyword name (&#39;required&#39;, &#39;pattern&#39;, ...)</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">source</span><span class="o">:</span><span class="w"> </span><span class="s1">'json-schema'</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="s1">'standard-schema'</span><span class="p">;</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">schemaPath?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">     </span><span class="c1">// JSON Schema pointer when source === 'json-schema'</span>
+<span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">code?</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">;</span><span class="w">           </span><span class="c1">// schema-keyword name ('required', 'pattern', ...)</span>
 <span class="p">}</span>
 </code></pre></div>
 <h2 id="migrating-from-a-pre-v10-gitsheetfields-config">Migrating from a pre-v1.0 <code>[gitsheet.fields]</code> config<a class="headerlink" href="#migrating-from-a-pre-v10-gitsheetfields-config" title="Permanent link"> ¶</a></h2>

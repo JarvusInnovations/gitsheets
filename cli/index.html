@@ -1437,7 +1437,7 @@ record data tree is scoped.</p>
 <p>Insert or update one or more records.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>users.json
 gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span>records.jsonl
-gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">&#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;jane@x.org&quot;}&#39;</span>
+gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane","email":"jane@x.org"}'</span>
 gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>users.csv<span class="w"> </span>--format<span class="o">=</span>csv
 gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span>users.toml<span class="w"> </span>--format<span class="o">=</span>toml
 </code></pre></div>
@@ -1450,15 +1450,15 @@ a file path, or <code>-</code> for stdin.</p>
 <li><code>--delete-missing</code> — <strong>DESTRUCTIVE</strong>: full-replace mode. After upserting every input record, deletes any record in the sheet whose path isn&rsquo;t in the input set, in the same transaction. If validation fails on any input record, the whole transaction rolls back and the tree is unchanged.</li>
 <li><code>--attachment &lt;name&gt;=&lt;source&gt;</code> (repeatable) — attach a file alongside the (single) upserted record in the same transaction. <code>&lt;source&gt;</code> is a file path (relative to the input file&rsquo;s directory, or cwd when input is stdin) or <code>-</code> for stdin (only one <code>-</code> per command). Requires a single-record input set.</li>
 </ul>
-<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">&#39;{&quot;slug&quot;:&quot;jane&quot;}&#39;</span><span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane"}'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--attachment<span class="w"> </span>avatar.jpg<span class="o">=</span>./assets/jane.jpg<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--attachment<span class="w"> </span>bio.md<span class="o">=</span>-
 </code></pre></div>
 <ul>
 <li><code>--patch</code> — treat each input record as an <a href="https://datatracker.ietf.org/doc/html/rfc7396">RFC 7396 JSON Merge Patch</a>. Fields present in the sheet&rsquo;s path template are split out as the query (which existing record to find); the remaining fields are merged into that record. <code>null</code> deletes a field. Cannot be combined with <code>--delete-missing</code> or <code>--attachment</code>.</li>
 </ul>
-<div class="highlight"><pre><span></span><code><span class="c1"># Update jane&#39;s email; delete her bio; add a team field.</span>
-gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">&#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;new@x.org&quot;,&quot;bio&quot;:null,&quot;team&quot;:&quot;eng&quot;}&#39;</span><span class="w"> </span>--patch
+<div class="highlight"><pre><span></span><code><span class="c1"># Update jane's email; delete her bio; add a team field.</span>
+gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane","email":"new@x.org","bio":null,"team":"eng"}'</span><span class="w"> </span>--patch
 </code></pre></div>
 <p>For sheets whose template uses expressions (e.g., <code>${{ slug.toLowerCase() }}</code>), the CLI does a best-effort identifier scan to find the query fields. If that doesn&rsquo;t yield the right split, use the library API <code>Sheet.patch(query, partial)</code> directly.</p>
 <p>TOML input supports three layouts: a <code>[[records]]</code> array of tables (recommended for multi-record files), a top-level table where every value is itself a table (each value becomes one record), or a single-record document.</p>
@@ -1530,7 +1530,7 @@ or after a manual edit that didn&rsquo;t preserve canonical key order.</p>
 <h3 id="gitsheets-init-sheet"><code>gitsheets init &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-init-sheet" title="Permanent link"> ¶</a></h3>
 <p>Scaffold <code>.gitsheets/&lt;sheet&gt;.toml</code> with sensible defaults. Useful as a first-step before bulk-importing records.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>init<span class="w"> </span>users
-gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--path<span class="o">=</span><span class="s1">&#39;${{ slug }}&#39;</span>
+gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--path<span class="o">=</span><span class="s1">'${{ slug }}'</span>
 gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--schema<span class="o">=</span>./schemas/user.schema.json
 </code></pre></div>
 <p>Defaults:</p>
@@ -1650,7 +1650,7 @@ gitsheets<span class="w"> </span>contracts<span class="w"> </span>prune<span cla
 <p>Errors print to stderr in this shape:</p>
 <div class="highlight"><pre><span></span><code>gitsheets: ValidationError: record failed JSON Schema validation
   code:   validation_failed
-  issue:  email: must match format &quot;email&quot; (json-schema)
+  issue:  email: must match format "email" (json-schema)
 </code></pre></div>
 
 

@@ -1370,37 +1370,37 @@ npm<span class="w"> </span>install<span class="w"> </span>gitsheets<span class="
 <h2 id="declare-the-sheet">Declare the sheet<a class="headerlink" href="#declare-the-sheet" title="Permanent link"> ¶</a></h2>
 <p><code>.gitsheets/users.toml</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
-<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;users&#39;</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;${{ slug }}&#39;</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'users'</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ slug }}'</span>
 
 <span class="k">[gitsheet.schema]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;object&#39;</span>
-<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;slug&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;email&#39;</span><span class="p">]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'object'</span>
+<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'slug'</span><span class="p">,</span><span class="w"> </span><span class="s1">'email'</span><span class="p">]</span>
 <span class="n">additionalProperties</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
 
 <span class="k">[gitsheet.schema.properties.slug]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;^[a-z0-9-]+$&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'^[a-z0-9-]+$'</span>
 
 <span class="k">[gitsheet.schema.properties.email]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;email&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'email'</span>
 
 <span class="k">[gitsheet.schema.properties.fullName]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
 
 <span class="k">[gitsheet.schema.properties.tags]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;array&#39;</span>
-<span class="n">items</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span><span class="w"> </span><span class="p">}</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'array'</span>
+<span class="n">items</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s1">'string'</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>Commit the config so gitsheets sees it:</p>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>add<span class="w"> </span>.gitsheets/
-git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;add users sheet&quot;</span>
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"add users sheet"</span>
 </code></pre></div>
 <p>The JSON Schema in the TOML is what travels with the repo. Anyone (or anything) reading the repo without your TS code can introspect it.</p>
 <h2 id="define-the-zod-schema">Define the Zod schema<a class="headerlink" href="#define-the-zod-schema" title="Permanent link"> ¶</a></h2>
 <p><code>src/schemas.ts</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">z</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;zod&#39;</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">z</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'zod'</span><span class="p">;</span>
 
 <span class="k">export</span><span class="w"> </span><span class="kd">const</span><span class="w"> </span><span class="nx">UserSchema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">z</span><span class="p">.</span><span class="nx">object</span><span class="p">({</span>
 <span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="kt">z.string</span><span class="p">().</span><span class="nx">regex</span><span class="p">(</span><span class="sr">/^[a-z0-9-]+$/</span><span class="p">),</span>
@@ -1414,8 +1414,8 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 <p>The transform lower-cases the email before it&rsquo;s written. Defaults apply when the field is absent.</p>
 <h2 id="open-the-store">Open the store<a class="headerlink" href="#open-the-store" title="Permanent link"> ¶</a></h2>
 <p><code>src/store.ts</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">openStore</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
-<span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">UserSchema</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;./schemas.js&#39;</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">openStore</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
+<span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">UserSchema</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'./schemas.js'</span><span class="p">;</span>
 
 <span class="k">export</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">makeStore</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">();</span>
@@ -1430,14 +1430,14 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 
 <span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">transact</span><span class="p">(</span>
 <span class="w">  </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;create jane&#39;</span><span class="p">,</span>
-<span class="w">    </span><span class="nx">author</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Admin&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;admin@example.com&#39;</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">'create jane'</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">author</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="o">:</span><span class="w"> </span><span class="s1">'Admin'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'admin@example.com'</span><span class="w"> </span><span class="p">},</span>
 <span class="w">  </span><span class="p">},</span>
 <span class="w">  </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span>
-<span class="w">      </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane&#39;</span><span class="p">,</span>
-<span class="w">      </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Jane@X.ORG&#39;</span><span class="p">,</span><span class="w">          </span><span class="c1">// ← Zod lower-cases this</span>
-<span class="w">      </span><span class="nx">fullName</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Jane Doe&#39;</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane'</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'Jane@X.ORG'</span><span class="p">,</span><span class="w">          </span><span class="c1">// ← Zod lower-cases this</span>
+<span class="w">      </span><span class="nx">fullName</span><span class="o">:</span><span class="w"> </span><span class="s1">'Jane Doe'</span><span class="p">,</span>
 <span class="w">      </span><span class="c1">// tags omitted → defaults to []</span>
 <span class="w">    </span><span class="p">});</span>
 <span class="w">  </span><span class="p">},</span>
@@ -1445,14 +1445,14 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 </code></pre></div>
 <p>Type-check confirms:</p>
 <div class="highlight"><pre><span></span><code><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span>
-<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane&#39;</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane@x.org&#39;</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">wat</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;huh?&#39;</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← TS error: &#39;wat&#39; not in User</span>
+<span class="w">  </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane'</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane@x.org'</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">wat</span><span class="o">:</span><span class="w"> </span><span class="s1">'huh?'</span><span class="p">,</span><span class="w">  </span><span class="c1">// ← TS error: 'wat' not in User</span>
 <span class="p">});</span>
 </code></pre></div>
 <p>The validators map is the source of type truth for <code>store.users.upsert</code>.</p>
 <h2 id="read-records">Read records<a class="headerlink" href="#read-records" title="Permanent link"> ¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">jane</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryFirst</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane&#39;</span><span class="w"> </span><span class="p">});</span>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">jane</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryFirst</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane'</span><span class="w"> </span><span class="p">});</span>
 <span class="c1">// jane: User | undefined</span>
 
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">jane</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
@@ -1466,35 +1466,35 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 <span class="c1">// all: User[]</span>
 </code></pre></div>
 <p>And the iterator:</p>
-<div class="highlight"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="p">(</span><span class="kd">const</span><span class="w"> </span><span class="nx">user</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">query</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane&#39;</span><span class="w"> </span><span class="p">}))</span><span class="w"> </span><span class="p">{</span>
+<div class="highlight"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="p">(</span><span class="kd">const</span><span class="w"> </span><span class="nx">user</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">query</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane'</span><span class="w"> </span><span class="p">}))</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="c1">// user: User</span>
 <span class="p">}</span>
 </code></pre></div>
 <h2 id="filter-narrows-to-keyof-t">Filter narrows to keyof T<a class="headerlink" href="#filter-narrows-to-keyof-t" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryAll</span><span class="p">({</span>
-<span class="w">  </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane@x.org&#39;</span><span class="p">,</span><span class="w">           </span><span class="c1">// ok</span>
-<span class="w">  </span><span class="nx">unknownField</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;something&#39;</span><span class="p">,</span><span class="w">     </span><span class="c1">// ← TS error</span>
+<span class="w">  </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane@x.org'</span><span class="p">,</span><span class="w">           </span><span class="c1">// ok</span>
+<span class="w">  </span><span class="nx">unknownField</span><span class="o">:</span><span class="w"> </span><span class="s1">'something'</span><span class="p">,</span><span class="w">     </span><span class="c1">// ← TS error</span>
 <span class="p">});</span>
 </code></pre></div>
 <h2 id="function-predicates">Function predicates<a class="headerlink" href="#function-predicates" title="Permanent link"> ¶</a></h2>
 <p>For sub-queries the path-template can&rsquo;t prune:</p>
 <div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">recent</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryAll</span><span class="p">({</span>
-<span class="w">  </span><span class="nx">fullName</span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="nx">value</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="ow">typeof</span><span class="w"> </span><span class="nx">value</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">&#39;string&#39;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">value</span><span class="p">.</span><span class="nx">startsWith</span><span class="p">(</span><span class="s1">&#39;J&#39;</span><span class="p">),</span>
+<span class="w">  </span><span class="nx">fullName</span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="nx">value</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="ow">typeof</span><span class="w"> </span><span class="nx">value</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">'string'</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">value</span><span class="p">.</span><span class="nx">startsWith</span><span class="p">(</span><span class="s1">'J'</span><span class="p">),</span>
 <span class="p">});</span>
 </code></pre></div>
 <p>The predicate type narrows: <code>value</code> is typed as the field&rsquo;s type, <code>record</code> as <code>User</code>.</p>
 <h2 id="patch-existing-records">Patch existing records<a class="headerlink" href="#patch-existing-records" title="Permanent link"> ¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">transact</span><span class="p">({</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;fix jane&#39;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<div class="highlight"><pre><span></span><code><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">transact</span><span class="p">({</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">'fix jane'</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">patch</span><span class="p">(</span>
-<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;jane&#39;</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nx">fullName</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Jane O. Doe&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">tags</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;admin&#39;</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane'</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nx">fullName</span><span class="o">:</span><span class="w"> </span><span class="s1">'Jane O. Doe'</span><span class="p">,</span><span class="w"> </span><span class="nx">tags</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s1">'admin'</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
 <span class="w">  </span><span class="p">);</span>
 <span class="p">});</span>
 </code></pre></div>
 <p>RFC 7396 semantics: <code>null</code> deletes, arrays replace, objects merge. The <code>partial</code> argument is <code>Partial&lt;User&gt;</code>.</p>
 <h2 id="sheets-without-validators">Sheets without validators<a class="headerlink" href="#sheets-without-validators" title="Permanent link"> ¶</a></h2>
 <p><code>openStore</code>&rsquo;s typed surface only includes sheets named in <code>validators</code>. To access a sheet without a validator, drop down to <code>repo.openSheet(name)</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">adhoc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">&#39;rare-events&#39;</span><span class="p">);</span><span class="w">  </span><span class="c1">// Sheet&lt;Record&lt;string, unknown&gt;&gt;</span>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">adhoc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">'rare-events'</span><span class="p">);</span><span class="w">  </span><span class="c1">// Sheet&lt;Record&lt;string, unknown&gt;&gt;</span>
 </code></pre></div>
 <p>The persisted JSON Schema in <code>.gitsheets/rare-events.toml</code> still runs at runtime — only the TS-level shape is loose.</p>
 <h2 id="see-it-on-disk">See it on disk<a class="headerlink" href="#see-it-on-disk" title="Permanent link"> ¶</a></h2>
@@ -1503,9 +1503,9 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 
 cat<span class="w"> </span>users/jane.toml
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">email</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;jane@x.org&#39;</span>
-<span class="n">fullName</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;Jane Doe&#39;</span>
-<span class="n">slug</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;jane&#39;</span>
+<div class="highlight"><pre><span></span><code><span class="n">email</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'jane@x.org'</span>
+<span class="n">fullName</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'Jane Doe'</span>
+<span class="n">slug</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'jane'</span>
 <span class="n">tags</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="p">]</span>
 </code></pre></div>
 <p>Keys sorted (canonical normalization), email lower-cased (Zod transform), <code>tags</code> defaulted to empty.</p>
@@ -1514,15 +1514,15 @@ cat<span class="w"> </span>users/jane.toml
 <p>The commit carries the author, message, and timestamp. Validation failures wouldn&rsquo;t have produced a commit at all.</p>
 <h2 id="validation-errors">Validation errors<a class="headerlink" href="#validation-errors" title="Permanent link"> ¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">try</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">transact</span><span class="p">({</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;bad&#39;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;Jane Doe!&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;not-an-email&#39;</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">transact</span><span class="p">({</span><span class="w"> </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">'bad'</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'Jane Doe!'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'not-an-email'</span><span class="w"> </span><span class="p">});</span>
 <span class="w">  </span><span class="p">});</span>
 <span class="p">}</span><span class="w"> </span><span class="k">catch</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="w"> </span><span class="ow">instanceof</span><span class="w"> </span><span class="nx">ValidationError</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kd">const</span><span class="w"> </span><span class="nx">issue</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="nx">err</span><span class="p">.</span><span class="nx">issues</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">path</span><span class="p">.</span><span class="nx">join</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)</span><span class="si">}</span><span class="sb">: </span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">message</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
-<span class="w">      </span><span class="c1">// slug: must match pattern &quot;^[a-z0-9-]+$&quot;  (json-schema)</span>
-<span class="w">      </span><span class="c1">// email: must match format &quot;email&quot;          (json-schema)</span>
+<span class="w">      </span><span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">path</span><span class="p">.</span><span class="nx">join</span><span class="p">(</span><span class="s1">'.'</span><span class="p">)</span><span class="si">}</span><span class="sb">: </span><span class="si">${</span><span class="nx">issue</span><span class="p">.</span><span class="nx">message</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="w">      </span><span class="c1">// slug: must match pattern "^[a-z0-9-]+$"  (json-schema)</span>
+<span class="w">      </span><span class="c1">// email: must match format "email"          (json-schema)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>

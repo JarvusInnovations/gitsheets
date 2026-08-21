@@ -1328,13 +1328,13 @@ help[1]: Run `gitsheets-axi read users &lt;path&gt;` to view a single record
 <p><code>--format=json</code> opts back to JSON for agents / pipelines that prefer it.</p>
 <h2 id="idempotency">Idempotency<a class="headerlink" href="#idempotency" title="Permanent link"> ¶</a></h2>
 <p>Every mutation pre-flights against the current on-disk state. When the resulting bytes would match what&rsquo;s already there, the command exits <code>0</code> with <code>result: "no-op"</code> and <strong>produces no commit</strong>.</p>
-<div class="highlight"><pre><span></span><code>$ gitsheets-axi upsert users --data &#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;jane@x.org&quot;}&#39;
+<div class="highlight"><pre><span></span><code>$ gitsheets-axi upsert users --data '{"slug":"jane","email":"jane@x.org"}'
 result: committed
 sheet: users
 path: jane
 commit: a1b2c3...
 
-$ gitsheets-axi upsert users --data &#39;{&quot;slug&quot;:&quot;jane&quot;,&quot;email&quot;:&quot;jane@x.org&quot;}&#39;
+$ gitsheets-axi upsert users --data '{"slug":"jane","email":"jane@x.org"}'
 result: no-op
 sheet: users
 path: jane

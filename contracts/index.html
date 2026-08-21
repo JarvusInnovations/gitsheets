@@ -1176,21 +1176,21 @@ consumer.</p>
 <p>A contract document is plain JSON Schema (Draft-07, the same dialect as
 <code>[gitsheet.schema]</code>) with a required <code>$id</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;$schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://json-schema.org/draft-07/schema#&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;$id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://gitsheets.io/meals/v1&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Meal&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;object&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;required&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;slug&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;name&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;nutrition&quot;</span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;properties&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;slug&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;pattern&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;^[a-z0-9-]+$&quot;</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;minLength&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;nutrition&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;object&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Ballpark per serving.&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;required&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;calories&quot;</span><span class="p">],</span>
-<span class="w">      </span><span class="nt">&quot;properties&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;calories&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;number&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kcal&quot;</span><span class="w"> </span><span class="p">},</span>
-<span class="w">        </span><span class="nt">&quot;protein_g&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;number&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="nt">"$schema"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://json-schema.org/draft-07/schema#"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"$id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://gitsheets.io/meals/v1"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Meal"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"object"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"required"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"slug"</span><span class="p">,</span><span class="w"> </span><span class="s2">"name"</span><span class="p">,</span><span class="w"> </span><span class="s2">"nutrition"</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">"properties"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"slug"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"string"</span><span class="p">,</span><span class="w"> </span><span class="nt">"pattern"</span><span class="p">:</span><span class="w"> </span><span class="s2">"^[a-z0-9-]+$"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"string"</span><span class="p">,</span><span class="w"> </span><span class="nt">"minLength"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"nutrition"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"object"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Ballpark per serving."</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"required"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"calories"</span><span class="p">],</span>
+<span class="w">      </span><span class="nt">"properties"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"calories"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"number"</span><span class="p">,</span><span class="w"> </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"kcal"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="nt">"protein_g"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"number"</span><span class="w"> </span><span class="p">}</span>
 <span class="w">      </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">  </span><span class="p">}</span>
@@ -1202,8 +1202,8 @@ host-qualified and stable.</p>
 <p>Adopt it into the repo:</p>
 <div class="highlight"><pre><span></span><code><span class="gp">$ </span>gitsheets<span class="w"> </span>contracts<span class="w"> </span>adopt<span class="w"> </span>./meals-v1.schema.json
 <span class="go">adopted gitsheets.io/meals/v1 → .gitsheets/contracts/gitsheets.io/meals/v1.toml</span>
-<span class="go">add to the declaring sheet&#39;s config (tooling never edits sheet configs):</span>
-<span class="go">  implements = [&#39;gitsheets.io/meals/v1&#39;]</span>
+<span class="go">add to the declaring sheet's config (tooling never edits sheet configs):</span>
+<span class="go">  implements = ['gitsheets.io/meals/v1']</span>
 </code></pre></div>
 <p><code>adopt</code> accepts a local file, an <code>https://</code> URL (fetched once, at adopt time —
 nothing ever fetches at runtime), or <code>-</code> for stdin, in JSON or TOML. It
@@ -1216,23 +1216,23 @@ pin.</p>
 configs):</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># .gitsheets/meal-bank.toml</span>
 <span class="k">[gitsheet]</span>
-<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;meals&#39;</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;${{ slug }}&#39;</span>
-<span class="n">implements</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;gitsheets.io/meals/v1&#39;</span><span class="p">]</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'meals'</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ slug }}'</span>
+<span class="n">implements</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'gitsheets.io/meals/v1'</span><span class="p">]</span>
 
 <span class="k">[gitsheet.schema]</span><span class="w">                 </span><span class="c1"># local extensions, composed with the contract</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;object&#39;</span>
-<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;tier&#39;</span><span class="p">]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'object'</span>
+<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'tier'</span><span class="p">]</span>
 
 <span class="k">[gitsheet.schema.properties.tier]</span>
-<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;string&#39;</span>
-<span class="n">enum</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">&#39;anchor&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;rotation&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;occasional&#39;</span><span class="p">]</span>
+<span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
+<span class="n">enum</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'anchor'</span><span class="p">,</span><span class="w"> </span><span class="s1">'rotation'</span><span class="p">,</span><span class="w"> </span><span class="s1">'occasional'</span><span class="p">]</span>
 </code></pre></div>
 <p>From here the sheet&rsquo;s effective schema is <code>allOf(contract, local schema)</code>: every
 write must satisfy both, and a violation says which contract it broke:</p>
 <div class="highlight"><pre><span></span><code>gitsheets: ValidationError: record failed JSON Schema validation
   code:   validation_failed
-  issue:  nutrition: &quot;calories&quot; is a required property (json-schema) [gitsheets.io/meals/v1]
+  issue:  nutrition: "calories" is a required property (json-schema) [gitsheets.io/meals/v1]
 </code></pre></div>
 <p>The sheet keeps evolving freely beyond the contract — extra fields, stricter
 local rules — with zero coordination. Contracts are required to stay <strong>open</strong>
@@ -1252,16 +1252,16 @@ contract-conforming records under composition).</p>
 <h2 id="verifying-the-consumer-side">Verifying: the consumer side<a class="headerlink" href="#verifying-the-consumer-side" title="Permanent link"> ¶</a></h2>
 <p>A consumer holds its own copy of the contract document and verifies at wiring
 time, through a two-rung ladder:</p>
-<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">ContractError</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
-<span class="k">import</span><span class="w"> </span><span class="nx">mealsV1</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;./contracts/meals-v1.schema.json&#39;</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">,</span><span class="w"> </span><span class="nx">ContractError</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
+<span class="k">import</span><span class="w"> </span><span class="nx">mealsV1</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'./contracts/meals-v1.schema.json'</span><span class="p">;</span>
 
-<span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">gitDir</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;/srv/hari/.git&#39;</span><span class="w"> </span><span class="p">});</span>
-<span class="kd">const</span><span class="w"> </span><span class="nx">meals</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">&#39;meal-bank&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="nx">contract</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">schema</span><span class="o">:</span><span class="w"> </span><span class="kt">mealsV1</span><span class="w"> </span><span class="p">},</span><span class="w">   </span><span class="c1">// mode: &#39;verify&#39; is the default</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">gitDir</span><span class="o">:</span><span class="w"> </span><span class="s1">'/srv/hari/.git'</span><span class="w"> </span><span class="p">});</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">meals</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">'meal-bank'</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">contract</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">schema</span><span class="o">:</span><span class="w"> </span><span class="kt">mealsV1</span><span class="w"> </span><span class="p">},</span><span class="w">   </span><span class="c1">// mode: 'verify' is the default</span>
 <span class="p">});</span>
 
 <span class="nx">meals</span><span class="p">.</span><span class="nx">contractVerification</span><span class="p">;</span>
-<span class="c1">// { name: &#39;gitsheets.io/meals/v1&#39;, rung: &#39;declared&#39;, tree: &#39;9c41…&#39;, conforming: true, issues: [] }</span>
+<span class="c1">// { name: 'gitsheets.io/meals/v1', rung: 'declared', tree: '9c41…', conforming: true, issues: [] }</span>
 </code></pre></div>
 <ul>
 <li><strong>Rung 1 — declared identity.</strong> The sheet declares the contract&rsquo;s name <em>and</em>
@@ -1283,10 +1283,10 @@ callback gets an advisory signal if a structurally-verified sheet&rsquo;s produc
 later commits non-conforming data — reads are never blocked by drift; refusal
 belongs at wiring time only.</p>
 <p>The identity primitive is also exported directly:</p>
-<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">canonicalContractHash</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">&#39;gitsheets&#39;</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">canonicalContractHash</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
 
 <span class="nx">canonicalContractHash</span><span class="p">(</span><span class="nx">mealsV1</span><span class="p">);</span><span class="w">                    </span><span class="c1">// parsed data</span>
-<span class="nx">canonicalContractHash</span><span class="p">(</span><span class="nx">text</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">format</span><span class="o">:</span><span class="w"> </span><span class="s1">&#39;json&#39;</span><span class="w"> </span><span class="p">});</span><span class="w">   </span><span class="c1">// or text — same hash either way</span>
+<span class="nx">canonicalContractHash</span><span class="p">(</span><span class="nx">text</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">format</span><span class="o">:</span><span class="w"> </span><span class="s1">'json'</span><span class="w"> </span><span class="p">});</span><span class="w">   </span><span class="c1">// or text — same hash either way</span>
 </code></pre></div>
 <p>Two parties holding the same logical document get the same hash regardless of
 serialization, because everything funnels through the canonical TOML encoder —
