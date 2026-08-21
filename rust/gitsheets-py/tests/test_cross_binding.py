@@ -256,3 +256,85 @@ def test_canonical_contract_hash_identical_across_bindings():
     assert node_data == node_json == node_toml
 
     assert py_data == node_data, "contract identity diverged across bindings"
+
+
+def _init_people_repo(d: str) -> None:
+    """A minimal repo with `.gitsheets/people.toml` (no `implements`) committed
+    on `main` — the shared fixture both bindings verify against."""
+    _git(["init", "-q", "-b", "main", d])
+    _git(["config", "user.name", "Seed"], cwd=d)
+    _git(["config", "user.email", "seed@x.org"], cwd=d)
+    os.makedirs(os.path.join(d, ".gitsheets"))
+    with open(os.path.join(d, ".gitsheets", "people.toml"), "w") as fh:
+        fh.write("[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n")
+    _git(["add", ".gitsheets/people.toml"], cwd=d)
+
+
+def test_verify_sheet_contract_structural_pass_report_identical_across_bindings():
+    """A rung-2 (structural) conformance report — name/rung/conforming and an
+    empty issue set — agrees across Python and Node for the same fixture
+    (specs/behaviors/contracts.md 'Consumer verification')."""
+    d = tempfile.mkdtemp(prefix="gs-verify-")
+    try:
+        _init_people_repo(d)
+        os.makedirs(os.path.join(d, "people"))
+        with open(os.path.join(d, "people", "jane.toml"), "w") as fh:
+            fh.write(gitsheets.serialize_records([{"slug": "jane", "email": "jane@x.org"}])[0])
+        _git(["add", "people"], cwd=d)
+        _git(["commit", "-q", "-m", "init"], cwd=d)
+
+        git_dir = os.path.join(d, ".git")
+        doc = {
+            "$id": "https://example.com/people/v1",
+            "type": "object",
+            "required": ["email"],
+            "properties": {"email": {"type": "string"}},
+        }
+        py_report = gitsheets.verify_sheet_contract(git_dir, "HEAD", "people", doc, mode="structural")
+        node = _run_node("verify-contract", git_dir, json.dumps(doc), "structural")
+
+        assert node["ok"] is True
+        assert py_report["name"] == node["report"]["name"]
+        assert py_report["rung"] == node["report"]["rung"]
+        assert py_report["conforming"] == node["report"]["conforming"]
+        assert py_report["issues"] == node["report"]["issues"] == []
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_verify_sheet_contract_failure_issue_set_identical_across_bindings():
+    """A rung-2 failure's `ContractError` — code, contract name, and the
+    per-record issue set (record/code/contract) — agrees across Python and
+    Node for the same non-conforming fixture."""
+    d = tempfile.mkdtemp(prefix="gs-verify-")
+    try:
+        _init_people_repo(d)
+        os.makedirs(os.path.join(d, "people"))
+        for slug, fields in [("jane", {"email": "jane@x.org"}), ("bob", {})]:
+            with open(os.path.join(d, "people", f"{slug}.toml"), "w") as fh:
+                fh.write(gitsheets.serialize_records([{"slug": slug, **fields}])[0])
+        _git(["add", "people"], cwd=d)
+        _git(["commit", "-q", "-m", "init"], cwd=d)
+
+        git_dir = os.path.join(d, ".git")
+        doc = {
+            "$id": "https://example.com/people/v1",
+            "type": "object",
+            "required": ["email"],
+            "properties": {"email": {"type": "string"}},
+        }
+        with pytest.raises(gitsheets.ContractError) as ei:
+            gitsheets.verify_sheet_contract(git_dir, "HEAD", "people", doc)
+        py_err = ei.value
+
+        node = _run_node("verify-contract", git_dir, json.dumps(doc))
+
+        assert node["ok"] is False
+        assert py_err.code == node["code"] == "contract_unsatisfied"
+        assert py_err.contract == node["contract"] == "example.com/people/v1"
+
+        py_issue_set = {(i["record"], i["code"], i["contract"]) for i in py_err.issues}
+        node_issue_set = {(i["record"], i["code"], i["contract"]) for i in node["issues"]}
+        assert py_issue_set == node_issue_set == {("bob", "required", "example.com/people/v1")}
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
