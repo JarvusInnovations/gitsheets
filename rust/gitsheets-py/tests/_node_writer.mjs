@@ -6,6 +6,11 @@
 //   commit <gitDir>                   → { commitHash, treeHash, refName }
 //   comparator <rule> <aJson> <bJson> → { result }
 //   contract-hash <kind> <input>      → { hash } — kind: data|json|toml
+//   verify-contract <gitDir> <docJson> [mode]
+//     → { ok: true, report } | { ok: false, code, contract, issues }
+//     Verifies the 'people' sheet (config at .gitsheets/people.toml, root '.',
+//     no prefix) at HEAD — the same shared fixture the Python side builds via
+//     test_cross_binding.py, so the two bindings' reports can be diffed.
 //
 // The binding.cjs path comes from $GITSHEETS_NAPI_BINDING. Fixtures are authored
 // here as native JS values (the whole point: the same logical data, expressed in
@@ -116,6 +121,26 @@ if (op === 'record-write') {
   const input = kind === 'data' ? JSON.parse(args[1]) : args[1];
   const format = kind === 'data' ? undefined : kind;
   out({ hash: binding.canonicalContractHash(input, format) });
+} else if (op === 'verify-contract') {
+  const gitDir = args[0];
+  const doc = JSON.parse(args[1]);
+  const mode = args[2]; // 'verify' | 'declared' | 'structural' | undefined
+  try {
+    const report = binding.verifySheetContract(
+      gitDir,
+      'HEAD',
+      'people',
+      '.gitsheets/people.toml',
+      '.',
+      '',
+      doc,
+      undefined,
+      mode,
+    );
+    out({ ok: true, report });
+  } catch (err) {
+    out({ ok: false, code: err.code, contract: err.contract, issues: err.issues ?? [] });
+  }
 } else {
   process.stderr.write(`unknown op: ${op}\n`);
   process.exit(2);

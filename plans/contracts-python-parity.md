@@ -1,10 +1,11 @@
 ---
-status: planned
+status: done
 depends: []
 specs:
   - specs/api/python-binding.md
   - specs/behaviors/contracts.md
 issues: []
+pr: 277
 ---
 
 # Plan: contracts parity for the Python binding
@@ -55,15 +56,15 @@ deliberately batch-first per `specs/api/python-binding.md`); drift callbacks
 
 ## Validation
 
-- [ ] `verify_sheet_contract` passes rung 1 against a declaring fixture sheet
+- [x] `verify_sheet_contract` passes rung 1 against a declaring fixture sheet
       and reports `rung: 'declared'` without reading records
-- [ ] Rung-1 miss falls through to a rung-2 structural pass; `declared` mode
+- [x] Rung-1 miss falls through to a rung-2 structural pass; `declared` mode
       raises immediately; `structural` mode verifies a contract-unaware sheet
-- [ ] A non-conforming sheet raises `ContractError` (`contract_unsatisfied`)
+- [x] A non-conforming sheet raises `ContractError` (`contract_unsatisfied`)
       whose issues name record path, field, and contract
-- [ ] Cross-binding parity: Node and Python produce equivalent conformance
+- [x] Cross-binding parity: Node and Python produce equivalent conformance
       reports for the same fixtures
-- [ ] Full existing suites pass unchanged (`cargo test`, pytest, napi, JS)
+- [x] Full existing suites pass unchanged (`cargo test`, pytest, napi, JS)
 
 ## Risks / unknowns
 
@@ -77,8 +78,36 @@ deliberately batch-first per `specs/api/python-binding.md`); drift callbacks
 
 ## Notes
 
-(populated at closeout)
+- The sheet-open plumbing risk was a non-issue: `record::open_repo`,
+  `record::resolve_tree`, and `sheet::Sheet as CoreSheet::open` were already
+  imported/used elsewhere in `rust/gitsheets-py/src/lib.rs` (e.g.
+  `record_query`), so `verify_sheet_contract` reuses them directly — no core
+  refactor needed.
+- The issue-marshalling risk was real: `raise_core_error`'s generic
+  `ValidationIssue → dict` loop was dropping the `record` key entirely (for
+  every typed exception, not just contracts). Fixed as part of this PR —
+  `ContractError.issues` now carries `record`/`contract` alongside the usual
+  `path`/`message`/`source`/`schema_path`/`code`, matching napi's
+  `JsValidationIssue` shape.
+- `config_path` defaults to `<root>/.gitsheets/<sheet>.toml` when omitted
+  (mirroring `Repository.openSheet`'s `joinTreePath(root, '.gitsheets',
+  '<name>.toml')` default on the Node/TS side), via the existing
+  `gitsheets_core::sheet::join_path` helper.
+- `declared`-mode failures carry no `.issues` attribute at all (not an empty
+  list) — `raise_core_error` only sets the attribute when issues are
+  non-empty, an existing convention shared with every other typed exception.
+  The test asserts `getattr(err, "issues", []) == []` rather than
+  `err.issues == []`.
+- Verified with: `cargo test --workspace` (230+ passing), `cargo clippy
+  --workspace --all-targets -- -D warnings` (clean), `gitsheets-napi`'s
+  `npm run build:debug && npm test` (123/123, `contracts.mjs` unchanged),
+  a release wheel built with `maturin build --release` + installed into a
+  `uv venv` + `pytest tests/ -v` with `GITSHEETS_NAPI_BINDING` set (49/49,
+  including the new cross-binding parity tests), and root `npm test`
+  (all workspaces, exit 0).
 
 ## Follow-ups
 
-(populated at closeout)
+None identified. The plan's scope (module function + `ContractError`
+marshalling + tests) is fully delivered; no CLI or spec follow-on work
+surfaced.
