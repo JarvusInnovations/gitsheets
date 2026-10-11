@@ -51,8 +51,8 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 
 ### Richer query operators
 
-- **What:** `$in`, `$or`, `$gt`-style operators on `Sheet.query`.
-- **Why deferred:** Consumers can iterate `queryAll(...)` and `.filter(...)` in their own code. The whole-repo-fits-in-memory premise makes the operator richness less load-bearing.
+- **What:** `$in`, `$or`, and other set / boolean operators on `Sheet.query`. (The ordered-comparison operators `$gt` / `$gte` / `$lt` / `$lte` are **in scope** — they shipped with range-pruned traversal of date-bucket path keys; see [api/sheet.md](api/sheet.md#sheetqueryfilter-opts) and [behaviors/path-templates.md](behaviors/path-templates.md#range-pruned-traversal).)
+- **Why deferred:** Consumers can iterate `queryAll(...)` and `.filter(...)` in their own code. The whole-repo-fits-in-memory premise makes the operator richness less load-bearing. Ranges earned their place because the path template can *invert* them into a bounded tree walk; `$in` / `$or` have no comparable pruning payoff.
 
 ### Persisted in-memory cache layer
 
