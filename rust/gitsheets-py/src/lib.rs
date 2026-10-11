@@ -955,6 +955,18 @@ fn parse_filter_pred(val: &Bound<'_, PyAny>, engine: &mut Engine) -> PyResult<Fi
                 return Ok(FilterPred::Predicate(handle));
             }
         }
+        // A `$`-keyed dict is a range (`{"$gte": a, "$lt": b}`); the core
+        // validates the vocabulary. Anything else is a nested-table filter.
+        let has_operator = d
+            .iter()
+            .any(|(k, _)| k.extract::<String>().map(|s| s.starts_with('$')).unwrap_or(false));
+        if has_operator {
+            let Value::Table(map) = py_to_value(val)? else {
+                unreachable!("a dict marshals to a core table");
+            };
+            let range = query::Range::from_table(&map).map_err(|e| raise_core_error(val.py(), &e))?;
+            return Ok(FilterPred::Range(range));
+        }
         let nested = parse_filter(d, engine)?;
         return Ok(FilterPred::Nested(nested));
     }
@@ -963,7 +975,8 @@ fn parse_filter_pred(val: &Bound<'_, PyAny>, engine: &mut Engine) -> PyResult<Fi
 
 /// Query records under `base` in the tree `tree_ref`, returning each matched
 /// `{ "path", "record" }` in sorted path order. The template prunes the walk; the
-/// filter (equality / nested / `{"$pred": "<js>"}` snippets) runs in the core.
+/// filter (equality / nested / `{"$pred": "<js>"}` snippets / `{"$gte": a, "$lt": b}`
+/// ranges) runs in the core; a range on a date-bucket path field bounds the walk.
 #[pyfunction]
 #[pyo3(signature = (git_dir, tree_ref, base, template, filter, extension=None))]
 fn record_query<'py>(

@@ -235,15 +235,18 @@ export declare function substrateReset(): void
 /**
  * Query records under `base` in the tree `treeRef`, returning each matched
  * `{ path, record }` in sorted path order. The template prunes the walk; the
- * filter (equality / nested / `$pred` snippets) is applied to each candidate.
- * Batch-first: the whole query crosses the FFI once.
+ * filter (equality / nested / `$pred` snippets / `{ $gt, $gte, $lt, $lte }` ranges)
+ * is applied to each candidate; a range on a date-bucket path field prunes
+ * the walk to the bounded span of partitions. Batch-first: the whole query
+ * crosses the FFI once.
  */
 export declare function recordQuery(gitDir: string, treeRef: string, base: string, template: string, filter: object, extension?: string | undefined | null): Array<JsRecordEntry>
 /**
  * The pruning candidate set alone (no content filter applied) — the direct
  * parity target for the host `Template.queryTree`. `query` is a (partial)
- * record of the path-template input fields. Returns candidate record paths
- * (relative to `base`, no extension) in sorted order.
+ * record of the path-template input fields; a date-bucket field may carry a
+ * `{ $gte, $lt, … }` range object, which bounds the walk. Returns candidate
+ * record paths (relative to `base`, no extension) in sorted order.
  */
 export declare function recordQueryCandidates(gitDir: string, treeRef: string, base: string, template: string, query: JsValue, extension?: string | undefined | null): Array<string>
 /**

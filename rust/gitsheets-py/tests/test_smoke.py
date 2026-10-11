@@ -435,3 +435,86 @@ def test_date_bucket_invalid_format_raises_config_error():
 def test_date_bucket_wrong_type_raises_path_template_error():
     with pytest.raises(gitsheets.PathTemplateError):
         gitsheets.render_paths_batch("${{ d: YYYY }}", [{"d": 42}])
+
+
+# ── range filters + range-pruned traversal ─────────────────────────────────────
+# specs/api/sheet.md "Range filter entries" + specs/behaviors/path-templates.md
+# "Range-pruned traversal". The dict form `{"$gte": a, "$lt": b}` is the same
+# wire form the Node binding feeds; expectations are byte-identical to
+# rust/gitsheets-napi/test/record-query.mjs.
+
+_DAILY = [
+    ("2025/10/05/a", "2025-10-05T10:00:00Z"),
+    ("2025/11/19/b", "2025-11-19T23:59:59Z"),
+    ("2025/11/20/c", "2025-11-20T00:00:00Z"),
+    ("2025/11/25/d", "2025-11-25T12:00:00Z"),
+    ("2025/12/31/e", "2025-12-31T23:00:00Z"),
+    ("2026/01/15/f", "2026-01-15T08:00:00Z"),
+    ("2026/02/03/g", "2026-02-03T00:00:00Z"),
+    ("2026/02/03/h", "2026-02-03T09:00:00Z"),
+    ("2026/02/04/i", "2026-02-04T00:00:00Z"),
+    ("2026/06/01/j", "2026-06-01T00:00:00Z"),
+]
+_DAILY_TEMPLATE = "${{ d: YYYY/MM/DD }}/${{ slug }}"
+
+
+def _seed_daily(git_dir):
+    paths = [p for p, _ in _DAILY]
+    records = [
+        {"d": dt.datetime.fromisoformat(when.replace("Z", "+00:00")), "slug": p.split("/")[-1]}
+        for p, when in _DAILY
+    ]
+    return gitsheets.record_write(git_dir, gitsheets.EMPTY_TREE_HASH, "posts", paths, records)["tree_hash"]
+
+
+def test_range_bounds_a_date_bucketed_candidate_walk(fresh_repo):
+    _, git_dir = fresh_repo
+    tree = _seed_daily(git_dir)
+    bounded = gitsheets.record_query_candidates(
+        git_dir, tree, "posts", _DAILY_TEMPLATE,
+        {"d": {"$gte": "2025-11-20", "$lt": dt.datetime(2026, 2, 3, tzinfo=dt.timezone.utc)}},
+    )
+    assert bounded == [
+        "2025/11/20/c", "2025/11/25/d", "2025/12/31/e", "2026/01/15/f", "2026/02/03/g", "2026/02/03/h",
+    ]
+    assert gitsheets.record_query_candidates(git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gt": "2026-02-03"}}) == [
+        "2026/02/03/g", "2026/02/03/h", "2026/02/04/i", "2026/06/01/j",
+    ]
+    # A non-date bound widens rather than erroring.
+    assert len(gitsheets.record_query_candidates(git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gte": 2025}})) == len(_DAILY)
+
+
+def test_range_filter_applies_the_exact_cutoff(fresh_repo):
+    _, git_dir = fresh_repo
+    tree = _seed_daily(git_dir)
+    out = gitsheets.record_query(
+        git_dir, tree, "posts", _DAILY_TEMPLATE,
+        {"d": {"$gte": "2025-11-20", "$lt": dt.datetime(2026, 2, 3, tzinfo=dt.timezone.utc)}},
+    )
+    assert [e["record"]["slug"] for e in out] == ["c", "d", "e", "f"]
+    after = gitsheets.record_query(
+        git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gt": dt.datetime(2026, 2, 3, 9, tzinfo=dt.timezone.utc)}}
+    )
+    assert [e["record"]["slug"] for e in after] == ["i", "j"]
+    mixed = gitsheets.record_query(
+        git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gte": "2026-01-01"}, "slug": {"$pred": "value !== 'i'"}}
+    )
+    assert [e["record"]["slug"] for e in mixed] == ["f", "g", "h", "j"]
+
+
+def test_range_filter_numeric_and_malformed(fresh_repo):
+    _, git_dir = fresh_repo
+    people = [
+        ("amy", {"slug": "amy", "age": 41}),
+        ("bob", {"slug": "bob", "age": 17}),
+        ("jane", {"slug": "jane", "age": 30}),
+        ("zed", {"slug": "zed", "age": 64}),
+    ]
+    tree = gitsheets.record_write(
+        git_dir, gitsheets.EMPTY_TREE_HASH, "people", [p for p, _ in people], [r for _, r in people]
+    )["tree_hash"]
+    adults = gitsheets.record_query(git_dir, tree, "people", "${{ slug }}", {"age": {"$gte": 18, "$lt": 63.5}})
+    assert [e["path"] for e in adults] == ["amy", "jane"]
+    for bad in ({"$in": [1]}, {"$gte": 1, "foo": 2}, {"$gt": 1, "$gte": 2}):
+        with pytest.raises(gitsheets.ConfigError):
+            gitsheets.record_query(git_dir, tree, "people", "${{ slug }}", {"age": bad})
