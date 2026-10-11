@@ -17,7 +17,7 @@ Four reference files cover the surface. Read the relevant one(s) for the user's 
 | --- | --- |
 | The `gitsheets` / `git sheet` CLI (commands, flags, exit codes) | `references/cli.md` |
 | The TypeScript API (`openRepo`, `Sheet`, `Transaction`, `Store`, push daemon, errors) | `references/api.md` |
-| Authoring `.gitsheets/<name>.toml` configs (path template, schema, fields, format, indices) | `references/sheet-config.md` |
+| Authoring `.gitsheets/<name>.toml` configs (path template, **date-bucket partitioning**, schema, fields, format, indices) | `references/sheet-config.md` |
 | The **agent-facing** `gitsheets-axi` CLI (TOON output, idempotent mutations, session hooks) | `references/axi.md` |
 
 If unsure or the question spans multiple surfaces, read all four. They're sized to fit comfortably in context together.
@@ -47,18 +47,20 @@ When the user is building something, these idioms are usually the right shape:
 
 - **Typed sheets**: combine `openStore(repo, { validators: { users: UserSchema } })` (Standard Schema — Zod / Valibot / ArkType) with a `[gitsheet.schema]` block in the sheet config. The Zod schema flows TS types; the persisted JSON Schema is the on-repo contract.
 - **Per-request transactions** in HTTP handlers: open one `repo.transact` per request with the user's identity in `author` + structured `trailers`. Errors thrown from the handler discard the transaction.
+- **Date-partitioned sheets**: anything time-series-ish (posts, events, logs, daily rollups) should partition by a declarative **date bucket** in the path template — `path = '${{ publishedAt: YYYY/MM/DD }}/${{ slug }}'` (also `YYYY/MM`, `YYYY`, `YYYY/WW`). It's UTC-safe by construction, and it's what makes **range queries** cheap: `queryAll({ publishedAt: { $gte: '2026-01-01', $lt: '2026-04-01' } })` (or `gitsheets-axi query posts --filter 'publishedAt>=2026-01-01'`) walks only the partitions inside the bounds. See `references/sheet-config.md` → "Date-bucket partitioning" and `references/api.md` → "Range filters".
 - **Bulk reads + lazy bodies**: on content-typed (markdown) sheets, pass `{ withBody: false }` to `query` for listing/filtering, then `await sheet.loadBody(record)` when the body is actually needed.
 - **Secondary indices**: `sheet.defineIndex('byEmail', { unique: true }, r => r.email.toLowerCase())`. Built lazily on first `findByIndex` call; rebuilt when the underlying tree hash changes. For markdown sheets, index builds always use body-less reads — don't index on body content (returns `undefined` → record excluded).
 - **CSV import**: `gitsheets upsert <sheet> records.csv --format=csv` — first row is the header, each subsequent row becomes one record. Cell values stay strings; type coercion belongs in the schema.
 - **Bulk ingest a databank**: build a JSON array or NDJSON stream with `jq` (never hand-serialize TOML), then pipe it into **one** `upsert` — `jq -c '.[]' raw.json | gitsheets-axi upsert repos`. The whole batch commits once. To reshape existing data, `gitsheets-axi query <sheet> --ndjson-out`, transform the file, and pipe it back in (exports round-trip verbatim). See `references/axi.md` → "Bulk data engineering".
 - **Classify / update in bulk**: use bulk `gitsheets-axi patch` (array/NDJSON of `{<path-fields>, <fields-to-set>}` → one commit, merge-not-replace), not `upsert` (which replaces whole records). `--on-missing skip|insert` tolerates or inserts stale rows; `--dry-run` previews; `--delete-missing` makes the sheet exactly match a source.
-- **Review / audit without `jq`**: `gitsheets-axi count <sheet> --filter …` for totals, `query --group-by <field>` for distributions, `distinct <sheet> <field>` for the value set. The `--filter` DSL does comparison / `!=` / `in()` / regex / `:present` / `:empty`, not just equality.
+- **Review / audit without `jq`**: `gitsheets-axi count <sheet> --filter …` for totals, `query --group-by <field>` for distributions, `distinct <sheet> <field>` for the value set. The `--filter` DSL does comparison / `!=` / `in()` / regex / `:present` / `:empty`, not just equality — and comparisons on a date-bucket path field prune the walk instead of scanning.
 
 ## Anti-patterns to redirect
 
 If the user is heading toward one of these, gently steer them back:
 
 - **Treating `Sheet` like a SQL table.** Records are *files* with structured filenames. Path templates uniquely identify a record by its fields; there's no surrogate primary key. If the user wants a stable identifier, design it into the path template.
+- **Hand-rolling date partitions with expressions** (`${{ publishedAt.getUTCFullYear() }}/${{ String(publishedAt.getUTCMonth() + 1).padStart(2, '0') }}/…`). Use `${{ publishedAt: YYYY/MM }}` instead: shorter, timezone-safe, and the only form whose range queries prune. Likewise, don't fetch `queryAll({})` and filter dates in consumer code on a partitioned sheet — pass a `{ $gte, $lt }` range so the walk skips the other partitions.
 - **Stuffing huge text bodies into a TOML field** when they actually want a markdown document. Switch to content-typed records (`[gitsheet.format] type = 'markdown'`) so the body is a proper file with editor affordances.
 - **Indexing on body content.** Indexes always build with body-less reads on markdown sheets — `keyFn(record).body` is `undefined`. Index on frontmatter fields.
 - **Calling `pull` then `push`** to sync. The library has no pull. The single-writer model is non-negotiable; "pull elsewhere, restart consumer" is the canonical reconciliation path.
