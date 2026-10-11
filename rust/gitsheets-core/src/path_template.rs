@@ -56,6 +56,12 @@ enum Part {
         /// tables).
         field: Vec<String>,
         unit: BucketUnit,
+        /// Which bucket *token* of the template this part came from (0-based,
+        /// in source order). The query walk's range-bound tracking is scoped
+        /// to one token: the segments of `${{ d: YYYY/MM/DD }}` share a
+        /// token, a second bucket token elsewhere in the template starts
+        /// fresh. See [`Bounds::token`].
+        token: usize,
     },
     Expression {
         handle: SnippetHandle,
@@ -92,11 +98,45 @@ const BUCKET_FORMATS: &[(&str, &[BucketUnit])] = &[
 /// One component's contribution to a query-tree walk: the value it renders to
 /// against the (partial) query — `None` when un-renderable, in which case the
 /// walk must expand across all subtrees at that level — plus whether it is the
-/// recursive (`field/**`) component. See [`Template::plan_query`].
+/// recursive (`field/**`) component. A date-bucket component whose field the
+/// query supplies as a **range** (`{ "$gte": …, "$lt": … }`) is neither exact
+/// nor wildcard: `rendered` is `None` and `bounds` carries the rendered
+/// lower/upper segment the walk must stay within (spec: "Range-pruned
+/// traversal"). See [`Template::plan_query`].
 #[derive(Clone, Debug)]
 pub struct QueryComponentPlan {
     pub rendered: Option<String>,
     pub recursive: bool,
+    pub bounds: Option<Bounds>,
+}
+
+/// The rendered lower / upper segment of a range-bounded bucket component.
+/// Segments are fixed-width and zero-padded, so plain string comparison of a
+/// child name against `lo` / `hi` orders the same as the dates do. Pruning
+/// is inclusive at the date level on both sides (a superset — the record
+/// filter applies the exact `$gt` / `$lt` cutoff), so `lo` and `hi` are
+/// always inclusive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Bounds {
+    pub lo: Option<String>,
+    pub hi: Option<String>,
+    /// The bucket token these bounds belong to — the walk tracks "still on
+    /// the lower bound's prefix" / "still on the upper bound's prefix" per
+    /// token, resetting when it crosses into a different token's segments.
+    pub token: usize,
+}
+
+/// The range operators a filter value may carry, in the `$`-keyed object form
+/// shared by every binding (`{ "$gte": a, "$lt": b }`). Shared with
+/// [`crate::query`] so the planner and the record-level filter agree on the
+/// vocabulary.
+pub const RANGE_OPERATORS: &[&str] = &["$gt", "$gte", "$lt", "$lte"];
+
+/// Is `map` a range object — a table whose keys are all range operators (at
+/// least one)? A table with *some* `$`-prefixed keys that doesn't satisfy this
+/// is malformed; the bindings reject it before it reaches the planner.
+pub fn is_range_table(map: &indexmap::IndexMap<String, Value>) -> bool {
+    !map.is_empty() && map.keys().all(|k| RANGE_OPERATORS.contains(&k.as_str()))
 }
 
 /// A parsed, compiled path template. Built once per template string (with its
@@ -177,7 +217,7 @@ impl Template {
             let piece = match part {
                 Part::Literal(text) => Some(text.clone()),
                 Part::Field { name, .. } => field_to_string(record, name),
-                Part::Bucket { field, unit } => match bucket_date(record, field) {
+                Part::Bucket { field, unit, .. } => match bucket_date(record, field) {
                     Ok(Some(date)) => Some(render_bucket_unit(&date, *unit)),
                     Ok(None) => None,
                     Err(detail) if strict => {
@@ -273,10 +313,23 @@ impl Template {
     ) -> Result<Vec<QueryComponentPlan>> {
         let mut out = Vec::with_capacity(self.components.len());
         for c in &self.components {
+            // A bucket component whose field the query carries as a range
+            // object plans to *bounds* (spec: "Range-pruned traversal") —
+            // checked before plain rendering, where a table-valued bucket
+            // field would merely degrade to un-renderable.
+            if let Some(bounds) = bucket_range_bounds(c, query) {
+                out.push(QueryComponentPlan {
+                    rendered: None,
+                    recursive: c.recursive,
+                    bounds: Some(bounds),
+                });
+                continue;
+            }
             let rendered = self.render_component(c, query, engine, false)?;
             out.push(QueryComponentPlan {
                 rendered,
                 recursive: c.recursive,
+                bounds: None,
             });
         }
         Ok(out)
@@ -386,16 +439,108 @@ fn bucket_date(record: &Value, field: &[String]) -> std::result::Result<Option<N
             None => return Ok(None),
         }
     }
-    let name = field.join(".");
-    match current {
-        Value::Datetime(dt) => date_from_toml_datetime(dt, &name).map(Some),
-        Value::String(s) => parse_iso_date(s, &name).map(Some),
+    value_to_bucket_date(current, &field.join(".")).map(Some)
+}
+
+/// Reduce one date-typed value (TOML datetime kinds or an accepted ISO 8601
+/// string) to the UTC calendar date a bucket partitions on. `name` labels the
+/// field in the error detail.
+fn value_to_bucket_date(value: &Value, name: &str) -> std::result::Result<NaiveDate, String> {
+    match value {
+        Value::Datetime(dt) => date_from_toml_datetime(dt, name),
+        Value::String(s) => parse_iso_date(s, name),
         other => Err(format!(
             "field \"{name}\" has type {} — date-bucket fields accept TOML \
              datetime/local-datetime/local-date values or ISO 8601 strings",
             other.type_name()
         )),
     }
+}
+
+/// Plan a range-bounded bucket component (spec: "Range-pruned traversal").
+/// `Some(bounds)` when `component` is exactly one bucket part AND the query
+/// carries that field as a range object whose bounds reduce to dates; `None`
+/// otherwise (the caller falls back to exact / wildcard planning — a range
+/// whose bound isn't a date widens, per the spec's widening rule).
+fn bucket_range_bounds(component: &Component, query: &Value) -> Option<Bounds> {
+    let [Part::Bucket { field, unit, token }] = component.parts.as_slice() else {
+        return None;
+    };
+    // Resolve the (possibly dotted) field to the range object.
+    let mut current = query;
+    for seg in field {
+        let Value::Table(map) = current else {
+            return None;
+        };
+        current = map.get(seg)?;
+    }
+    let Value::Table(ops) = current else {
+        return None;
+    };
+    if !is_range_table(ops) {
+        return None;
+    }
+    let name = field.join(".");
+    // Every bound present must reduce to a date, or the whole range widens.
+    // Both `$gt` and `$gte` keep the bound's own partition (inclusive at the
+    // date level); when both are present, the tighter (later) one wins —
+    // likewise the earlier of `$lt` / `$lte`.
+    let mut lo: Option<NaiveDate> = None;
+    let mut hi: Option<NaiveDate> = None;
+    for (op, value) in ops {
+        let date = value_to_bucket_date(value, &name).ok()?;
+        match op.as_str() {
+            "$gt" | "$gte" => lo = Some(lo.map_or(date, |d| d.max(date))),
+            _ => hi = Some(hi.map_or(date, |d| d.min(date))),
+        }
+    }
+    Some(Bounds {
+        lo: lo.map(|d| render_bucket_unit(&d, *unit)),
+        hi: hi.map(|d| render_bucket_unit(&d, *unit)),
+        token: *token,
+    })
+}
+
+/// A TOML datetime as a UTC-normalized naive datetime — the comparison key
+/// for chronological ordering (spec: `Sheet.query` "Range filter entries").
+/// An offset datetime converts to UTC; offset-less kinds are taken at face
+/// value; a local-date is its midnight; a local-time has no date and is
+/// incomparable (`None`).
+pub(crate) fn datetime_instant(dt: &Datetime) -> Option<chrono::NaiveDateTime> {
+    let Datetime(inner) = dt;
+    let date = inner.date?;
+    let date = NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)?;
+    let naive = match inner.time {
+        Some(t) => date.and_hms_nano_opt(
+            t.hour as u32,
+            t.minute as u32,
+            t.second as u32,
+            t.nanosecond,
+        )?,
+        None => date.and_hms_opt(0, 0, 0)?,
+    };
+    let offset_minutes: i64 = match inner.offset {
+        Some(toml::value::Offset::Z) | None => 0,
+        Some(toml::value::Offset::Custom { minutes }) => minutes as i64,
+    };
+    Some(naive - chrono::Duration::minutes(offset_minutes))
+}
+
+/// An ISO 8601 string (the same accepted shapes as bucket rendering:
+/// RFC 3339 with offset → UTC; offset-less datetime at face value; date-only
+/// → midnight) as the chronological comparison key, or `None` if it isn't
+/// one of those shapes.
+pub(crate) fn iso_instant(s: &str) -> Option<chrono::NaiveDateTime> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.naive_utc());
+    }
+    if let Ok(dt) = s.parse::<chrono::NaiveDateTime>() {
+        return Some(dt);
+    }
+    if let Ok(d) = s.parse::<NaiveDate>() {
+        return d.and_hms_opt(0, 0, 0);
+    }
+    None
 }
 
 /// The UTC calendar date of a TOML datetime. **UTC always**: an offset
@@ -544,6 +689,8 @@ fn parse_template(source: &str, engine: &mut Engine) -> Result<Vec<Component>> {
 
     let chars: Vec<char> = normalized.chars().collect();
     let mut segments: Vec<Vec<Part>> = vec![Vec::new()];
+    // Bucket tokens numbered in source order — see `Part::Bucket::token`.
+    let mut bucket_tokens: usize = 0;
     let mut pending_literal = String::new();
     let mut i = 0;
 
@@ -600,6 +747,8 @@ fn parse_template(source: &str, engine: &mut Engine) -> Result<Vec<Component>> {
                         ),
                     });
                 }
+                let token = bucket_tokens;
+                bucket_tokens += 1;
                 for (idx, unit) in units.iter().enumerate() {
                     if idx > 0 {
                         segments.push(Vec::new());
@@ -607,6 +756,7 @@ fn parse_template(source: &str, engine: &mut Engine) -> Result<Vec<Component>> {
                     segments.last_mut().unwrap().push(Part::Bucket {
                         field: field.clone(),
                         unit: *unit,
+                        token,
                     });
                 }
                 continue;
@@ -1090,5 +1240,137 @@ mod tests {
         let r2 = table(&[("slug", Value::String("b".into()))]);
         assert_eq!(t.render(&r1, &mut eng).unwrap(), "A");
         assert_eq!(t.render(&r2, &mut eng).unwrap(), "B");
+    }
+
+    // ── range-pruned traversal (spec: "Range-pruned traversal") ──────────────
+
+    fn range(pairs: &[(&str, Value)]) -> Value {
+        table(pairs)
+    }
+
+    #[test]
+    fn plan_query_bounds_a_bucket_component_from_a_range_object() {
+        let mut eng = Engine::new().unwrap();
+        let t = Template::compile("${{ d: YYYY/MM/DD }}/${{ slug }}", &mut eng).unwrap();
+
+        // Both bounds, year-spanning: each bucket segment renders its own
+        // lo/hi; the walk tightens per prefix (see query.rs tests).
+        let q = table(&[(
+            "d",
+            range(&[("$gte", dt("2025-11-20T00:00:00Z")), ("$lt", dt("2026-02-03T00:00:00Z"))]),
+        )]);
+        let plan = t.plan_query(&q, &mut eng).unwrap();
+        assert!(plan.iter().take(3).all(|p| p.rendered.is_none()));
+        let bounds: Vec<(Option<&str>, Option<&str>)> = plan
+            .iter()
+            .take(3)
+            .map(|p| {
+                let b = p.bounds.as_ref().unwrap();
+                (b.lo.as_deref(), b.hi.as_deref())
+            })
+            .collect();
+        assert_eq!(
+            bounds,
+            vec![
+                (Some("2025"), Some("2026")),
+                (Some("11"), Some("02")),
+                (Some("20"), Some("03")),
+            ]
+        );
+        assert!(plan.iter().take(3).all(|p| p.bounds.as_ref().unwrap().token == 0));
+        assert!(plan[3].bounds.is_none());
+
+        // One-sided: only that side is bounded.
+        let q = table(&[("d", range(&[("$gt", Value::String("2026-03-09".into()))]))]);
+        let plan = t.plan_query(&q, &mut eng).unwrap();
+        let b = plan[0].bounds.as_ref().unwrap();
+        assert_eq!((b.lo.as_deref(), b.hi.as_deref()), (Some("2026"), None));
+        let b = plan[2].bounds.as_ref().unwrap();
+        assert_eq!((b.lo.as_deref(), b.hi.as_deref()), (Some("09"), None));
+
+        // `$gt` and `$lt` are inclusive at the date level — same bounds as
+        // `$gte` / `$lte` (the superset rule).
+        let q = table(&[(
+            "d",
+            range(&[("$gt", dt("2026-03-09T23:59:59Z")), ("$lt", dt("2026-03-10T00:00:00Z"))]),
+        )]);
+        let plan = t.plan_query(&q, &mut eng).unwrap();
+        let b = plan[2].bounds.as_ref().unwrap();
+        assert_eq!((b.lo.as_deref(), b.hi.as_deref()), (Some("09"), Some("10")));
+
+        // Offset bounds normalize to UTC before bucketing.
+        let q = table(&[("d", range(&[("$gte", Value::String("2025-12-31T23:30:00-05:00".into()))]))]);
+        let plan = t.plan_query(&q, &mut eng).unwrap();
+        assert_eq!(plan[0].bounds.as_ref().unwrap().lo.as_deref(), Some("2026"));
+        assert_eq!(plan[2].bounds.as_ref().unwrap().lo.as_deref(), Some("01"));
+    }
+
+    #[test]
+    fn plan_query_iso_week_bounds_use_the_week_based_year() {
+        let mut eng = Engine::new().unwrap();
+        let t = Template::compile("${{ d: YYYY/WW }}/${{ slug }}", &mut eng).unwrap();
+        // 2027-01-01 is ISO 2026-W53; 2024-12-30 is ISO 2025-W01.
+        let q = table(&[(
+            "d",
+            range(&[("$gte", Value::String("2024-12-30".into())), ("$lte", Value::String("2027-01-01".into()))]),
+        )]);
+        let plan = t.plan_query(&q, &mut eng).unwrap();
+        let b0 = plan[0].bounds.as_ref().unwrap();
+        let b1 = plan[1].bounds.as_ref().unwrap();
+        assert_eq!((b0.lo.as_deref(), b0.hi.as_deref()), (Some("2025"), Some("2026")));
+        assert_eq!((b1.lo.as_deref(), b1.hi.as_deref()), (Some("01"), Some("53")));
+    }
+
+    #[test]
+    fn plan_query_range_widens_when_a_bound_is_not_a_date_or_the_component_is_not_a_bucket() {
+        let mut eng = Engine::new().unwrap();
+        let t = Template::compile("${{ d: YYYY/MM }}/${{ slug }}", &mut eng).unwrap();
+
+        // A non-date bound → the whole range widens to wildcards.
+        for bad in [Value::Integer(2026), Value::String("not-a-date".into())] {
+            let q = table(&[("d", range(&[("$gte", bad), ("$lt", dt("2026-04-01T00:00:00Z"))]))]);
+            let plan = t.plan_query(&q, &mut eng).unwrap();
+            assert!(plan[0].bounds.is_none() && plan[0].rendered.is_none());
+            assert!(plan[1].bounds.is_none() && plan[1].rendered.is_none());
+        }
+
+        // A range on a plain field component is opaque: wildcard, no bounds.
+        let t2 = Template::compile("${{ year }}/${{ slug }}", &mut eng).unwrap();
+        let q = table(&[("year", range(&[("$gte", Value::String("2025".into()))]))]);
+        let plan = t2.plan_query(&q, &mut eng).unwrap();
+        assert!(plan[0].bounds.is_none() && plan[0].rendered.is_none());
+
+        // An equality value on the bucket field still plans to an exact
+        // segment, not bounds.
+        let q = table(&[("d", dt("2026-03-09T12:00:00Z"))]);
+        let plan = t.plan_query(&q, &mut eng).unwrap();
+        assert!(plan[0].bounds.is_none());
+        assert_eq!(plan[0].rendered.as_deref(), Some("2026"));
+    }
+
+    #[test]
+    fn distinct_bucket_tokens_get_distinct_token_ids() {
+        let mut eng = Engine::new().unwrap();
+        let t = Template::compile("${{ a: YYYY }}/${{ b: YYYY/MM }}/${{ slug }}", &mut eng).unwrap();
+        let q = table(&[
+            ("a", range(&[("$gte", Value::String("2020-01-01".into()))])),
+            ("b", range(&[("$lt", Value::String("2026-06-01".into()))])),
+        ]);
+        let plan = t.plan_query(&q, &mut eng).unwrap();
+        assert_eq!(plan[0].bounds.as_ref().unwrap().token, 0);
+        assert_eq!(plan[1].bounds.as_ref().unwrap().token, 1);
+        assert_eq!(plan[2].bounds.as_ref().unwrap().token, 1);
+    }
+
+    #[test]
+    fn instants_normalize_offsets_and_dates_to_utc_midnight() {
+        let a = datetime_instant(&"2025-12-31T23:30:00-05:00".parse::<Datetime>().unwrap()).unwrap();
+        assert_eq!(a.to_string(), "2026-01-01 04:30:00");
+        let d = datetime_instant(&"2026-03-09".parse::<Datetime>().unwrap()).unwrap();
+        assert_eq!(d.to_string(), "2026-03-09 00:00:00");
+        assert!(datetime_instant(&"07:32:00".parse::<Datetime>().unwrap()).is_none());
+        assert_eq!(iso_instant("2026-03-09").unwrap().to_string(), "2026-03-09 00:00:00");
+        assert_eq!(iso_instant("2026-03-09T01:00:00+01:00").unwrap().to_string(), "2026-03-09 00:00:00");
+        assert!(iso_instant("yesterday").is_none());
     }
 }
