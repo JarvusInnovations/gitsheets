@@ -161,6 +161,26 @@ await store.users.queryAll({
 });
 ```
 
+## Range filters
+
+Given a `User` that also declares `createdAt: z.date()` and `age: z.number()`, a field
+accepts a `{ $gt, $gte, $lt, $lte }` object; the bound type follows the
+field, and a `Date` field also admits ISO 8601 string bounds:
+
+```typescript
+await store.users.queryAll({
+  createdAt: { $gte: '2026-01-01', $lt: new Date('2026-04-01T00:00:00Z') },  // ok: Date field, string or Date bound
+  age: { $gte: 18 },                                                          // ok: number bound
+});
+
+await store.users.queryAll({ age: { $gte: '18' } });                          // ← TS error: number field, string bound
+```
+
+On a sheet partitioned by a date bucket (`path = '${{ createdAt: YYYY/MM }}/${{ slug }}'`)
+the range prunes the tree walk to the partitions inside the bounds; on any
+other field it filters record-level. See
+[path templates](../path-templates.md#range-queries-on-date-buckets).
+
 ## Function predicates
 
 For sub-queries the path-template can't prune:
