@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: [date-bucket-path-keys]
 specs:
   - specs/api/sheet.md
@@ -7,6 +7,7 @@ specs:
   - specs/api/cli.md
   - specs/deferred.md
 issues: [291]
+pr: 292
 ---
 
 # Plan: range-pruned queries on date-bucket path keys
@@ -67,8 +68,8 @@ Out of scope:
 ## Approach
 
 1. **Core filter** (`rust/gitsheets-core/src/query.rs`): add
-   `FilterPred::Range(Range)` with `lower: Option<(Value, bool)>` /
-   `upper: Option<(Value, bool)>` (value + inclusive flag). `matches` compares
+   `FilterPred::Range(Range)` with `lower: Option<Bound>` /
+   `upper: Option<Bound>` (value + inclusive flag). `matches` compares
    via a `compare_values(field, bound) -> Option<Ordering>`: Integer/Float
    numeric, String/String lexicographic, Datetime/Datetime chronological
    (both reduced to a UTC `NaiveDateTime`; local-date → midnight; local-time
@@ -77,18 +78,18 @@ Out of scope:
    field — the single wire form shared with `query_candidate_paths`' `query`
    argument.
 2. **Planner** (`path_template.rs`): `QueryComponentPlan` grows a
-   `bounds: Option<Bounds { lo: Option<String>, hi: Option<String>, group: usize }>`
+   `bounds: Option<Bounds { lo: Option<String>, hi: Option<String>, token: usize }>`
    alongside `rendered`. In `plan_query`, a component that is exactly one
    `Part::Bucket` whose field maps to a `$`-keyed table renders each bound's
-   date (via the existing `bucket_date` on a one-field synthetic record) with
-   `render_bucket_unit`. `group` is the bucket token's index so the walk can
+   date (via the existing bucket date reduction) with `render_bucket_unit`.
+   `token` is the bucket token's index (assigned at parse) so the walk can
    reset its boundary tracking between distinct bucket tokens.
-3. **Walk** (`walk_query`): carry `(group, on_lo, on_hi)`. At a bounded
-   intermediate: list subtrees; skip `name < lo` while `on_lo`, skip
-   `name > hi` while `on_hi`; recurse with `on_lo && name == lo`,
+3. **Walk** (`walk_query`): carry a `BoundTrack { token, on_lo, on_hi }`. At
+   a bounded intermediate: list subtrees; skip `name < lo` while `on_lo`,
+   skip `name > hi` while `on_hi`; recurse with `on_lo && name == lo`,
    `on_hi && name == hi`. At a bounded leaf: the same test over the bare
    record names. Exact / wildcard components pass the tracking through
-   unchanged; a component from a different group resets it.
+   unchanged; a component from a different token resets it.
 4. **Bindings**: `parse_filter_pred` in both napi and pyo3 checks for any
    `$`-prefixed key first — `$pred` → predicate (unchanged), range keys →
    `Range`, anything else / a mix → `ConfigInvalid` surfaced as `TypeError`
@@ -96,47 +97,47 @@ Out of scope:
    the candidates path.
 5. **Host**: `QueryFilter<T>` value union gains `RangeFilter<T[K]>`;
    `queryMatches` evaluates range objects with the same kind rules (Date vs
-   ISO string via the existing bucket parse); `stripFilterFunctions` passes
-   range objects through verbatim. Reject malformed `$` objects at query start
-   with `TypeError`.
+   ISO string via a regex-based UTC parse, never `Date.parse` on offset-less
+   input); `stripFilterFunctions` passes range objects through verbatim.
+   Reject malformed `$` objects at query start with `TypeError`.
 6. **CLI**: `--filter` coerce parses `>=`, `<=`, `>`, `<`, `=` longest-first;
    comparison clauses accumulate into one range object per field.
-7. **axi**: in `queryCommand`, derive the bucket fields from `config.path`
-   (the `${{ field: YYYY… }}` grammar), translate ordered `--filter` clauses on
-   those fields into a core range filter passed to `queryAll`, keep
-   `buildPredicate` as the authoritative post-filter.
+7. **axi**: in `query` / `count` / `distinct`, derive the bucket fields from
+   `config.path` (the `${{ field: YYYY… }}` grammar), translate ordered
+   `--filter` clauses on those fields into a core range filter passed to
+   `queryAll`, keep `buildPredicate` as the authoritative post-filter.
 8. **Docs** as listed in Scope.
 
 ## Validation
 
-- [ ] `cargo test` (core): range `matches` across kinds (int/float, string,
+- [x] `cargo test` (core): range `matches` across kinds (int/float, string,
       datetime/datetime, datetime/ISO-string, mismatched → no match); planner
       renders lo/hi segments for every bucket format incl. ISO-week bounds;
       candidate walk on a year-spanning range visits exactly the in-range
       partitions; one-sided ranges; superset rule (`$lt` midnight still visits
       that day's partition, record filter excludes it); wrong-typed bound
       widens to wildcard; non-bucket range does not prune.
-- [ ] `cargo clippy -D warnings` clean.
-- [ ] napi `node --test`: `recordQueryCandidates` with a range object returns
+- [x] `cargo clippy -D warnings` clean (whole workspace).
+- [x] napi `node --test`: `recordQueryCandidates` with a range object returns
       the pinned bounded set; `recordQuery` end-to-end applies the exact
       cutoff; malformed `$` object rejected.
-- [ ] pytest: same cases through the Python binding (dict form), byte-identical
-      results to the napi run (cross-binding parity).
-- [ ] vitest (`gitsheets`): end-to-end range query on a bucketed sheet (TOML
+- [x] pytest: same cases through the Python binding (dict form), byte-identical
+      results to the napi run (cross-binding parity suite green).
+- [x] vitest (`gitsheets`): end-to-end range query on a bucketed sheet (TOML
       and markdown) returns the right records; `count` honors a range; range
       on a tx-bound sheet applies host-side; `QueryFilter` type accepts the
       range object; malformed `$` object throws `TypeError`.
-- [ ] vitest (`gitsheets`, CLI): `git sheet query --filter 'f>=v'` builds a
+- [x] vitest (`gitsheets`, CLI): `git sheet query --filter 'f>=v'` builds a
       range entry.
-- [ ] vitest (`gitsheets-axi`): ordered clauses on a bucket field reach the
+- [x] vitest (`gitsheets-axi`): ordered clauses on a bucket field reach the
       core filter; results identical to the post-filter-only path.
-- [ ] `npm run type-check` clean.
-- [ ] Docs updated (`path-templates.md`, `cli.md`, `axi.md`, `api.md`).
+- [x] `npm run type-check` clean.
+- [x] Docs updated (`path-templates.md`, `cli.md`, `axi.md`, `api.md`).
 
 ## Risks / unknowns
 
 - **Boundary tracking across templates with multiple bucket tokens** — the
-  `group` reset exists for this; covered by a two-bucket test.
+  `token` reset exists for this; covered by a two-bucket test.
 - **ISO-week bounds** — a range's lower bound in calendar terms maps to an
   ISO week-year/week pair that can precede the calendar year (2027-01-01 →
   `2026/53`); rendering both bounds through `iso_week()` keeps the scan
@@ -150,8 +151,32 @@ Out of scope:
 
 ## Notes
 
-(Populated at closeout.)
+- **Offset-less datetime bounds are not pushed down by axi.** `Date.parse`
+  reads `2026-01-01T10:00:00` in the host timezone while the core reads it
+  as UTC, so a pushed `<` bound could cut records the host predicate keeps.
+  Date-only and offset/`Z`-qualified bounds agree on both sides and are the
+  only ones pushed (`PUSHDOWN_BOUND_RE` in `packages/gitsheets-axi/src/util/filter.ts`).
+- **Schema-less sheets store ISO strings, not datetimes.** A JSON upsert of
+  `"2025-11-20T00:00:00Z"` into a sheet with no schema lands as a TOML
+  string, so a range on it compares lexicographically on both the core and
+  axi sides (`"…T00:00:00Z" > "2025-11-20"`). Consistent, but a reader
+  expecting instant semantics should give the field a date-time schema.
+  Bucket *pruning* is unaffected (buckets accept ISO strings).
+- **`$gt`/`$gte` on one side (or `$lt`/`$lte`) is rejected**, not merged —
+  one bound per side keeps the wire form unambiguous across bindings.
+- The host `Template.queryTree` export stays equality-only; the napi parity
+  suite pins range expectations directly against the core instead of the JS
+  reference transcription (`_ref-query.mjs` is unchanged).
+- **axi tests on devbox**: four pre-existing export tests fail there because
+  `/tmp/gitsheets-axi` is owned by another user (EACCES); green with
+  `TMPDIR` overridden. Environmental, not a code issue.
+- Workspace vitest for `gitsheets-axi` resolves `gitsheets` through
+  `packages/gitsheets/dist`, so `npm run build` is required after library
+  changes before the axi suite sees them.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Tracked as: range pruning on zero-padded non-bucket path keys (e.g. a
+  `${{ year }}` field holding a four-digit string) — spec'd as widening for
+  now; worth its own plan if a consumer shows a partitioned sheet keyed that
+  way. Noted in `specs/behaviors/path-templates.md` "Range filter entries".
