@@ -35,7 +35,7 @@ import type {
   OpenRepoOptions, OpenSheetOptions, OpenSheetsOptions,
   TransactionOptions, TransactionResult, TransactionHandler, Author,
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions, WillChangeResult,
-  SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, QueryOptions,
+  SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, RangeFilter, QueryOptions,
   DiffStatus, DiffOptions, DiffChange,
   AttachmentBlobHandle, AttachmentEntry,
   Format, FormatConfig,

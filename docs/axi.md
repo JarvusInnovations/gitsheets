@@ -14,7 +14,7 @@ gitsheets-axi              # session-aware home view in a gitsheets-managed repo
 The two packages are intentionally separate because the AXI contract disagrees with a human-CLI contract on too many defaults to coexist in one binary without conditional logic at every output site.
 
 | Scenario | Use |
-|---|---|
+| --- | --- |
 | Agent reads/writes records via shell execution | `gitsheets-axi` |
 | Writing TypeScript that imports the library | [`gitsheets`](api.md) library |
 | Authoring `.gitsheets/<name>.toml` configs | Either (configs are shared) |
@@ -29,7 +29,7 @@ Sheet configs are the shared substrate — both tools read the same `.gitsheets/
 Every difference is in service of agents talking to the CLI through shell execution rather than humans driving it interactively.
 
 | Convention | `gitsheets` (human) | `gitsheets-axi` (agent) |
-|---|---|---|
+| --- | --- | --- |
 | Errors | stderr, non-zero exit | **stdout** (agents read it), non-zero exit |
 | `$ <bin>` with no args | usage / help | **live content** (sheets + counts + suggested actions) |
 | Duplicate / no-op mutation | throws `NotFoundError` / similar | **idempotent**, exit 0 with `result: "no-op"` |
@@ -113,6 +113,14 @@ gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 ```
 
 Every command supports `--help` with its specific flags and 2-3 examples.
+
+`query`, `count`, and `distinct` share a `--filter` mini-DSL (`k=v`, `k!=v`,
+`k<v`, `k>v`, `k<=v`, `k>=v`, `k~regex`, `k in (a,b)`, `k:present`,
+`k:empty`). Ordered comparisons on a **date-bucket path field** (a sheet
+whose `path` uses `${{ field: YYYY/MM/DD }}` or another bucket format) with a
+date-only or offset-qualified ISO bound are pushed down to the core, which
+prunes the tree walk to the bounded span of partitions instead of scanning
+every record; results are identical, just faster on large partitioned sheets.
 
 ## Errors
 
