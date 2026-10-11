@@ -187,4 +187,37 @@ describe('CLI: upsert + query + read', () => {
       expect(out).not.toContain('"slug":"b"');
     }
   });
+
+  it('builds a range entry from --filter comparison clauses', async () => {
+    const fixture = await makeRepoWithUsers();
+    captureStdout().restore();
+    await main([
+      '--git-dir',
+      fixture.gitDir,
+      '--message',
+      'seed',
+      'upsert',
+      'users',
+      '[{"slug":"a","joined":"2026-01-10"},{"slug":"b","joined":"2026-03-10"},{"slug":"c","joined":"2026-05-10"}]',
+    ]);
+
+    const cap = captureStdout();
+    try {
+      await main([
+        '--git-dir',
+        fixture.gitDir,
+        'query',
+        'users',
+        '--filter',
+        'joined>=2026-02-01',
+        '--filter',
+        'joined<2026-05-01',
+      ]);
+    } finally {
+      const out = cap.restore();
+      expect(out).toContain('"slug":"b"');
+      expect(out).not.toContain('"slug":"a"');
+      expect(out).not.toContain('"slug":"c"');
+    }
+  });
 });
