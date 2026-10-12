@@ -94,7 +94,7 @@ List records.
 **Default schema is format-aware:**
 
 - **TOML sheets** — path-template fields + first scalar schema properties, capped at 4 columns.
-- **Markdown/MDX sheets** — path-template fields + `title` (if in schema) + `body_size` (byte count). Body content itself never appears in lists — that belongs in `read`.
+- **Markdown/MDX sheets** — path-template fields + `title` (if in schema) + `body_size` (byte count). Body content itself never appears in lists — that belongs in `read`. Reads are **body-less by default** on these sheets (`query` / `count` / `distinct` parse only frontmatter) unless a `--filter` targets the body field, `--fields` names it, or an export flag is set — so listing a few thousand markdown records is a sub-second read, not a scan of every body.
 
 The summary line `count: N of M total` is always present so agents know when results are paginated.
 
@@ -198,7 +198,7 @@ RFC 7396 JSON Merge Patch — update fields without replacing the whole record. 
 gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane O. Doe"}'
 ```
 
-**Bulk — this is the classification primitive.** Drop the `<query-json>` positional and pass an array / NDJSON of **combined** records. In each record the sheet's **path-template fields** form the query (which record to patch); the **remaining fields** are the merge patch. Every patch runs in **one transaction → one commit**:
+**Bulk — this is the classification primitive.** Drop the `<query-json>` positional and pass an array / NDJSON of **combined** records. In each record the sheet's **path-template fields** form the query (which record to patch); the **remaining fields** are the merge patch. Every patch runs in **one transaction → one commit** — the per-row preflight (resolve + will-change) runs *inside* that same transaction as pruned reads of the private tree, so a 3,000-row batch costs seconds, not a sheet scan per row; batches over 200 rows print `preflight: N/total` / `apply: N/total` progress on stderr, and `--dry-run` discards the transaction without committing:
 
 ```bash
 # classify many repos at once — one commit, merge-not-replace
