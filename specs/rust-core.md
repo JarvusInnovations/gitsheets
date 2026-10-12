@@ -48,7 +48,20 @@ Owns everything bytes-determining or consistency-critical:
 - **Path-template rendering** (record → path), including partition derivations.
 - **Persisted-shape validation** (JSON Schema).
 - **Definition-embedded logic execution** — see [Embedded code](#embedded-code-execution).
-- Query traversal + filtering; secondary indexing.
+- Query traversal + filtering; secondary indexing. The query is **format-aware
+  and runs over both a committed ref and a transaction's private tree**: the
+  core walks (pruning by the path template), reads each candidate blob through
+  the object database, and decodes it with the format codec (TOML, or markdown
+  frontmatter with or without the body — the lazy-body switch). A binding
+  never fetches record bytes itself.
+- **Blob reads.** Reading a blob by `ref:path` (sheet configs, lazy-body
+  hydration) or by object hash (attachment content, diff-side records) is a
+  core primitive over gitoxide. The binding spawns no `git` process on any
+  record, config, or attachment read path — subprocesses are reserved for the
+  few porcelain operations the core does not own (push, `diff-tree`
+  enumeration, `ls-tree` attachment listing, working-tree materialization,
+  repository discovery) and for `Repository.readBlobStream`, whose contract is
+  a true streaming read that never buffers the blob.
 - Diff + patch semantics (RFC 7396 / RFC 6902).
 - The `Sheet` / `Transaction` / `Store` state machine.
 

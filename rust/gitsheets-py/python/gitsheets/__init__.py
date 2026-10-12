@@ -60,6 +60,9 @@ apply_merge_patch = _core.apply_merge_patch
 diff_records = _core.diff_records
 record_query = _core.record_query
 record_query_candidates = _core.record_query_candidates
+tree_read_blob = _core.tree_read_blob
+tree_entry_hash = _core.tree_entry_hash
+blob_read = _core.blob_read
 template_field_names = _core.template_field_names
 record_index_unique = _core.record_index_unique
 record_index_multi = _core.record_index_multi
@@ -105,6 +108,9 @@ __all__ = [
     "diff_records",
     "record_query",
     "record_query_candidates",
+    "tree_read_blob",
+    "tree_entry_hash",
+    "blob_read",
     "template_field_names",
     "record_index_unique",
     "record_index_multi",

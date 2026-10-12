@@ -239,8 +239,37 @@ export declare function substrateReset(): void
  * is applied to each candidate; a range on a date-bucket path field prunes
  * the walk to the bounded span of partitions. Batch-first: the whole query
  * crosses the FFI once.
+ *
+ * Format-aware: pass `bodyField` (and optionally `titleField`) for a
+ * markdown/mdx sheet (the kind follows `extension`: `.mdx` → mdx, else
+ * markdown) and the core decodes each candidate through the frontmatter
+ * codec — `withBody: false` is the lazy-body switch (default `true`). Without
+ * `bodyField` records are canonical TOML. The binding never fetches record
+ * bytes itself (spec: `rust-core.md` "Query traversal + filtering").
  */
-export declare function recordQuery(gitDir: string, treeRef: string, base: string, template: string, filter: object, extension?: string | undefined | null): Array<JsRecordEntry>
+export declare function recordQuery(gitDir: string, treeRef: string, base: string, template: string, filter: object, extension?: string | undefined | null, bodyField?: string | undefined | null, titleField?: string | undefined | null, withBody?: boolean | undefined | null): Array<JsRecordEntry>
+/**
+ * A blob read by `treeRef:path` — the bytes plus the blob's object id, or
+ * `null` when nothing (or a subtree) lives at `path`. Backs sheet-config
+ * loading and lazy-body hydration without a `git cat-file` subprocess
+ * (spec: `rust-core.md` "Blob reads").
+ */
+export declare function treeReadBlob(gitDir: string, treeRef: string, path: string): JsBlobEntry | null
+/**
+ * The object id of the blob at `treeRef:path`, or `null` when absent or not
+ * a blob. The hash-only lookup (attachment handles, cache keys).
+ */
+export declare function treeEntryHash(gitDir: string, treeRef: string, path: string): string | null
+/**
+ * A blob's bytes by object id, or `null` when no object has that id. Backs
+ * attachment content reads and diff-side record reads.
+ */
+export declare function blobRead(gitDir: string, hash: string): Buffer | null
+/** A blob read by `treeRef:path`: its object id and bytes. */
+export interface JsBlobEntry {
+  hash: string
+  content: Buffer
+}
 /**
  * The pruning candidate set alone (no content filter applied) — the direct
  * parity target for the host `Template.queryTree`. `query` is a (partial)
@@ -513,6 +542,15 @@ export declare class CoreTransaction {
    * Read-only — does not mark the transaction mutated.
    */
   list(name: string, withBody: boolean): Array<JsRecordEntry>
+  /**
+   * Query the sheet's records in the transaction's private tree — pruned by
+   * the path template exactly like a committed-ref query, decoded through
+   * the format codec, `withBody` the lazy-body switch (spec:
+   * `api/transaction.md` "Read isolation"). The filter takes the same forms
+   * as `recordQuery` (equality / nested / `$pred` / ranges). Read-only —
+   * does not mark the transaction mutated.
+   */
+  query(name: string, filter: object, withBody: boolean): Array<JsRecordEntry>
   /** The parent commit hash captured at open (null on a fresh repo). */
   parentCommitHash(): string | null
   /**

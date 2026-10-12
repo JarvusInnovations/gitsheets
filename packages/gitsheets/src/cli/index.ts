@@ -18,6 +18,7 @@ import {
   TransactionError,
   ValidationError,
 } from '../errors.js';
+import { readTreeBlobText } from '../core.js';
 import { openRepo } from '../repository.js';
 import type { Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
@@ -470,23 +471,20 @@ async function runRead(argv: ReadArgs): Promise<void> {
  * Read the raw TOML bytes of a sheet config at HEAD (or whichever ref the
  * caller's `--ref` points to). Returns the file's text content.
  *
- * Uses `git cat-file blob` rather than the parsed Sheet config so the same
- * helper supports both v1.0-shaped and pre-v1.0 (`[gitsheet.fields]`) configs
- * — `migrate-config` operates on the latter.
+ * Reads the raw blob through the core rather than the parsed Sheet config so
+ * the same helper supports both v1.0-shaped and pre-v1.0
+ * (`[gitsheet.fields]`) configs — `migrate-config` operates on the latter.
  */
 async function readSheetConfigText(
   gitDir: string,
   ref: string,
   configPath: string,
 ): Promise<string> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const ex = promisify(execFile);
-  const { stdout } = await ex('git', ['cat-file', 'blob', `${ref}:${configPath}`], {
-    cwd: gitDir,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  return stdout;
+  const text = readTreeBlobText(gitDir, ref, configPath);
+  if (text === null) {
+    throw new ConfigError('config_missing', `sheet config not found at ${ref}:${configPath}`);
+  }
+  return text;
 }
 
 /** Update one of a record-like field's observed type info during inference. */

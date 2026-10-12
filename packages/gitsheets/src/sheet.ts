@@ -1,14 +1,22 @@
 // Sheet — typed handle to one declared sheet in a Repository.
 // See specs/api/sheet.md and specs/concepts.md.
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { promisify } from 'node:util';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
-import { addon, callCore, CoreTransaction } from './core.js';
+import {
+  addon,
+  callCore,
+  CoreTransaction,
+  readBlobBytes,
+  readTreeBlob,
+  readTreeBlobText,
+  treeEntryHash,
+} from './core.js';
 import type { ConformanceReport, OpenSheetContractOptions } from './contracts.js';
 import {
   ConfigError,
@@ -311,31 +319,9 @@ function stripFilterFunctions(filter: RecordLike): RecordLike {
  * where the core's TOML-only ref reads can't parse the record. Returns `null`
  * when the object doesn't exist.
  */
-function readTreeBlobText(gitDir: string, treeRef: string, path: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const child = execFile(
-      'git',
-      ['cat-file', 'blob', `${treeRef}:${path}`],
-      { cwd: gitDir, maxBuffer: 1024 * 1024 * 1024 },
-      (err, stdout) => {
-        if (err) return resolve(null);
-        resolve(String(stdout));
-      },
-    );
-    child.stdin?.end();
-  });
-}
-
-/** Resolve `<rev>` to its object hash via `git rev-parse`; `null` when absent. */
-async function revParseObject(gitDir: string, rev: string): Promise<string | null> {
-  try {
-    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', rev], { cwd: gitDir });
-    const hash = stdout.trim();
-    return hash || null;
-  } catch {
-    return null;
-  }
-}
+// Blob reads (`readTreeBlob` / `readTreeBlobText` / `treeEntryHash` /
+// `readBlobBytes`) come from ./core.ts — the core reads the object database
+// directly, so none of this file's read paths spawn `git cat-file`.
 
 /**
  * The immediate blob children (`name → { hash, mode }`) of a tree path via
@@ -381,17 +367,14 @@ async function loadConfig(
   treeRef: string,
   configPath: string,
 ): Promise<SheetConfig> {
-  const hash = await revParseObject(gitDir, `${treeRef}:${configPath}`);
-  if (hash === null) {
+  const entry = await readTreeBlob(gitDir, treeRef, configPath);
+  if (entry === null) {
     throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
   }
-  const cached = CONFIG_CACHE.get(hash);
+  const cached = CONFIG_CACHE.get(entry.hash);
   if (cached) return cached;
-
-  const tomlText = await readTreeBlobText(gitDir, treeRef, configPath);
-  if (tomlText === null) {
-    throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
-  }
+  const hash = entry.hash;
+  const tomlText = entry.content.toString('utf8');
   const raw = parseConfigToml(tomlText, configPath);
   const gitsheet = raw['gitsheet'];
   if (!gitsheet || typeof gitsheet !== 'object') {
@@ -646,27 +629,27 @@ function inferMimeType(filename: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
+/**
+ * A handle over an attachment blob, read through the core by object id (no
+ * `git cat-file` subprocess). `stream()` yields the buffered bytes as a
+ * single-chunk `Readable` — the content is held in memory once, which fits
+ * the human-scale premise; it is not a streaming read of a huge object.
+ */
 function makeAttachmentBlobHandle(gitDir: string, hash: string): AttachmentBlobHandle {
+  const load = (): Buffer => {
+    const bytes = readBlobBytes(gitDir, hash);
+    if (bytes === null) {
+      throw new NotFoundError('record_not_found', `no blob object ${hash}`);
+    }
+    return bytes;
+  };
   return {
     hash,
     async read(): Promise<Buffer> {
-      return new Promise((resolve, reject) => {
-        const child = execFile(
-          'git',
-          ['cat-file', 'blob', hash],
-          { cwd: gitDir, encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024 },
-          (err, stdout) => {
-            if (err) return reject(err);
-            resolve(stdout as Buffer);
-          },
-        );
-        child.stdin?.end();
-      });
+      return load();
     },
     stream(): Readable {
-      const child = spawn('git', ['cat-file', 'blob', hash], { cwd: gitDir });
-      child.stdin.end();
-      return child.stdout;
+      return Readable.from([load()]);
     },
   };
 }
@@ -794,11 +777,9 @@ async function readBlobAsRecord(
   formatConfig: FormatConfig,
 ): Promise<RecordLike | null> {
   try {
-    const { stdout } = await exec('git', ['cat-file', 'blob', hash], {
-      cwd: gitDir,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return format.parse(stdout, formatConfig);
+    const bytes = readBlobBytes(gitDir, hash);
+    if (bytes === null) return null;
+    return format.parse(bytes.toString('utf8'), formatConfig);
   } catch {
     // Blob unreadable or unparsable — caller treats this as "no record".
     return null;
@@ -1144,39 +1125,34 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     let rows: Array<{ path: string; record: RecordLike }>;
     if (this.#transaction !== undefined) {
-      // Tx-bound: read the in-progress private tree through the core (format-
-      // aware). The core lists every record under the sheet base; the full
-      // filter (including functions) is applied host-side below.
+      // Tx-bound: query the in-progress private tree through the core —
+      // pruned by the path template and format-aware, exactly like the
+      // committed-ref path (specs/api/transaction.md "Read isolation"). The
+      // full filter (including functions) is re-applied host-side below.
       this.#ensureCoreSheetOpened();
       rows = callCore(() =>
-        this.#transaction!.coreTx.list(this.#name, withBody),
+        this.#transaction!.coreTx.query(this.#name, coreFilter, withBody),
       ) as Array<{ path: string; record: RecordLike }>;
     } else {
       // Non-tx: resolve against the open-time snapshot ref.
       const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
       const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
-      if (config.format.type === 'toml') {
-        // TOML records: the core reads + parses + literal-filters in one call.
-        rows = callCore(() =>
-          addon.recordQuery(gitDir, treeRef, base, config.path, coreFilter, format.extension),
-        ) as Array<{ path: string; record: RecordLike }>;
-      } else {
-        // Format-aware (markdown/mdx): the core's ref reads are TOML-only, so
-        // use it only for the (format-agnostic) pruning walk, then read + decode
-        // each candidate blob through the host format codec (itself core-backed).
-        const candidates = callCore(() =>
-          addon.recordQueryCandidates(gitDir, treeRef, base, config.path, coreFilter, format.extension),
-        );
-        rows = [];
-        for (const p of candidates) {
-          const text = await readTreeBlobText(gitDir, treeRef, joinTreePath(base, `${p}${format.extension}`));
-          if (text === null) continue;
-          const record = withBody
-            ? format.parse(text, config.format)
-            : format.parseHeaderOnly(text, config.format);
-          rows.push({ path: p, record });
-        }
-      }
+      // The core prunes, reads, decodes (format-aware: TOML, or markdown
+      // frontmatter with/without the body), and literal-filters in one call —
+      // no per-candidate blob fetch host-side (specs/rust-core.md).
+      rows = callCore(() =>
+        addon.recordQuery(
+          gitDir,
+          treeRef,
+          base,
+          config.path,
+          coreFilter,
+          format.extension,
+          bodyField ?? null,
+          config.format.title ?? null,
+          withBody,
+        ),
+      ) as Array<{ path: string; record: RecordLike }>;
     }
 
     for (const { path: recordPath, record } of rows) {
@@ -1699,7 +1675,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
       return hash === null ? null : makeBlobHandle(this.#gitDir, hash, '100644');
     }
     const full = joinTreePath(this.#dataBase, this.#effectiveRoot(config), recordPath, name);
-    const hash = await revParseObject(this.#gitDir, `${this.#configTreeRef()}:${full}`);
+    const hash = await treeEntryHash(this.#gitDir, this.#configTreeRef(), full);
     if (hash === null) return null;
     return makeBlobHandle(this.#gitDir, hash, '100644');
   }

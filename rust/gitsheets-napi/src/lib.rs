@@ -1013,7 +1013,15 @@ fn parse_filter_pred(env: &Env, val: JsUnknown, engine: &mut Engine) -> Result<F
 /// is applied to each candidate; a range on a date-bucket path field prunes
 /// the walk to the bounded span of partitions. Batch-first: the whole query
 /// crosses the FFI once.
+///
+/// Format-aware: pass `bodyField` (and optionally `titleField`) for a
+/// markdown/mdx sheet (the kind follows `extension`: `.mdx` → mdx, else
+/// markdown) and the core decodes each candidate through the frontmatter
+/// codec — `withBody: false` is the lazy-body switch (default `true`). Without
+/// `bodyField` records are canonical TOML. The binding never fetches record
+/// bytes itself (spec: `rust-core.md` "Query traversal + filtering").
 #[napi]
+#[allow(clippy::too_many_arguments)]
 pub fn record_query(
     env: Env,
     git_dir: String,
@@ -1022,6 +1030,9 @@ pub fn record_query(
     template: String,
     filter: JsObject,
     extension: Option<String>,
+    body_field: Option<String>,
+    title_field: Option<String>,
+    with_body: Option<bool>,
 ) -> Result<Vec<JsRecordEntry>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
@@ -1029,7 +1040,24 @@ pub fn record_query(
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
     let parsed = parse_filter(&env, &filter, &mut engine)?;
-    match query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext) {
+    let rows = match body_field {
+        Some(body) => {
+            let format = content_format(&ext, body, title_field);
+            query::query_records_format(
+                &repo,
+                &mut tree,
+                &base,
+                &compiled,
+                &parsed,
+                &mut engine,
+                &ext,
+                &format,
+                with_body.unwrap_or(true),
+            )
+        }
+        None => query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
+    };
+    match rows {
         Ok(rows) => Ok(rows
             .into_iter()
             .map(|(path, record)| JsRecordEntry {
@@ -1039,6 +1067,65 @@ pub fn record_query(
             .collect()),
         Err(err) => Err(raise_core_error(&env, &err)),
     }
+}
+
+/// The content-typed `FormatConfig` for a read: markdown or mdx by extension.
+/// `normalize` only matters on serialize; reads never consult it.
+fn content_format(extension: &str, body_field: String, title_field: Option<String>) -> FormatConfig {
+    FormatConfig {
+        kind: if extension == ".mdx" { FormatKind::Mdx } else { FormatKind::Markdown },
+        body: Some(body_field),
+        title: title_field,
+        normalize: true,
+    }
+}
+
+/// A blob read by `treeRef:path` — the bytes plus the blob's object id, or
+/// `null` when nothing (or a subtree) lives at `path`. Backs sheet-config
+/// loading and lazy-body hydration without a `git cat-file` subprocess
+/// (spec: `rust-core.md` "Blob reads").
+#[napi]
+pub fn tree_read_blob(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<JsBlobEntry>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    match record::read_blob_entry(&repo, &mut tree, &path) {
+        Ok(Some((hash, bytes))) => Ok(Some(JsBlobEntry {
+            hash,
+            content: Buffer::from(bytes),
+        })),
+        Ok(None) => Ok(None),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// The object id of the blob at `treeRef:path`, or `null` when absent or not
+/// a blob. The hash-only lookup (attachment handles, cache keys).
+#[napi]
+pub fn tree_entry_hash(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<String>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    match record::tree_entry_hash(&repo, &mut tree, &path) {
+        Ok(hash) => Ok(hash.map(|h| h.to_string())),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// A blob's bytes by object id, or `null` when no object has that id. Backs
+/// attachment content reads and diff-side record reads.
+#[napi]
+pub fn blob_read(env: Env, git_dir: String, hash: String) -> Result<Option<Buffer>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    match record::read_blob_by_hash(&repo, &hash) {
+        Ok(bytes) => Ok(bytes.map(Buffer::from)),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// A blob read by `treeRef:path`: its object id and bytes.
+#[napi(object)]
+pub struct JsBlobEntry {
+    pub hash: String,
+    pub content: Buffer,
 }
 
 /// The pruning candidate set alone (no content filter applied) — the direct
@@ -1946,6 +2033,41 @@ impl CoreTransaction {
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         match sheet.list(repo, tree, with_body) {
+            Ok(rows) => Ok(rows
+                .into_iter()
+                .map(|(path, record)| JsRecordEntry {
+                    path,
+                    record: JsValue(record),
+                })
+                .collect()),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// Query the sheet's records in the transaction's private tree — pruned by
+    /// the path template exactly like a committed-ref query, decoded through
+    /// the format codec, `withBody` the lazy-body switch (spec:
+    /// `api/transaction.md` "Read isolation"). The filter takes the same forms
+    /// as `recordQuery` (equality / nested / `$pred` / ranges). Read-only —
+    /// does not mark the transaction mutated.
+    #[napi]
+    pub fn query(
+        &mut self,
+        env: Env,
+        name: String,
+        filter: JsObject,
+        with_body: bool,
+    ) -> Result<Vec<JsRecordEntry>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get_mut(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
+        match sheet.query(repo, tree, &parsed, with_body) {
             Ok(rows) => Ok(rows
                 .into_iter()
                 .map(|(path, record)| JsRecordEntry {
