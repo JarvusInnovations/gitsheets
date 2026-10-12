@@ -1764,6 +1764,10 @@
 <td><code>Promise&lt;T[]&gt;</code> — honors <code>opts.signal</code>, <code>opts.withBody</code></td>
 </tr>
 <tr>
+<td><code>sheet.get(path, opts?)</code></td>
+<td><code>Promise&lt;T \| undefined&gt;</code> — one record by its rendered path (one blob read, no scan); <code>opts.withBody</code>; on a tx-bound sheet reads the private tree</td>
+</tr>
+<tr>
 <td><code>sheet.loadBody(record)</code></td>
 <td><code>Promise&lt;T&gt;</code> — hydrate a body-less record (content-typed sheets)</td>
 </tr>

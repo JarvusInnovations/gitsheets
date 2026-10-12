@@ -1378,6 +1378,15 @@ whose <code>path</code> uses <code>${{ field: YYYY/MM/DD }}</code> or another bu
 date-only or offset-qualified ISO bound are pushed down to the core, which
 prunes the tree walk to the bounded span of partitions instead of scanning
 every record; results are identical, just faster on large partitioned sheets.</p>
+<p>On content-typed (markdown / mdx) sheets the read commands are <strong>body-less by
+default</strong>: the TOON preview never shows bodies, so <code>query</code>, <code>count</code>, and
+<code>distinct</code> read only frontmatter unless a <code>--filter</code> clause targets the body
+field, <code>--fields</code> names it, or an export flag (<code>--json-out</code> / <code>--ndjson-out</code>,
+whose contract is the verbatim record) is set. <code>read &lt;sheet&gt; &lt;path&gt;</code> is a
+single blob read by path, not a scan. Bulk <code>patch</code> preflights every row inside
+the one transaction it commits (pruned lookups on the private tree), prints
+progress to stderr every 100 rows for batches over 200, and a <code>--dry-run</code>
+discards that transaction without committing.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link"> ¶</a></h2>
 <p>Errors go to <strong>stdout</strong> (not stderr — agents typically don&rsquo;t read stderr), in the same structured shape:</p>
 <div class="highlight"><pre><span></span><code>error: Record failed validation: slug: must NOT have fewer than 1 characters
