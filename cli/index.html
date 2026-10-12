@@ -1477,7 +1477,7 @@ gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="
 </code></pre></div>
 <p>Flags:</p>
 <ul>
-<li><code>--filter &lt;field&gt;=&lt;value&gt;</code> (repeatable) — equality filter</li>
+<li><code>--filter &lt;field&gt;=&lt;value&gt;</code> (repeatable) — equality filter. <code>field&gt;=value</code>, <code>field&lt;=value</code>, <code>field&gt;value</code>, <code>field&lt;value</code> build a range entry on the field (several bounds on one field merge into one range). Values are strings; an ISO 8601 value compares chronologically against datetime fields, and a range on a date-bucket path field prunes the tree walk — e.g. <code>--filter 'publishedAt&gt;=2026-01-01' --filter 'publishedAt&lt;2026-04-01'</code>.</li>
 <li><code>--fields &lt;name&gt;...</code> — output column subset (order preserved)</li>
 <li><code>--limit &lt;n&gt;</code></li>
 <li><code>--format &lt;json|csv|tsv|toml&gt;</code> — output format. Default <code>json</code> (newline-delimited).</li>

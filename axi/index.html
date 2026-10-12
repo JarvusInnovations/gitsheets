@@ -1371,6 +1371,13 @@ gitsheets-axi push                       # one-shot git push
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 </code></pre></div>
 <p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.</p>
+<p><code>query</code>, <code>count</code>, and <code>distinct</code> share a <code>--filter</code> mini-DSL (<code>k=v</code>, <code>k!=v</code>,
+<code>k&lt;v</code>, <code>k&gt;v</code>, <code>k&lt;=v</code>, <code>k&gt;=v</code>, <code>k~regex</code>, <code>k in (a,b)</code>, <code>k:present</code>,
+<code>k:empty</code>). Ordered comparisons on a <strong>date-bucket path field</strong> (a sheet
+whose <code>path</code> uses <code>${{ field: YYYY/MM/DD }}</code> or another bucket format) with a
+date-only or offset-qualified ISO bound are pushed down to the core, which
+prunes the tree walk to the bounded span of partitions instead of scanning
+every record; results are identical, just faster on large partitioned sheets.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link"> ¶</a></h2>
 <p>Errors go to <strong>stdout</strong> (not stderr — agents typically don&rsquo;t read stderr), in the same structured shape:</p>
 <div class="highlight"><pre><span></span><code>error: Record failed validation: slug: must NOT have fewer than 1 characters

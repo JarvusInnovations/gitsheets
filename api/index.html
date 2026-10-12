@@ -1664,7 +1664,7 @@
 <span class="w">  </span><span class="nx">OpenRepoOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">OpenSheetsOptions</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">TransactionOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionResult</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionHandler</span><span class="p">,</span><span class="w"> </span><span class="nx">Author</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">SheetConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SheetFieldConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SortRule</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertResult</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">WillChangeResult</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">SheetConstructorOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">IndexKeyFn</span><span class="p">,</span><span class="w"> </span><span class="nx">DefineIndexOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryFilter</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryOptions</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">SheetConstructorOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">IndexKeyFn</span><span class="p">,</span><span class="w"> </span><span class="nx">DefineIndexOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryFilter</span><span class="p">,</span><span class="w"> </span><span class="nx">RangeFilter</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryOptions</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">DiffStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffChange</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">AttachmentBlobHandle</span><span class="p">,</span><span class="w"> </span><span class="nx">AttachmentEntry</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">Format</span><span class="p">,</span><span class="w"> </span><span class="nx">FormatConfig</span><span class="p">,</span>
@@ -1753,7 +1753,7 @@
 <tbody>
 <tr>
 <td><code>sheet.query(filter?, opts?)</code></td>
-<td><code>AsyncGenerator&lt;T&gt;</code> — iterator; <code>opts.signal</code> for AbortSignal cancellation; <code>opts.withBody</code> for content-typed body loading</td>
+<td><code>AsyncGenerator&lt;T&gt;</code> — iterator; filter entries are equality, a predicate, a nested object, or a <code>{ $gt, $gte, $lt, $lte }</code> range (see <a href="../path-templates/#range-queries-on-date-buckets">path templates</a>); <code>opts.signal</code> for AbortSignal cancellation; <code>opts.withBody</code> for content-typed body loading</td>
 </tr>
 <tr>
 <td><code>sheet.queryFirst(filter?, opts?)</code></td>

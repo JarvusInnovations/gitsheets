@@ -904,6 +904,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#range-filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Range filters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#function-predicates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1267,6 +1278,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#range-filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Range filters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#function-predicates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1476,6 +1498,21 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 <span class="w">  </span><span class="nx">unknownField</span><span class="o">:</span><span class="w"> </span><span class="s1">'something'</span><span class="p">,</span><span class="w">     </span><span class="c1">// ← TS error</span>
 <span class="p">});</span>
 </code></pre></div>
+<h2 id="range-filters">Range filters<a class="headerlink" href="#range-filters" title="Permanent link"> ¶</a></h2>
+<p>Given a <code>User</code> that also declares <code>createdAt: z.date()</code> and <code>age: z.number()</code>, a field
+accepts a <code>{ $gt, $gte, $lt, $lte }</code> object; the bound type follows the
+field, and a <code>Date</code> field also admits ISO 8601 string bounds:</p>
+<div class="highlight"><pre><span></span><code><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryAll</span><span class="p">({</span>
+<span class="w">  </span><span class="nx">createdAt</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">$gte</span><span class="o">:</span><span class="w"> </span><span class="s1">'2026-01-01'</span><span class="p">,</span><span class="w"> </span><span class="nx">$lt</span><span class="o">:</span><span class="w"> </span><span class="kt">new</span><span class="w"> </span><span class="nb">Date</span><span class="p">(</span><span class="s1">'2026-04-01T00:00:00Z'</span><span class="p">)</span><span class="w"> </span><span class="p">},</span><span class="w">  </span><span class="c1">// ok: Date field, string or Date bound</span>
+<span class="w">  </span><span class="nx">age</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">$gte</span><span class="o">:</span><span class="w"> </span><span class="kt">18</span><span class="w"> </span><span class="p">},</span><span class="w">                                                          </span><span class="c1">// ok: number bound</span>
+<span class="p">});</span>
+
+<span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryAll</span><span class="p">({</span><span class="w"> </span><span class="nx">age</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">$gte</span><span class="o">:</span><span class="w"> </span><span class="s1">'18'</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">});</span><span class="w">                          </span><span class="c1">// ← TS error: number field, string bound</span>
+</code></pre></div>
+<p>On a sheet partitioned by a date bucket (<code>path = '${{ createdAt: YYYY/MM }}/${{ slug }}'</code>)
+the range prunes the tree walk to the partitions inside the bounds; on any
+other field it filters record-level. See
+<a href="../../path-templates/#range-queries-on-date-buckets">path templates</a>.</p>
 <h2 id="function-predicates">Function predicates<a class="headerlink" href="#function-predicates" title="Permanent link"> ¶</a></h2>
 <p>For sub-queries the path-template can&rsquo;t prune:</p>
 <div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">recent</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">store</span><span class="p">.</span><span class="nx">users</span><span class="p">.</span><span class="nx">queryAll</span><span class="p">({</span>
