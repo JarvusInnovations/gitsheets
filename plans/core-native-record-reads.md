@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: [range-pruned-queries]
 specs:
   - specs/rust-core.md
   - specs/architecture.md
   - specs/api/transaction.md
 issues: [289, 290]
+pr: 295
 ---
 
 # Plan: core-native record reads (no `git cat-file` on any read path)
@@ -87,22 +88,22 @@ Out of scope (follow-up plans / issues):
 
 ## Validation
 
-- [ ] `cargo test`: format-aware query over a markdown corpus (with/without
+- [x] `cargo test`: format-aware query over a markdown corpus (with/without
       body, pruned + wildcard), `Sheet::query` on a mutated private tree sees
       staged writes, blob-entry / blob-by-hash reads, `.mdx` kind selection.
-- [ ] `cargo clippy --workspace -D warnings` clean.
-- [ ] napi `node --test`: `recordQuery` markdown parity with the host codec,
+- [x] `cargo clippy --workspace -D warnings` clean.
+- [x] napi `node --test`: `recordQuery` markdown parity with the host codec,
       `CoreTransaction.query` prunes (candidate count) and honors `withBody`,
       `treeReadBlob` / `treeEntryHash` / `blobRead` round-trips.
-- [ ] pytest: the same module-level functions, byte-identical results.
-- [ ] vitest (`gitsheets`): the existing markdown, lazy-body, attachment,
+- [x] pytest: the same module-level functions, byte-identical results.
+- [x] vitest (`gitsheets`): the existing markdown, lazy-body, attachment,
       diffFrom, and transaction suites pass unchanged; `grep -n "cat-file"
       packages/gitsheets/src/*.ts` returns only the `repository.ts`
       `cat-file -t` ref-type probe.
-- [ ] vitest (`gitsheets-axi`) passes (with a writable `TMPDIR`).
-- [ ] Benchmark table recorded in Notes: markdown `query --limit 1`, `read`,
+- [x] vitest (`gitsheets-axi`) passes (with a writable `TMPDIR`).
+- [x] Benchmark table recorded in Notes: markdown `query --limit 1`, `read`,
       and 100-row bulk `patch` on a 4,300-record sheet, before vs after.
-- [ ] `npm run type-check` clean.
+- [x] `npm run type-check` clean.
 
 ## Risks / unknowns
 
@@ -117,8 +118,48 @@ Out of scope (follow-up plans / issues):
 
 ## Notes
 
-(Populated at closeout.)
+- **Benchmark** (devbox, 4,300-record markdown sheet, `${{ ring }}/${{ id }}`,
+  2.3 MB of bodies; published `gitsheets-axi@latest` on gitsheets 2.6.0 +
+  core-napi 0.3.0 vs this branch):
+
+  | Command | Before | After |
+  | --- | ---: | ---: |
+  | `count` | 3.7 s | 0.3 s |
+  | `query --fields id --limit 1` | 27.4 s | 1.8 s |
+  | `query --filter id=…` | 28.0 s | 1.8 s |
+  | `read <sheet> <path>` | 29.3 s | 1.8 s |
+  | `patch` 100 rows, one commit | 23.9 s | 6.6 s |
+  | `patch --dry-run` 100 rows | 3.0 s | 5.6 s |
+
+  The read wins are the per-candidate subprocess fan-out disappearing; the
+  bulk-patch win is the transaction-bound query pruning instead of listing the
+  sheet per row. The dry-run regressed because its preflight still begins a
+  throwaway core transaction per row (`willChange` on a standalone sheet) —
+  deliberately left to the axi follow-up (single-transaction preflight).
+- **`Repository.readBlobStream` keeps its `git cat-file` on purpose** — its
+  spec is a true streaming read that never buffers the blob. The attachment
+  handle's `stream()` is the opposite trade: buffered once, in memory.
+- **Markdown bodies parse without their trailing newline** (the codec trims
+  it); every new test asserts `'# One'`, not `'# One\n'`.
+- The napi test wrapper `binding.cjs` enumerates exports by hand; new addon
+  functions must be added there or the boundary suite sees `undefined`.
+- Python's `CoreTransaction` has no read surface (no `list`), so no `query`
+  was added there — the module-level functions carry parity.
+- Remaining `git` shell-outs in the library: `readBlobStream`, push,
+  `diff-tree` in `diffFrom`, `ls-tree` for attachment listing, working-tree
+  materialization, `rev-parse --absolute-git-dir`, `git config` author
+  defaults. None is per-record.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#289](https://github.com/JarvusInnovations/gitsheets/issues/289) —
+  the axi half: body-less `query` by default (bodies only when the filter,
+  `--fields`, or an export needs them), `read` by exact path through a
+  by-path library read, `--limit` short-circuit without `--sort`.
+- Issue [#290](https://github.com/JarvusInnovations/gitsheets/issues/290) —
+  bulk `patch` preflight inside the one real transaction (no per-row
+  throwaway transaction; dry-run discards), plus progress output for large
+  batches.
+- Tracked as: `diffFrom` still enumerates changes with `git diff-tree` and
+  attachment listing with `git ls-tree` — core walks would retire the last
+  two read-side subprocesses; no consumer has reported them as a cost.
