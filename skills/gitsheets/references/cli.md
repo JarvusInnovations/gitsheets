@@ -76,11 +76,12 @@ gitsheets query users --fields slug email --limit 100
 gitsheets query users --format=csv --fields slug email
 gitsheets query users --format=toml > users.toml
 gitsheets query posts --no-body --format=csv          # markdown sheet, body-less
+gitsheets query posts --filter 'publishedAt>=2026-01-01' --filter 'publishedAt<2026-04-01'   # range (quote the > / <)
 ```
 
 ### Flags
 
-- `--filter <field>=<value>` (repeatable) — equality filter
+- `--filter <field>=<value>` (repeatable) — equality filter. `field>=value`, `field<=value`, `field>value`, `field<value` build a **range** on the field (two clauses on one field merge into one range; v2.7+). Values are strings: an ISO 8601 value compares chronologically against datetime fields, and on a date-bucket path field (`${{ field: YYYY/MM/DD }}`) the range prunes the walk to the matching partitions. Quote clauses containing `<` / `>` so the shell doesn't redirect.
 - `--fields <name>...` — output column subset (order preserved)
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` — default `json` (newline-delimited)

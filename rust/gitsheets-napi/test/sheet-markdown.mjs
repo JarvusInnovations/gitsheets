@@ -41,6 +41,10 @@ const {
   markdownExtractH1,
   markdownRewriteH1,
   markdownNormalizeBody,
+  recordQuery,
+  treeReadBlob,
+  treeEntryHash,
+  blobRead,
 } = binding;
 
 // ── direct codec: serialize / parse byte parity ────────────────────────────────
@@ -414,5 +418,102 @@ test('a byte-identical markdown re-upsert is a no-op', () => {
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── core-native reads: format-aware query + blob primitives ───────────────────
+// specs/rust-core.md "Query traversal + filtering" / "Blob reads";
+// specs/api/transaction.md "Read isolation". No `git cat-file` anywhere here.
+
+function seedPosts(gitDir) {
+  const opts = (m) => defaultOpts(m);
+  upsertPost(gitDir, opts('a'), { slug: 'alpha', kind: 'note', body: '# Alpha\n\nfirst\n' });
+  upsertPost(gitDir, opts('b'), { slug: 'beta', kind: 'post', body: '# Beta\n' });
+  upsertPost(gitDir, opts('c'), { slug: 'gamma', kind: 'note', body: '# Gamma\n' });
+}
+
+test('recordQuery decodes markdown candidates in the core (with and without body)', () => {
+  const { gitDir } = setupRepo(MD_CONFIG);
+  seedPosts(gitDir);
+
+  const full = recordQuery(gitDir, 'HEAD', 'posts', '${{ slug }}', { kind: 'note' }, '.md', 'body', null, true);
+  assert.deepEqual(full.map((r) => r.path), ['alpha', 'gamma']);
+  assert.equal(full[0].record.body, '# Alpha\n\nfirst');
+
+  const lazy = recordQuery(gitDir, 'HEAD', 'posts', '${{ slug }}', {}, '.md', 'body', null, false);
+  assert.deepEqual(lazy.map((r) => r.path), ['alpha', 'beta', 'gamma']);
+  assert.equal(lazy[0].record.body, undefined);
+  assert.equal(lazy[0].record.kind, 'note');
+
+  // Pruned by the path template: exactly one blob is read.
+  const one = recordQuery(gitDir, 'HEAD', 'posts', '${{ slug }}', { slug: 'beta' }, '.md', 'body', null, false);
+  assert.deepEqual(one.map((r) => r.path), ['beta']);
+
+  // Parity with the host codec on the same bytes.
+  const entry = treeReadBlob(gitDir, 'HEAD', 'posts/alpha.md');
+  assert.deepEqual(markdownParse(entry.content.toString('utf8'), 'body'), full[0].record);
+});
+
+test('CoreTransaction.query prunes and sees staged writes on the private tree', () => {
+  const { gitDir } = setupRepo(MD_CONFIG);
+  seedPosts(gitDir);
+
+  const tx = CoreTransaction.begin(gitDir, defaultOpts('delta'));
+  try {
+    tx.openSheet('posts', '.gitsheets/posts.toml', '.', '');
+    tx.prepareUpsert('posts', { slug: 'delta', kind: 'post', body: '# Delta\n' }, undefined, false);
+    tx.stageUpsert('posts');
+
+    // The uncommitted record is visible; the walk is pruned by `slug`.
+    const staged = tx.query('posts', { slug: 'delta' }, true);
+    assert.deepEqual(staged.map((r) => r.path), ['delta']);
+    assert.equal(staged[0].record.body, '# Delta');
+
+    // Lazy-body + a $pred snippet compiled into the sheet's engine.
+    const notes = tx.query('posts', { kind: { $pred: "value === 'note'" } }, false);
+    assert.deepEqual(notes.map((r) => r.path), ['alpha', 'gamma']);
+    assert.equal(notes[0].record.body, undefined);
+
+    // Range + equality forms work identically to recordQuery.
+    assert.deepEqual(tx.query('posts', { slug: { $gte: 'c' } }, false).map((r) => r.path), ['delta', 'gamma']);
+  } finally {
+    tx.discard();
+  }
+  // Discarded: the committed tree never saw delta.
+  assert.deepEqual(recordQuery(gitDir, 'HEAD', 'posts', '${{ slug }}', { slug: 'delta' }, '.md', 'body'), []);
+});
+
+test('treeReadBlob / treeEntryHash / blobRead read the object database directly', () => {
+  const { gitDir } = setupRepo(MD_CONFIG);
+  seedPosts(gitDir);
+
+  const entry = treeReadBlob(gitDir, 'HEAD', '.gitsheets/posts.toml');
+  assert.equal(entry.content.toString('utf8'), MD_CONFIG);
+  assert.match(entry.hash, /^[0-9a-f]{40}$/);
+  assert.equal(treeEntryHash(gitDir, 'HEAD', '.gitsheets/posts.toml'), entry.hash);
+  assert.deepEqual(blobRead(gitDir, entry.hash), entry.content);
+
+  // Absent path / subtree / unknown hash → null; bad ref → RefError.
+  assert.equal(treeReadBlob(gitDir, 'HEAD', 'posts/nope.md'), null);
+  assert.equal(treeReadBlob(gitDir, 'HEAD', 'posts'), null);
+  assert.equal(treeEntryHash(gitDir, 'HEAD', 'posts'), null);
+  assert.equal(blobRead(gitDir, '0'.repeat(40)), null);
+  assert.throws(() => treeReadBlob(gitDir, 'no-such-ref', 'x'), /ref_not_found|could not resolve/);
+});
+
+test('CoreTransaction.readRecord reads one record by path, staged writes included', () => {
+  const { gitDir } = setupRepo(MD_CONFIG);
+  seedPosts(gitDir);
+  const tx = CoreTransaction.begin(gitDir, defaultOpts('delta'));
+  try {
+    tx.openSheet('posts', '.gitsheets/posts.toml', '.', '');
+    assert.equal(tx.readRecord('posts', 'alpha', true).body, '# Alpha\n\nfirst');
+    assert.equal(tx.readRecord('posts', 'alpha', false).body, undefined);
+    assert.equal(tx.readRecord('posts', 'nope', true), null);
+    tx.prepareUpsert('posts', { slug: 'delta', kind: 'post', body: '# Delta\n' }, undefined, false);
+    tx.stageUpsert('posts');
+    assert.equal(tx.readRecord('posts', 'delta', true).kind, 'post');
+  } finally {
+    tx.discard();
   }
 });

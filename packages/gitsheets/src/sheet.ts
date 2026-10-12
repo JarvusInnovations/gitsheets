@@ -1,14 +1,22 @@
 // Sheet — typed handle to one declared sheet in a Repository.
 // See specs/api/sheet.md and specs/concepts.md.
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { promisify } from 'node:util';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 
 import { createPatch as rfc6902CreatePatch, type Operation as JsonPatchOp } from 'rfc6902';
 
-import { addon, callCore, CoreTransaction } from './core.js';
+import {
+  addon,
+  callCore,
+  CoreTransaction,
+  readBlobBytes,
+  readTreeBlob,
+  readTreeBlobText,
+  treeEntryHash,
+} from './core.js';
 import type { ConformanceReport, OpenSheetContractOptions } from './contracts.js';
 import {
   ConfigError,
@@ -175,11 +183,113 @@ function queryMatches(filter: RecordLike, record: RecordLike): boolean {
       continue;
     }
     if (qval !== null && typeof qval === 'object' && !Array.isArray(qval)) {
+      if (isRangeFilter(qval)) {
+        if (!rangeMatches(qval, rval)) return false;
+        continue;
+      }
       if (rval === null || typeof rval !== 'object') return false;
       if (!queryMatches(qval as RecordLike, rval as RecordLike)) return false;
       continue;
     }
     if (rval !== qval) return false;
+  }
+  return true;
+}
+
+// --- Range filter entries (specs/api/sheet.md § "Range filter entries") ---
+
+const RANGE_OPERATORS = ['$gt', '$gte', '$lt', '$lte'] as const;
+
+/** Is `v` a range object — a plain object whose keys are all range operators? */
+function isRangeFilter(v: object): v is RangeFilter<unknown> {
+  const keys = Object.keys(v);
+  return keys.length > 0 && keys.every((k) => (RANGE_OPERATORS as readonly string[]).includes(k));
+}
+
+/**
+ * Validate every `$`-keyed object in a filter up front so a malformed one
+ * (`{ $in: … }`, a mix of range and ordinary keys, two bounds on one side)
+ * is a `TypeError` at query start — the same rejection the core applies —
+ * rather than a silently-empty nested-table match on the host-side paths.
+ */
+function assertWellFormedOperators(filter: RecordLike, path = ''): void {
+  for (const [key, v] of Object.entries(filter)) {
+    if (v === null || typeof v !== 'object' || Array.isArray(v) || v instanceof Date) continue;
+    const keys = Object.keys(v);
+    const at = path ? `${path}.${key}` : key;
+    if (keys.some((k) => k.startsWith('$'))) {
+      if (!isRangeFilter(v)) {
+        throw new TypeError(
+          `Sheet.query: filter on ${JSON.stringify(at)} — a $-keyed object may only carry ${RANGE_OPERATORS.join(' / ')}, got ${JSON.stringify(keys)}`,
+        );
+      }
+      if (('$gt' in v && '$gte' in v) || ('$lt' in v && '$lte' in v)) {
+        throw new TypeError(
+          `Sheet.query: filter on ${JSON.stringify(at)} carries two bounds on one side — give one of $gt/$gte and one of $lt/$lte`,
+        );
+      }
+      continue;
+    }
+    assertWellFormedOperators(v as RecordLike, at);
+  }
+}
+
+// ISO 8601 shapes a string bound may take to compare against a Date field —
+// the same shapes date buckets accept (never `Date.parse` on an offset-less
+// string, which would consult the host timezone).
+const ISO_DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_DATETIME_RE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|[+-]\d{2}:\d{2})?$/;
+
+/** The UTC instant (ms) an ISO 8601 string bound denotes, or `undefined`. */
+function isoInstantMs(s: string): number | undefined {
+  const d = ISO_DATE_ONLY_RE.exec(s);
+  if (d) return Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]));
+  const m = ISO_DATETIME_RE.exec(s);
+  if (!m) return undefined;
+  const frac = m[7] ? Number(`0.${m[7]}`) * 1000 : 0;
+  let ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])) + frac;
+  const offset = m[8];
+  if (offset && offset !== 'Z' && offset !== 'z') {
+    const sign = offset.startsWith('-') ? -1 : 1;
+    const minutes = sign * (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(4, 6)));
+    ms -= minutes * 60_000;
+  }
+  return ms;
+}
+
+/**
+ * Order a record value against a bound by kind, mirroring the core's
+ * `compare_values`: numbers numerically, strings lexicographically, Dates as
+ * instants, a Date field against an ISO-string bound as instants. Anything
+ * else is incomparable (`undefined`) and never matches.
+ */
+function compareForRange(rval: unknown, bound: unknown): number | undefined {
+  if (typeof rval === 'number' && typeof bound === 'number') return Math.sign(rval - bound);
+  if (typeof rval === 'string' && typeof bound === 'string') {
+    return rval < bound ? -1 : rval > bound ? 1 : 0;
+  }
+  if (rval instanceof Date) {
+    let b: number | undefined;
+    if (bound instanceof Date) b = bound.getTime();
+    else if (typeof bound === 'string') b = isoInstantMs(bound);
+    if (b === undefined || Number.isNaN(b) || Number.isNaN(rval.getTime())) return undefined;
+    return Math.sign(rval.getTime() - b);
+  }
+  return undefined;
+}
+
+function rangeMatches(range: RangeFilter<unknown>, rval: unknown): boolean {
+  if (rval === undefined || rval === null) return false;
+  const lower = '$gte' in range ? { v: range.$gte, inc: true } : '$gt' in range ? { v: range.$gt, inc: false } : undefined;
+  const upper = '$lte' in range ? { v: range.$lte, inc: true } : '$lt' in range ? { v: range.$lt, inc: false } : undefined;
+  if (lower) {
+    const c = compareForRange(rval, lower.v);
+    if (c === undefined || c < 0 || (c === 0 && !lower.inc)) return false;
+  }
+  if (upper) {
+    const c = compareForRange(rval, upper.v);
+    if (c === undefined || c > 0 || (c === 0 && !upper.inc)) return false;
   }
   return true;
 }
@@ -209,31 +319,9 @@ function stripFilterFunctions(filter: RecordLike): RecordLike {
  * where the core's TOML-only ref reads can't parse the record. Returns `null`
  * when the object doesn't exist.
  */
-function readTreeBlobText(gitDir: string, treeRef: string, path: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const child = execFile(
-      'git',
-      ['cat-file', 'blob', `${treeRef}:${path}`],
-      { cwd: gitDir, maxBuffer: 1024 * 1024 * 1024 },
-      (err, stdout) => {
-        if (err) return resolve(null);
-        resolve(String(stdout));
-      },
-    );
-    child.stdin?.end();
-  });
-}
-
-/** Resolve `<rev>` to its object hash via `git rev-parse`; `null` when absent. */
-async function revParseObject(gitDir: string, rev: string): Promise<string | null> {
-  try {
-    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', rev], { cwd: gitDir });
-    const hash = stdout.trim();
-    return hash || null;
-  } catch {
-    return null;
-  }
-}
+// Blob reads (`readTreeBlob` / `readTreeBlobText` / `treeEntryHash` /
+// `readBlobBytes`) come from ./core.ts — the core reads the object database
+// directly, so none of this file's read paths spawn `git cat-file`.
 
 /**
  * The immediate blob children (`name → { hash, mode }`) of a tree path via
@@ -279,17 +367,14 @@ async function loadConfig(
   treeRef: string,
   configPath: string,
 ): Promise<SheetConfig> {
-  const hash = await revParseObject(gitDir, `${treeRef}:${configPath}`);
-  if (hash === null) {
+  const entry = await readTreeBlob(gitDir, treeRef, configPath);
+  if (entry === null) {
     throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
   }
-  const cached = CONFIG_CACHE.get(hash);
+  const cached = CONFIG_CACHE.get(entry.hash);
   if (cached) return cached;
-
-  const tomlText = await readTreeBlobText(gitDir, treeRef, configPath);
-  if (tomlText === null) {
-    throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
-  }
+  const hash = entry.hash;
+  const tomlText = entry.content.toString('utf8');
   const raw = parseConfigToml(tomlText, configPath);
   const gitsheet = raw['gitsheet'];
   if (!gitsheet || typeof gitsheet !== 'object') {
@@ -416,8 +501,25 @@ function validateSortRule(sort: unknown, configPath: string, field: string): voi
  * accepted; consumer-supplied `T` narrows to its own keys.
  */
 export type QueryFilter<T extends RecordLike = RecordLike> = {
-  [K in keyof T]?: T[K] | ((value: T[K], record: T) => unknown);
+  [K in keyof T]?: T[K] | RangeFilter<T[K]> | ((value: T[K], record: T) => unknown);
 };
+
+/**
+ * A range filter entry: an ordered comparison on one field, any combination
+ * of the four bounds (at least one). Numbers compare numerically, strings
+ * lexicographically, Dates as instants; a Date field also accepts an ISO 8601
+ * string bound. On a date-bucket path field the range prunes the tree walk to
+ * the bounded span of partitions.
+ *
+ * @see specs/api/sheet.md § "Range filter entries"
+ * @see specs/behaviors/path-templates.md § "Range-pruned traversal"
+ */
+export interface RangeFilter<V = unknown> {
+  $gt?: V | (V extends Date ? string : never);
+  $gte?: V | (V extends Date ? string : never);
+  $lt?: V | (V extends Date ? string : never);
+  $lte?: V | (V extends Date ? string : never);
+}
 
 /**
  * Options for `Sheet.query` / `queryFirst` / `queryAll`.
@@ -527,27 +629,27 @@ function inferMimeType(filename: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
+/**
+ * A handle over an attachment blob, read through the core by object id (no
+ * `git cat-file` subprocess). `stream()` yields the buffered bytes as a
+ * single-chunk `Readable` — the content is held in memory once, which fits
+ * the human-scale premise; it is not a streaming read of a huge object.
+ */
 function makeAttachmentBlobHandle(gitDir: string, hash: string): AttachmentBlobHandle {
+  const load = (): Buffer => {
+    const bytes = readBlobBytes(gitDir, hash);
+    if (bytes === null) {
+      throw new NotFoundError('record_not_found', `no blob object ${hash}`);
+    }
+    return bytes;
+  };
   return {
     hash,
     async read(): Promise<Buffer> {
-      return new Promise((resolve, reject) => {
-        const child = execFile(
-          'git',
-          ['cat-file', 'blob', hash],
-          { cwd: gitDir, encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024 },
-          (err, stdout) => {
-            if (err) return reject(err);
-            resolve(stdout as Buffer);
-          },
-        );
-        child.stdin?.end();
-      });
+      return load();
     },
     stream(): Readable {
-      const child = spawn('git', ['cat-file', 'blob', hash], { cwd: gitDir });
-      child.stdin.end();
-      return child.stdout;
+      return Readable.from([load()]);
     },
   };
 }
@@ -675,11 +777,9 @@ async function readBlobAsRecord(
   formatConfig: FormatConfig,
 ): Promise<RecordLike | null> {
   try {
-    const { stdout } = await exec('git', ['cat-file', 'blob', hash], {
-      cwd: gitDir,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return format.parse(stdout, formatConfig);
+    const bytes = readBlobBytes(gitDir, hash);
+    if (bytes === null) return null;
+    return format.parse(bytes.toString('utf8'), formatConfig);
   } catch {
     // Blob unreadable or unparsable — caller treats this as "no record".
     return null;
@@ -998,6 +1098,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (typeof filter === 'function') {
       throw new TypeError('Sheet.query() does not accept a function — pass a filter object');
     }
+    assertWellFormedOperators(filter as RecordLike);
 
     const { signal } = opts;
     // Aborted-before-call: throw immediately, no I/O.
@@ -1024,39 +1125,34 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     let rows: Array<{ path: string; record: RecordLike }>;
     if (this.#transaction !== undefined) {
-      // Tx-bound: read the in-progress private tree through the core (format-
-      // aware). The core lists every record under the sheet base; the full
-      // filter (including functions) is applied host-side below.
+      // Tx-bound: query the in-progress private tree through the core —
+      // pruned by the path template and format-aware, exactly like the
+      // committed-ref path (specs/api/transaction.md "Read isolation"). The
+      // full filter (including functions) is re-applied host-side below.
       this.#ensureCoreSheetOpened();
       rows = callCore(() =>
-        this.#transaction!.coreTx.list(this.#name, withBody),
+        this.#transaction!.coreTx.query(this.#name, coreFilter, withBody),
       ) as Array<{ path: string; record: RecordLike }>;
     } else {
       // Non-tx: resolve against the open-time snapshot ref.
       const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
       const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
-      if (config.format.type === 'toml') {
-        // TOML records: the core reads + parses + literal-filters in one call.
-        rows = callCore(() =>
-          addon.recordQuery(gitDir, treeRef, base, config.path, coreFilter, format.extension),
-        ) as Array<{ path: string; record: RecordLike }>;
-      } else {
-        // Format-aware (markdown/mdx): the core's ref reads are TOML-only, so
-        // use it only for the (format-agnostic) pruning walk, then read + decode
-        // each candidate blob through the host format codec (itself core-backed).
-        const candidates = callCore(() =>
-          addon.recordQueryCandidates(gitDir, treeRef, base, config.path, coreFilter, format.extension),
-        );
-        rows = [];
-        for (const p of candidates) {
-          const text = await readTreeBlobText(gitDir, treeRef, joinTreePath(base, `${p}${format.extension}`));
-          if (text === null) continue;
-          const record = withBody
-            ? format.parse(text, config.format)
-            : format.parseHeaderOnly(text, config.format);
-          rows.push({ path: p, record });
-        }
-      }
+      // The core prunes, reads, decodes (format-aware: TOML, or markdown
+      // frontmatter with/without the body), and literal-filters in one call —
+      // no per-candidate blob fetch host-side (specs/rust-core.md).
+      rows = callCore(() =>
+        addon.recordQuery(
+          gitDir,
+          treeRef,
+          base,
+          config.path,
+          coreFilter,
+          format.extension,
+          bodyField ?? null,
+          config.format.title ?? null,
+          withBody,
+        ),
+      ) as Array<{ path: string; record: RecordLike }>;
     }
 
     for (const { path: recordPath, record } of rows) {
@@ -1114,6 +1210,43 @@ export class Sheet<T extends RecordLike = RecordLike> {
     let n = 0;
     for await (const _ of this.query(filter, { withBody: false })) n++;
     return n;
+  }
+
+  /**
+   * Read the one record stored at `path` — the rendered path-template result
+   * (no extension), the same string `query` annotates on each record — with a
+   * single blob read and no tree walk. `undefined` when nothing (or a subtree
+   * / attachment file) lives there. Honors `opts.withBody` like `query`. On a
+   * transaction-bound sheet reads the private tree, so a record staged
+   * earlier in the same handler is visible.
+   *
+   * @see specs/api/sheet.md#sheetgetpath-opts
+   */
+  async get(path: string, opts: Pick<QueryOptions, 'withBody'> = {}): Promise<T | undefined> {
+    const config = await this.readConfig();
+    const withBody = opts.withBody ?? true;
+    let record: RecordLike | undefined;
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      const found = callCore(() =>
+        this.#transaction!.coreTx.readRecord(this.#name, path, withBody),
+      ) as RecordLike | null | undefined;
+      if (found === null || found === undefined) return undefined;
+      record = found;
+      (record as Record<symbol, unknown>)[RECORD_SHEET_KEY] = this.#name;
+      (record as Record<symbol, unknown>)[RECORD_PATH_KEY] = path;
+    } else {
+      const format = this.#getFormat(config);
+      const fullPath = joinTreePath(
+        this.#dataBase,
+        this.#effectiveRoot(config),
+        `${path}${format.extension}`,
+      );
+      const text = await readTreeBlobText(this.#gitDir, this.#configTreeRef(), fullPath);
+      if (text === null) return undefined;
+      record = this.#readRecordFromText(text, path, config, { headerOnly: !withBody });
+    }
+    return record as T;
   }
 
   /**
@@ -1579,7 +1712,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
       return hash === null ? null : makeBlobHandle(this.#gitDir, hash, '100644');
     }
     const full = joinTreePath(this.#dataBase, this.#effectiveRoot(config), recordPath, name);
-    const hash = await revParseObject(this.#gitDir, `${this.#configTreeRef()}:${full}`);
+    const hash = await treeEntryHash(this.#gitDir, this.#configTreeRef(), full);
     if (hash === null) return null;
     return makeBlobHandle(this.#gitDir, hash, '100644');
   }

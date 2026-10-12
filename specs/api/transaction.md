@@ -41,6 +41,8 @@ await repo.transact({ message: '...' }, async (tx) => {
 
 Reads through `tx.sheet(name)` see the transaction's in-flight mutations. Reads outside the transaction (e.g., a concurrent `repo.openSheet(name).queryFirst(...)`) see the *committed* state — the pre-transaction tree — until the transaction commits.
 
+A transaction-bound query is **pruned by the path template exactly like a committed-ref query** ([behaviors/path-templates.md § Query traversal](../behaviors/path-templates.md#query-traversal)): a filter that supplies path fields reads only the matching subtrees of the private tree, and `withBody: false` skips bodies. It never degrades to listing the whole sheet — a bulk loop of `tx.sheet(name).patch(query, …)` costs one pruned lookup per row, not one full-sheet read per row.
+
 ## Commit message + trailers
 
 The commit's message is structured:

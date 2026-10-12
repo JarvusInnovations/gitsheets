@@ -90,7 +90,7 @@ gitsheets query users --format=toml > users.toml
 
 Flags:
 
-- `--filter <field>=<value>` (repeatable) — equality filter
+- `--filter <field>=<value>` (repeatable) — equality filter. `field>=value`, `field<=value`, `field>value`, `field<value` build a range entry on the field (several bounds on one field merge into one range). Values are strings; an ISO 8601 value compares chronologically against datetime fields, and a range on a date-bucket path field prunes the tree walk — e.g. `--filter 'publishedAt>=2026-01-01' --filter 'publishedAt<2026-04-01'`.
 - `--fields <name>...` — output column subset (order preserved)
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` — output format. Default `json` (newline-delimited).

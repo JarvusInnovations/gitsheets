@@ -7,7 +7,63 @@ import { AxiError } from 'axi-sdk-js';
 export interface FilterClause {
   field: string;
   op: string;
+  /** The raw right-hand side of a binary clause (`k<v`, `k=v`, …). */
+  rhs?: string;
   test: (value: unknown, record: Record<string, unknown>) => boolean;
+}
+
+/**
+ * The fields a path template partitions by date bucket
+ * (`${{ field: YYYY/MM/DD }}` and friends — the closed format set in
+ * specs/behaviors/path-templates.md § "Date-bucket references").
+ */
+export function bucketFieldsOf(pathTemplate: string): Set<string> {
+  const out = new Set<string>();
+  const re = /\$\{\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*:\s*YYYY(?:\/MM(?:\/DD)?|\/WW)?\s*\}\}/g;
+  for (const m of pathTemplate.matchAll(re)) out.add(m[1]!);
+  return out;
+}
+
+// A bound the core and the host predicate agree on: a date-only ISO string
+// (both read it as UTC midnight) or a datetime carrying an explicit offset /
+// `Z`. An offset-less datetime is deliberately NOT pushed down — `Date.parse`
+// reads it in the host timezone while the core reads it as UTC, so the core's
+// cut could drop records the host predicate would keep.
+const PUSHDOWN_BOUND_RE =
+  /^\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2}))?$/;
+
+const RANGE_OPS: Record<string, '$gt' | '$gte' | '$lt' | '$lte'> = {
+  '>': '$gt',
+  '>=': '$gte',
+  '<': '$lt',
+  '<=': '$lte',
+};
+
+/**
+ * The subset of `--filter` clauses worth handing to `Sheet.query` so the
+ * core can prune the tree walk: ordered comparisons on date-bucket path
+ * fields with an unambiguous ISO bound. Everything else stays host-side in
+ * {@link buildPredicate}, which remains the authoritative filter — the
+ * pushed-down range never excludes a record the host predicate would keep
+ * (specs/behaviors/path-templates.md § "Range-pruned traversal").
+ */
+export function pushdownFilter(
+  exprs: string[],
+  bucketFields: Set<string>,
+): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  if (bucketFields.size === 0) return out;
+  for (const clause of exprs.map(parseFilter)) {
+    const op = RANGE_OPS[clause.op];
+    if (!op || clause.rhs === undefined || !bucketFields.has(clause.field)) continue;
+    if (!PUSHDOWN_BOUND_RE.test(clause.rhs)) continue;
+    const range = (out[clause.field] ??= {});
+    // Two bounds on one side would be rejected by the core; keep the first.
+    const side = op.startsWith('$g') ? ['$gt', '$gte'] : ['$lt', '$lte'];
+    if (side.some((k) => k in range)) continue;
+    range[op] = clause.rhs;
+  }
+  return out;
 }
 
 /**
@@ -60,7 +116,7 @@ export function parseFilter(expr: string): FilterClause {
     const field = trimmed.slice(0, idx).trim();
     const rhs = trimmed.slice(idx + op.length).trim();
     if (!/^[\w.]+$/.test(field)) break; // not a clean field → malformed
-    return { field, op, test: binaryTest(op, rhs, expr) };
+    return { field, op, rhs, test: binaryTest(op, rhs, expr) };
   }
 
   throw new AxiError(
@@ -70,6 +126,31 @@ export function parseFilter(expr: string): FilterClause {
       'Forms: k=v · k!=v · k<v · k>v · k<=v · k>=v · k~regex · "k in (a,b)" · k:present · k:empty',
     ],
   );
+}
+
+/**
+ * Does a read command need record bodies? On a content-typed sheet the TOON
+ * preview never shows the body, so reads are body-less unless a `--filter`
+ * clause targets the body field, `--fields` names it, or an export (whose
+ * contract is the verbatim record) was requested. TOML sheets have no body
+ * concept; `false` is a no-op there.
+ */
+export function needsBodies(
+  bodyField: string | undefined,
+  exprs: string[],
+  extraFields: readonly string[],
+  exporting: boolean,
+): boolean {
+  if (bodyField === undefined) return false;
+  if (exporting) return true;
+  if (extraFields.includes(bodyField)) return true;
+  return exprs.some((e) => {
+    try {
+      return parseFilter(e).field === bodyField;
+    } catch {
+      return false; // malformed clauses are reported by buildPredicate
+    }
+  });
 }
 
 /** Compose many `--filter` clauses into one AND predicate over a record. */

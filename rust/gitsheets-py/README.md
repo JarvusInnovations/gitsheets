@@ -108,13 +108,44 @@ with gitsheets.transact(git_dir, "add jane", time_seconds, author=("Jane", "jane
 JSON-Schema validation declared in the sheet config runs in-core, identically
 to the Node binding.
 
+## Schema contracts
+
+The full [contracts](https://jarvusinnovations.github.io/gitsheets/contracts/)
+surface ships in this binding (0.2.0+), in its batch-first shape:
+
+- **Write-time enforcement** needs nothing Python-specific — a sheet declaring
+  `implements` rejects non-conforming writes through the shared core,
+  byte-identically to Node, with the violated contract named on each issue.
+- `canonical_contract_hash(document, format=None)` — a contract document's
+  identity: parsed data (a `dict`), or JSON/TOML text with an explicit
+  `format`. Two parties holding the same logical document compute the same
+  hash from either language.
+- `verify_sheet_contract(git_dir, tree_ref, sheet, document, ...)` — consumer-side
+  verification, the module-level equivalent of Node's
+  `openSheet(name, { contract })`:
+
+```python
+report = gitsheets.verify_sheet_contract(
+    git_dir, "HEAD", "meals", contract_doc, mode="verify",
+)
+# {'name': 'gitsheets.io/meals/v1', 'rung': 'declared', 'conforming': True,
+#  'issues': [], 'tree': '9c41...'}
+```
+
+Modes: `'verify'` (declared-identity fast path, falling back to structural
+record validation — the default), `'declared'` (fast path only, never reads
+records), `'structural'` (duck-typing any sheet, contract-aware or not).
+A failed verification raises `ContractError` (code `contract_unsatisfied`)
+carrying per-record issues.
+
 ## What 0.x is (and isn't)
 
 The 0.x releases are honestly scoped as a **transactional writer with
 parity-proven reads**: `transact`/`Transaction` (`open_sheet`, `upsert`,
 `delete`, `clear`, `will_change`), attachments
 (`set_attachment(s)`/`get_attachment(s)`/`delete_attachment(s)`), reads
-through opened sheets, and validation.
+through opened sheets, validation, and schema contracts (enforcement,
+identity, and consumer verification — above).
 
 Known gaps, tracked in
 [#240](https://github.com/JarvusInnovations/gitsheets/issues/240) and stated

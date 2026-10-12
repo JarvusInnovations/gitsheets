@@ -35,7 +35,7 @@ import type {
   OpenRepoOptions, OpenSheetOptions, OpenSheetsOptions,
   TransactionOptions, TransactionResult, TransactionHandler, Author,
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions, WillChangeResult,
-  SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, QueryOptions,
+  SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, RangeFilter, QueryOptions,
   DiffStatus, DiffOptions, DiffChange,
   AttachmentBlobHandle, AttachmentEntry,
   Format, FormatConfig,
@@ -101,9 +101,10 @@ const store = await openStore(repo, {
 
 | Method | Returns |
 | --- | --- |
-| `sheet.query(filter?, opts?)` | `AsyncGenerator<T>` — iterator; `opts.signal` for AbortSignal cancellation; `opts.withBody` for content-typed body loading |
+| `sheet.query(filter?, opts?)` | `AsyncGenerator<T>` — iterator; filter entries are equality, a predicate, a nested object, or a `{ $gt, $gte, $lt, $lte }` range (see [path templates](path-templates.md#range-queries-on-date-buckets)); `opts.signal` for AbortSignal cancellation; `opts.withBody` for content-typed body loading |
 | `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` — honors `opts.signal`, `opts.withBody` |
 | `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` — honors `opts.signal`, `opts.withBody` |
+| `sheet.get(path, opts?)` | `Promise<T \| undefined>` — one record by its rendered path (one blob read, no scan); `opts.withBody`; on a tx-bound sheet reads the private tree |
 | `sheet.loadBody(record)` | `Promise<T>` — hydrate a body-less record (content-typed sheets) |
 | `sheet.refresh()` | Rebind this sheet's read snapshot to the current HEAD tree (out-of-band movement; own commits auto-refresh) |
 | `sheet.pathForRecord(record)` | `Promise<string>` — rendered path, no write |

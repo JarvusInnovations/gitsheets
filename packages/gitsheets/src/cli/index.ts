@@ -18,6 +18,7 @@ import {
   TransactionError,
   ValidationError,
 } from '../errors.js';
+import { readTreeBlobText } from '../core.js';
 import { openRepo } from '../repository.js';
 import type { Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
@@ -344,6 +345,53 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   }
 }
 
+/**
+ * Parse `--filter` clauses into a `Sheet.query` filter. `field=value` is an
+ * equality entry; `>=`, `<=`, `>`, `<` build a range entry on the field
+ * (several bounds on one field merge into one range object). Values stay
+ * strings, so comparisons follow the string-bound rules in
+ * specs/api/sheet.md — an ISO 8601 value compares chronologically against a
+ * datetime field, and a range on a date-bucket path field prunes the walk.
+ * Operators are matched longest-first so `>=` beats `>`.
+ *
+ * @see specs/api/cli.md § `git sheet query`
+ */
+export function parseCliFilters(raw: string[] | string): RecordLike {
+  const items = Array.isArray(raw) ? raw : [raw];
+  const out: RecordLike = {};
+  const OPS: Array<[string, string | undefined]> = [
+    ['>=', '$gte'],
+    ['<=', '$lte'],
+    ['>', '$gt'],
+    ['<', '$lt'],
+    ['=', undefined],
+  ];
+  for (const item of items) {
+    let matched = false;
+    for (const [token, op] of OPS) {
+      const idx = item.indexOf(token);
+      if (idx <= 0) continue;
+      const field = item.slice(0, idx);
+      const value = item.slice(idx + token.length);
+      if (op === undefined) {
+        out[field] = value;
+      } else {
+        const existing = out[field];
+        const range: RecordLike =
+          existing !== null && typeof existing === 'object' ? (existing as RecordLike) : {};
+        range[op] = value;
+        out[field] = range;
+      }
+      matched = true;
+      break;
+    }
+    if (!matched) {
+      throw new Error(`--filter expects field=value or field>=value / <= / > / <, got ${item}`);
+    }
+  }
+  return out;
+}
+
 async function runQuery(argv: QueryArgs): Promise<void> {
   const { sheet } = await loadRepoAndSheet(argv);
   const filter = (argv.filter as RecordLike | undefined) ?? {};
@@ -395,16 +443,8 @@ async function runRead(argv: ReadArgs): Promise<void> {
   // The path is treated as the record's full slug-rendered key plus optional
   // .toml extension. For the simple `${{ slug }}` case this is just the slug.
   const target = argv.path.endsWith('.toml') ? argv.path.slice(0, -5) : argv.path;
-  // Query by RECORD_PATH_KEY isn't supported through `query()` directly; iterate
-  // and match. For typical sheets this is small enough.
-  let found: RecordLike | undefined;
-  for await (const record of sheet.query()) {
-    const pathSym = (record as Record<symbol, unknown>)[Symbol.for('gitsheets-path')];
-    if (pathSym === target) {
-      found = record;
-      break;
-    }
-  }
+  // One blob read by rendered path — no sheet scan (specs/api/sheet.md#sheetget).
+  const found: RecordLike | undefined = await sheet.get(target);
   if (!found) {
     throw new NotFoundError('record_not_found', `${argv.sheet}: no record at ${target}`);
   }
@@ -423,23 +463,20 @@ async function runRead(argv: ReadArgs): Promise<void> {
  * Read the raw TOML bytes of a sheet config at HEAD (or whichever ref the
  * caller's `--ref` points to). Returns the file's text content.
  *
- * Uses `git cat-file blob` rather than the parsed Sheet config so the same
- * helper supports both v1.0-shaped and pre-v1.0 (`[gitsheet.fields]`) configs
- * — `migrate-config` operates on the latter.
+ * Reads the raw blob through the core rather than the parsed Sheet config so
+ * the same helper supports both v1.0-shaped and pre-v1.0
+ * (`[gitsheet.fields]`) configs — `migrate-config` operates on the latter.
  */
 async function readSheetConfigText(
   gitDir: string,
   ref: string,
   configPath: string,
 ): Promise<string> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const ex = promisify(execFile);
-  const { stdout } = await ex('git', ['cat-file', 'blob', `${ref}:${configPath}`], {
-    cwd: gitDir,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  return stdout;
+  const text = readTreeBlobText(gitDir, ref, configPath);
+  if (text === null) {
+    throw new ConfigError('config_missing', `sheet config not found at ${ref}:${configPath}`);
+  }
+  return text;
 }
 
 /** Update one of a record-like field's observed type info during inference. */
@@ -935,17 +972,9 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           .option('filter', {
             type: 'string',
             array: true,
-            describe: 'Equality filter as field=value (repeatable)',
-            coerce: (raw: string[] | string): Record<string, string> => {
-              const items = Array.isArray(raw) ? raw : [raw];
-              const out: Record<string, string> = {};
-              for (const item of items) {
-                const eq = item.indexOf('=');
-                if (eq === -1) throw new Error(`--filter expects field=value, got ${item}`);
-                out[item.slice(0, eq)] = item.slice(eq + 1);
-              }
-              return out;
-            },
+            describe:
+              'Filter clause (repeatable): field=value equality, or field>=value / field<=value / field>value / field<value range bounds',
+            coerce: parseCliFilters,
           })
           .option('fields', { type: 'string', array: true })
           .option('limit', { type: 'number' })

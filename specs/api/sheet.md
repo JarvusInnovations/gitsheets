@@ -38,8 +38,9 @@ for await (const user of sheet.query({ accountLevel: 'staff' })) {
 }
 ```
 
-- `filter` is a plain object. Each key on the filter is matched against the record's field by equality. Function-valued filter entries are called as `(recordValue, record) => boolean`. Nested objects descend recursively.
-- If the filter includes fields from the path template, gitsheets prunes the tree traversal to only matching subtrees (see [behaviors/path-templates.md](../behaviors/path-templates.md)).
+- `filter` is a plain object. Each key on the filter is matched against the record's field by equality. Function-valued filter entries are called as `(recordValue, record) => boolean`. Nested objects descend recursively — except a **range object**, below.
+- **Range filter entries.** A filter value that is a plain object whose keys are all drawn from `$gt`, `$gte`, `$lt`, `$lte` (at least one) is a range predicate on that field, not a nested-table filter. Every bound present must hold. Comparison is by kind: integer and float bounds compare numerically against integer or float fields (`30` and `30.0` are the same bound); string bounds compare lexicographically against string fields; datetime bounds compare chronologically against datetime fields (offset datetimes as instants, offset-less values at face value in UTC, a local-date as its midnight). A **string bound in an accepted ISO 8601 shape** (date-only, datetime with or without offset — the same shapes [behaviors/path-templates.md](../behaviors/path-templates.md#rendering-semantics) accepts for buckets) compares chronologically against a datetime field, so `{ publishedAt: { $gte: '2026-01-01' } }` works without constructing a `Date`. Any other kind pairing (an absent field, a string bound against a number, a table or array field) does not match. A `$`-prefixed key outside this set, or a range object that mixes range keys with other keys, is `TypeError` at query start.
+- If the filter includes fields from the path template, gitsheets prunes the tree traversal to only matching subtrees (see [behaviors/path-templates.md](../behaviors/path-templates.md)). A range entry on a **date-bucket** field prunes to the bounded span of partitions ([behaviors/path-templates.md § Range-pruned traversal](../behaviors/path-templates.md#range-pruned-traversal)); a range on any other field applies record-level only.
 - Order of results: filesystem order within each tree level. Not guaranteed stable across implementation changes — sort in consumer code if order matters.
 - `opts.signal?: AbortSignal` — cancel a streaming query. The query checks the signal before iteration starts and again before each yield. If aborted, the next iteration throws `signal.reason` (a `DOMException` with name `'AbortError'` by default, or whatever value the consumer passed to `controller.abort(reason)`). See [api/conventions.md](conventions.md#cancellation).
 - `opts.withBody?: boolean` — for content-typed (markdown/mdx) sheets, whether to load the body field. Default `true`. Setting `false` reads only the frontmatter; the body field is `undefined` on yielded records. No effect on TOML sheets. Filters that reference the body field throw `TypeError` under `withBody: false`. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
@@ -55,6 +56,14 @@ Returns `Promise<T[]>`. All matches collected into an array. Convenience over `f
 ### `sheet.count(filter?)`
 
 Returns `Promise<number>`, the number of matching records. With no filter (outside a transaction) it counts candidate paths from the tree walk without parsing any record, so it stays cheap on large sheets. A non-empty filter (value or function predicate) or a tx-bound sheet falls back to a body-less scan that honors the filter. Throws `TypeError` if passed a function.
+
+### `sheet.get(path, opts?)`
+
+Returns `Promise<T | undefined>`: the one record stored at `path` — the rendered path-template result (no extension), the same string `query` annotates on each record and the CLI `read` command takes — or `undefined` when nothing lives there. One blob read, no tree walk: the by-path primitive behind "read a single record" surfaces.
+
+- Honors `opts.withBody` exactly like `query` (default `true`; `false` reads only the frontmatter on content-typed sheets).
+- On a transaction-bound sheet (`tx.sheet(name)`) reads the transaction's private tree, so a record staged earlier in the same handler is visible ([transaction.md § Read isolation](transaction.md#read-isolation)).
+- A path that names a subtree or an attachment file (not a record blob) is `undefined`, not an error. An unparseable blob throws `ConfigError` (`config_invalid`).
 
 ### `sheet.loadBody(record)`
 

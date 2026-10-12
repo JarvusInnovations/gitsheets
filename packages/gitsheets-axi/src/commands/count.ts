@@ -4,7 +4,7 @@ import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
-import { buildPredicate } from '../util/filter.js';
+import { bucketFieldsOf, buildPredicate, pushdownFilter } from '../util/filter.js';
 
 export const COUNT_HELP = `usage: gitsheets-axi count <sheet> [--filter k=v ...] [--prefix p]
 flags[2]:
@@ -83,12 +83,16 @@ export async function countCommand(
   }
 
   // Filtered → scan body-less and count matches, reporting the total too.
+  // Ordered clauses on date-bucket path fields are pushed to the core so the
+  // scan prunes; the total comes from the cheap candidate-path count.
   const predicate = buildPredicate(flags.filters);
   let matched = 0;
   let total = 0;
   try {
-    const records = await sheet.queryAll({}, { withBody: false });
-    total = records.length;
+    const config = await sheet.readConfig();
+    const pushdown = pushdownFilter(flags.filters, bucketFieldsOf(config.path));
+    total = await sheet.count();
+    const records = await sheet.queryAll(pushdown, { withBody: false });
     for (const r of records) {
       if (predicate(r as Record<string, unknown>)) matched++;
     }

@@ -35,6 +35,19 @@ use gitsheets_core::path_template::Template;
 use gitsheets_core::query::{self, Filter, FilterPred};
 use gitsheets_core::validation::CompiledSchema;
 use gitsheets_core::{record, Datetime, Value};
+use gitsheets_core::record::{Context, TreeCache};
+
+thread_local! {
+    /// The per-thread tree cache behind ref-path reads (holo-tree 0.5: caches
+    /// are consumer-owned, never thread-implicit). Leaked once per thread so a
+    /// `Context` can borrow it for the duration of a call; transactions own
+    /// their own cache (`Transaction::split`).
+    static TREE_CACHE: &'static TreeCache = Box::leak(Box::new(TreeCache::new()));
+}
+
+fn tree_cache() -> &'static TreeCache {
+    TREE_CACHE.with(|c| *c)
+}
 use napi::bindgen_prelude::*;
 use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, ValueType};
 use napi_derive::napi;
@@ -533,9 +546,10 @@ pub fn contract_load(
     name: String,
 ) -> Result<String> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree =
         record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    let json = gitsheets_core::contract::load_contract(&repo, &mut tree, &open_root, &name)
+    let json = gitsheets_core::contract::load_contract(&ctx, &mut tree, &open_root, &name)
         .map_err(|err| raise_core_error(&env, &err))?;
     Ok(json.to_string())
 }
@@ -578,9 +592,10 @@ pub fn verify_sheet_contract(
     mode: Option<String>,
 ) -> Result<JsConformanceReport> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree =
         record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    let sheet = match CoreSheet::open(&repo, &mut tree, &sheet_name, &config_path, &open_root, &prefix)
+    let sheet = match CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, &prefix)
     {
         Ok(s) => s,
         Err(err) => return Err(raise_core_error(&env, &err)),
@@ -617,7 +632,7 @@ pub fn verify_sheet_contract(
         }
     };
 
-    match gitsheets_core::verify_sheet_contract(&repo, &mut tree, &open_root, &sheet, core_input, verify_mode) {
+    match gitsheets_core::verify_sheet_contract(&ctx, &mut tree, &open_root, &sheet, core_input, verify_mode) {
         Ok(report) => Ok(JsConformanceReport {
             name: report.name,
             rung: report.rung.as_str().to_string(),
@@ -933,6 +948,7 @@ pub fn substrate_stats() -> JsSubstrateStats {
 #[napi]
 pub fn substrate_reset() {
     record::substrate_reset();
+    tree_cache().clear();
 }
 
 // ── query traversal + filtering ───────────────────────────────────────────────
@@ -977,7 +993,27 @@ fn parse_filter_pred(env: &Env, val: JsUnknown, engine: &mut Engine) -> Result<F
                 return Ok(FilterPred::Predicate(handle));
             }
         }
-        // A plain object is a nested-table filter.
+        // A `$`-keyed object is a range (`{ $gte, $lt, … }`); the core
+        // validates the vocabulary (an unknown `$` operator or a mix with
+        // ordinary keys is an error). Anything else is a nested-table filter.
+        let names = obj.get_property_names()?;
+        let n = names.get_array_length()?;
+        let mut has_operator = false;
+        for i in 0..n {
+            let key: JsString = names.get_element(i)?;
+            if key.into_utf8()?.as_str()?.starts_with('$') {
+                has_operator = true;
+                break;
+            }
+        }
+        if has_operator {
+            let jv = unsafe { JsValue::from_napi_value(env.raw(), val.raw())? };
+            let JsValue(Value::Table(map)) = jv else {
+                unreachable!("a JS object marshals to a core table");
+            };
+            let range = query::Range::from_table(&map).map_err(|err| raise_core_error(env, &err))?;
+            return Ok(FilterPred::Range(range));
+        }
         let nested = parse_filter(env, &obj, engine)?;
         return Ok(FilterPred::Nested(nested));
     }
@@ -989,9 +1025,19 @@ fn parse_filter_pred(env: &Env, val: JsUnknown, engine: &mut Engine) -> Result<F
 
 /// Query records under `base` in the tree `treeRef`, returning each matched
 /// `{ path, record }` in sorted path order. The template prunes the walk; the
-/// filter (equality / nested / `$pred` snippets) is applied to each candidate.
-/// Batch-first: the whole query crosses the FFI once.
+/// filter (equality / nested / `$pred` snippets / `{ $gt, $gte, $lt, $lte }` ranges)
+/// is applied to each candidate; a range on a date-bucket path field prunes
+/// the walk to the bounded span of partitions. Batch-first: the whole query
+/// crosses the FFI once.
+///
+/// Format-aware: pass `bodyField` (and optionally `titleField`) for a
+/// markdown/mdx sheet (the kind follows `extension`: `.mdx` → mdx, else
+/// markdown) and the core decodes each candidate through the frontmatter
+/// codec — `withBody: false` is the lazy-body switch (default `true`). Without
+/// `bodyField` records are canonical TOML. The binding never fetches record
+/// bytes itself (spec: `rust-core.md` "Query traversal + filtering").
 #[napi]
+#[allow(clippy::too_many_arguments)]
 pub fn record_query(
     env: Env,
     git_dir: String,
@@ -1000,14 +1046,35 @@ pub fn record_query(
     template: String,
     filter: JsObject,
     extension: Option<String>,
+    body_field: Option<String>,
+    title_field: Option<String>,
+    with_body: Option<bool>,
 ) -> Result<Vec<JsRecordEntry>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
     let parsed = parse_filter(&env, &filter, &mut engine)?;
-    match query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext) {
+    let rows = match body_field {
+        Some(body) => {
+            let format = content_format(&ext, body, title_field);
+            query::query_records_format(
+                &ctx,
+                &mut tree,
+                &base,
+                &compiled,
+                &parsed,
+                &mut engine,
+                &ext,
+                &format,
+                with_body.unwrap_or(true),
+            )
+        }
+        None => query::query_records(&ctx, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
+    };
+    match rows {
         Ok(rows) => Ok(rows
             .into_iter()
             .map(|(path, record)| JsRecordEntry {
@@ -1019,10 +1086,72 @@ pub fn record_query(
     }
 }
 
+/// The content-typed `FormatConfig` for a read: markdown or mdx by extension.
+/// `normalize` only matters on serialize; reads never consult it.
+fn content_format(extension: &str, body_field: String, title_field: Option<String>) -> FormatConfig {
+    FormatConfig {
+        kind: if extension == ".mdx" { FormatKind::Mdx } else { FormatKind::Markdown },
+        body: Some(body_field),
+        title: title_field,
+        normalize: true,
+    }
+}
+
+/// A blob read by `treeRef:path` — the bytes plus the blob's object id, or
+/// `null` when nothing (or a subtree) lives at `path`. Backs sheet-config
+/// loading and lazy-body hydration without a `git cat-file` subprocess
+/// (spec: `rust-core.md` "Blob reads").
+#[napi]
+pub fn tree_read_blob(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<JsBlobEntry>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    match record::read_blob_entry(&ctx, &mut tree, &path) {
+        Ok(Some((hash, bytes))) => Ok(Some(JsBlobEntry {
+            hash,
+            content: Buffer::from(bytes),
+        })),
+        Ok(None) => Ok(None),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// The object id of the blob at `treeRef:path`, or `null` when absent or not
+/// a blob. The hash-only lookup (attachment handles, cache keys).
+#[napi]
+pub fn tree_entry_hash(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<String>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    match record::tree_entry_hash(&ctx, &mut tree, &path) {
+        Ok(hash) => Ok(hash.map(|h| h.to_string())),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// A blob's bytes by object id, or `null` when no object has that id. Backs
+/// attachment content reads and diff-side record reads.
+#[napi]
+pub fn blob_read(env: Env, git_dir: String, hash: String) -> Result<Option<Buffer>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    match record::read_blob_by_hash(&repo, &hash) {
+        Ok(bytes) => Ok(bytes.map(Buffer::from)),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// A blob read by `treeRef:path`: its object id and bytes.
+#[napi(object)]
+pub struct JsBlobEntry {
+    pub hash: String,
+    pub content: Buffer,
+}
+
 /// The pruning candidate set alone (no content filter applied) — the direct
 /// parity target for the host `Template.queryTree`. `query` is a (partial)
-/// record of the path-template input fields. Returns candidate record paths
-/// (relative to `base`, no extension) in sorted order.
+/// record of the path-template input fields; a date-bucket field may carry a
+/// `{ $gte, $lt, … }` range object, which bounds the walk. Returns candidate
+/// record paths (relative to `base`, no extension) in sorted order.
 #[napi]
 pub fn record_query_candidates(
     env: Env,
@@ -1035,10 +1164,11 @@ pub fn record_query_candidates(
 ) -> Result<Vec<String>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
-    query::query_candidate_paths(&repo, &mut tree, &base, &compiled, &query.0, &mut engine, &ext)
+    query::query_candidate_paths(&ctx, &mut tree, &base, &compiled, &query.0, &mut engine, &ext)
         .map_err(|err| raise_core_error(&env, &err))
 }
 
@@ -1525,8 +1655,8 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
-        match CoreSheet::open(repo, tree, &name, &config_path, &open_root, &prefix) {
+        let (ctx, tree) = tx.split();
+        match CoreSheet::open(&ctx, tree, &name, &config_path, &open_root, &prefix) {
             Ok(sheet) => {
                 sheets.insert(name, sheet);
                 Ok(())
@@ -1556,12 +1686,12 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         let candidate = match sheet.prepare_upsert(
-            repo,
+            &ctx,
             tree,
             &record.0,
             previous_path,
@@ -1602,11 +1732,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let outcome = {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            match sheet.stage_upsert(repo, tree, &candidate) {
+            match sheet.stage_upsert(&ctx, tree, &candidate) {
                 Ok(o) => o,
                 Err(err) => return Err(raise_core_error(&env, &err)),
             }
@@ -1633,12 +1763,12 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         let wc = match sheet.will_change(
-            repo,
+            &ctx,
             tree,
             &record.0,
             previous_path,
@@ -1667,11 +1797,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.delete_at_path(repo, tree, &record_path) {
+            if let Err(err) = sheet.delete_at_path(&ctx, tree, &record_path) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -1687,11 +1817,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.clear(repo, tree) {
+            if let Err(err) = sheet.clear(&ctx, tree) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -1717,11 +1847,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.set_attachments(repo, tree, &record_path, &items) {
+            if let Err(err) = sheet.set_attachments(&ctx, tree, &record_path, &items) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -1755,8 +1885,8 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let hash = {
-            let (repo, tree) = tx.split();
-            match tree.write_child_bytes(repo, &path, content.as_bytes()) {
+            let (ctx, tree) = tx.split();
+            match tree.write_child_bytes(&ctx, &path, content.as_bytes()) {
                 Ok(h) => h.to_string(),
                 Err(e) => {
                     let core_err = gitsheets_core::Error::CommitFailed {
@@ -1781,8 +1911,8 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let existed = {
-            let (repo, tree) = tx.split();
-            match tree.delete_child_deep(repo, &path) {
+            let (ctx, tree) = tx.split();
+            match tree.delete_child_deep(&ctx, &path) {
                 Ok(existed) => existed,
                 Err(e) => {
                     let core_err = gitsheets_core::Error::CommitFailed {
@@ -1812,11 +1942,11 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        match sheet.get_attachments(repo, tree, &record_path) {
+        match sheet.get_attachments(&ctx, tree, &record_path) {
             Ok(Some(entries)) => Ok(Some(
                 entries
                     .into_iter()
@@ -1841,12 +1971,12 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         sheet
-            .get_attachment(repo, tree, &record_path, &attachment_name)
+            .get_attachment(&ctx, tree, &record_path, &attachment_name)
             .map_err(|err| raise_core_error(&env, &err))
     }
 
@@ -1865,11 +1995,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.delete_attachment(repo, tree, &record_path, &attachment_name) {
+            if let Err(err) = sheet.delete_attachment(&ctx, tree, &record_path, &attachment_name) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -1893,11 +2023,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let removed = {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            match sheet.delete_attachments(repo, tree, &record_path) {
+            match sheet.delete_attachments(&ctx, tree, &record_path) {
                 Ok(r) => r,
                 Err(err) => return Err(raise_core_error(&env, &err)),
             }
@@ -1918,11 +2048,11 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        match sheet.list(repo, tree, with_body) {
+        match sheet.list(&ctx, tree, with_body) {
             Ok(rows) => Ok(rows
                 .into_iter()
                 .map(|(path, record)| JsRecordEntry {
@@ -1930,6 +2060,67 @@ impl CoreTransaction {
                     record: JsValue(record),
                 })
                 .collect()),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// Query the sheet's records in the transaction's private tree — pruned by
+    /// the path template exactly like a committed-ref query, decoded through
+    /// the format codec, `withBody` the lazy-body switch (spec:
+    /// `api/transaction.md` "Read isolation"). The filter takes the same forms
+    /// as `recordQuery` (equality / nested / `$pred` / ranges). Read-only —
+    /// does not mark the transaction mutated.
+    #[napi]
+    pub fn query(
+        &mut self,
+        env: Env,
+        name: String,
+        filter: JsObject,
+        with_body: bool,
+    ) -> Result<Vec<JsRecordEntry>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (ctx, tree) = tx.split();
+        let sheet = sheets
+            .get_mut(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
+        match sheet.query(&ctx, tree, &parsed, with_body) {
+            Ok(rows) => Ok(rows
+                .into_iter()
+                .map(|(path, record)| JsRecordEntry {
+                    path,
+                    record: JsValue(record),
+                })
+                .collect()),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// Read the one record at `recordPath` (relative to the sheet's base, no
+    /// extension) in the transaction's private tree, decoded through the format
+    /// codec — the tx-bound `Sheet.get`. `null` when absent; `withBody` is the
+    /// lazy-body switch. Read-only.
+    #[napi]
+    pub fn read_record(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+        with_body: bool,
+    ) -> Result<Option<JsValue>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (ctx, tree) = tx.split();
+        let sheet = sheets
+            .get(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        match sheet.read_one(&ctx, tree, &record_path, with_body) {
+            Ok(record) => Ok(record.map(JsValue)),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
     }
@@ -1977,9 +2168,10 @@ pub fn core_discover_sheets(
     open_root: String,
 ) -> Result<Vec<String>> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree =
         record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    store::discover_sheets(&repo, &mut tree, &open_root).map_err(|err| raise_core_error(&env, &err))
+    store::discover_sheets(&ctx, &mut tree, &open_root).map_err(|err| raise_core_error(&env, &err))
 }
 
 /// The `openStore` `config_missing` check: every validator must name a declared

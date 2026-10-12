@@ -73,6 +73,9 @@ One handler, one commit, committed only on success. `openStore` layers typed
 sheets on top with Standard Schema validators (Zod, Valibot, ArkType), and a
 successful transaction auto-refreshes reads. See
 [the docs](https://jarvusinnovations.github.io/gitsheets/) for the API guide.
+Published as [`gitsheets`](https://www.npmjs.com/package/gitsheets) on npm; the
+agent-facing [`gitsheets-axi`](https://www.npmjs.com/package/gitsheets-axi)
+ships separately.
 
 ### The CLI
 
@@ -113,10 +116,26 @@ npx skills add JarvusInnovations/gitsheets -y --skill gitsheets
 
 ### Python
 
-A Python binding ([`rust/gitsheets-py`](rust/gitsheets-py), pyo3) runs on the
-same core — a write from Python and a write from Node produce byte-identical
-commits, proven by cross-binding tests in CI. It builds from the repo today;
-PyPI publication is on the roadmap.
+```console
+pip install gitsheets        # CPython >= 3.9; prebuilt abi3 wheels
+```
+
+The [PyPI package](https://pypi.org/project/gitsheets/) runs on the same Rust
+core — a write from Python and a write from Node produce byte-identical
+commits, proven by cross-binding tests in CI. Surface and scope:
+[`rust/gitsheets-py`](rust/gitsheets-py/README.md).
+
+## Sheets as checked interfaces
+
+A sheet can declare that it `implements` named, versioned schema contracts —
+JSON Schema documents vendored into the repo in canonical form and composed
+into validation on every write, so conformance is enforced by construction. A
+system consuming someone else's sheet verifies it mechanically at wiring time:
+by content identity (fast, and guaranteed for all future writes) or by
+validating the records themselves (works against any sheet ever written).
+Cross-system data sharing becomes a checked interface instead of a hopeful
+convention. See the
+[contracts guide](https://jarvusinnovations.github.io/gitsheets/contracts/).
 
 ## What it is not
 

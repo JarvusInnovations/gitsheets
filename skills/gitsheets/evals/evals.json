@@ -35,6 +35,13 @@
       "prompt": "I have a record like `{slug: 'jane', email: 'jane@x.org', team: 'eng', joined: '2024-01-01'}`. I want to update just the team to 'design' without touching the other fields. I tried `await sheet.upsert({slug: 'jane', team: 'design'})` and it wiped out email and joined! What am I doing wrong?",
       "expected_output": "Should explain that upsert is a full-record replace by design — it's not a partial update. The fix is sheet.patch({slug: 'jane'}, {team: 'design'}) which uses RFC 7396 merge semantics: only the keys in the partial override; other fields are preserved. Should also note that null in the partial deletes that field (RFC 7396 semantics).",
       "files": []
+    },
+    {
+      "id": 6,
+      "name": "partition-events-by-date-and-range-query",
+      "prompt": "We have an `events` sheet with a few thousand records: each has an `id`, an `occurredAt` datetime, a `kind`, and a short `summary`. Queries like \"everything from the last 30 days\" and \"all events in March 2026\" currently load the whole sheet and filter in JS, which is slow. Rewrite the `.gitsheets/events.toml` config so the records are partitioned by day on disk, then show (a) the TypeScript query for a date range that only reads the partitions it needs, (b) the equivalent `gitsheets-axi` one-liner an agent would run, and (c) a `count` of events since the start of the year. Call out any gotchas with timezones.",
+      "expected_output": "Config uses the declarative date-bucket path form (e.g. `path = '${{ occurredAt: YYYY/MM/DD }}/${{ id }}'`) rather than a JS expression, with a date-time schema on occurredAt. (a) uses a range filter object (`{ occurredAt: { $gte: '...', $lt: '...' } }` with ISO strings or Dates) on queryAll; (b) uses `gitsheets-axi query events --filter 'occurredAt>=YYYY-MM-DD' --filter 'occurredAt<YYYY-MM-DD'` (quoted); (c) uses `sheet.count({ occurredAt: { $gte: ... } })` or `gitsheets-axi count events --filter ...`. Mentions buckets are UTC-always and that pruning is inclusive at the day level with the exact cutoff applied record-level. Does NOT hand-roll getUTCFullYear()/padStart expressions and does NOT fetch everything then filter.",
+      "files": []
     }
   ]
 }

@@ -435,3 +435,147 @@ def test_date_bucket_invalid_format_raises_config_error():
 def test_date_bucket_wrong_type_raises_path_template_error():
     with pytest.raises(gitsheets.PathTemplateError):
         gitsheets.render_paths_batch("${{ d: YYYY }}", [{"d": 42}])
+
+
+# ── range filters + range-pruned traversal ─────────────────────────────────────
+# specs/api/sheet.md "Range filter entries" + specs/behaviors/path-templates.md
+# "Range-pruned traversal". The dict form `{"$gte": a, "$lt": b}` is the same
+# wire form the Node binding feeds; expectations are byte-identical to
+# rust/gitsheets-napi/test/record-query.mjs.
+
+_DAILY = [
+    ("2025/10/05/a", "2025-10-05T10:00:00Z"),
+    ("2025/11/19/b", "2025-11-19T23:59:59Z"),
+    ("2025/11/20/c", "2025-11-20T00:00:00Z"),
+    ("2025/11/25/d", "2025-11-25T12:00:00Z"),
+    ("2025/12/31/e", "2025-12-31T23:00:00Z"),
+    ("2026/01/15/f", "2026-01-15T08:00:00Z"),
+    ("2026/02/03/g", "2026-02-03T00:00:00Z"),
+    ("2026/02/03/h", "2026-02-03T09:00:00Z"),
+    ("2026/02/04/i", "2026-02-04T00:00:00Z"),
+    ("2026/06/01/j", "2026-06-01T00:00:00Z"),
+]
+_DAILY_TEMPLATE = "${{ d: YYYY/MM/DD }}/${{ slug }}"
+
+
+def _seed_daily(git_dir):
+    paths = [p for p, _ in _DAILY]
+    records = [
+        {"d": dt.datetime.fromisoformat(when.replace("Z", "+00:00")), "slug": p.split("/")[-1]}
+        for p, when in _DAILY
+    ]
+    return gitsheets.record_write(git_dir, gitsheets.EMPTY_TREE_HASH, "posts", paths, records)["tree_hash"]
+
+
+def test_range_bounds_a_date_bucketed_candidate_walk(fresh_repo):
+    _, git_dir = fresh_repo
+    tree = _seed_daily(git_dir)
+    bounded = gitsheets.record_query_candidates(
+        git_dir, tree, "posts", _DAILY_TEMPLATE,
+        {"d": {"$gte": "2025-11-20", "$lt": dt.datetime(2026, 2, 3, tzinfo=dt.timezone.utc)}},
+    )
+    assert bounded == [
+        "2025/11/20/c", "2025/11/25/d", "2025/12/31/e", "2026/01/15/f", "2026/02/03/g", "2026/02/03/h",
+    ]
+    assert gitsheets.record_query_candidates(git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gt": "2026-02-03"}}) == [
+        "2026/02/03/g", "2026/02/03/h", "2026/02/04/i", "2026/06/01/j",
+    ]
+    # A non-date bound widens rather than erroring.
+    assert len(gitsheets.record_query_candidates(git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gte": 2025}})) == len(_DAILY)
+
+
+def test_range_filter_applies_the_exact_cutoff(fresh_repo):
+    _, git_dir = fresh_repo
+    tree = _seed_daily(git_dir)
+    out = gitsheets.record_query(
+        git_dir, tree, "posts", _DAILY_TEMPLATE,
+        {"d": {"$gte": "2025-11-20", "$lt": dt.datetime(2026, 2, 3, tzinfo=dt.timezone.utc)}},
+    )
+    assert [e["record"]["slug"] for e in out] == ["c", "d", "e", "f"]
+    after = gitsheets.record_query(
+        git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gt": dt.datetime(2026, 2, 3, 9, tzinfo=dt.timezone.utc)}}
+    )
+    assert [e["record"]["slug"] for e in after] == ["i", "j"]
+    mixed = gitsheets.record_query(
+        git_dir, tree, "posts", _DAILY_TEMPLATE, {"d": {"$gte": "2026-01-01"}, "slug": {"$pred": "value !== 'i'"}}
+    )
+    assert [e["record"]["slug"] for e in mixed] == ["f", "g", "h", "j"]
+
+
+def test_range_filter_numeric_and_malformed(fresh_repo):
+    _, git_dir = fresh_repo
+    people = [
+        ("amy", {"slug": "amy", "age": 41}),
+        ("bob", {"slug": "bob", "age": 17}),
+        ("jane", {"slug": "jane", "age": 30}),
+        ("zed", {"slug": "zed", "age": 64}),
+    ]
+    tree = gitsheets.record_write(
+        git_dir, gitsheets.EMPTY_TREE_HASH, "people", [p for p, _ in people], [r for _, r in people]
+    )["tree_hash"]
+    adults = gitsheets.record_query(git_dir, tree, "people", "${{ slug }}", {"age": {"$gte": 18, "$lt": 63.5}})
+    assert [e["path"] for e in adults] == ["amy", "jane"]
+    for bad in ({"$in": [1]}, {"$gte": 1, "foo": 2}, {"$gt": 1, "$gte": 2}):
+        with pytest.raises(gitsheets.ConfigError):
+            gitsheets.record_query(git_dir, tree, "people", "${{ slug }}", {"age": bad})
+
+
+# ── core-native reads: format-aware record_query + blob primitives ──────────────
+# specs/rust-core.md "Query traversal + filtering" / "Blob reads". The same
+# markdown bytes the Node binding writes decode byte-identically here; no
+# `git cat-file` is involved on any of these paths.
+
+_MD_CONFIG = "[gitsheet]\npath = '${{ slug }}'\nroot = 'posts'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\n"
+
+
+@pytest.fixture()
+def markdown_repo():
+    d = tempfile.mkdtemp(prefix="gitsheets-py-md-")
+    _git(["init", "-q", "-b", "main", d])
+    _git(["config", "user.name", "Seed"], cwd=d)
+    _git(["config", "user.email", "seed@x.org"], cwd=d)
+    os.makedirs(os.path.join(d, ".gitsheets"))
+    os.makedirs(os.path.join(d, "posts"))
+    with open(os.path.join(d, ".gitsheets", "posts.toml"), "w") as fh:
+        fh.write(_MD_CONFIG)
+    for slug, kind, body in [("alpha", "note", "# Alpha\n\nfirst\n"), ("beta", "post", "# Beta\n"), ("gamma", "note", "# Gamma\n")]:
+        text = f'+++\nkind = "{kind}"\nslug = "{slug}"\n+++\n\n{body}'
+        with open(os.path.join(d, "posts", f"{slug}.md"), "w") as fh:
+            fh.write(text)
+    _git(["add", "."], cwd=d)
+    _git(["commit", "-q", "-m", "seed"], cwd=d)
+    try:
+        yield d, os.path.join(d, ".git")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_record_query_decodes_markdown_in_the_core(markdown_repo):
+    _, git_dir = markdown_repo
+    full = gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {"kind": "note"}, ".md", body_field="body")
+    assert [e["path"] for e in full] == ["alpha", "gamma"]
+    assert full[0]["record"]["body"] == "# Alpha\n\nfirst"
+    lazy = gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {}, ".md", body_field="body", with_body=False)
+    assert [e["path"] for e in lazy] == ["alpha", "beta", "gamma"]
+    assert "body" not in lazy[0]["record"]
+    assert lazy[0]["record"]["kind"] == "note"
+    one = gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {"slug": "beta"}, ".md", body_field="body", with_body=False)
+    assert [e["path"] for e in one] == ["beta"]
+    # Without body_field the core would try to parse the .md as TOML.
+    with pytest.raises(gitsheets.ConfigError):
+        gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {}, ".md")
+
+
+def test_blob_primitives_read_the_object_database(markdown_repo):
+    _, git_dir = markdown_repo
+    entry = gitsheets.tree_read_blob(git_dir, "HEAD", ".gitsheets/posts.toml")
+    assert entry["content"].decode() == _MD_CONFIG
+    assert len(entry["hash"]) == 40
+    assert gitsheets.tree_entry_hash(git_dir, "HEAD", ".gitsheets/posts.toml") == entry["hash"]
+    assert gitsheets.blob_read(git_dir, entry["hash"]) == entry["content"]
+    assert gitsheets.tree_read_blob(git_dir, "HEAD", "posts/nope.md") is None
+    assert gitsheets.tree_read_blob(git_dir, "HEAD", "posts") is None
+    assert gitsheets.tree_entry_hash(git_dir, "HEAD", "posts") is None
+    assert gitsheets.blob_read(git_dir, "0" * 40) is None
+    with pytest.raises(gitsheets.RefError):
+        gitsheets.tree_read_blob(git_dir, "no-such-ref", "x")

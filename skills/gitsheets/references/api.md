@@ -8,7 +8,7 @@ ESM-only. `import { … } from 'gitsheets'`. Targets Node ≥ 20 / Bun ≥ 1, `s
 - [openRepo](#openrepo) — open a Repository
 - [Repository](#repository) — methods on the repo handle
 - [Sheet](#sheet) — per-sheet operations
-  - [Reading](#reading) — query / queryFirst / queryAll / count / loadBody / pathForRecord / normalizeRecord
+  - [Reading](#reading) — query / queryFirst / queryAll / count / get / loadBody / pathForRecord / normalizeRecord
   - [Writing](#writing) — upsert / delete / patch / clear / clone
   - [Attachments](#attachments) — get / set / delete / iterator
   - [Indexing](#indexing) — defineIndex / findByIndex
@@ -47,7 +47,7 @@ import type {
   TransactionOptions, TransactionResult, TransactionHandler, Author,
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions,
   IndexKeyFn, DefineIndexOptions,
-  QueryFilter, QueryOptions, DiffStatus, DiffOptions, DiffChange,
+  QueryFilter, RangeFilter, QueryOptions, DiffStatus, DiffOptions, DiffChange,
   AttachmentBlobHandle, AttachmentEntry,
   Format, FormatConfig,
   OpenStoreOptions, Store, StoreTx, StoreTransactFn, ValidatorMap, InferRecord,
@@ -122,11 +122,33 @@ const all = await sheet.queryAll();
 | `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` | Same opts |
 | `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` | Same opts |
 | `sheet.count(filter?)` | `Promise<number>` | Cheap count (walks candidate paths, no parse) when unfiltered; a filter falls back to a body-less scan |
+| `sheet.get(path, opts?)` | `Promise<T \| undefined>` | One record by its rendered path — one blob read, no scan; `opts.withBody`; tx-bound reads the private tree. The primitive behind "read one record" |
 | `sheet.loadBody(record)` | `Promise<T>` | Hydrate a body-less record (markdown sheets); no-op on TOML sheets |
 | `sheet.pathForRecord(record)` | `Promise<string>` | Render the path template; doesn't write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` | Canonical form (deep-sort keys, array sort rules); doesn't write/validate |
 
-Filters: each key matches by equality; function values are predicates `(value, record) => boolean`; nested objects descend. Filters that reference path-template fields prune the tree walk.
+**Filters.** A filter is a plain object; every entry must hold (AND). Per field, the value is one of:
+
+| Entry | Meaning |
+| --- | --- |
+| literal (`'staff'`, `42`, `true`, a `Date`) | strict equality (`Date`s compare by instant) |
+| `(value, record) => boolean` | predicate — opaque to pruning |
+| plain object | nested-table filter, descends recursively |
+| `{ $gt?, $gte?, $lt?, $lte? }` | **range** — see below (v2.7+) |
+
+Filters that reference path-template fields prune the tree walk (see `sheet-config.md` → "How queries use the template"); predicates and most other entries filter record-level after the walk.
+
+**Range filters** (`RangeFilter<V>`): any combination of the four bounds, at least one. Comparison is by kind — numbers numerically (int and float interchangeably), strings lexicographically, `Date`s as instants — and a `Date` field also accepts an **ISO 8601 string bound** (`'2026-01-01'`, `'2026-01-01T00:00:00Z'`), so you rarely need to construct a `Date`. Mismatched kinds (a string bound against a number field, an absent field) never match. A `$`-keyed object outside this vocabulary, or mixing `$gte` with ordinary keys, or giving both `$gt` and `$gte`, throws `TypeError` at query start. `$in` / `$or` don't exist — use a predicate or filter in consumer code.
+
+```typescript
+// template '${{ publishedAt: YYYY/MM/DD }}/${{ slug }}' — walks only the 2025/11/20 … 2026/02/03 partitions
+const q1 = await posts.queryAll({ publishedAt: { $gte: '2025-11-20', $lt: '2026-02-03' } });
+const recent = await posts.queryAll({ publishedAt: { $gt: new Date('2026-01-01T00:00:00Z') } });  // one-sided
+const adults = await users.queryAll({ age: { $gte: 18, $lt: 65 } });                               // numeric, record-level
+const n = await posts.count({ publishedAt: { $gte: '2026-01-01' } });                              // count honors it too
+```
+
+On a **date-bucket** path field (`${{ field: YYYY/MM/DD }}` etc.) a range prunes the walk to the bounded span of partitions — pruning is inclusive at the day/month/year level and the record-level comparison applies the exact `$gt` / `$lt` cutoff, so results equal a full scan, just far cheaper. On any other field a range is record-level only. Typed sheets: `RangeFilter<Date>` admits string bounds, `RangeFilter<number>` doesn't.
 
 AbortSignal: throws `signal.reason` on the next yield boundary. Filters that reference the body field under `withBody: false` throw `TypeError` at query start.
 

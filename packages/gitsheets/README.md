@@ -10,7 +10,9 @@ npm install gitsheets
 
 ESM-only. Targets Node.js ≥ 20 and Bun ≥ 1. CLI installs as `gitsheets` and `git-sheet`.
 
-The engine is a shared Rust core, shipped as a prebuilt native addon (`@gitsheets/core-napi`) for Linux (x64/arm64, glibc + musl), macOS (x64/arm64), and Windows (x64), so a plain install needs no Rust toolchain. The same core backs a Python binding, and a write from either language produces byte-identical commits.
+The engine is a shared Rust core, shipped as a prebuilt native addon (`@gitsheets/core-napi`) for Linux (x64/arm64, glibc + musl), macOS (x64/arm64), and Windows (x64), so a plain install needs no Rust toolchain. The same core backs a [Python binding on PyPI](https://pypi.org/project/gitsheets/), and a write from either language produces byte-identical commits.
+
+Sheets can declare that they `implements` named, versioned **schema contracts** — JSON Schema documents vendored into the repo in canonical form and composed into write-time validation, so conformance is enforced by construction. Consumers verify a sheet against a contract at wiring time with `openSheet(name, { contract })` (by content identity, or by validating the records themselves), and the CLI manages the lifecycle via `gitsheets contracts adopt|verify|test|sync|export|prune`. See the [contracts guide](https://jarvusinnovations.github.io/gitsheets/contracts/).
 
 > **Upgrading from v1?** The public API is unchanged, but v2 moves the engine to that Rust core. Two things change for existing repos: `gitsheets` now depends on the prebuilt addon above, and the canonical on-disk form shifted once (the change is value-preserving; for example, integer digit separators are dropped and markdown bodies are reformatted). Re-normalize an existing repo once; see the [v2.0.0 release notes](https://github.com/JarvusInnovations/gitsheets/releases) for the exact command.
 

@@ -32,7 +32,7 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
-use holo_tree::{repo as holo_repo, MutableTree, ObjectId};
+use holo_tree::{repo as holo_repo, Context, MutableTree, ObjectId, TreeCache};
 
 use crate::error::{Error, Result};
 use crate::record;
@@ -88,6 +88,9 @@ fn registry_key(git_dir: &str) -> String {
 /// holo-tree's thread-local-cached tree) — constructed and used on one thread.
 pub struct Transaction {
     repo: gix::Repository,
+    /// The consumer-owned tree cache for this transaction (holo-tree 0.5):
+    /// scoped to the private tree, moves with it, never thread-implicit.
+    cache: TreeCache,
     root: MutableTree,
     registry_key: String,
     parent_commit_hash: Option<ObjectId>,
@@ -140,6 +143,7 @@ impl Transaction {
 
             Ok(Transaction {
                 repo,
+                cache: TreeCache::new(),
                 root,
                 registry_key: key.clone(),
                 parent_commit_hash,
@@ -164,8 +168,14 @@ impl Transaction {
 
     /// Borrow the repo handle + root tree together (disjoint) so a `Sheet` can
     /// run a mutation against this transaction's private tree.
-    pub fn split(&mut self) -> (&gix::Repository, &mut MutableTree) {
-        (&self.repo, &mut self.root)
+    pub fn split(&mut self) -> (Context<'_>, &mut MutableTree) {
+        let Self { repo, cache, root, .. } = self;
+        (Context::new(repo, cache), root)
+    }
+
+    /// A tree-operation context over this transaction's repo + cache.
+    pub fn ctx(&self) -> Context<'_> {
+        Context::new(&self.repo, &self.cache)
     }
 
     pub fn repo(&self) -> &gix::Repository {
@@ -220,7 +230,7 @@ impl Transaction {
             }
         }
 
-        let tree_hash = match self.root.write(&self.repo) {
+        let tree_hash = match self.root.write(&Context::new(&self.repo, &self.cache)) {
             Ok(h) => h,
             Err(e) => {
                 self.release();
@@ -238,7 +248,7 @@ impl Transaction {
                         return Err(record::map_ht(e));
                     }
                 };
-            let parent_tree_hash = match parent_tree.write(&self.repo) {
+            let parent_tree_hash = match parent_tree.write(&Context::new(&self.repo, &self.cache)) {
                 Ok(h) => h,
                 Err(e) => {
                     self.release();
@@ -500,6 +510,11 @@ fn build_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tree-op context over a test-lifetime cache (holo-tree 0.5).
+    fn tctx(repo: &gix::Repository) -> holo_tree::Context<'_> {
+        holo_tree::Context::new(repo, Box::leak(Box::new(holo_tree::TreeCache::new())))
+    }
     use crate::record::{self, write_records, TOML_EXTENSION};
     use crate::sheet::Sheet;
     use crate::value::Value;
@@ -532,14 +547,14 @@ mod tests {
 
         let mut tree = MutableTree::empty();
         write_records(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             ".gitsheets",
             &[("people".into(), config)],
             TOML_EXTENSION,
         )
         .unwrap();
-        let tree_hash = tree.write(&repo).unwrap();
+        let tree_hash = tree.write(&tctx(&repo)).unwrap();
         let sig = build_signature(
             &Author {
                 name: "Seed".into(),
@@ -583,7 +598,7 @@ mod tests {
         let repo = gix::open_opts(dir.path(), gix::open::Options::isolated()).unwrap();
 
         let mut tree = MutableTree::empty();
-        let tree_hash = tree.write(&repo).unwrap();
+        let tree_hash = tree.write(&tctx(&repo)).unwrap();
         let sig = build_signature(
             &Author { name: "Test".into(), email: "test@test".into() },
             1_600_000_000,
@@ -636,9 +651,9 @@ mod tests {
         {
             let (repo, tree) = tx.split();
             let mut sheet =
-                Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
-            let candidate = sheet.prepare_upsert(repo, tree, &rec, None, false).unwrap();
-            sheet.stage_upsert(repo, tree, &candidate).unwrap();
+                Sheet::open(&repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
+            let candidate = sheet.prepare_upsert(&repo, tree, &rec, None, false).unwrap();
+            sheet.stage_upsert(&repo, tree, &candidate).unwrap();
         }
         tx.mark_mutated();
         tx.finalize().unwrap()
@@ -654,15 +669,15 @@ mod tests {
         {
             let (repo, tree) = tx.split();
             let mut sheet =
-                Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
+                Sheet::open(&repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
             let rec = record_value(&[("slug", "jane")]);
-            let candidate = sheet.prepare_upsert(repo, tree, &rec, None, false).unwrap();
-            sheet.stage_upsert(repo, tree, &candidate).unwrap();
+            let candidate = sheet.prepare_upsert(&repo, tree, &rec, None, false).unwrap();
+            sheet.stage_upsert(&repo, tree, &candidate).unwrap();
             // Blob-write primitive → set_attachments (place-by-hash into the SAME
             // live tree the record staged into).
-            attach_hash = record::write_blob(repo, b"AVATAR").unwrap();
+            attach_hash = record::write_blob(repo.repo, b"AVATAR").unwrap();
             sheet
-                .set_attachments(repo, tree, "jane", &[("avatar.jpg".into(), attach_hash.clone())])
+                .set_attachments(&repo, tree, "jane", &[("avatar.jpg".into(), attach_hash.clone())])
                 .unwrap();
         }
         tx.mark_mutated();
@@ -680,9 +695,9 @@ mod tests {
 
         // That ONE commit's tree contains BOTH the record and the attachment.
         let mut committed = record::resolve_tree(&repo, &commit_hash).unwrap();
-        let record_blob = committed.read_blob(&repo, "people/jane.toml").unwrap();
+        let record_blob = committed.read_blob(&tctx(&repo), "people/jane.toml").unwrap();
         assert!(record_blob.is_some(), "record file is in the commit");
-        let attach_child = committed.get_child(&repo, "people/jane/avatar.jpg").unwrap();
+        let attach_child = committed.get_child(&tctx(&repo), "people/jane/avatar.jpg").unwrap();
         match attach_child {
             Some(holo_tree::Child::Blob { hash, .. }) => {
                 assert_eq!(hash.to_string(), attach_hash, "attachment blob is the written one");
@@ -771,10 +786,10 @@ mod tests {
         {
             let (repo, tree) = tx.split();
             let mut sheet =
-                Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
+                Sheet::open(&repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
             let rec = record_value(&[("slug", "jane")]);
-            let candidate = sheet.prepare_upsert(repo, tree, &rec, None, false).unwrap();
-            sheet.stage_upsert(repo, tree, &candidate).unwrap();
+            let candidate = sheet.prepare_upsert(&repo, tree, &rec, None, false).unwrap();
+            sheet.stage_upsert(&repo, tree, &candidate).unwrap();
         }
         tx.mark_mutated();
 
@@ -782,14 +797,14 @@ mod tests {
         let repo2 = record::open_repo(&git_dir).unwrap();
         let mut t = holo_repo::create_tree_from_ref(&repo2, &parent.to_string()).unwrap();
         write_records(
-            &repo2,
+            &tctx(&repo2),
             &mut t,
             "people",
             &[("intruder".into(), record_value(&[("slug", "intruder")]))],
             TOML_EXTENSION,
         )
         .unwrap();
-        let th = t.write(&repo2).unwrap();
+        let th = t.write(&tctx(&repo2)).unwrap();
         let sig = build_signature(
             &Author {
                 name: "Other".into(),
@@ -846,9 +861,9 @@ mod tests {
         let err = {
             let (repo, tree) = tx.split();
             let mut sheet =
-                Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
+                Sheet::open(&repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
             let bad = record_value(&[("slug", "jane"), ("email", "not-an-email")]);
-            sheet.prepare_upsert(repo, tree, &bad, None, false).unwrap_err()
+            sheet.prepare_upsert(&repo, tree, &bad, None, false).unwrap_err()
         };
         assert_eq!(err.code(), "validation_failed");
         // No stage happened → no mutation → finalize is a no-op.

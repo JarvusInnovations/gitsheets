@@ -59,12 +59,13 @@ Read records.
 git sheet query users
 git sheet query users --filter email=jane@x.org
 git sheet query users --filter status=active --filter project_id=p1
+git sheet query posts --filter 'publishedAt>=2026-01-01' --filter 'publishedAt<2026-04-01'
 git sheet query users --format=csv --headers
 ```
 
 Flags:
 
-- `--filter field=value` (repeatable) — equality filter
+- `--filter field=value` (repeatable) — equality filter. The comparison forms `field>=value`, `field<=value`, `field>value`, `field<value` build a range entry on the field (several clauses on one field combine into one range); values are passed as strings, so comparisons follow the string-bound rules of [api/sheet.md](sheet.md#sheetqueryfilter-opts) — an ISO 8601 value compares chronologically against datetime fields, and a range on a date-bucket path field prunes the walk. Operators are matched longest-first (`>=` before `>`), and a clause with no operator is an error.
 - `--fields <name>...` — output column subset / reorder
 - `--limit <n>`
 - `--format <json|csv|tsv|toml>` (default: `json`)
@@ -73,7 +74,7 @@ Flags:
 
 ### `git sheet read <sheet> <path>`
 
-Read a single record by exact path.
+Read a single record by exact path — one blob read via [`sheet.get(path)`](sheet.md#sheetgetpath-opts), never a sheet scan.
 
 ```bash
 git sheet read users users/janedoe

@@ -5,7 +5,7 @@ import { translateError } from '../errors.js';
 import { renderListResponse } from '../output/render.js';
 import { field } from '../output/schema.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
-import { buildPredicate } from '../util/filter.js';
+import { bucketFieldsOf, buildPredicate, pushdownFilter } from '../util/filter.js';
 import { facetCounts } from '../util/aggregate.js';
 
 export const DISTINCT_HELP = `usage: gitsheets-axi distinct <sheet> <field> [--filter expr ...] [--prefix p]
@@ -81,7 +81,11 @@ export async function distinctCommand(
 
   let records;
   try {
-    records = await sheet.queryAll({}, { withBody: false });
+    // Ordered clauses on date-bucket path fields prune the walk in the core;
+    // the host predicate below remains authoritative.
+    const config = await sheet.readConfig();
+    const pushdown = pushdownFilter(flags.filters, bucketFieldsOf(config.path));
+    records = await sheet.queryAll(pushdown, { withBody: false });
   } catch (error) {
     throw translateError(error);
   }

@@ -334,3 +334,85 @@ test('recordQueryCandidates prunes a date-bucketed walk when the field is suppli
   // getFieldNames surfaces the bucket's field for query derivation.
   assert.deepEqual(templateFieldNames(template), ['publishedAt', 'slug']);
 });
+
+// ── range-pruned traversal: ${{ d: YYYY/MM/DD }}/${{ slug }} ──────────────────
+// specs/behaviors/path-templates.md "Range-pruned traversal" + specs/api/sheet.md
+// "Range filter entries". Pinned expectations (the host queryTree is
+// equality-only; the core is the authority here).
+
+const DAILY = [
+  ['2025/10/05/a', '2025-10-05T10:00:00Z'],
+  ['2025/11/19/b', '2025-11-19T23:59:59Z'],
+  ['2025/11/20/c', '2025-11-20T00:00:00Z'],
+  ['2025/11/25/d', '2025-11-25T12:00:00Z'],
+  ['2025/12/31/e', '2025-12-31T23:00:00Z'],
+  ['2026/01/15/f', '2026-01-15T08:00:00Z'],
+  ['2026/02/03/g', '2026-02-03T00:00:00Z'],
+  ['2026/02/03/h', '2026-02-03T09:00:00Z'],
+  ['2026/02/04/i', '2026-02-04T00:00:00Z'],
+  ['2026/06/01/j', '2026-06-01T00:00:00Z'],
+].map(([path, when]) => ({ path, record: { d: new Date(when), slug: path.split('/').pop() } }));
+
+test('recordQueryCandidates bounds a date-bucketed walk from a range object', () => {
+  const { gitDir } = freshRepo();
+  const tree = seed(gitDir, 'posts', DAILY);
+  const template = '${{ d: YYYY/MM/DD }}/${{ slug }}';
+
+  // Year-spanning, both bounds; inclusive at the date level on both ends
+  // (the `$lt` midnight bound's own day is still visited).
+  const bounded = recordQueryCandidates(
+    gitDir, tree, 'posts', template,
+    { d: { $gte: '2025-11-20', $lt: new Date('2026-02-03T00:00:00Z') } },
+    '.toml',
+  );
+  assert.deepEqual(bounded, [
+    '2025/11/20/c', '2025/11/25/d', '2025/12/31/e', '2026/01/15/f', '2026/02/03/g', '2026/02/03/h',
+  ]);
+
+  // One-sided.
+  assert.deepEqual(
+    recordQueryCandidates(gitDir, tree, 'posts', template, { d: { $gt: '2026-02-03' } }, '.toml'),
+    ['2026/02/03/g', '2026/02/03/h', '2026/02/04/i', '2026/06/01/j'],
+  );
+
+  // A non-date bound widens to the full walk (never errors).
+  assert.equal(
+    recordQueryCandidates(gitDir, tree, 'posts', template, { d: { $gte: 2025 } }, '.toml').length,
+    DAILY.length,
+  );
+});
+
+test('recordQuery applies the exact range cutoff over the bounded candidate set', () => {
+  const { gitDir } = freshRepo();
+  const tree = seed(gitDir, 'posts', DAILY);
+  const template = '${{ d: YYYY/MM/DD }}/${{ slug }}';
+
+  const out = recordQuery(
+    gitDir, tree, 'posts', template,
+    { d: { $gte: '2025-11-20', $lt: new Date('2026-02-03T00:00:00Z') } },
+    '.toml',
+  );
+  assert.deepEqual(out.map((r) => r.record.slug), ['c', 'd', 'e', 'f']);
+
+  // `$gt` excludes the bound instant itself; a Date bound compares as an instant.
+  const after = recordQuery(gitDir, tree, 'posts', template, { d: { $gt: new Date('2026-02-03T09:00:00Z') } }, '.toml');
+  assert.deepEqual(after.map((r) => r.record.slug), ['i', 'j']);
+
+  // Ranges compose with other clauses and with a `$pred`.
+  const mixed = recordQuery(
+    gitDir, tree, 'posts', template,
+    { d: { $gte: '2026-01-01' }, slug: { $pred: "value !== 'i'" } },
+    '.toml',
+  );
+  assert.deepEqual(mixed.map((r) => r.record.slug), ['f', 'g', 'h', 'j']);
+
+  // Numeric ranges on a non-path field (record-level only; int↔float numeric).
+  const peopleTree = seed(gitDir, 'people', PEOPLE);
+  const adults = recordQuery(gitDir, peopleTree, 'people', '${{ slug }}', { age: { $gte: 18, $lt: 63.5 } }, '.toml');
+  assert.deepEqual(adults.map((r) => r.path), ['amy', 'jane']);
+
+  // Malformed `$` objects are rejected at the boundary, not silently nested.
+  for (const bad of [{ $in: [1] }, { $gte: 1, foo: 2 }, { $gt: 1, $gte: 2 }]) {
+    assert.throws(() => recordQuery(gitDir, peopleTree, 'people', '${{ slug }}', { age: bad }, '.toml'), /range object/);
+  }
+});

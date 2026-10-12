@@ -125,11 +125,40 @@ A query value of any other type does not prune (the segments widen to
 wildcards); the record-level equality filter still applies downstream, so
 results are unchanged — only the walk is wider.
 
-**Range-pruned queries are explicitly out of scope** for this behavior:
-mapping date-*range* filters onto bounded subtree walks (skip whole years or
-months outside the range) is a natural follow-up that the declarative bucket
-form makes possible — an opaque JS expression could never be inverted this
-way. Tracked as a follow-up; see [#252](https://github.com/JarvusInnovations/gitsheets/issues/252).
+### Range-pruned traversal
+
+A **range filter entry** on the bucketed field (`{ publishedAt: { $gte: a,
+$lt: b } }` — see [api/sheet.md](../api/sheet.md#sheetqueryfilter-opts)) prunes
+the walk to the **bounded span of partitions** between the two bounds instead
+of walking every partition. This is what the declarative bucket form exists
+to enable — an opaque JS expression could never be inverted this way.
+
+1. **Bounds reduce to UTC calendar dates** by the same rules as rendering: a
+   datetime bound converts to UTC, an offset-less value is taken at face
+   value, and an ISO 8601 string bound is parsed in the accepted shapes. Each
+   bound then renders to the bucket's segments (`2025/11/20` for
+   `YYYY/MM/DD`; ISO week-year/week for `YYYY/WW`).
+2. **Pruning is inclusive at the date level, always.** Both `$gt` and `$gte`
+   keep the lower bound's own partition; both `$lt` and `$lte` keep the upper
+   bound's. The pruned set is therefore a *superset* of the matches
+   (`{ $lt: '2026-05-02T00:00:00Z' }` still visits `2026/05/02`); the
+   record-level comparison applies the exact cutoff. Pruning never changes
+   results, only how much of the tree is read.
+3. **A one-sided range prunes one side**: `{ $gte: a }` skips everything
+   before `a`'s partition and walks everything after it.
+4. **Boundary partitions are scanned exactly.** Because bucket segments are
+   fixed-width and zero-padded, directory names order the same as dates. At
+   each bucket level the walk visits a child only if it is within the bounds
+   *for the path taken so far*: the lower bound constrains a level only while
+   the walk is still on the lower bound's own prefix, and likewise the upper
+   bound. A range spanning a year boundary (`2025-11-20` to `2026-02-03`)
+   thus visits `2025/11`, `2025/12`, `2026/01`, `2026/02` and nothing else.
+5. **Widening rules carry over.** A range whose bound is not a date-typed or
+   accepted-ISO value, a range on a bucket field referenced through a nested
+   table, and a range on any non-bucket component do not prune — the segments
+   widen to wildcards and the record-level filter still applies.
+6. **Equality and range are exclusive per field** — a filter entry is one or
+   the other.
 
 ### Backward compatibility
 
@@ -214,6 +243,14 @@ a value (and prunes) when the query supplies the bucketed field with a
 date-typed or ISO-string value, and is otherwise treated as un-renderable
 (walk all children). See "Date-bucket references § Query traversal semantics".
 
+A date-bucket segment whose field the query supplies as a **range** is a third
+case — **bounded**: walk into each child whose name lies within the range's
+rendered lower/upper segment for the path taken so far (the lower bound
+applies only while on the lower bound's prefix, the upper only while on the
+upper's). A bounded *last* component (the bucket is the whole path) lists the
+record blobs the same way. See "Date-bucket references § Range-pruned
+traversal".
+
 ### Practical implication
 
 A sheet with `path = "${{ domain }}/${{ username }}"` and a query `{ domain: 'af.mil' }` reads only the `af.mil/` subtree. A query with no `domain` reads all subtrees but is still O(records). A query `{ domain: 'af.mil', username: 'GrandmaCOBOL' }` reads exactly one file.
@@ -221,6 +258,10 @@ A sheet with `path = "${{ domain }}/${{ username }}"` and a query `{ domain: 'af
 ### Function-valued filter entries
 
 `query({ slug: (value) => value.startsWith('jane') })` cannot prune by the path template (the function is opaque). The traversal falls back to listing all subtrees. Equality predicates are preferred for fields used in path templates.
+
+### Range filter entries
+
+`query({ publishedAt: { $gte: '2026-01-01', $lt: '2026-04-01' } })` prunes only when `publishedAt` is a date-bucket component (see "Range-pruned traversal"). A range on a plain `${{ field }}` or expression component is opaque to pruning — unpadded integers and arbitrary strings don't order the same as their directory names — so the traversal lists all subtrees and the range applies record-level.
 
 ## Recursive components (`field/**`)
 

@@ -58,6 +58,52 @@ export const addon: typeof CoreAddon = loadAddon();
 export const CoreTransaction = addon.CoreTransaction;
 export type CoreTransaction = InstanceType<typeof CoreAddon.CoreTransaction>;
 
+// --- Blob reads (specs/rust-core.md "Blob reads") ---
+//
+// Every record, config, and attachment read in the package goes through these
+// four helpers — the core reads the object database directly, so no read path
+// spawns `git cat-file`. The one deliberate exception is
+// `Repository.readBlobStream`, whose contract is a true streaming read.
+
+/**
+ * The blob at `<treeRef>:<path>` as `{ hash, content }`, or `null` when nothing
+ * (or a subtree) lives there — also `null` when `treeRef` doesn't resolve, so
+ * callers can treat "absent" uniformly.
+ */
+export function readTreeBlob(
+  gitDir: string,
+  treeRef: string,
+  path: string,
+): { hash: string; content: Buffer } | null {
+  try {
+    return callCore(() => addon.treeReadBlob(gitDir, treeRef, path)) ?? null;
+  } catch (err) {
+    if (err instanceof RefError) return null;
+    throw err;
+  }
+}
+
+/** The blob at `<treeRef>:<path>` as UTF-8 text, or `null` when absent. */
+export function readTreeBlobText(gitDir: string, treeRef: string, path: string): string | null {
+  const entry = readTreeBlob(gitDir, treeRef, path);
+  return entry === null ? null : entry.content.toString('utf8');
+}
+
+/** The object id of the blob at `<treeRef>:<path>`, or `null` when absent / not a blob. */
+export function treeEntryHash(gitDir: string, treeRef: string, path: string): string | null {
+  try {
+    return callCore(() => addon.treeEntryHash(gitDir, treeRef, path)) ?? null;
+  } catch (err) {
+    if (err instanceof RefError) return null;
+    throw err;
+  }
+}
+
+/** A blob's bytes by object id, or `null` when no such object exists. */
+export function readBlobBytes(gitDir: string, hash: string): Buffer | null {
+  return callCore(() => addon.blobRead(gitDir, hash)) ?? null;
+}
+
 // --- Structured error mapping -------------------------------------------------
 
 /**

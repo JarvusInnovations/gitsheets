@@ -24,7 +24,7 @@ import process from 'node:process';
 
 import type { Argv } from 'yargs';
 
-import { addon, callCore } from '../core.js';
+import { addon, callCore, readTreeBlobText } from '../core.js';
 import { ConfigError, ContractError } from '../errors.js';
 import type { ValidationIssue } from '../errors.js';
 import { openRepo } from '../repository.js';
@@ -81,17 +81,9 @@ function sheetOpenOpts(root: string): { root?: string } {
   return root && root !== '.' && root !== '/' ? { root } : {};
 }
 
-/** `git cat-file blob <ref>:<path>` — null when the path doesn't exist at `ref`. */
+/** The blob at `<ref>:<path>` as text through the core — null when absent at `ref`. */
 async function readBlobText(gitDir: string, ref: string, path: string): Promise<string | null> {
-  try {
-    const { stdout } = await exec('git', ['cat-file', 'blob', `${ref}:${path}`], {
-      cwd: gitDir,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    return stdout;
-  } catch {
-    return null;
-  }
+  return readTreeBlobText(gitDir, ref, path);
 }
 
 /** The `implements` array declared by `<root>/.gitsheets/<sheet>.toml` at `ref` ([] if absent/unparseable). */

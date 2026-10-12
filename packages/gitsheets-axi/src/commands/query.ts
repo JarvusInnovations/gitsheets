@@ -15,7 +15,7 @@ import {
 } from '../output/sheet-schema.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { exportRecords, type ExportFormat } from '../util/export-file.js';
-import { buildPredicate } from '../util/filter.js';
+import { bucketFieldsOf, buildPredicate, needsBodies, pushdownFilter } from '../util/filter.js';
 import { facetCounts, sortRecords } from '../util/aggregate.js';
 
 export const QUERY_HELP = `usage: gitsheets-axi query <sheet> [--filter expr ...] [--fields a,b] [--sort f [--desc]] [--limit n] [--group-by f] [--json-out[=path]] [--ndjson-out[=path]] [--csv-out[=path]]
@@ -175,11 +175,24 @@ export async function queryCommand(
   );
 
   const config = await sheet.readConfig();
-  const withBody = config.format.body !== undefined;
+  // Body-less unless a filter / --fields / an export needs bodies — the TOON
+  // preview never shows them, and body-less reads skip the heavy half of a
+  // content-typed sheet.
+  const withBody = needsBodies(
+    config.format.body,
+    flags.filters,
+    flags.extras,
+    flags.exportFormat !== undefined,
+  );
+
+  // Ordered clauses on date-bucket path fields go to the core so the walk
+  // prunes to the bounded span of partitions; the host predicate below stays
+  // authoritative over whatever comes back.
+  const pushdown = pushdownFilter(flags.filters, bucketFieldsOf(config.path));
 
   let all;
   try {
-    all = await sheet.queryAll({}, { withBody });
+    all = await sheet.queryAll(pushdown, { withBody });
   } catch (error) {
     throw translateError(error);
   }
