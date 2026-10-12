@@ -45,6 +45,7 @@ use crate::engine::{Engine, SnippetError, SnippetHandle};
 use crate::error::{Error, Result};
 use crate::index::{MultiIndex, UniqueIndex};
 use crate::path_template::Template;
+use crate::query::{self, Filter};
 use crate::record::{self};
 use crate::validation::CompiledSchema;
 use crate::value::Value;
@@ -605,6 +606,40 @@ impl Sheet {
         with_body: bool,
     ) -> Result<Vec<(String, Value)>> {
         self.read_all(repo, tree, with_body)
+    }
+
+    /// Query the sheet's records in `tree` — the transaction-bound read (spec:
+    /// `api/transaction.md` "Read isolation"): the walk is pruned by the path
+    /// template exactly like a committed-ref query, candidates are decoded
+    /// through the format codec, and `with_body` is the lazy-body switch. The
+    /// filter's predicate snippets must have been compiled into this sheet's
+    /// engine (see [`Sheet::engine_mut`]). Read-only.
+    pub fn query(
+        &mut self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        filter: &Filter,
+        with_body: bool,
+    ) -> Result<Vec<(String, Value)>> {
+        let extension = self.extension();
+        query::query_records_format(
+            repo,
+            tree,
+            &self.base,
+            &self.template,
+            filter,
+            &mut self.engine,
+            extension,
+            &self.config.format,
+            with_body,
+        )
+    }
+
+    /// The sheet's embedded engine — bindings parse a [`Sheet::query`] filter
+    /// against it so predicate snippets compile into the engine that evaluates
+    /// them.
+    pub fn engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
     }
 
     // ── indexing ─────────────────────────────────────────────────────────────
@@ -1649,5 +1684,53 @@ mod tests {
         let err2 = projects.prepare_upsert(&repo, &mut tree, &bad, None, false).err().unwrap();
         assert_eq!(err1.issues()[0].contract.as_deref(), Some(name));
         assert_eq!(err2.issues()[0].contract.as_deref(), Some(name));
+    }
+
+    // ── transaction-tree query (spec: api/transaction.md "Read isolation") ────
+
+    fn md_config(path: &str, root: &str) -> Value {
+        let mut gs = IndexMap::new();
+        gs.insert("path".to_string(), s(path));
+        gs.insert("root".to_string(), s(root));
+        let mut fmt = IndexMap::new();
+        fmt.insert("type".to_string(), s("markdown"));
+        fmt.insert("body".to_string(), s("body"));
+        gs.insert("format".to_string(), Value::Table(fmt));
+        let mut top = IndexMap::new();
+        top.insert("gitsheet".to_string(), Value::Table(gs));
+        Value::Table(top)
+    }
+
+    #[test]
+    fn sheet_query_prunes_and_decodes_on_the_live_tree() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, md_config("${{ ring }}/${{ slug }}", "posts"));
+        let mut sheet = open(&repo, &mut tree);
+        let fmt = sheet.config().format.clone();
+        // Stage markdown records straight into the (uncommitted) tree — the
+        // query must see them without any ref/commit in between.
+        for (ring, slug) in [("a", "one"), ("a", "two"), ("b", "three")] {
+            let record = rec(&[("ring", s(ring)), ("slug", s(slug)), ("body", s("# Hi\n"))]);
+            let text = codec::serialize(&record, &fmt).unwrap();
+            tree.write_child_bytes(&repo, &format!("posts/{ring}/{slug}.md"), text.as_bytes()).unwrap();
+        }
+
+        let mut filter = crate::query::Filter::new();
+        filter.push("ring", crate::query::FilterPred::Equals(s("b")));
+        let out = sheet.query(&repo, &mut tree, &filter, false).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "b/three");
+        let Value::Table(r) = &out[0].1 else { panic!() };
+        assert!(!r.contains_key("body"), "with_body=false omits the body");
+
+        // A predicate snippet compiles into the sheet's own engine.
+        let handle = sheet.engine_mut().compile("(value, record) => ( value.startsWith('t') )").unwrap();
+        let mut filter = crate::query::Filter::new();
+        filter.push("slug", crate::query::FilterPred::Predicate(handle));
+        let out = sheet.query(&repo, &mut tree, &filter, true).unwrap();
+        let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, vec!["a/two", "b/three"]);
+        let Value::Table(r) = &out[0].1 else { panic!() };
+        assert_eq!(r.get("body"), Some(&s("# Hi")));
     }
 }

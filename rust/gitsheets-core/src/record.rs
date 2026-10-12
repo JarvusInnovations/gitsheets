@@ -177,17 +177,76 @@ fn hex(id: ObjectId) -> String {
 /// isn't valid UTF-8 / canonical TOML is `config_invalid`, matching the host's
 /// `#readRecordFromBlob`.
 pub(crate) fn read_blob_value(repo: &gix::Repository, hash: ObjectId) -> Result<Value> {
-    let bytes = repo
+    canonical::parse(&read_blob_text(repo, hash)?)
+}
+
+/// A blob's bytes by object id — the record-read primitive the query walk and
+/// the bindings' by-hash reads share (spec: `rust-core.md` "Blob reads"). An
+/// id with no object is `commit_failed` (the hash came from a tree walk, so
+/// its absence is corruption, not a missing record).
+pub(crate) fn read_blob_bytes(repo: &gix::Repository, hash: ObjectId) -> Result<Vec<u8>> {
+    Ok(repo
         .find_object(hash)
         .map_err(|e| Error::CommitFailed {
             message: format!("could not read blob {hash}: {e}"),
         })?
         .data
-        .to_vec();
-    let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
+        .to_vec())
+}
+
+/// A blob's UTF-8 text by object id; a non-UTF-8 blob is `config_invalid`.
+pub(crate) fn read_blob_text(repo: &gix::Repository, hash: ObjectId) -> Result<String> {
+    String::from_utf8(read_blob_bytes(repo, hash)?).map_err(|e| Error::ConfigInvalid {
         message: format!("record blob {hash} is not valid UTF-8: {e}"),
-    })?;
-    canonical::parse(&text)
+    })
+}
+
+/// Parse a 40-hex object id; an unparseable string is `ref_not_found`.
+pub fn parse_object_id(hash: &str) -> Result<ObjectId> {
+    ObjectId::from_hex(hash.as_bytes()).map_err(|e| Error::RefNotFound {
+        message: format!("invalid object id {hash:?}: {e}"),
+    })
+}
+
+/// Read a blob by object id, for the bindings' by-hash reads (attachment
+/// content, diff-side records). `None` when no object has that id.
+pub fn read_blob_by_hash(repo: &gix::Repository, hash: &str) -> Result<Option<Vec<u8>>> {
+    let id = parse_object_id(hash)?;
+    match repo.find_object(id) {
+        Ok(obj) => Ok(Some(obj.data.to_vec())),
+        Err(gix::object::find::existing::Error::NotFound { .. }) => Ok(None),
+        Err(e) => Err(Error::CommitFailed {
+            message: format!("could not read blob {hash}: {e}"),
+        }),
+    }
+}
+
+/// The blob at `path` (deep, relative to the tree root) as `(hash, bytes)`, or
+/// `None` when nothing — or a subtree — lives there. The by-`ref:path` read
+/// primitive behind sheet-config loading and lazy-body hydration.
+pub fn read_blob_entry(
+    repo: &gix::Repository,
+    tree: &mut MutableTree,
+    path: &str,
+) -> Result<Option<(String, Vec<u8>)>> {
+    let Some(hash) = tree_entry_hash(repo, tree, path)? else {
+        return Ok(None);
+    };
+    let bytes = read_blob_bytes(repo, hash)?;
+    Ok(Some((hash.to_string(), bytes)))
+}
+
+/// The object id of the blob at `path` (deep), or `None` when absent or not a
+/// blob — the hash-only lookup (attachment handles, cache keys).
+pub fn tree_entry_hash(
+    repo: &gix::Repository,
+    tree: &mut MutableTree,
+    path: &str,
+) -> Result<Option<ObjectId>> {
+    match tree.get_child(repo, path).map_err(map_ht)? {
+        Some(holo_tree::Child::Blob { hash, .. }) => Ok(Some(*hash)),
+        _ => Ok(None),
+    }
 }
 
 // ── blob-write primitive (the attachment / arbitrary-blob seam) ───────────────
@@ -1037,5 +1096,27 @@ mod tests {
             changes.iter().map(|c| (c.path.as_str(), c.status)).collect();
         assert_eq!(statuses["amy"], RecordStatus::Added);
         assert_eq!(statuses["bob"], RecordStatus::Deleted);
+    }
+
+    // ── blob-read primitives (spec: rust-core.md "Blob reads") ───────────────
+
+    #[test]
+    fn blob_reads_by_path_and_by_hash_without_a_subprocess() {
+        let (_d, repo) = temp_repo();
+        let mut tree = MutableTree::empty();
+        let hash = tree.write_child_bytes(&repo, "cfg/people.toml", b"[gitsheet]\npath = '${{ slug }}'\n").unwrap();
+        tree.write(&repo).unwrap();
+
+        let (h, bytes) = read_blob_entry(&repo, &mut tree, "cfg/people.toml").unwrap().unwrap();
+        assert_eq!(h, hash.to_string());
+        assert!(bytes.starts_with(b"[gitsheet]"));
+        assert_eq!(tree_entry_hash(&repo, &mut tree, "cfg/people.toml").unwrap(), Some(hash));
+        // A directory is not a blob; a missing path is None.
+        assert!(read_blob_entry(&repo, &mut tree, "cfg").unwrap().is_none());
+        assert!(tree_entry_hash(&repo, &mut tree, "nope/x.toml").unwrap().is_none());
+
+        assert_eq!(read_blob_by_hash(&repo, &hash.to_string()).unwrap().unwrap(), bytes);
+        assert!(read_blob_by_hash(&repo, &"0".repeat(40)).unwrap().is_none());
+        assert!(matches!(read_blob_by_hash(&repo, "not-a-hash"), Err(Error::RefNotFound { .. })));
     }
 }

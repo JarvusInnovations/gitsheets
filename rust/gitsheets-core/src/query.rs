@@ -56,7 +56,9 @@ use crate::path_template::{
     datetime_instant, is_range_table, iso_instant, Bounds, QueryComponentPlan, Template,
     RANGE_OPERATORS,
 };
-use crate::record::{base_arg, map_ht, read_blob_value};
+use crate::codec;
+use crate::config::FormatConfig;
+use crate::record::{base_arg, map_ht, read_blob_text, read_blob_value};
 use crate::value::Value;
 
 /// One field's filter predicate. The declarative cases ([`Equals`] /
@@ -327,6 +329,53 @@ pub fn query_records(
     engine: &mut Engine,
     extension: &str,
 ) -> Result<Vec<(String, Value)>> {
+    query_records_with(repo, tree, base, template, filter, engine, extension, |hash| {
+        read_blob_value(repo, hash)
+    })
+}
+
+/// The format-aware query (spec: `rust-core.md` "Query traversal +
+/// filtering"): the same pruning walk as [`query_records`], with each
+/// candidate blob decoded through the format codec — canonical TOML, or
+/// markdown frontmatter with (`with_body`) or without the body field (the
+/// lazy-body switch; a no-op for TOML). Works over any tree — a committed ref
+/// or a transaction's private tree — so no binding ever fetches record bytes
+/// itself. `extension` is the record-file extension the walk keys on (the
+/// format's own, e.g. `.md`).
+#[allow(clippy::too_many_arguments)]
+pub fn query_records_format(
+    repo: &gix::Repository,
+    tree: &mut MutableTree,
+    base: &str,
+    template: &Template,
+    filter: &Filter,
+    engine: &mut Engine,
+    extension: &str,
+    format: &FormatConfig,
+    with_body: bool,
+) -> Result<Vec<(String, Value)>> {
+    query_records_with(repo, tree, base, template, filter, engine, extension, |hash| {
+        let text = read_blob_text(repo, hash)?;
+        if with_body {
+            codec::parse(&text, format)
+        } else {
+            codec::parse_header_only(&text, format)
+        }
+    })
+}
+
+/// The shared walk + decode + filter pipeline behind the two public queries.
+#[allow(clippy::too_many_arguments)]
+fn query_records_with(
+    repo: &gix::Repository,
+    tree: &mut MutableTree,
+    base: &str,
+    template: &Template,
+    filter: &Filter,
+    engine: &mut Engine,
+    extension: &str,
+    mut decode: impl FnMut(ObjectId) -> Result<Value>,
+) -> Result<Vec<(String, Value)>> {
     let plan = template.plan_query(&prune_record(filter), engine)?;
 
     // Candidate (path, blob-hash) pairs the pruning walk surfaces.
@@ -343,7 +392,7 @@ pub fn query_records(
 
     let mut out = Vec::new();
     for (path, hash) in candidates {
-        let record = read_blob_value(repo, hash)?;
+        let record = decode(hash)?;
         if matches(filter, &record, engine)? {
             out.push((path, record));
         }
@@ -1014,5 +1063,62 @@ mod tests {
         let paths =
             query_candidate_paths(&repo, &mut tree, "x", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
         assert_eq!(paths, vec!["2020/2026/01/x", "2021/2026/01/z"]);
+    }
+
+    // ── format-aware query (spec: rust-core.md "Query traversal + filtering") ──
+
+    fn md_format() -> FormatConfig {
+        FormatConfig {
+            kind: crate::config::FormatKind::Markdown,
+            body: Some("body".into()),
+            title: None,
+            normalize: true,
+        }
+    }
+
+    /// Seed `posts/<ring>/<slug>.md` markdown records with frontmatter + body.
+    fn seed_markdown(repo: &gix::Repository) -> String {
+        let fmt = md_format();
+        let mut tree = MutableTree::empty();
+        for (ring, slug, body) in [("a", "one", "# One\n"), ("a", "two", "# Two\n"), ("b", "three", "# Three\n")] {
+            let record = rec(&[("ring", s(ring)), ("slug", s(slug)), ("body", s(body))]);
+            let text = codec::serialize(&record, &fmt).unwrap();
+            tree.write_child_bytes(repo, &format!("posts/{ring}/{slug}.md"), text.as_bytes()).unwrap();
+        }
+        tree.write(repo).unwrap().to_string()
+    }
+
+    #[test]
+    fn format_query_decodes_markdown_candidates_with_and_without_body() {
+        let (_d, repo) = temp_repo();
+        let hash = seed_markdown(&repo);
+        let mut tree = resolve_tree(&repo, &hash).unwrap();
+        let mut eng = Engine::new().unwrap();
+        let template = Template::compile("${{ ring }}/${{ slug }}", &mut eng).unwrap();
+        let fmt = md_format();
+
+        // Pruned to one ring; full records carry the body.
+        let mut filter = Filter::new();
+        filter.push("ring", FilterPred::Equals(s("a")));
+        let out = query_records_format(&repo, &mut tree, "posts", &template, &filter, &mut eng, ".md", &fmt, true)
+            .unwrap();
+        let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, vec!["a/one", "a/two"]);
+        let Value::Table(first) = &out[0].1 else { panic!() };
+        assert_eq!(first.get("body"), Some(&s("# One")));
+
+        // Lazy-body: the body field is absent, frontmatter intact, filter still applies.
+        let mut filter = Filter::new();
+        filter.push("slug", FilterPred::Equals(s("three")));
+        let out = query_records_format(&repo, &mut tree, "posts", &template, &filter, &mut eng, ".md", &fmt, false)
+            .unwrap();
+        assert_eq!(out.len(), 1);
+        let Value::Table(r) = &out[0].1 else { panic!() };
+        assert!(!r.contains_key("body"));
+        assert_eq!(r.get("ring"), Some(&s("b")));
+
+        // A TOML-format read of the same tree would be a parse error — the
+        // codec selection is what makes `.md` blobs readable.
+        assert!(query_records(&repo, &mut tree, "posts", &template, &Filter::new(), &mut eng, ".md").is_err());
     }
 }
