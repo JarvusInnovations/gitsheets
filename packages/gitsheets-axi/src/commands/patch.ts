@@ -256,11 +256,145 @@ async function batchPatch(
   const template = Template.fromString(config.path);
   const templateFields = new Set(template.getFieldNames());
 
-  // Pre-flight: split each record into (query, partial) and categorize —
-  // changed / unchanged / missing (query matched nothing) / invalid — before
-  // opening a transaction. We never throw mid-loop so --dry-run can report the
-  // full picture; the commit path aborts explicitly afterward.
-  const changes: Array<{ query: Record<string, unknown>; partial: Record<string, unknown> }> = [];
+  // Pre-flight AND apply run inside ONE transaction against the tx-bound
+  // sheet: each row's lookup is a pruned read of the private tree and
+  // willChange reuses the transaction instead of opening a throwaway one per
+  // row (#290). A dry run, an invalid row, an abort-on-missing, or a no-op
+  // throws BatchHalt so the transaction is discarded — nothing commits
+  // (specs/api/transaction.md "Read isolation"). We never throw mid-loop so
+  // --dry-run can report the full picture.
+  const progress = makeProgress(records.length);
+  const commitMessage = flags.message ?? `${flags.sheet} patch (${records.length} rows)`;
+  let outcome: BatchOutcome;
+  let commitHash: string | null = null;
+  try {
+    const result = await repo.transact({ message: commitMessage }, async (tx) => {
+      const txSheet = tx.sheet(flags.sheet, prefixOpts);
+      const o = await preflightBatch(txSheet, records, template, templateFields, flags, progress);
+      if (flags.dryRun) throw new BatchHalt('dry-run', o);
+      if (o.invalid.length > 0) throw new BatchHalt('invalid', o);
+      if (flags.onMissing === 'abort' && o.missing.length > 0) throw new BatchHalt('missing', o);
+      if (o.changes.length === 0 && o.inserts.length === 0 && o.deletions.length === 0) {
+        throw new BatchHalt('no-op', o);
+      }
+      let applied = 0;
+      for (const { query, partial } of o.changes) {
+        await txSheet.patch(query, partial);
+        progress.tick('apply', ++applied);
+      }
+      for (const record of o.inserts) await txSheet.upsert(record as never);
+      for (const path of o.deletions) await txSheet.delete(path);
+      return o;
+    });
+    outcome = result.value;
+    commitHash = result.commitHash;
+  } catch (error) {
+    if (!(error instanceof BatchHalt)) throw translateError(error);
+    outcome = error.outcome;
+    const { changes, inserts, invalid, missing, deletions, unchanged } = outcome;
+    switch (error.kind) {
+      case 'dry-run':
+        return renderDryRun(
+          flags.sheet,
+          {
+            willChange: changes.length,
+            insert: inserts.length,
+            noOp: unchanged,
+            missing: missing.length,
+            invalid: invalid.length,
+            ...(flags.deleteMissing ? { willDelete: deletions.length } : {}),
+          },
+          invalid,
+        );
+      case 'invalid': {
+        const first = invalid[0]!;
+        throw new AxiError(`Record ${first.row} (${first.id}): ${first.reason}`, first.code, [
+          `${invalid.length} record(s) invalid — the whole batch was aborted, nothing committed. Run --dry-run to see all.`,
+        ]);
+      }
+      case 'missing': {
+        const first = missing[0]!;
+        throw new AxiError(`Record ${first.row} (${first.id}): no record matches its query`, 'NOT_FOUND', [
+          `${missing.length} record(s) matched nothing — batch aborted. Use --on-missing skip|insert, or --dry-run to see all.`,
+        ]);
+      }
+      case 'no-op':
+        return renderObject({
+          result: 'no-op',
+          sheet: flags.sheet,
+          patched: 0,
+          unchanged: records.length - invalid.length - missing.length,
+          ...(missing.length > 0 ? { skipped: missing.length } : {}),
+        });
+    }
+  }
+
+  const { changes, inserts, missing, deletions, unchanged } = outcome;
+  return joinBlocks(
+    renderObject({
+      result: 'committed',
+      sheet: flags.sheet,
+      patched: changes.length,
+      ...(inserts.length > 0 ? { inserted: inserts.length } : {}),
+      unchanged,
+      ...(missing.length > 0 ? { skipped: missing.length } : {}),
+      ...(flags.deleteMissing ? { deleted: deletions.length } : {}),
+      commit: commitHash,
+    }),
+    renderHelp([MATERIALIZE_HINT]),
+  );
+}
+
+/** Everything the bulk preflight learns about a batch, before anything commits. */
+interface BatchOutcome {
+  changes: Array<{ query: Record<string, unknown>; partial: Record<string, unknown> }>;
+  inserts: Array<Record<string, unknown>>;
+  deletions: string[];
+  invalid: InvalidRow[];
+  missing: Array<{ row: number; id: string }>;
+  unchanged: number;
+}
+
+/** Thrown inside the transaction handler to discard it with a known reason. */
+class BatchHalt extends Error {
+  constructor(
+    readonly kind: 'dry-run' | 'invalid' | 'missing' | 'no-op',
+    readonly outcome: BatchOutcome,
+  ) {
+    super(`batch halted: ${kind}`);
+  }
+}
+
+/**
+ * Progress on stderr for large batches (stdout stays the structured
+ * response): one line per 100 rows once a batch exceeds 200, so a long run
+ * is distinguishable from a hung one.
+ */
+function makeProgress(total: number): { tick(phase: 'preflight' | 'apply', n: number): void } {
+  const enabled = total > 200;
+  return {
+    tick(phase, n) {
+      if (enabled && (n % 100 === 0 || n === total)) {
+        process.stderr.write(`${phase}: ${n}/${total}\n`);
+      }
+    },
+  };
+}
+
+/**
+ * Split each record into (query, partial) and categorize it — changed /
+ * unchanged / missing (query matched nothing) / invalid — against `sheet`
+ * (the tx-bound sheet, so lookups are pruned reads of the private tree).
+ */
+async function preflightBatch(
+  sheet: Sheet,
+  records: Array<Record<string, unknown>>,
+  template: Template,
+  templateFields: Set<string>,
+  flags: PatchFlags,
+  progress: { tick(phase: 'preflight' | 'apply', n: number): void },
+): Promise<BatchOutcome> {
+  const changes: BatchOutcome['changes'] = [];
   const inserts: Array<Record<string, unknown>> = [];
   const batchPaths = new Set<string>();
   const invalid: InvalidRow[] = [];
@@ -268,6 +402,7 @@ async function batchPatch(
   let unchanged = 0;
 
   for (let i = 0; i < records.length; i++) {
+    progress.tick('preflight', i + 1);
     const record = records[i]!;
     const query: Record<string, unknown> = {};
     const partial: Record<string, unknown> = {};
@@ -325,71 +460,9 @@ async function batchPatch(
       if (typeof p === 'string' && !batchPaths.has(p)) deletions.push(p);
     }
   }
-
-  if (flags.dryRun) {
-    return renderDryRun(
-      flags.sheet,
-      {
-        willChange: changes.length,
-        insert: inserts.length,
-        noOp: unchanged,
-        missing: missing.length,
-        invalid: invalid.length,
-        ...(flags.deleteMissing ? { willDelete: deletions.length } : {}),
-      },
-      invalid,
-    );
-  }
-
-  if (invalid.length > 0) {
-    const first = invalid[0]!;
-    throw new AxiError(`Record ${first.row} (${first.id}): ${first.reason}`, first.code, [
-      `${invalid.length} record(s) invalid — the whole batch was aborted, nothing committed. Run --dry-run to see all.`,
-    ]);
-  }
-  if (flags.onMissing === 'abort' && missing.length > 0) {
-    const first = missing[0]!;
-    throw new AxiError(`Record ${first.row} (${first.id}): no record matches its query`, 'NOT_FOUND', [
-      `${missing.length} record(s) matched nothing — batch aborted. Use --on-missing skip|insert, or --dry-run to see all.`,
-    ]);
-  }
-
-  if (changes.length === 0 && inserts.length === 0 && deletions.length === 0) {
-    return renderObject({
-      result: 'no-op',
-      sheet: flags.sheet,
-      patched: 0,
-      unchanged: records.length - invalid.length - missing.length,
-      ...(missing.length > 0 ? { skipped: missing.length } : {}),
-    });
-  }
-
-  const commitMessage = flags.message ?? `${flags.sheet} patch (${changes.length + inserts.length})`;
-  try {
-    const result = await repo.transact({ message: commitMessage }, async (tx) => {
-      const txSheet = tx.sheet(flags.sheet, prefixOpts);
-      for (const { query, partial } of changes) await txSheet.patch(query, partial);
-      for (const record of inserts) await txSheet.upsert(record as never);
-      for (const path of deletions) await txSheet.delete(path);
-      return changes.length;
-    });
-    return joinBlocks(
-      renderObject({
-        result: 'committed',
-        sheet: flags.sheet,
-        patched: changes.length,
-        ...(inserts.length > 0 ? { inserted: inserts.length } : {}),
-        unchanged,
-        ...(missing.length > 0 ? { skipped: missing.length } : {}),
-        ...(flags.deleteMissing ? { deleted: deletions.length } : {}),
-        commit: result.commitHash,
-      }),
-      renderHelp([MATERIALIZE_HINT]),
-    );
-  } catch (error) {
-    throw translateError(error);
-  }
+  return { changes, inserts, deletions, invalid, missing, unchanged };
 }
+
 
 type PatchPreview =
   | 'not-found'

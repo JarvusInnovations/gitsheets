@@ -2079,6 +2079,32 @@ impl CoreTransaction {
         }
     }
 
+    /// Read the one record at `recordPath` (relative to the sheet's base, no
+    /// extension) in the transaction's private tree, decoded through the format
+    /// codec — the tx-bound `Sheet.get`. `null` when absent; `withBody` is the
+    /// lazy-body switch. Read-only.
+    #[napi]
+    pub fn read_record(
+        &mut self,
+        env: Env,
+        name: String,
+        record_path: String,
+        with_body: bool,
+    ) -> Result<Option<JsValue>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (repo, tree) = tx.split();
+        let sheet = sheets
+            .get(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        match sheet.read_one(repo, tree, &record_path, with_body) {
+            Ok(record) => Ok(record.map(JsValue)),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
     /// The parent commit hash captured at open (null on a fresh repo).
     #[napi]
     pub fn parent_commit_hash(&self) -> Option<String> {

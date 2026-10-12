@@ -443,16 +443,8 @@ async function runRead(argv: ReadArgs): Promise<void> {
   // The path is treated as the record's full slug-rendered key plus optional
   // .toml extension. For the simple `${{ slug }}` case this is just the slug.
   const target = argv.path.endsWith('.toml') ? argv.path.slice(0, -5) : argv.path;
-  // Query by RECORD_PATH_KEY isn't supported through `query()` directly; iterate
-  // and match. For typical sheets this is small enough.
-  let found: RecordLike | undefined;
-  for await (const record of sheet.query()) {
-    const pathSym = (record as Record<symbol, unknown>)[Symbol.for('gitsheets-path')];
-    if (pathSym === target) {
-      found = record;
-      break;
-    }
-  }
+  // One blob read by rendered path — no sheet scan (specs/api/sheet.md#sheetget).
+  const found: RecordLike | undefined = await sheet.get(target);
   if (!found) {
     throw new NotFoundError('record_not_found', `${argv.sheet}: no record at ${target}`);
   }

@@ -74,7 +74,7 @@ Flags:
 
 ### `git sheet read <sheet> <path>`
 
-Read a single record by exact path.
+Read a single record by exact path — one blob read via [`sheet.get(path)`](sheet.md#sheetgetpath-opts), never a sheet scan.
 
 ```bash
 git sheet read users users/janedoe

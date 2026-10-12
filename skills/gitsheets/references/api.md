@@ -8,7 +8,7 @@ ESM-only. `import { … } from 'gitsheets'`. Targets Node ≥ 20 / Bun ≥ 1, `s
 - [openRepo](#openrepo) — open a Repository
 - [Repository](#repository) — methods on the repo handle
 - [Sheet](#sheet) — per-sheet operations
-  - [Reading](#reading) — query / queryFirst / queryAll / count / loadBody / pathForRecord / normalizeRecord
+  - [Reading](#reading) — query / queryFirst / queryAll / count / get / loadBody / pathForRecord / normalizeRecord
   - [Writing](#writing) — upsert / delete / patch / clear / clone
   - [Attachments](#attachments) — get / set / delete / iterator
   - [Indexing](#indexing) — defineIndex / findByIndex
@@ -122,6 +122,7 @@ const all = await sheet.queryAll();
 | `sheet.queryFirst(filter?, opts?)` | `Promise<T \| undefined>` | Same opts |
 | `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` | Same opts |
 | `sheet.count(filter?)` | `Promise<number>` | Cheap count (walks candidate paths, no parse) when unfiltered; a filter falls back to a body-less scan |
+| `sheet.get(path, opts?)` | `Promise<T \| undefined>` | One record by its rendered path — one blob read, no scan; `opts.withBody`; tx-bound reads the private tree. The primitive behind "read one record" |
 | `sheet.loadBody(record)` | `Promise<T>` | Hydrate a body-less record (markdown sheets); no-op on TOML sheets |
 | `sheet.pathForRecord(record)` | `Promise<string>` | Render the path template; doesn't write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` | Canonical form (deep-sort keys, array sort rules); doesn't write/validate |

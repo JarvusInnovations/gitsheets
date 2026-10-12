@@ -500,3 +500,20 @@ test('treeReadBlob / treeEntryHash / blobRead read the object database directly'
   assert.equal(blobRead(gitDir, '0'.repeat(40)), null);
   assert.throws(() => treeReadBlob(gitDir, 'no-such-ref', 'x'), /ref_not_found|could not resolve/);
 });
+
+test('CoreTransaction.readRecord reads one record by path, staged writes included', () => {
+  const { gitDir } = setupRepo(MD_CONFIG);
+  seedPosts(gitDir);
+  const tx = CoreTransaction.begin(gitDir, defaultOpts('delta'));
+  try {
+    tx.openSheet('posts', '.gitsheets/posts.toml', '.', '');
+    assert.equal(tx.readRecord('posts', 'alpha', true).body, '# Alpha\n\nfirst');
+    assert.equal(tx.readRecord('posts', 'alpha', false).body, undefined);
+    assert.equal(tx.readRecord('posts', 'nope', true), null);
+    tx.prepareUpsert('posts', { slug: 'delta', kind: 'post', body: '# Delta\n' }, undefined, false);
+    tx.stageUpsert('posts');
+    assert.equal(tx.readRecord('posts', 'delta', true).kind, 'post');
+  } finally {
+    tx.discard();
+  }
+});

@@ -57,6 +57,14 @@ Returns `Promise<T[]>`. All matches collected into an array. Convenience over `f
 
 Returns `Promise<number>`, the number of matching records. With no filter (outside a transaction) it counts candidate paths from the tree walk without parsing any record, so it stays cheap on large sheets. A non-empty filter (value or function predicate) or a tx-bound sheet falls back to a body-less scan that honors the filter. Throws `TypeError` if passed a function.
 
+### `sheet.get(path, opts?)`
+
+Returns `Promise<T | undefined>`: the one record stored at `path` — the rendered path-template result (no extension), the same string `query` annotates on each record and the CLI `read` command takes — or `undefined` when nothing lives there. One blob read, no tree walk: the by-path primitive behind "read a single record" surfaces.
+
+- Honors `opts.withBody` exactly like `query` (default `true`; `false` reads only the frontmatter on content-typed sheets).
+- On a transaction-bound sheet (`tx.sheet(name)`) reads the transaction's private tree, so a record staged earlier in the same handler is visible ([transaction.md § Read isolation](transaction.md#read-isolation)).
+- A path that names a subtree or an attachment file (not a record blob) is `undefined`, not an error. An unparseable blob throws `ConfigError` (`config_invalid`).
+
 ### `sheet.loadBody(record)`
 
 Hydrate a body-less record (returned by `query` / `queryFirst` / `queryAll` / `findByIndex` under `withBody: false`) with its full body. Re-reads the record blob and returns a fresh record with the body field populated. For TOML sheets (no body concept), returns the record unchanged. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).

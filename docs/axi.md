@@ -122,6 +122,16 @@ date-only or offset-qualified ISO bound are pushed down to the core, which
 prunes the tree walk to the bounded span of partitions instead of scanning
 every record; results are identical, just faster on large partitioned sheets.
 
+On content-typed (markdown / mdx) sheets the read commands are **body-less by
+default**: the TOON preview never shows bodies, so `query`, `count`, and
+`distinct` read only frontmatter unless a `--filter` clause targets the body
+field, `--fields` names it, or an export flag (`--json-out` / `--ndjson-out`,
+whose contract is the verbatim record) is set. `read <sheet> <path>` is a
+single blob read by path, not a scan. Bulk `patch` preflights every row inside
+the one transaction it commits (pruned lookups on the private tree), prints
+progress to stderr every 100 rows for batches over 200, and a `--dry-run`
+discards that transaction without committing.
+
 ## Errors
 
 Errors go to **stdout** (not stderr — agents typically don't read stderr), in the same structured shape:

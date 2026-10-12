@@ -551,6 +551,13 @@ export declare class CoreTransaction {
    * does not mark the transaction mutated.
    */
   query(name: string, filter: object, withBody: boolean): Array<JsRecordEntry>
+  /**
+   * Read the one record at `recordPath` (relative to the sheet's base, no
+   * extension) in the transaction's private tree, decoded through the format
+   * codec — the tx-bound `Sheet.get`. `null` when absent; `withBody` is the
+   * lazy-body switch. Read-only.
+   */
+  readRecord(name: string, recordPath: string, withBody: boolean): JsValue | null
   /** The parent commit hash captured at open (null on a fresh repo). */
   parentCommitHash(): string | null
   /**

@@ -1213,6 +1213,43 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
+   * Read the one record stored at `path` — the rendered path-template result
+   * (no extension), the same string `query` annotates on each record — with a
+   * single blob read and no tree walk. `undefined` when nothing (or a subtree
+   * / attachment file) lives there. Honors `opts.withBody` like `query`. On a
+   * transaction-bound sheet reads the private tree, so a record staged
+   * earlier in the same handler is visible.
+   *
+   * @see specs/api/sheet.md#sheetgetpath-opts
+   */
+  async get(path: string, opts: Pick<QueryOptions, 'withBody'> = {}): Promise<T | undefined> {
+    const config = await this.readConfig();
+    const withBody = opts.withBody ?? true;
+    let record: RecordLike | undefined;
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      const found = callCore(() =>
+        this.#transaction!.coreTx.readRecord(this.#name, path, withBody),
+      ) as RecordLike | null | undefined;
+      if (found === null || found === undefined) return undefined;
+      record = found;
+      (record as Record<symbol, unknown>)[RECORD_SHEET_KEY] = this.#name;
+      (record as Record<symbol, unknown>)[RECORD_PATH_KEY] = path;
+    } else {
+      const format = this.#getFormat(config);
+      const fullPath = joinTreePath(
+        this.#dataBase,
+        this.#effectiveRoot(config),
+        `${path}${format.extension}`,
+      );
+      const text = await readTreeBlobText(this.#gitDir, this.#configTreeRef(), fullPath);
+      if (text === null) return undefined;
+      record = this.#readRecordFromText(text, path, config, { headerOnly: !withBody });
+    }
+    return record as T;
+  }
+
+  /**
    * Hydrate a body-less record returned by `query`/`findByIndex` with its
    * full body. Re-reads the record blob at the path annotation symbol and
    * returns a fresh record with the body field populated.

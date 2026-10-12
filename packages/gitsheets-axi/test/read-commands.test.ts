@@ -1,6 +1,6 @@
 // AXI read-only commands: home, sheets, query, read.
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -247,5 +247,26 @@ describe('read', () => {
     const { stdout, exitCode } = await runCli(['read', 'users'], fixture.path);
     expect(exitCode).not.toBe(0);
     expect(stdout).toContain('error:');
+  });
+});
+
+describe('body-less reads on content-typed sheets', () => {
+  it('query preview omits bodies; an export carries them verbatim', async () => {
+    const fixture = await seedRepo({ withRecords: true });
+    const { stdout } = await runCli(['query', 'posts', '--fields', 'title'], fixture.path);
+    expect(stdout).toContain('Hello World');
+    expect(stdout).not.toContain('A short post');
+
+    const exported = await runCli(['query', 'posts', '--ndjson-out'], fixture.path);
+    const file = exported.stdout.match(/wrote: (\S+)/)![1]!;
+    const rows = (await readFile(file, 'utf-8')).trim().split('\n').map((l) => JSON.parse(l));
+    expect(rows.find((r) => r.slug === 'hello')?.body).toContain('A short post');
+  });
+
+  it('a --filter on the body field still loads bodies', async () => {
+    const fixture = await seedRepo({ withRecords: true });
+    const { stdout } = await runCli(['query', 'posts', '--filter', 'body~short'], fixture.path);
+    expect(stdout).toContain('1 of 1 total');
+    expect(stdout).toContain('hello');
   });
 });
