@@ -518,3 +518,64 @@ def test_range_filter_numeric_and_malformed(fresh_repo):
     for bad in ({"$in": [1]}, {"$gte": 1, "foo": 2}, {"$gt": 1, "$gte": 2}):
         with pytest.raises(gitsheets.ConfigError):
             gitsheets.record_query(git_dir, tree, "people", "${{ slug }}", {"age": bad})
+
+
+# ── core-native reads: format-aware record_query + blob primitives ──────────────
+# specs/rust-core.md "Query traversal + filtering" / "Blob reads". The same
+# markdown bytes the Node binding writes decode byte-identically here; no
+# `git cat-file` is involved on any of these paths.
+
+_MD_CONFIG = "[gitsheet]\npath = '${{ slug }}'\nroot = 'posts'\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\n"
+
+
+@pytest.fixture()
+def markdown_repo():
+    d = tempfile.mkdtemp(prefix="gitsheets-py-md-")
+    _git(["init", "-q", "-b", "main", d])
+    _git(["config", "user.name", "Seed"], cwd=d)
+    _git(["config", "user.email", "seed@x.org"], cwd=d)
+    os.makedirs(os.path.join(d, ".gitsheets"))
+    os.makedirs(os.path.join(d, "posts"))
+    with open(os.path.join(d, ".gitsheets", "posts.toml"), "w") as fh:
+        fh.write(_MD_CONFIG)
+    for slug, kind, body in [("alpha", "note", "# Alpha\n\nfirst\n"), ("beta", "post", "# Beta\n"), ("gamma", "note", "# Gamma\n")]:
+        text = f'+++\nkind = "{kind}"\nslug = "{slug}"\n+++\n\n{body}'
+        with open(os.path.join(d, "posts", f"{slug}.md"), "w") as fh:
+            fh.write(text)
+    _git(["add", "."], cwd=d)
+    _git(["commit", "-q", "-m", "seed"], cwd=d)
+    try:
+        yield d, os.path.join(d, ".git")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_record_query_decodes_markdown_in_the_core(markdown_repo):
+    _, git_dir = markdown_repo
+    full = gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {"kind": "note"}, ".md", body_field="body")
+    assert [e["path"] for e in full] == ["alpha", "gamma"]
+    assert full[0]["record"]["body"] == "# Alpha\n\nfirst"
+    lazy = gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {}, ".md", body_field="body", with_body=False)
+    assert [e["path"] for e in lazy] == ["alpha", "beta", "gamma"]
+    assert "body" not in lazy[0]["record"]
+    assert lazy[0]["record"]["kind"] == "note"
+    one = gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {"slug": "beta"}, ".md", body_field="body", with_body=False)
+    assert [e["path"] for e in one] == ["beta"]
+    # Without body_field the core would try to parse the .md as TOML.
+    with pytest.raises(gitsheets.ConfigError):
+        gitsheets.record_query(git_dir, "HEAD", "posts", "${{ slug }}", {}, ".md")
+
+
+def test_blob_primitives_read_the_object_database(markdown_repo):
+    _, git_dir = markdown_repo
+    entry = gitsheets.tree_read_blob(git_dir, "HEAD", ".gitsheets/posts.toml")
+    assert entry["content"].decode() == _MD_CONFIG
+    assert len(entry["hash"]) == 40
+    assert gitsheets.tree_entry_hash(git_dir, "HEAD", ".gitsheets/posts.toml") == entry["hash"]
+    assert gitsheets.blob_read(git_dir, entry["hash"]) == entry["content"]
+    assert gitsheets.tree_read_blob(git_dir, "HEAD", "posts/nope.md") is None
+    assert gitsheets.tree_read_blob(git_dir, "HEAD", "posts") is None
+    assert gitsheets.tree_entry_hash(git_dir, "HEAD", "posts") is None
+    assert gitsheets.blob_read(git_dir, "0" * 40) is None
+    with pytest.raises(gitsheets.RefError):
+        gitsheets.tree_read_blob(git_dir, "no-such-ref", "x")

@@ -51,7 +51,7 @@ use indexmap::IndexMap;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use toml::value::{Date as TomlDate, Datetime as TomlDatetime, Offset, Time as TomlTime};
 
 const DEFAULT_EXTENSION: &str = ".toml";
@@ -698,6 +698,53 @@ fn record_read<'py>(
     }
 }
 
+/// A blob read by `tree_ref:path` as `{"hash", "content"}` (bytes), or `None`
+/// when nothing — or a subtree — lives at `path`. Backs sheet-config loading
+/// and lazy-body hydration without a `git cat-file` subprocess (spec:
+/// `rust-core.md` "Blob reads").
+#[pyfunction]
+fn tree_read_blob<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    tree_ref: String,
+    path: String,
+) -> PyResult<Option<Bound<'py, PyDict>>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    match record::read_blob_entry(&repo, &mut tree, &path) {
+        Ok(Some((hash, bytes))) => {
+            let d = PyDict::new(py);
+            d.set_item("hash", hash)?;
+            d.set_item("content", PyBytes::new(py, &bytes))?;
+            Ok(Some(d))
+        }
+        Ok(None) => Ok(None),
+        Err(err) => Err(raise_core_error(py, &err)),
+    }
+}
+
+/// The object id of the blob at `tree_ref:path`, or `None` when absent or not
+/// a blob — the hash-only lookup.
+#[pyfunction]
+fn tree_entry_hash(py: Python<'_>, git_dir: String, tree_ref: String, path: String) -> PyResult<Option<String>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    match record::tree_entry_hash(&repo, &mut tree, &path) {
+        Ok(hash) => Ok(hash.map(|h| h.to_string())),
+        Err(err) => Err(raise_core_error(py, &err)),
+    }
+}
+
+/// A blob's bytes by object id, or `None` when no object has that id.
+#[pyfunction]
+fn blob_read<'py>(py: Python<'py>, git_dir: String, hash: String) -> PyResult<Option<Bound<'py, PyBytes>>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    match record::read_blob_by_hash(&repo, &hash) {
+        Ok(bytes) => Ok(bytes.map(|b| PyBytes::new(py, &b))),
+        Err(err) => Err(raise_core_error(py, &err)),
+    }
+}
+
 /// Write a batch of records (canonical TOML) under `base` starting from the tree
 /// `base_ref`. Returns `{ "tree_hash", "blob_hashes" }`. The bytes come from the
 /// core's bytes-authority, so two bindings writing the same record agree
@@ -977,8 +1024,14 @@ fn parse_filter_pred(val: &Bound<'_, PyAny>, engine: &mut Engine) -> PyResult<Fi
 /// `{ "path", "record" }` in sorted path order. The template prunes the walk; the
 /// filter (equality / nested / `{"$pred": "<js>"}` snippets / `{"$gte": a, "$lt": b}`
 /// ranges) runs in the core; a range on a date-bucket path field bounds the walk.
+///
+/// Format-aware: pass `body_field` (and optionally `title_field`) for a
+/// markdown/mdx sheet (kind by `extension`: `.mdx` → mdx, else markdown) and the
+/// core decodes each candidate through the frontmatter codec; `with_body=False`
+/// is the lazy-body switch. Without `body_field` records are canonical TOML.
 #[pyfunction]
-#[pyo3(signature = (git_dir, tree_ref, base, template, filter, extension=None))]
+#[pyo3(signature = (git_dir, tree_ref, base, template, filter, extension=None, body_field=None, title_field=None, with_body=true))]
+#[allow(clippy::too_many_arguments)]
 fn record_query<'py>(
     py: Python<'py>,
     git_dir: String,
@@ -987,6 +1040,9 @@ fn record_query<'py>(
     template: String,
     filter: &Bound<'py, PyDict>,
     extension: Option<String>,
+    body_field: Option<String>,
+    title_field: Option<String>,
+    with_body: bool,
 ) -> PyResult<Bound<'py, PyList>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
@@ -994,7 +1050,25 @@ fn record_query<'py>(
     let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|e| raise_core_error(py, &e))?;
     let parsed = parse_filter(filter, &mut engine)?;
-    match query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext) {
+    let rows = match body_field {
+        Some(body) => {
+            let format = gitsheets_core::config::FormatConfig {
+                kind: if ext == ".mdx" {
+                    gitsheets_core::config::FormatKind::Mdx
+                } else {
+                    gitsheets_core::config::FormatKind::Markdown
+                },
+                body: Some(body),
+                title: title_field,
+                normalize: true,
+            };
+            query::query_records_format(
+                &repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext, &format, with_body,
+            )
+        }
+        None => query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
+    };
+    match rows {
         Ok(rows) => {
             let out = PyList::empty(py);
             for (path, rec) in rows {
@@ -1570,6 +1644,9 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff_records, m)?)?;
     m.add_function(wrap_pyfunction!(record_query, m)?)?;
     m.add_function(wrap_pyfunction!(record_query_candidates, m)?)?;
+    m.add_function(wrap_pyfunction!(tree_read_blob, m)?)?;
+    m.add_function(wrap_pyfunction!(tree_entry_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(blob_read, m)?)?;
     m.add_function(wrap_pyfunction!(template_field_names, m)?)?;
     m.add_function(wrap_pyfunction!(record_index_unique, m)?)?;
     m.add_function(wrap_pyfunction!(record_index_multi, m)?)?;

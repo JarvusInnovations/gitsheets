@@ -149,6 +149,9 @@ module.exports = {
   // the filter (equality / nested / `$pred` engine snippets) runs in the core.
   recordQuery: wrap(addon.recordQuery),
   recordQueryCandidates: wrap(addon.recordQueryCandidates),
+  treeReadBlob: wrap(addon.treeReadBlob),
+  treeEntryHash: wrap(addon.treeEntryHash),
+  blobRead: wrap(addon.blobRead),
   templateFieldNames: wrap(addon.templateFieldNames),
   // Secondary indexing (lazy, in-memory). A unique conflict surfaces as a typed
   // IndexError(index_unique_conflict).
