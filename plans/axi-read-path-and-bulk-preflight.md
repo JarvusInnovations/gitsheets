@@ -1,10 +1,11 @@
 ---
-status: in-progress
+status: done
 depends: [core-native-record-reads]
 specs:
   - specs/api/sheet.md
   - specs/api/cli.md
 issues: [289, 290]
+pr: 296
 ---
 
 # Plan: by-path reads and a single-transaction bulk preflight
@@ -74,19 +75,19 @@ Out of scope:
 
 ## Validation
 
-- [ ] `cargo test`: `Sheet::read_one` with/without body, absent path, subtree.
-- [ ] napi `node --test`: `CoreTransaction.readRecord` sees a staged record.
-- [ ] vitest (`gitsheets`): `sheet.get` on TOML and markdown sheets (withBody
+- [x] `cargo test`: `Sheet::read_one` with/without body, absent path, subtree.
+- [x] napi `node --test`: `CoreTransaction.readRecord` sees a staged record.
+- [x] vitest (`gitsheets`): `sheet.get` on TOML and markdown sheets (withBody
       both ways), tx-bound `get` sees an uncommitted upsert, `undefined` on a
       missing path and on an attachment path; `git sheet read` still works.
-- [ ] vitest (`gitsheets-axi`): `read` returns the full record incl. body;
+- [x] vitest (`gitsheets-axi`): `read` returns the full record incl. body;
       `query` on a markdown sheet omits bodies from the preview and includes
       them in `--ndjson-out`; a `--filter body~…` clause still matches;
       bulk `patch --dry-run` leaves no commit and reports the same counts;
       bulk `patch` commits once; the existing bulk-patch suite passes.
-- [ ] Benchmark recorded in Notes; `patch --dry-run` 100 rows is faster than
+- [x] Benchmark recorded in Notes; `patch --dry-run` 100 rows is faster than
       before `core-native-record-reads` (3.0 s), not slower.
-- [ ] `npm run type-check` clean; `cargo clippy --workspace -D warnings` clean.
+- [x] `npm run type-check` clean; `cargo clippy --workspace -D warnings` clean.
 
 ## Risks / unknowns
 
@@ -100,8 +101,35 @@ Out of scope:
 
 ## Notes
 
-(Populated at closeout.)
+- **Benchmark** (devbox, the #295 sheet: 4,300 markdown records, `${{ ring }}/${{ id }}`):
+
+  | Command | Published 2.6.0 | After #295 | This plan |
+  | --- | ---: | ---: | ---: |
+  | `read <sheet> <path>` | 29.3 s | 1.8 s | 0.3 s |
+  | `query --fields id --limit 1` | 27.4 s | 1.8 s | 2.0 s |
+  | `patch --dry-run` 100 rows | 3.0 s | 5.6 s | 3.0 s |
+  | `patch` 100 rows | 23.9 s | 6.6 s | 6.1 s |
+  | `patch` 2,916 rows | killed at 51 min | — | 91 s |
+
+- A body-less listing of 4,300 records is ~2 s and is dominated by parsing
+  4,300 frontmatters plus engine init, not I/O (packing the loose objects with
+  `git gc` changed nothing). The `--limit` short-circuit from #289 would not
+  move it; recorded as superseded.
+- The bulk-patch commit message now reads `<sheet> patch (N rows)` — the
+  changed-row count is unknown until the preflight, which now runs inside the
+  transaction whose message is fixed at open.
+- `BatchHalt` must be caught *before* `translateError` wraps it; the dry-run
+  path relies on `repo.transact` rethrowing the handler error after discard.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#289](https://github.com/JarvusInnovations/gitsheets/issues/289) —
+  resolved by #295 + this plan; the `--limit` short-circuit item is superseded
+  (see Notes). Close on merge.
+- Issue [#290](https://github.com/JarvusInnovations/gitsheets/issues/290) —
+  resolved: 2,916 rows in 91 s, one commit, with progress. The remaining
+  ~30 ms/row is the write pipeline (merge → validate → canonical serialize with
+  native markdown normalization → stage); a batch-level `prepareUpsert` in the
+  core would be the next step if a consumer needs it. Close on merge.
+- Tracked as: Python parity for content-typed by-path reads — a `body_field`
+  kwarg on `record_read`, one-line add when asked.
