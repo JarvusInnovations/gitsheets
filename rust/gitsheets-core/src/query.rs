@@ -46,7 +46,7 @@
 //! date-*bucket* components (`${{ field: YYYY/MM/DD }}`) — and expression
 //! components using UTC accessors — prune to the exact rendered path.
 
-use holo_tree::{Child, MutableTree, ObjectId};
+use holo_tree::{Context, Child, MutableTree, ObjectId};
 
 use crate::engine::{Engine, SnippetError, SnippetHandle};
 use crate::error::{Error, Result};
@@ -321,7 +321,7 @@ pub fn prune_record(filter: &Filter) -> Value {
 /// any predicate snippets compiled into the same `engine`) so a query crosses
 /// the FFI once.
 pub fn query_records(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     template: &Template,
@@ -329,8 +329,8 @@ pub fn query_records(
     engine: &mut Engine,
     extension: &str,
 ) -> Result<Vec<(String, Value)>> {
-    query_records_with(repo, tree, base, template, filter, engine, extension, |hash| {
-        read_blob_value(repo, hash)
+    query_records_with(ctx, tree, base, template, filter, engine, extension, |hash| {
+        read_blob_value(ctx.repo, hash)
     })
 }
 
@@ -344,7 +344,7 @@ pub fn query_records(
 /// format's own, e.g. `.md`).
 #[allow(clippy::too_many_arguments)]
 pub fn query_records_format(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     template: &Template,
@@ -354,8 +354,8 @@ pub fn query_records_format(
     format: &FormatConfig,
     with_body: bool,
 ) -> Result<Vec<(String, Value)>> {
-    query_records_with(repo, tree, base, template, filter, engine, extension, |hash| {
-        let text = read_blob_text(repo, hash)?;
+    query_records_with(ctx, tree, base, template, filter, engine, extension, |hash| {
+        let text = read_blob_text(ctx.repo, hash)?;
         if with_body {
             codec::parse(&text, format)
         } else {
@@ -367,7 +367,7 @@ pub fn query_records_format(
 /// The shared walk + decode + filter pipeline behind the two public queries.
 #[allow(clippy::too_many_arguments)]
 fn query_records_with(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     template: &Template,
@@ -381,8 +381,8 @@ fn query_records_with(
     // Candidate (path, blob-hash) pairs the pruning walk surfaces.
     let mut candidates: Vec<(String, ObjectId)> = Vec::new();
     let barg = base_arg(base);
-    if let Some(subtree) = tree.get_subtree(repo, &barg).map_err(map_ht)? {
-        walk_query(repo, subtree, &plan, 0, "", extension, &mut candidates)?;
+    if let Some(subtree) = tree.get_subtree(ctx, &barg).map_err(map_ht)? {
+        walk_query(ctx, subtree, &plan, 0, "", extension, &mut candidates)?;
     }
 
     // Sorted candidate order keeps results deterministic and git-canonical
@@ -404,7 +404,7 @@ fn query_records_with(
 /// parity target for the host `Template.queryTree`. Returns candidate record
 /// paths (relative to `base`, no extension) in sorted order.
 pub fn query_candidate_paths(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     template: &Template,
@@ -415,8 +415,8 @@ pub fn query_candidate_paths(
     let plan = template.plan_query(query, engine)?;
     let mut candidates: Vec<(String, ObjectId)> = Vec::new();
     let barg = base_arg(base);
-    if let Some(subtree) = tree.get_subtree(repo, &barg).map_err(map_ht)? {
-        walk_query(repo, subtree, &plan, 0, "", extension, &mut candidates)?;
+    if let Some(subtree) = tree.get_subtree(ctx, &barg).map_err(map_ht)? {
+        walk_query(ctx, subtree, &plan, 0, "", extension, &mut candidates)?;
     }
     let mut paths: Vec<String> = candidates.into_iter().map(|(p, _)| p).collect();
     paths.sort();
@@ -494,7 +494,7 @@ impl BoundTrack {
 ///   tightening the boundary tracking per child;
 /// - **intermediate, un-renderable** → expand into every subtree.
 fn walk_query(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     plan: &[QueryComponentPlan],
     depth: usize,
@@ -502,12 +502,12 @@ fn walk_query(
     extension: &str,
     out: &mut Vec<(String, ObjectId)>,
 ) -> Result<()> {
-    walk_query_tracked(repo, tree, plan, depth, prefix, extension, out, BoundTrack::FRESH)
+    walk_query_tracked(ctx, tree, plan, depth, prefix, extension, out, BoundTrack::FRESH)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn walk_query_tracked(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     plan: &[QueryComponentPlan],
     depth: usize,
@@ -526,7 +526,7 @@ fn walk_query_tracked(
     if is_last {
         if let Some(rendered) = &comp.rendered {
             let leaf = format!("{rendered}{extension}");
-            if let Some(Child::Blob { hash, .. }) = tree.get_child(repo, &leaf).map_err(map_ht)? {
+            if let Some(Child::Blob { hash, .. }) = tree.get_child(ctx, &leaf).map_err(map_ht)? {
                 out.push((join_path(prefix, rendered), *hash));
             }
             return Ok(());
@@ -535,7 +535,7 @@ fn walk_query_tracked(
             // Bounded leaf (the bucket is the whole path): this tree's direct
             // record blobs within the bounds. A bucket is never recursive.
             let track = track.entering(bounds);
-            tree.ensure_children(repo).map_err(map_ht)?;
+            tree.ensure_children(ctx).map_err(map_ht)?;
             for (name, child) in tree.children.as_ref().unwrap().iter() {
                 if let Child::Blob { hash, .. } = child {
                     if !name.ends_with(extension) {
@@ -553,7 +553,7 @@ fn walk_query_tracked(
             // Recursive leaf: every blob beneath this tree (the host's
             // `getBlobMap`), skipping any path under an already-yielded record
             // (its attachment files).
-            let blob_map = tree.get_blob_map(repo).map_err(map_ht)?;
+            let blob_map = tree.get_blob_map(ctx).map_err(map_ht)?;
             let mut attachment_prefix: Option<String> = None;
             for (path, info) in blob_map {
                 if !path.ends_with(extension) {
@@ -571,7 +571,7 @@ fn walk_query_tracked(
         } else {
             // Non-recursive leaf: this tree's direct record blobs (BTreeMap →
             // sorted). Subdirectories (attachment dirs) are not blobs → skipped.
-            tree.ensure_children(repo).map_err(map_ht)?;
+            tree.ensure_children(ctx).map_err(map_ht)?;
             for (name, child) in tree.children.as_ref().unwrap().iter() {
                 if let Child::Blob { hash, .. } = child {
                     if !name.ends_with(extension) {
@@ -587,10 +587,10 @@ fn walk_query_tracked(
 
     // Intermediate component.
     if let Some(rendered) = &comp.rendered {
-        if let Some(next) = tree.get_subtree(repo, rendered).map_err(map_ht)? {
+        if let Some(next) = tree.get_subtree(ctx, rendered).map_err(map_ht)? {
             let child_prefix = join_path(prefix, rendered);
             return walk_query_tracked(
-                repo,
+                ctx,
                 next,
                 plan,
                 depth + 1,
@@ -609,7 +609,7 @@ fn walk_query_tracked(
         Some(bounds) => track.entering(bounds),
         None => track,
     };
-    tree.ensure_children(repo).map_err(map_ht)?;
+    tree.ensure_children(ctx).map_err(map_ht)?;
     let names: Vec<String> = tree
         .children
         .as_ref()
@@ -629,7 +629,7 @@ fn walk_query_tracked(
                 None => track,
             };
             walk_query_tracked(
-                repo,
+                ctx,
                 sub,
                 plan,
                 depth + 1,
@@ -646,6 +646,11 @@ fn walk_query_tracked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tree-op context over a test-lifetime cache (holo-tree 0.5).
+    fn tctx(repo: &gix::Repository) -> holo_tree::Context<'_> {
+        holo_tree::Context::new(repo, Box::leak(Box::new(holo_tree::TreeCache::new())))
+    }
     use crate::record::{resolve_tree, write_records, TOML_EXTENSION};
     use indexmap::IndexMap;
 
@@ -668,14 +673,14 @@ mod tests {
 
     /// Seed a flat people sheet (`path = ${{ slug }}`, base `people`) and return
     /// its tree hash.
-    fn seed_people(repo: &gix::Repository) -> String {
+    fn seed_people(ctx: &Context<'_>) -> String {
         let mut tree = MutableTree::empty();
         let items = vec![
             ("jane".to_string(), rec(&[("slug", s("jane")), ("email", s("jane@x.org")), ("team", s("eng"))])),
             ("bob".to_string(), rec(&[("slug", s("bob")), ("email", s("bob@y.org")), ("team", s("eng"))])),
             ("amy".to_string(), rec(&[("slug", s("amy")), ("email", s("amy@z.org")), ("team", s("design"))])),
         ];
-        write_records(repo, &mut tree, "people", &items, TOML_EXTENSION)
+        write_records(ctx, &mut tree, "people", &items, TOML_EXTENSION)
             .unwrap()
             .tree_hash
     }
@@ -683,12 +688,12 @@ mod tests {
     #[test]
     fn empty_filter_returns_all_records_sorted() {
         let (_d, repo) = temp_repo();
-        let hash = seed_people(&repo);
+        let hash = seed_people(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ slug }}", &mut eng).unwrap();
         let out =
-            query_records(&repo, &mut tree, "people", &template, &Filter::new(), &mut eng, TOML_EXTENSION)
+            query_records(&tctx(&repo), &mut tree, "people", &template, &Filter::new(), &mut eng, TOML_EXTENSION)
                 .unwrap();
         let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["amy", "bob", "jane"]);
@@ -697,14 +702,14 @@ mod tests {
     #[test]
     fn equality_filter_prunes_to_one_leaf() {
         let (_d, repo) = temp_repo();
-        let hash = seed_people(&repo);
+        let hash = seed_people(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ slug }}", &mut eng).unwrap();
         let mut filter = Filter::new();
         filter.push("slug", FilterPred::Equals(s("jane")));
         let out =
-            query_records(&repo, &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION)
+            query_records(&tctx(&repo), &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION)
                 .unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "jane");
@@ -713,14 +718,14 @@ mod tests {
     #[test]
     fn non_path_equality_filter_scans_then_matches() {
         let (_d, repo) = temp_repo();
-        let hash = seed_people(&repo);
+        let hash = seed_people(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ slug }}", &mut eng).unwrap();
         let mut filter = Filter::new();
         filter.push("team", FilterPred::Equals(s("eng")));
         let out =
-            query_records(&repo, &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION)
+            query_records(&tctx(&repo), &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION)
                 .unwrap();
         let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["bob", "jane"]);
@@ -729,7 +734,7 @@ mod tests {
     #[test]
     fn predicate_escape_hatch_filters_natively_in_the_engine() {
         let (_d, repo) = temp_repo();
-        let hash = seed_people(&repo);
+        let hash = seed_people(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ slug }}", &mut eng).unwrap();
@@ -740,7 +745,7 @@ mod tests {
         let mut filter = Filter::new();
         filter.push("email", FilterPred::Predicate(handle));
         let out =
-            query_records(&repo, &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION)
+            query_records(&tctx(&repo), &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION)
                 .unwrap();
         let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["bob"]);
@@ -757,7 +762,7 @@ mod tests {
             ("2026/04/b".to_string(), rec(&[("publishedAt", dt("2026-04-01T00:00:00Z")), ("slug", s("b"))])),
             ("2025/12/c".to_string(), rec(&[("publishedAt", dt("2025-12-31T09:00:00Z")), ("slug", s("c"))])),
         ];
-        let hash = write_records(&repo, &mut tree, "posts", &items, TOML_EXTENSION)
+        let hash = write_records(&tctx(&repo), &mut tree, "posts", &items, TOML_EXTENSION)
             .unwrap()
             .tree_hash;
         let mut tree = resolve_tree(&repo, &hash).unwrap();
@@ -769,13 +774,13 @@ mod tests {
         // prune_record and descends the exact rendered bucket path.
         let q = rec(&[("publishedAt", dt("2026-03-09T12:00:00Z"))]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION)
+            query_candidate_paths(&tctx(&repo), &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION)
                 .unwrap();
         assert_eq!(paths, vec!["2026/03/a"]);
 
         // No bucket field in the query → bucket segments are wildcards.
         let all = query_candidate_paths(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             "posts",
             &template,
@@ -791,7 +796,7 @@ mod tests {
         let mut filter = Filter::new();
         filter.push("publishedAt", FilterPred::Equals(dt("2026-03-09T12:00:00Z")));
         let out =
-            query_records(&repo, &mut tree, "posts", &template, &filter, &mut eng, TOML_EXTENSION)
+            query_records(&tctx(&repo), &mut tree, "posts", &template, &filter, &mut eng, TOML_EXTENSION)
                 .unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "2026/03/a");
@@ -808,7 +813,7 @@ mod tests {
             ("af.mil/cobol".to_string(), rec(&[("domain", s("af.mil")), ("username", s("cobol"))])),
             ("navy.mil/sailor".to_string(), rec(&[("domain", s("navy.mil")), ("username", s("sailor"))])),
         ];
-        let hash = write_records(&repo, &mut tree, "people", &items, TOML_EXTENSION)
+        let hash = write_records(&tctx(&repo), &mut tree, "people", &items, TOML_EXTENSION)
             .unwrap()
             .tree_hash;
         let mut tree = resolve_tree(&repo, &hash).unwrap();
@@ -817,13 +822,13 @@ mod tests {
 
         let q = rec(&[("domain", s("af.mil"))]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "people", &template, &q, &mut eng, TOML_EXTENSION)
+            query_candidate_paths(&tctx(&repo), &mut tree, "people", &template, &q, &mut eng, TOML_EXTENSION)
                 .unwrap();
         assert_eq!(paths, vec!["af.mil/cobol", "af.mil/grandma"]);
 
         // No fields supplied → expand across all subtrees.
         let all = query_candidate_paths(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             "people",
             &template,
@@ -914,7 +919,7 @@ mod tests {
     }
 
     /// A `${{ d: YYYY/MM/DD }}/${{ slug }}` corpus straddling a year boundary.
-    fn seed_daily(repo: &gix::Repository) -> String {
+    fn seed_daily(ctx: &Context<'_>) -> String {
         let mut tree = MutableTree::empty();
         let items: Vec<(String, Value)> = [
             ("2025/10/05/a", "2025-10-05T10:00:00Z"),
@@ -934,7 +939,7 @@ mod tests {
             ((*p).to_string(), rec(&[("d", dt(when)), ("slug", s(slug))]))
         })
         .collect();
-        write_records(repo, &mut tree, "posts", &items, TOML_EXTENSION)
+        write_records(ctx, &mut tree, "posts", &items, TOML_EXTENSION)
             .unwrap()
             .tree_hash
     }
@@ -942,7 +947,7 @@ mod tests {
     #[test]
     fn range_bounded_walk_visits_exactly_the_in_range_partitions_across_a_year_boundary() {
         let (_d, repo) = temp_repo();
-        let hash = seed_daily(&repo);
+        let hash = seed_daily(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ d: YYYY/MM/DD }}/${{ slug }}", &mut eng).unwrap();
@@ -951,7 +956,7 @@ mod tests {
         // upper bound's own day (02/03) is visited even for `$lt` midnight.
         let q = rec(&[("d", rec(&[("$gte", s("2025-11-20")), ("$lt", dt("2026-02-03T00:00:00Z"))]))]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
+            query_candidate_paths(&tctx(&repo), &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
         assert_eq!(
             paths,
             vec!["2025/11/20/c", "2025/11/25/d", "2025/12/31/e", "2026/01/15/f", "2026/02/03/g", "2026/02/03/h"]
@@ -960,7 +965,7 @@ mod tests {
         // End to end: the record filter applies the exact `$lt` cutoff.
         let mut filter = Filter::new();
         filter.push("d", range_pred(&[("$gte", s("2025-11-20")), ("$lt", dt("2026-02-03T00:00:00Z"))]));
-        let out = query_records(&repo, &mut tree, "posts", &template, &filter, &mut eng, TOML_EXTENSION).unwrap();
+        let out = query_records(&tctx(&repo), &mut tree, "posts", &template, &filter, &mut eng, TOML_EXTENSION).unwrap();
         let slugs: Vec<&str> = out.iter().map(|(p, _)| p.rsplit('/').next().unwrap()).collect();
         assert_eq!(slugs, vec!["c", "d", "e", "f"]);
     }
@@ -968,26 +973,26 @@ mod tests {
     #[test]
     fn one_sided_ranges_prune_one_side() {
         let (_d, repo) = temp_repo();
-        let hash = seed_daily(&repo);
+        let hash = seed_daily(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ d: YYYY/MM/DD }}/${{ slug }}", &mut eng).unwrap();
 
         let q = rec(&[("d", rec(&[("$gt", s("2026-02-03"))]))]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
+            query_candidate_paths(&tctx(&repo), &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
         assert_eq!(paths, vec!["2026/02/03/g", "2026/02/03/h", "2026/02/04/i", "2026/06/01/j"]);
 
         let q = rec(&[("d", rec(&[("$lte", s("2025-11-19"))]))]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
+            query_candidate_paths(&tctx(&repo), &mut tree, "posts", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
         assert_eq!(paths, vec!["2025/10/05/a", "2025/11/19/b"]);
 
         // `$gt` on the day's midnight excludes that day's records at the
         // record level while the walk still visits the partition.
         let mut filter = Filter::new();
         filter.push("d", range_pred(&[("$gt", s("2026-02-03T09:00:00Z"))]));
-        let out = query_records(&repo, &mut tree, "posts", &template, &filter, &mut eng, TOML_EXTENSION).unwrap();
+        let out = query_records(&tctx(&repo), &mut tree, "posts", &template, &filter, &mut eng, TOML_EXTENSION).unwrap();
         let slugs: Vec<&str> = out.iter().map(|(p, _)| p.rsplit('/').next().unwrap()).collect();
         assert_eq!(slugs, vec!["i", "j"]);
     }
@@ -995,7 +1000,7 @@ mod tests {
     #[test]
     fn range_on_a_non_bucket_field_does_not_prune_but_still_filters() {
         let (_d, repo) = temp_repo();
-        let hash = seed_people(&repo);
+        let hash = seed_people(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ slug }}", &mut eng).unwrap();
@@ -1003,13 +1008,13 @@ mod tests {
         // Candidate walk is the full set (string range on a plain field widens).
         let q = rec(&[("slug", rec(&[("$gte", s("b"))]))]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "people", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
+            query_candidate_paths(&tctx(&repo), &mut tree, "people", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
         assert_eq!(paths, vec!["amy", "bob", "jane"]);
 
         // …but the record-level range still applies.
         let mut filter = Filter::new();
         filter.push("slug", range_pred(&[("$gte", s("b"))]));
-        let out = query_records(&repo, &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION).unwrap();
+        let out = query_records(&tctx(&repo), &mut tree, "people", &template, &filter, &mut eng, TOML_EXTENSION).unwrap();
         let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["bob", "jane"]);
     }
@@ -1022,14 +1027,14 @@ mod tests {
             .iter()
             .map(|p| ((*p).to_string(), rec(&[("day", dt(&p.replace('/', "-")))])))
             .collect();
-        let hash = write_records(&repo, &mut tree, "rollups", &items, TOML_EXTENSION).unwrap().tree_hash;
+        let hash = write_records(&tctx(&repo), &mut tree, "rollups", &items, TOML_EXTENSION).unwrap().tree_hash;
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ day: YYYY/MM/DD }}", &mut eng).unwrap();
 
         let q = rec(&[("day", rec(&[("$gte", s("2026-01-31")), ("$lte", s("2026-02-01"))]))]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "rollups", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
+            query_candidate_paths(&tctx(&repo), &mut tree, "rollups", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
         assert_eq!(paths, vec!["2026/01/31", "2026/02/01"]);
     }
 
@@ -1050,7 +1055,7 @@ mod tests {
             ((*p).to_string(), rec(&[("a", dt(a)), ("b", dt(b)), ("slug", s(slug))]))
         })
         .collect();
-        let hash = write_records(&repo, &mut tree, "x", &items, TOML_EXTENSION).unwrap().tree_hash;
+        let hash = write_records(&tctx(&repo), &mut tree, "x", &items, TOML_EXTENSION).unwrap().tree_hash;
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ a: YYYY }}/${{ b: YYYY/MM }}/${{ slug }}", &mut eng).unwrap();
@@ -1061,7 +1066,7 @@ mod tests {
             ("b", rec(&[("$lte", s("2026-02-28"))])),
         ]);
         let paths =
-            query_candidate_paths(&repo, &mut tree, "x", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
+            query_candidate_paths(&tctx(&repo), &mut tree, "x", &template, &q, &mut eng, TOML_EXTENSION).unwrap();
         assert_eq!(paths, vec!["2020/2026/01/x", "2021/2026/01/z"]);
     }
 
@@ -1077,21 +1082,21 @@ mod tests {
     }
 
     /// Seed `posts/<ring>/<slug>.md` markdown records with frontmatter + body.
-    fn seed_markdown(repo: &gix::Repository) -> String {
+    fn seed_markdown(ctx: &Context<'_>) -> String {
         let fmt = md_format();
         let mut tree = MutableTree::empty();
         for (ring, slug, body) in [("a", "one", "# One\n"), ("a", "two", "# Two\n"), ("b", "three", "# Three\n")] {
             let record = rec(&[("ring", s(ring)), ("slug", s(slug)), ("body", s(body))]);
             let text = codec::serialize(&record, &fmt).unwrap();
-            tree.write_child_bytes(repo, &format!("posts/{ring}/{slug}.md"), text.as_bytes()).unwrap();
+            tree.write_child_bytes(ctx, &format!("posts/{ring}/{slug}.md"), text.as_bytes()).unwrap();
         }
-        tree.write(repo).unwrap().to_string()
+        tree.write(ctx).unwrap().to_string()
     }
 
     #[test]
     fn format_query_decodes_markdown_candidates_with_and_without_body() {
         let (_d, repo) = temp_repo();
-        let hash = seed_markdown(&repo);
+        let hash = seed_markdown(&tctx(&repo));
         let mut tree = resolve_tree(&repo, &hash).unwrap();
         let mut eng = Engine::new().unwrap();
         let template = Template::compile("${{ ring }}/${{ slug }}", &mut eng).unwrap();
@@ -1100,7 +1105,7 @@ mod tests {
         // Pruned to one ring; full records carry the body.
         let mut filter = Filter::new();
         filter.push("ring", FilterPred::Equals(s("a")));
-        let out = query_records_format(&repo, &mut tree, "posts", &template, &filter, &mut eng, ".md", &fmt, true)
+        let out = query_records_format(&tctx(&repo), &mut tree, "posts", &template, &filter, &mut eng, ".md", &fmt, true)
             .unwrap();
         let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["a/one", "a/two"]);
@@ -1110,7 +1115,7 @@ mod tests {
         // Lazy-body: the body field is absent, frontmatter intact, filter still applies.
         let mut filter = Filter::new();
         filter.push("slug", FilterPred::Equals(s("three")));
-        let out = query_records_format(&repo, &mut tree, "posts", &template, &filter, &mut eng, ".md", &fmt, false)
+        let out = query_records_format(&tctx(&repo), &mut tree, "posts", &template, &filter, &mut eng, ".md", &fmt, false)
             .unwrap();
         assert_eq!(out.len(), 1);
         let Value::Table(r) = &out[0].1 else { panic!() };
@@ -1119,6 +1124,6 @@ mod tests {
 
         // A TOML-format read of the same tree would be a parse error — the
         // codec selection is what makes `.md` blobs readable.
-        assert!(query_records(&repo, &mut tree, "posts", &template, &Filter::new(), &mut eng, ".md").is_err());
+        assert!(query_records(&tctx(&repo), &mut tree, "posts", &template, &Filter::new(), &mut eng, ".md").is_err());
     }
 }

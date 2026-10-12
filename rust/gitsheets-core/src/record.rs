@@ -29,6 +29,7 @@
 
 use gix::bstr::ByteSlice;
 use holo_tree::{MutableTree, ObjectId};
+pub use holo_tree::{Context, TreeCache};
 
 use crate::canonical;
 use crate::diff::{create_patch, PatchOp};
@@ -96,8 +97,10 @@ pub fn substrate_stats() -> SubstrateStats {
     }
 }
 
-/// Reset the substrate counters and the thread-local tree cache — call before a
-/// timed benchmark phase for a clean read-amplification measurement.
+/// Reset the substrate counters — call before a timed benchmark phase for a
+/// clean read-amplification measurement. Tree caches are consumer-owned
+/// (holo-tree 0.5: one per transaction, one per binding thread), so a binding
+/// clears its own alongside this.
 pub fn substrate_reset() {
     holo_tree::reset();
 }
@@ -225,25 +228,25 @@ pub fn read_blob_by_hash(repo: &gix::Repository, hash: &str) -> Result<Option<Ve
 /// `None` when nothing — or a subtree — lives there. The by-`ref:path` read
 /// primitive behind sheet-config loading and lazy-body hydration.
 pub fn read_blob_entry(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     path: &str,
 ) -> Result<Option<(String, Vec<u8>)>> {
-    let Some(hash) = tree_entry_hash(repo, tree, path)? else {
+    let Some(hash) = tree_entry_hash(ctx, tree, path)? else {
         return Ok(None);
     };
-    let bytes = read_blob_bytes(repo, hash)?;
+    let bytes = read_blob_bytes(ctx.repo, hash)?;
     Ok(Some((hash.to_string(), bytes)))
 }
 
 /// The object id of the blob at `path` (deep), or `None` when absent or not a
 /// blob — the hash-only lookup (attachment handles, cache keys).
 pub fn tree_entry_hash(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     path: &str,
 ) -> Result<Option<ObjectId>> {
-    match tree.get_child(repo, path).map_err(map_ht)? {
+    match tree.get_child(ctx, path).map_err(map_ht)? {
         Some(holo_tree::Child::Blob { hash, .. }) => Ok(Some(*hash)),
         _ => Ok(None),
     }
@@ -320,7 +323,7 @@ pub(crate) fn base_arg(base: &str) -> String {
 /// `None` for a path with no blob; a present-but-unparseable blob is
 /// `config_invalid`. The whole batch shares one tree traversal.
 pub fn read_records(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     paths: &[String],
@@ -329,7 +332,7 @@ pub fn read_records(
     let mut out = Vec::with_capacity(paths.len());
     for path in paths {
         let full = full_path(base, path, extension);
-        match tree.read_blob(repo, &full).map_err(map_ht)? {
+        match tree.read_blob(ctx, &full).map_err(map_ht)? {
             Some(bytes) => {
                 let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
                     message: format!("record at {full} is not valid UTF-8: {e}"),
@@ -356,7 +359,7 @@ pub struct WriteOutcome {
 /// (deep key-sort + canonical form), so two bindings writing the same record
 /// produce identical blobs. Returns the new root tree hash and each blob hash.
 pub fn write_records(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     items: &[(String, Value)],
@@ -366,10 +369,10 @@ pub fn write_records(
     for (record_path, value) in items {
         let text = canonical::serialize(value)?;
         let full = full_path(base, record_path, extension);
-        let blob_id = tree.write_child(repo, &full, &text).map_err(map_ht)?;
+        let blob_id = tree.write_child(ctx, &full, &text).map_err(map_ht)?;
         blob_hashes.push(hex(blob_id));
     }
-    let tree_hash = hex(tree.write(repo).map_err(map_ht)?);
+    let tree_hash = hex(tree.write(ctx).map_err(map_ht)?);
     Ok(WriteOutcome {
         tree_hash,
         blob_hashes,
@@ -388,7 +391,7 @@ pub struct DeleteOutcome {
 /// didn't exist reports `false` (not an error — matching the permissive
 /// substrate primitive; the `record_not_found` guard is a sheet-level concern).
 pub fn delete_records(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     paths: &[String],
@@ -397,9 +400,9 @@ pub fn delete_records(
     let mut existed = Vec::with_capacity(paths.len());
     for path in paths {
         let full = full_path(base, path, extension);
-        existed.push(tree.delete_child_deep(repo, &full).map_err(map_ht)?);
+        existed.push(tree.delete_child_deep(ctx, &full).map_err(map_ht)?);
     }
-    let tree_hash = hex(tree.write(repo).map_err(map_ht)?);
+    let tree_hash = hex(tree.write(ctx).map_err(map_ht)?);
     Ok(DeleteOutcome { tree_hash, existed })
 }
 
@@ -411,24 +414,24 @@ pub fn delete_records(
 /// [`crate::codec`] and [`crate::sheet::Sheet`]. A non-UTF-8 blob is
 /// `config_invalid`.
 pub fn list_record_texts(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     extension: &str,
 ) -> Result<Vec<(String, String)>> {
     let barg = base_arg(base);
-    let subtree = match tree.get_subtree(repo, &barg).map_err(map_ht)? {
+    let subtree = match tree.get_subtree(ctx, &barg).map_err(map_ht)? {
         Some(t) => t,
         None => return Ok(Vec::new()),
     };
-    let blob_map = subtree.get_blob_map(repo).map_err(map_ht)?;
+    let blob_map = subtree.get_blob_map(ctx).map_err(map_ht)?;
     let mut out = Vec::new();
     for (path, info) in blob_map {
         if !path.ends_with(extension) {
             continue;
         }
         let record_path = path[..path.len() - extension.len()].to_string();
-        let bytes = repo
+        let bytes = ctx.repo
             .find_object(info.hash)
             .map_err(|e| Error::CommitFailed {
                 message: format!("could not read blob {} : {e}", info.hash),
@@ -449,12 +452,12 @@ pub fn list_record_texts(
 /// the `Sheet` layer; this primitive stays TOML-only for the thin record-CRUD
 /// binding surface.)
 pub fn list_records(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     extension: &str,
 ) -> Result<Vec<(String, Value)>> {
-    list_record_texts(repo, tree, base, extension)?
+    list_record_texts(ctx, tree, base, extension)?
         .into_iter()
         .map(|(path, text)| Ok((path, canonical::parse(&text)?)))
         .collect()
@@ -504,14 +507,14 @@ pub struct RecordChange {
 /// exist or is empty (git's empty-tree hash) — scoping the diff to the sheet's
 /// records the way `Sheet.diffFrom`'s `-- <effectiveRoot>` pathspec does.
 fn subtree_id_for_diff(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
 ) -> Result<Option<ObjectId>> {
     let barg = base_arg(base);
-    match tree.get_subtree(repo, &barg).map_err(map_ht)? {
+    match tree.get_subtree(ctx, &barg).map_err(map_ht)? {
         Some(sub) => {
-            let id = sub.write(repo).map_err(map_ht)?;
+            let id = sub.write(ctx).map_err(map_ht)?;
             if id.to_string() == EMPTY_TREE_HASH {
                 Ok(None)
             } else {
@@ -559,7 +562,7 @@ fn record_path_of(location: &gix::bstr::BStr, extension: &str) -> Option<String>
 /// Non-record entries (attachments, directories) are filtered by `extension`.
 /// Yielded in sorted destination-path order.
 pub fn diff_record_changes(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     src_tree: &mut MutableTree,
     dst_tree: &mut MutableTree,
     base: &str,
@@ -568,15 +571,15 @@ pub fn diff_record_changes(
     use gix::diff::{Options, Rewrites};
     use gix::object::tree::diff::ChangeDetached;
 
-    let src_id = subtree_id_for_diff(repo, src_tree, base)?;
-    let dst_id = subtree_id_for_diff(repo, dst_tree, base)?;
-    let src_gix = load_gix_tree(repo, src_id)?;
-    let dst_gix = load_gix_tree(repo, dst_id)?;
+    let src_id = subtree_id_for_diff(ctx, src_tree, base)?;
+    let dst_id = subtree_id_for_diff(ctx, dst_tree, base)?;
+    let src_gix = load_gix_tree(ctx.repo, src_id)?;
+    let dst_gix = load_gix_tree(ctx.repo, dst_id)?;
 
     // Explicit 50%-rename options (the `-M` default), NOT config-derived, so the
     // classification is deterministic regardless of the repo's diff.renames.
     let opts = Options::default().with_rewrites(Some(Rewrites::default()));
-    let changes = repo
+    let changes = ctx.repo
         .diff_tree_to_tree(src_gix.as_ref(), dst_gix.as_ref(), Some(opts))
         .map_err(|e| Error::CommitFailed {
             message: format!("gix diff_tree_to_tree failed: {e}"),
@@ -695,24 +698,24 @@ pub struct RecordDiff {
 /// records and RFC 6902 patch — the full `Sheet.diffFrom(opts: {records,
 /// patches})` payload, computed in the core.
 pub fn diff_records(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     src_tree: &mut MutableTree,
     dst_tree: &mut MutableTree,
     base: &str,
     extension: &str,
 ) -> Result<Vec<RecordDiff>> {
-    let changes = diff_record_changes(repo, src_tree, dst_tree, base, extension)?;
+    let changes = diff_record_changes(ctx, src_tree, dst_tree, base, extension)?;
     let mut out = Vec::with_capacity(changes.len());
     for change in changes {
         // The src side of a rename lives at `previous_path`; every other status
         // has src and dst at the same `path`.
         let src_path = change.previous_path.as_deref().unwrap_or(&change.path);
         let src = match &change.src_hash {
-            Some(_) => read_one(repo, src_tree, base, src_path, extension)?,
+            Some(_) => read_one(ctx, src_tree, base, src_path, extension)?,
             None => None,
         };
         let dst = match &change.dst_hash {
-            Some(_) => read_one(repo, dst_tree, base, &change.path, extension)?,
+            Some(_) => read_one(ctx, dst_tree, base, &change.path, extension)?,
             None => None,
         };
         let patch = create_patch(src.as_ref(), dst.as_ref());
@@ -727,14 +730,14 @@ pub fn diff_records(
 }
 
 fn read_one(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     base: &str,
     path: &str,
     extension: &str,
 ) -> Result<Option<Value>> {
     let full = full_path(base, path, extension);
-    match tree.read_blob(repo, &full).map_err(map_ht)? {
+    match tree.read_blob(ctx, &full).map_err(map_ht)? {
         Some(bytes) => {
             let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
                 message: format!("record at {full} is not valid UTF-8: {e}"),
@@ -763,8 +766,10 @@ pub fn read_records_at_ref(
     extension: &str,
 ) -> Result<Vec<Option<Value>>> {
     let repo = open_repo(git_dir)?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
     let mut tree = resolve_tree(&repo, tree_ref)?;
-    read_records(&repo, &mut tree, base, paths, extension)
+    read_records(&ctx, &mut tree, base, paths, extension)
 }
 
 /// Open the repo, resolve `base_ref` to a starting tree, write a batch, and
@@ -777,8 +782,10 @@ pub fn write_records_at_ref(
     extension: &str,
 ) -> Result<WriteOutcome> {
     let repo = open_repo(git_dir)?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
     let mut tree = resolve_tree(&repo, base_ref)?;
-    write_records(&repo, &mut tree, base, items, extension)
+    write_records(&ctx, &mut tree, base, items, extension)
 }
 
 /// Open the repo, resolve `base_ref`, delete a batch, and flush. See
@@ -791,8 +798,10 @@ pub fn delete_records_at_ref(
     extension: &str,
 ) -> Result<DeleteOutcome> {
     let repo = open_repo(git_dir)?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
     let mut tree = resolve_tree(&repo, base_ref)?;
-    delete_records(&repo, &mut tree, base, paths, extension)
+    delete_records(&ctx, &mut tree, base, paths, extension)
 }
 
 /// Open the repo, resolve `tree_ref`, and list every record under `base`. See
@@ -804,8 +813,10 @@ pub fn list_records_at_ref(
     extension: &str,
 ) -> Result<Vec<(String, Value)>> {
     let repo = open_repo(git_dir)?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
     let mut tree = resolve_tree(&repo, tree_ref)?;
-    list_records(&repo, &mut tree, base, extension)
+    list_records(&ctx, &mut tree, base, extension)
 }
 
 /// Open the repo, resolve both refs, and diff records (with parsed src/dst +
@@ -818,14 +829,21 @@ pub fn diff_records_at_refs(
     extension: &str,
 ) -> Result<Vec<RecordDiff>> {
     let repo = open_repo(git_dir)?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
     let mut src = resolve_tree(&repo, src_ref)?;
     let mut dst = resolve_tree(&repo, dst_ref)?;
-    diff_records(&repo, &mut src, &mut dst, base, extension)
+    diff_records(&ctx, &mut src, &mut dst, base, extension)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tree-op context over a test-lifetime cache (holo-tree 0.5).
+    fn tctx(repo: &gix::Repository) -> holo_tree::Context<'_> {
+        holo_tree::Context::new(repo, Box::leak(Box::new(holo_tree::TreeCache::new())))
+    }
     use indexmap::IndexMap;
 
     fn rec(pairs: &[(&str, Value)]) -> Value {
@@ -862,7 +880,7 @@ mod tests {
         let (_dir, repo) = temp_repo();
         let mut tree = MutableTree::empty();
         let record = rec(&[("email", s("jane@x.org")), ("slug", s("jane"))]);
-        let out = write_records(&repo, &mut tree, "people", &[("jane".into(), record.clone())], TOML_EXTENSION)
+        let out = write_records(&tctx(&repo), &mut tree, "people", &[("jane".into(), record.clone())], TOML_EXTENSION)
             .expect("write");
 
         // The blob hash holo-tree produced is the git blob hash of the canonical
@@ -871,12 +889,12 @@ mod tests {
         assert_eq!(out.blob_hashes[0], git_blob_hash(canonical_bytes.as_bytes()));
 
         // Read back from the same tree: identical value.
-        let read = read_records(&repo, &mut tree, "people", &["jane".into()], TOML_EXTENSION).unwrap();
+        let read = read_records(&tctx(&repo), &mut tree, "people", &["jane".into()], TOML_EXTENSION).unwrap();
         assert_eq!(read[0].as_ref().unwrap(), &record);
 
         // And from the persisted tree hash, via a fresh tree handle.
         let mut reloaded = resolve_tree(&repo, &out.tree_hash).unwrap();
-        let read2 = read_records(&repo, &mut reloaded, "people", &["jane".into()], TOML_EXTENSION).unwrap();
+        let read2 = read_records(&tctx(&repo), &mut reloaded, "people", &["jane".into()], TOML_EXTENSION).unwrap();
         assert_eq!(read2[0].as_ref().unwrap(), &record);
     }
 
@@ -884,7 +902,7 @@ mod tests {
     fn read_missing_record_is_none() {
         let (_dir, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        let read = read_records(&repo, &mut tree, "people", &["nobody".into()], TOML_EXTENSION).unwrap();
+        let read = read_records(&tctx(&repo), &mut tree, "people", &["nobody".into()], TOML_EXTENSION).unwrap();
         assert!(read[0].is_none());
     }
 
@@ -893,7 +911,7 @@ mod tests {
         let (_dir, repo) = temp_repo();
         let mut tree = MutableTree::empty();
         write_records(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             "people",
             &[
@@ -903,7 +921,7 @@ mod tests {
             TOML_EXTENSION,
         )
         .unwrap();
-        let listed = list_records(&repo, &mut tree, "people", TOML_EXTENSION).unwrap();
+        let listed = list_records(&tctx(&repo), &mut tree, "people", TOML_EXTENSION).unwrap();
         let paths: Vec<&str> = listed.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["amy", "zoe"]);
         assert_eq!(listed[0].1, rec(&[("slug", s("amy"))]));
@@ -913,12 +931,12 @@ mod tests {
     fn delete_removes_record_and_reports_existed() {
         let (_dir, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        write_records(&repo, &mut tree, "people", &[("jane".into(), rec(&[("slug", s("jane"))]))], TOML_EXTENSION)
+        write_records(&tctx(&repo), &mut tree, "people", &[("jane".into(), rec(&[("slug", s("jane"))]))], TOML_EXTENSION)
             .unwrap();
-        let del = delete_records(&repo, &mut tree, "people", &["jane".into(), "ghost".into()], TOML_EXTENSION)
+        let del = delete_records(&tctx(&repo), &mut tree, "people", &["jane".into(), "ghost".into()], TOML_EXTENSION)
             .unwrap();
         assert_eq!(del.existed, vec![true, false]);
-        let read = read_records(&repo, &mut tree, "people", &["jane".into()], TOML_EXTENSION).unwrap();
+        let read = read_records(&tctx(&repo), &mut tree, "people", &["jane".into()], TOML_EXTENSION).unwrap();
         assert!(read[0].is_none());
     }
 
@@ -929,7 +947,7 @@ mod tests {
         // src tree: jane + bob
         let mut src = MutableTree::empty();
         write_records(
-            &repo,
+            &tctx(&repo),
             &mut src,
             "people",
             &[
@@ -939,26 +957,26 @@ mod tests {
             TOML_EXTENSION,
         )
         .unwrap();
-        let src_hash = src.write(&repo).unwrap().to_string();
+        let src_hash = src.write(&tctx(&repo)).unwrap().to_string();
 
         // dst tree: jane (modified) + amy (added); bob deleted
         let mut dst = resolve_tree(&repo, &src_hash).unwrap();
         write_records(
-            &repo,
+            &tctx(&repo),
             &mut dst,
             "people",
             &[("jane".into(), rec(&[("email", s("new")), ("slug", s("jane"))]))],
             TOML_EXTENSION,
         )
         .unwrap();
-        write_records(&repo, &mut dst, "people", &[("amy".into(), rec(&[("slug", s("amy"))]))], TOML_EXTENSION)
+        write_records(&tctx(&repo), &mut dst, "people", &[("amy".into(), rec(&[("slug", s("amy"))]))], TOML_EXTENSION)
             .unwrap();
-        delete_records(&repo, &mut dst, "people", &["bob".into()], TOML_EXTENSION).unwrap();
-        let dst_hash = dst.write(&repo).unwrap().to_string();
+        delete_records(&tctx(&repo), &mut dst, "people", &["bob".into()], TOML_EXTENSION).unwrap();
+        let dst_hash = dst.write(&tctx(&repo)).unwrap().to_string();
 
         let mut src2 = resolve_tree(&repo, &src_hash).unwrap();
         let mut dst2 = resolve_tree(&repo, &dst_hash).unwrap();
-        let diffs = diff_records(&repo, &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
+        let diffs = diff_records(&tctx(&repo), &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
 
         let by_path: std::collections::HashMap<&str, &RecordDiff> =
             diffs.iter().map(|d| (d.change.path.as_str(), d)).collect();
@@ -983,13 +1001,13 @@ mod tests {
     fn diff_against_empty_tree_is_all_added() {
         let (_dir, repo) = temp_repo();
         let mut dst = MutableTree::empty();
-        write_records(&repo, &mut dst, "people", &[("jane".into(), rec(&[("slug", s("jane"))]))], TOML_EXTENSION)
+        write_records(&tctx(&repo), &mut dst, "people", &[("jane".into(), rec(&[("slug", s("jane"))]))], TOML_EXTENSION)
             .unwrap();
-        let dst_hash = dst.write(&repo).unwrap().to_string();
+        let dst_hash = dst.write(&tctx(&repo)).unwrap().to_string();
 
         let mut empty = resolve_tree(&repo, EMPTY_TREE_HASH).unwrap();
         let mut dst2 = resolve_tree(&repo, &dst_hash).unwrap();
-        let diffs = diff_records(&repo, &mut empty, &mut dst2, "people", TOML_EXTENSION).unwrap();
+        let diffs = diff_records(&tctx(&repo), &mut empty, &mut dst2, "people", TOML_EXTENSION).unwrap();
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].change.status, RecordStatus::Added);
     }
@@ -1035,19 +1053,19 @@ mod tests {
     fn diff_detects_a_moved_record_as_renamed() {
         let (_dir, repo) = temp_repo();
         let mut src = MutableTree::empty();
-        write_records(&repo, &mut src, "people", &[("jane".into(), person("jane"))], TOML_EXTENSION).unwrap();
-        let src_hash = src.write(&repo).unwrap().to_string();
+        write_records(&tctx(&repo), &mut src, "people", &[("jane".into(), person("jane"))], TOML_EXTENSION).unwrap();
+        let src_hash = src.write(&tctx(&repo)).unwrap().to_string();
 
         // Move jane → jane-doe (slug change re-renders the path); content stays
         // ~75% identical.
         let mut dst = MutableTree::empty();
-        write_records(&repo, &mut dst, "people", &[("jane-doe".into(), person("jane-doe"))], TOML_EXTENSION)
+        write_records(&tctx(&repo), &mut dst, "people", &[("jane-doe".into(), person("jane-doe"))], TOML_EXTENSION)
             .unwrap();
-        let dst_hash = dst.write(&repo).unwrap().to_string();
+        let dst_hash = dst.write(&tctx(&repo)).unwrap().to_string();
 
         let mut src2 = resolve_tree(&repo, &src_hash).unwrap();
         let mut dst2 = resolve_tree(&repo, &dst_hash).unwrap();
-        let changes = diff_record_changes(&repo, &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
+        let changes = diff_record_changes(&tctx(&repo), &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
 
         assert_eq!(changes.len(), 1, "one rename, not an add + a delete");
         assert_eq!(changes[0].status, RecordStatus::Renamed);
@@ -1057,7 +1075,7 @@ mod tests {
         assert!(changes[0].dst_hash.is_some());
 
         // The rename's patch is the src→dst field delta (the slug replace).
-        let diffs = diff_records(&repo, &mut resolve_tree(&repo, &src_hash).unwrap(), &mut resolve_tree(&repo, &dst_hash).unwrap(), "people", TOML_EXTENSION).unwrap();
+        let diffs = diff_records(&tctx(&repo), &mut resolve_tree(&repo, &src_hash).unwrap(), &mut resolve_tree(&repo, &dst_hash).unwrap(), "people", TOML_EXTENSION).unwrap();
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].patch.len(), 1);
         assert_eq!(diffs[0].patch[0].path, "/slug");
@@ -1083,15 +1101,15 @@ mod tests {
         // pair them as a rename.
         let (_dir, repo) = temp_repo();
         let mut src = MutableTree::empty();
-        write_records(&repo, &mut src, "people", &[("bob".into(), rec(&[("slug", s("bob"))]))], TOML_EXTENSION).unwrap();
-        let src_hash = src.write(&repo).unwrap().to_string();
+        write_records(&tctx(&repo), &mut src, "people", &[("bob".into(), rec(&[("slug", s("bob"))]))], TOML_EXTENSION).unwrap();
+        let src_hash = src.write(&tctx(&repo)).unwrap().to_string();
         let mut dst = MutableTree::empty();
-        write_records(&repo, &mut dst, "people", &[("amy".into(), rec(&[("slug", s("amy"))]))], TOML_EXTENSION).unwrap();
-        let dst_hash = dst.write(&repo).unwrap().to_string();
+        write_records(&tctx(&repo), &mut dst, "people", &[("amy".into(), rec(&[("slug", s("amy"))]))], TOML_EXTENSION).unwrap();
+        let dst_hash = dst.write(&tctx(&repo)).unwrap().to_string();
 
         let mut src2 = resolve_tree(&repo, &src_hash).unwrap();
         let mut dst2 = resolve_tree(&repo, &dst_hash).unwrap();
-        let changes = diff_record_changes(&repo, &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
+        let changes = diff_record_changes(&tctx(&repo), &mut src2, &mut dst2, "people", TOML_EXTENSION).unwrap();
         let statuses: std::collections::HashMap<&str, RecordStatus> =
             changes.iter().map(|c| (c.path.as_str(), c.status)).collect();
         assert_eq!(statuses["amy"], RecordStatus::Added);
@@ -1104,16 +1122,16 @@ mod tests {
     fn blob_reads_by_path_and_by_hash_without_a_subprocess() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        let hash = tree.write_child_bytes(&repo, "cfg/people.toml", b"[gitsheet]\npath = '${{ slug }}'\n").unwrap();
-        tree.write(&repo).unwrap();
+        let hash = tree.write_child_bytes(&tctx(&repo), "cfg/people.toml", b"[gitsheet]\npath = '${{ slug }}'\n").unwrap();
+        tree.write(&tctx(&repo)).unwrap();
 
-        let (h, bytes) = read_blob_entry(&repo, &mut tree, "cfg/people.toml").unwrap().unwrap();
+        let (h, bytes) = read_blob_entry(&tctx(&repo), &mut tree, "cfg/people.toml").unwrap().unwrap();
         assert_eq!(h, hash.to_string());
         assert!(bytes.starts_with(b"[gitsheet]"));
-        assert_eq!(tree_entry_hash(&repo, &mut tree, "cfg/people.toml").unwrap(), Some(hash));
+        assert_eq!(tree_entry_hash(&tctx(&repo), &mut tree, "cfg/people.toml").unwrap(), Some(hash));
         // A directory is not a blob; a missing path is None.
-        assert!(read_blob_entry(&repo, &mut tree, "cfg").unwrap().is_none());
-        assert!(tree_entry_hash(&repo, &mut tree, "nope/x.toml").unwrap().is_none());
+        assert!(read_blob_entry(&tctx(&repo), &mut tree, "cfg").unwrap().is_none());
+        assert!(tree_entry_hash(&tctx(&repo), &mut tree, "nope/x.toml").unwrap().is_none());
 
         assert_eq!(read_blob_by_hash(&repo, &hash.to_string()).unwrap().unwrap(), bytes);
         assert!(read_blob_by_hash(&repo, &"0".repeat(40)).unwrap().is_none());

@@ -42,6 +42,19 @@ use gitsheets_core::index::{MultiIndex, UniqueIndex};
 use gitsheets_core::path_template::Template;
 use gitsheets_core::query::{self, Filter, FilterPred};
 use gitsheets_core::record;
+use gitsheets_core::record::{Context, TreeCache};
+
+thread_local! {
+    /// The per-thread tree cache behind ref-path reads (holo-tree 0.5: caches
+    /// are consumer-owned, never thread-implicit). Leaked once per thread so a
+    /// `Context` can borrow it for the duration of a call; transactions own
+    /// their own cache (`Transaction::split`).
+    static TREE_CACHE: &'static TreeCache = Box::leak(Box::new(TreeCache::new()));
+}
+
+fn tree_cache() -> &'static TreeCache {
+    TREE_CACHE.with(|c| *c)
+}
 use gitsheets_core::sheet::{Sheet as CoreSheet, UpsertCandidate};
 use gitsheets_core::store;
 use gitsheets_core::transaction::{Author as CoreAuthor, Transaction, TransactionOptions};
@@ -554,12 +567,13 @@ fn verify_sheet_contract<'py>(
     });
 
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
-    let core_sheet = CoreSheet::open(&repo, &mut tree, &sheet, &resolved_config_path, root, prefix)
+    let core_sheet = CoreSheet::open(&ctx, &mut tree, &sheet, &resolved_config_path, root, prefix)
         .map_err(|e| raise_core_error(py, &e))?;
 
     match gitsheets_core::verify_sheet_contract(
-        &repo,
+        &ctx,
         &mut tree,
         root,
         &core_sheet,
@@ -710,8 +724,9 @@ fn tree_read_blob<'py>(
     path: String,
 ) -> PyResult<Option<Bound<'py, PyDict>>> {
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
-    match record::read_blob_entry(&repo, &mut tree, &path) {
+    match record::read_blob_entry(&ctx, &mut tree, &path) {
         Ok(Some((hash, bytes))) => {
             let d = PyDict::new(py);
             d.set_item("hash", hash)?;
@@ -728,8 +743,9 @@ fn tree_read_blob<'py>(
 #[pyfunction]
 fn tree_entry_hash(py: Python<'_>, git_dir: String, tree_ref: String, path: String) -> PyResult<Option<String>> {
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
-    match record::tree_entry_hash(&repo, &mut tree, &path) {
+    match record::tree_entry_hash(&ctx, &mut tree, &path) {
         Ok(hash) => Ok(hash.map(|h| h.to_string())),
         Err(err) => Err(raise_core_error(py, &err)),
     }
@@ -860,6 +876,7 @@ fn substrate_stats(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
 #[pyfunction]
 fn substrate_reset() {
     record::substrate_reset();
+    tree_cache().clear();
 }
 
 // ── diff / patch primitives (RFC 6902 / RFC 7396) ─────────────────────────────
@@ -1046,6 +1063,7 @@ fn record_query<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
     let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|e| raise_core_error(py, &e))?;
@@ -1063,10 +1081,10 @@ fn record_query<'py>(
                 normalize: true,
             };
             query::query_records_format(
-                &repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext, &format, with_body,
+                &ctx, &mut tree, &base, &compiled, &parsed, &mut engine, &ext, &format, with_body,
             )
         }
-        None => query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
+        None => query::query_records(&ctx, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
     };
     match rows {
         Ok(rows) => {
@@ -1099,10 +1117,11 @@ fn record_query_candidates(
     let ext = extension_of(extension);
     let query_val = py_to_value(query)?;
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
     let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|e| raise_core_error(py, &e))?;
-    query::query_candidate_paths(&repo, &mut tree, &base, &compiled, &query_val, &mut engine, &ext)
+    query::query_candidate_paths(&ctx, &mut tree, &base, &compiled, &query_val, &mut engine, &ext)
         .map_err(|e| raise_core_error(py, &e))
 }
 
@@ -1241,8 +1260,8 @@ impl CoreTransaction {
         let tx = inner
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
-        let (repo, tree) = tx.split();
-        match CoreSheet::open(repo, tree, &name, &config_path, &open_root, &prefix) {
+        let (ctx, tree) = tx.split();
+        match CoreSheet::open(&ctx, tree, &name, &config_path, &open_root, &prefix) {
             Ok(sheet) => {
                 sheets.insert(name, sheet);
                 Ok(())
@@ -1271,12 +1290,12 @@ impl CoreTransaction {
         let tx = inner
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
         let candidate = sheet
-            .prepare_upsert(repo, tree, &record_val, previous_path, false)
+            .prepare_upsert(&ctx, tree, &record_val, previous_path, false)
             .map_err(|e| raise_core_error(py, &e))?;
 
         let d = PyDict::new(py);
@@ -1302,12 +1321,12 @@ impl CoreTransaction {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
         let outcome = {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets
                 .get_mut(&name)
                 .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
             sheet
-                .stage_upsert(repo, tree, &candidate)
+                .stage_upsert(&ctx, tree, &candidate)
                 .map_err(|e| raise_core_error(py, &e))?
         };
         tx.mark_mutated();
@@ -1332,12 +1351,12 @@ impl CoreTransaction {
         let tx = inner
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
         let wc = sheet
-            .will_change(repo, tree, &record_val, previous_path, false)
+            .will_change(&ctx, tree, &record_val, previous_path, false)
             .map_err(|e| raise_core_error(py, &e))?;
         let d = PyDict::new(py);
         d.set_item("changed", wc.changed)?;
@@ -1355,12 +1374,12 @@ impl CoreTransaction {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets
                 .get_mut(&name)
                 .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
             sheet
-                .delete_at_path(repo, tree, &record_path)
+                .delete_at_path(&ctx, tree, &record_path)
                 .map_err(|e| raise_core_error(py, &e))?;
         }
         tx.mark_mutated();
@@ -1374,11 +1393,11 @@ impl CoreTransaction {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets
                 .get_mut(&name)
                 .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
-            sheet.clear(repo, tree).map_err(|e| raise_core_error(py, &e))?;
+            sheet.clear(&ctx, tree).map_err(|e| raise_core_error(py, &e))?;
         }
         tx.mark_mutated();
         Ok(())
@@ -1401,12 +1420,12 @@ impl CoreTransaction {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets
                 .get_mut(&name)
                 .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
             sheet
-                .set_attachments(repo, tree, &record_path, &items)
+                .set_attachments(&ctx, tree, &record_path, &items)
                 .map_err(|e| raise_core_error(py, &e))?;
         }
         tx.mark_mutated();
@@ -1439,12 +1458,12 @@ impl CoreTransaction {
         let tx = inner
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
         match sheet
-            .get_attachments(repo, tree, &record_path)
+            .get_attachments(&ctx, tree, &record_path)
             .map_err(|e| raise_core_error(py, &e))?
         {
             Some(entries) => {
@@ -1470,12 +1489,12 @@ impl CoreTransaction {
         let tx = inner
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
         sheet
-            .get_attachment(repo, tree, &record_path, &attachment_name)
+            .get_attachment(&ctx, tree, &record_path, &attachment_name)
             .map_err(|e| raise_core_error(py, &e))
     }
 
@@ -1493,12 +1512,12 @@ impl CoreTransaction {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets
                 .get_mut(&name)
                 .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
             sheet
-                .delete_attachment(repo, tree, &record_path, &attachment_name)
+                .delete_attachment(&ctx, tree, &record_path, &attachment_name)
                 .map_err(|e| raise_core_error(py, &e))?;
         }
         tx.mark_mutated();
@@ -1519,12 +1538,12 @@ impl CoreTransaction {
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
         let removed = {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets
                 .get_mut(&name)
                 .ok_or_else(|| PyValueError::new_err(format!("sheet {name:?} not opened")))?;
             sheet
-                .delete_attachments(repo, tree, &record_path)
+                .delete_attachments(&ctx, tree, &record_path)
                 .map_err(|e| raise_core_error(py, &e))?
         };
         if removed {
@@ -1577,8 +1596,9 @@ fn core_discover_sheets(
     open_root: String,
 ) -> PyResult<Vec<String>> {
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
-    store::discover_sheets(&repo, &mut tree, &open_root).map_err(|e| raise_core_error(py, &e))
+    store::discover_sheets(&ctx, &mut tree, &open_root).map_err(|e| raise_core_error(py, &e))
 }
 
 /// The `open_store` `config_missing` check: every validator must name a declared
