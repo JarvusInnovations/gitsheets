@@ -128,6 +128,31 @@ export function parseFilter(expr: string): FilterClause {
   );
 }
 
+/**
+ * Does a read command need record bodies? On a content-typed sheet the TOON
+ * preview never shows the body, so reads are body-less unless a `--filter`
+ * clause targets the body field, `--fields` names it, or an export (whose
+ * contract is the verbatim record) was requested. TOML sheets have no body
+ * concept; `false` is a no-op there.
+ */
+export function needsBodies(
+  bodyField: string | undefined,
+  exprs: string[],
+  extraFields: readonly string[],
+  exporting: boolean,
+): boolean {
+  if (bodyField === undefined) return false;
+  if (exporting) return true;
+  if (extraFields.includes(bodyField)) return true;
+  return exprs.some((e) => {
+    try {
+      return parseFilter(e).field === bodyField;
+    } catch {
+      return false; // malformed clauses are reported by buildPredicate
+    }
+  });
+}
+
 /** Compose many `--filter` clauses into one AND predicate over a record. */
 export function buildPredicate(
   exprs: string[],

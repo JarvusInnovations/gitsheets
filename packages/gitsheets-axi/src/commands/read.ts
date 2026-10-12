@@ -93,15 +93,10 @@ export async function readCommand(
   // extension if the caller included one.
   const target = stripExtension(flags.path);
 
+  // One blob read by rendered path — no sheet scan (specs/api/sheet.md#sheetget).
   let found: Record<string, unknown> | undefined;
   try {
-    for await (const record of sheet.query()) {
-      const pathSym = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
-      if (pathSym === target) {
-        found = record as Record<string, unknown>;
-        break;
-      }
-    }
+    found = (await sheet.get(target)) as Record<string, unknown> | undefined;
   } catch (error) {
     throw translateError(error);
   }

@@ -177,3 +177,33 @@ describe('single patch still works', () => {
     expect(stdout).toMatch(/single mode/);
   });
 });
+
+describe('bulk patch preflight runs inside one transaction', () => {
+  it('--dry-run reports counts and commits nothing', async () => {
+    const fixture = await seeded();
+    const before = await commitCount(fixture);
+    const { stdout, exitCode } = await runCli(
+      ['patch', 'users', '--dry-run', '--data', JSON.stringify([{ slug: 'jane', role: 'lead' }, { slug: 'bob', team: 'eng' }, { slug: 'ghost', role: 'x' }]), '--on-missing', 'skip'],
+      fixture.path,
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout).toMatch(/will_change: 1\b|willChange: 1\b/);
+    expect(stdout).toMatch(/missing: 1\b/);
+    expect(await commitCount(fixture)).toBe(before);
+    // Nothing leaked from the discarded transaction.
+    const after = await runCli(['read', 'users', 'jane'], fixture.path);
+    expect(after.stdout).not.toContain('lead');
+  });
+
+  it('a large batch commits once', async () => {
+    const fixture = await seeded();
+    const before = await commitCount(fixture);
+    const rows = Array.from({ length: 250 }, (_, i) => ({ slug: `u${i}`, email: `u${i}@x.org` }));
+    await runCli(['upsert', 'users', '--data', JSON.stringify(rows)], fixture.path);
+    const patch = rows.map((r) => ({ slug: r.slug, role: 'member' }));
+    const { stdout, exitCode } = await runCli(['patch', 'users', '--data', JSON.stringify(patch)], fixture.path);
+    expect(exitCode).toBe(0);
+    expect(stdout).toMatch(/patched: 250\b/);
+    expect(await commitCount(fixture)).toBe(before + 2);
+  });
+});
