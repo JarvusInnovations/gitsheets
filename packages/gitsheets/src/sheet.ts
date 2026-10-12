@@ -175,11 +175,113 @@ function queryMatches(filter: RecordLike, record: RecordLike): boolean {
       continue;
     }
     if (qval !== null && typeof qval === 'object' && !Array.isArray(qval)) {
+      if (isRangeFilter(qval)) {
+        if (!rangeMatches(qval, rval)) return false;
+        continue;
+      }
       if (rval === null || typeof rval !== 'object') return false;
       if (!queryMatches(qval as RecordLike, rval as RecordLike)) return false;
       continue;
     }
     if (rval !== qval) return false;
+  }
+  return true;
+}
+
+// --- Range filter entries (specs/api/sheet.md § "Range filter entries") ---
+
+const RANGE_OPERATORS = ['$gt', '$gte', '$lt', '$lte'] as const;
+
+/** Is `v` a range object — a plain object whose keys are all range operators? */
+function isRangeFilter(v: object): v is RangeFilter<unknown> {
+  const keys = Object.keys(v);
+  return keys.length > 0 && keys.every((k) => (RANGE_OPERATORS as readonly string[]).includes(k));
+}
+
+/**
+ * Validate every `$`-keyed object in a filter up front so a malformed one
+ * (`{ $in: … }`, a mix of range and ordinary keys, two bounds on one side)
+ * is a `TypeError` at query start — the same rejection the core applies —
+ * rather than a silently-empty nested-table match on the host-side paths.
+ */
+function assertWellFormedOperators(filter: RecordLike, path = ''): void {
+  for (const [key, v] of Object.entries(filter)) {
+    if (v === null || typeof v !== 'object' || Array.isArray(v) || v instanceof Date) continue;
+    const keys = Object.keys(v);
+    const at = path ? `${path}.${key}` : key;
+    if (keys.some((k) => k.startsWith('$'))) {
+      if (!isRangeFilter(v)) {
+        throw new TypeError(
+          `Sheet.query: filter on ${JSON.stringify(at)} — a $-keyed object may only carry ${RANGE_OPERATORS.join(' / ')}, got ${JSON.stringify(keys)}`,
+        );
+      }
+      if (('$gt' in v && '$gte' in v) || ('$lt' in v && '$lte' in v)) {
+        throw new TypeError(
+          `Sheet.query: filter on ${JSON.stringify(at)} carries two bounds on one side — give one of $gt/$gte and one of $lt/$lte`,
+        );
+      }
+      continue;
+    }
+    assertWellFormedOperators(v as RecordLike, at);
+  }
+}
+
+// ISO 8601 shapes a string bound may take to compare against a Date field —
+// the same shapes date buckets accept (never `Date.parse` on an offset-less
+// string, which would consult the host timezone).
+const ISO_DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_DATETIME_RE =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|[+-]\d{2}:\d{2})?$/;
+
+/** The UTC instant (ms) an ISO 8601 string bound denotes, or `undefined`. */
+function isoInstantMs(s: string): number | undefined {
+  const d = ISO_DATE_ONLY_RE.exec(s);
+  if (d) return Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]));
+  const m = ISO_DATETIME_RE.exec(s);
+  if (!m) return undefined;
+  const frac = m[7] ? Number(`0.${m[7]}`) * 1000 : 0;
+  let ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])) + frac;
+  const offset = m[8];
+  if (offset && offset !== 'Z' && offset !== 'z') {
+    const sign = offset.startsWith('-') ? -1 : 1;
+    const minutes = sign * (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(4, 6)));
+    ms -= minutes * 60_000;
+  }
+  return ms;
+}
+
+/**
+ * Order a record value against a bound by kind, mirroring the core's
+ * `compare_values`: numbers numerically, strings lexicographically, Dates as
+ * instants, a Date field against an ISO-string bound as instants. Anything
+ * else is incomparable (`undefined`) and never matches.
+ */
+function compareForRange(rval: unknown, bound: unknown): number | undefined {
+  if (typeof rval === 'number' && typeof bound === 'number') return Math.sign(rval - bound);
+  if (typeof rval === 'string' && typeof bound === 'string') {
+    return rval < bound ? -1 : rval > bound ? 1 : 0;
+  }
+  if (rval instanceof Date) {
+    let b: number | undefined;
+    if (bound instanceof Date) b = bound.getTime();
+    else if (typeof bound === 'string') b = isoInstantMs(bound);
+    if (b === undefined || Number.isNaN(b) || Number.isNaN(rval.getTime())) return undefined;
+    return Math.sign(rval.getTime() - b);
+  }
+  return undefined;
+}
+
+function rangeMatches(range: RangeFilter<unknown>, rval: unknown): boolean {
+  if (rval === undefined || rval === null) return false;
+  const lower = '$gte' in range ? { v: range.$gte, inc: true } : '$gt' in range ? { v: range.$gt, inc: false } : undefined;
+  const upper = '$lte' in range ? { v: range.$lte, inc: true } : '$lt' in range ? { v: range.$lt, inc: false } : undefined;
+  if (lower) {
+    const c = compareForRange(rval, lower.v);
+    if (c === undefined || c < 0 || (c === 0 && !lower.inc)) return false;
+  }
+  if (upper) {
+    const c = compareForRange(rval, upper.v);
+    if (c === undefined || c > 0 || (c === 0 && !upper.inc)) return false;
   }
   return true;
 }
@@ -416,8 +518,25 @@ function validateSortRule(sort: unknown, configPath: string, field: string): voi
  * accepted; consumer-supplied `T` narrows to its own keys.
  */
 export type QueryFilter<T extends RecordLike = RecordLike> = {
-  [K in keyof T]?: T[K] | ((value: T[K], record: T) => unknown);
+  [K in keyof T]?: T[K] | RangeFilter<T[K]> | ((value: T[K], record: T) => unknown);
 };
+
+/**
+ * A range filter entry: an ordered comparison on one field, any combination
+ * of the four bounds (at least one). Numbers compare numerically, strings
+ * lexicographically, Dates as instants; a Date field also accepts an ISO 8601
+ * string bound. On a date-bucket path field the range prunes the tree walk to
+ * the bounded span of partitions.
+ *
+ * @see specs/api/sheet.md § "Range filter entries"
+ * @see specs/behaviors/path-templates.md § "Range-pruned traversal"
+ */
+export interface RangeFilter<V = unknown> {
+  $gt?: V | (V extends Date ? string : never);
+  $gte?: V | (V extends Date ? string : never);
+  $lt?: V | (V extends Date ? string : never);
+  $lte?: V | (V extends Date ? string : never);
+}
 
 /**
  * Options for `Sheet.query` / `queryFirst` / `queryAll`.
@@ -998,6 +1117,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (typeof filter === 'function') {
       throw new TypeError('Sheet.query() does not accept a function — pass a filter object');
     }
+    assertWellFormedOperators(filter as RecordLike);
 
     const { signal } = opts;
     // Aborted-before-call: throw immediately, no I/O.

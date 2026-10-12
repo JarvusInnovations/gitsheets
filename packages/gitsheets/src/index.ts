@@ -22,6 +22,7 @@ export type {
   IndexKeyFn,
   DefineIndexOptions,
   QueryFilter,
+  RangeFilter,
   QueryOptions,
   DiffStatus,
   DiffOptions,

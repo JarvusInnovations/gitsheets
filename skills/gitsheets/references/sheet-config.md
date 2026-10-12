@@ -62,10 +62,48 @@ Any JavaScript expression is allowed. Bare identifiers resolve from the record:
 ```toml
 path = '${{ slug.toLowerCase() }}'                  # → 'janedoe'
 path = '${{ id || legacy_id }}'                     # fallback to legacy_id when id missing
-path = '${{ publishedAt.getUTCFullYear() }}/${{ slug }}'  # year-partitioned
 ```
 
 Expressions that throw `ReferenceError` for a missing identifier are treated as "un-renderable" (so queries with partial fields can walk the tree). Other thrown errors propagate.
+
+**Don't use expressions to partition by date** (`${{ publishedAt.getUTCFullYear() }}/…`). Use the declarative date-bucket form below — it's shorter, timezone-safe by construction, and it's the only form whose queries can be range-pruned.
+
+### Date-bucket partitioning: `${{ field: FORMAT }}` (v2.4+)
+
+The idiomatic way to partition records by time. A field name, a colon, and one of a **closed set** of formats:
+
+```toml
+path = '${{ publishedAt: YYYY/MM/DD }}/${{ slug }}'   # posts/2026/03/09/hello.toml  (day partitions)
+path = '${{ publishedAt: YYYY/MM }}/${{ slug }}'      # posts/2026/03/hello.toml     (month partitions)
+path = '${{ publishedAt: YYYY }}/${{ slug }}'         # posts/2026/hello.toml        (year partitions)
+path = '${{ publishedAt: YYYY/WW }}/${{ slug }}'      # posts/2026/11/hello.toml     (ISO-week partitions)
+path = '${{ day: YYYY/MM/DD }}'                       # rollups/2026/03/09.toml      (bucket IS the identity — daily rollups)
+```
+
+| Format | Segments | Notes |
+| --- | --- | --- |
+| `YYYY` | calendar year | |
+| `YYYY/MM` | year / month | `MM` zero-padded |
+| `YYYY/MM/DD` | year / month / day | `MM`, `DD` zero-padded |
+| `YYYY/WW` | ISO week-based year / ISO week | the `YYYY` here is the ISO **week-year**: 2027-01-01 renders `2026/53`; 2024-12-30 renders `2025/01` |
+
+Rules worth knowing:
+
+- **One token expands to multiple real directory levels** (`YYYY/MM/DD` is three), so the token must stand alone in its segment — `posts-${{ d: YYYY }}` is a `ConfigError`. It can sit anywhere in the template, including as the entire path.
+- **UTC always.** Offset datetimes convert to UTC before the date parts are read; offset-less values are taken at face value. The same record renders the same path on every host — the bug class `getFullYear()` invites.
+- **Accepted values**: `Date`s, TOML datetime / local-datetime / local-date, and ISO 8601 strings (`2026-03-09`, `2026-03-09T12:00:00Z`, `…-05:00`). Anything else (a number, an unparseable string) fails the write with `PathTemplateError`; a *missing* field is un-renderable like any other missing path field.
+- **Anything outside the four formats** (`YYYY-MM`, `MM/DD`, `YYYY/MM/DD/HH`) is `ConfigError('config_invalid')` at sheet-open. Needs beyond the set (hour buckets, quarters) fall back to the expression form, but then nothing prunes.
+- Pair it with a schema: `[gitsheet.schema.properties.publishedAt] type = 'string' format = 'date-time'` so the field is validated and normalized as a datetime. Without a schema, a JSON upsert stores the ISO string as a string (which still buckets correctly, but range filters then compare lexicographically rather than as instants).
+
+### How queries use the template
+
+A query that supplies path-template fields reads only the matching subtrees instead of every record — this is what makes partitioned sheets scale. On a date-bucketed sheet:
+
+- **Equality** on the bucket field (`{ publishedAt: new Date('2026-03-09T12:00:00Z') }`) descends the exact `2026/03/09/` partition.
+- **A range** on the bucket field (`{ publishedAt: { $gte: '2025-11-20', $lt: '2026-02-03' } }`) walks only the partitions between the bounds — whole years / months / days outside the range are never opened. See `api.md` → "Range filters" for the operator grammar, `axi.md` for the `--filter 'publishedAt>=2025-11-20'` form.
+- **Absent** from the query → the bucket segments are wildcards (full walk, still correct).
+
+Ranges prune **only** on bucket components. A `${{ year }}` string field or an expression component doesn't order like its directory names, so a range on it still filters correctly but reads every record.
 
 ### Multi-variable segments
 

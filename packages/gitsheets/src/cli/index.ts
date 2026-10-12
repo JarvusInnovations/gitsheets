@@ -344,6 +344,53 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   }
 }
 
+/**
+ * Parse `--filter` clauses into a `Sheet.query` filter. `field=value` is an
+ * equality entry; `>=`, `<=`, `>`, `<` build a range entry on the field
+ * (several bounds on one field merge into one range object). Values stay
+ * strings, so comparisons follow the string-bound rules in
+ * specs/api/sheet.md — an ISO 8601 value compares chronologically against a
+ * datetime field, and a range on a date-bucket path field prunes the walk.
+ * Operators are matched longest-first so `>=` beats `>`.
+ *
+ * @see specs/api/cli.md § `git sheet query`
+ */
+export function parseCliFilters(raw: string[] | string): RecordLike {
+  const items = Array.isArray(raw) ? raw : [raw];
+  const out: RecordLike = {};
+  const OPS: Array<[string, string | undefined]> = [
+    ['>=', '$gte'],
+    ['<=', '$lte'],
+    ['>', '$gt'],
+    ['<', '$lt'],
+    ['=', undefined],
+  ];
+  for (const item of items) {
+    let matched = false;
+    for (const [token, op] of OPS) {
+      const idx = item.indexOf(token);
+      if (idx <= 0) continue;
+      const field = item.slice(0, idx);
+      const value = item.slice(idx + token.length);
+      if (op === undefined) {
+        out[field] = value;
+      } else {
+        const existing = out[field];
+        const range: RecordLike =
+          existing !== null && typeof existing === 'object' ? (existing as RecordLike) : {};
+        range[op] = value;
+        out[field] = range;
+      }
+      matched = true;
+      break;
+    }
+    if (!matched) {
+      throw new Error(`--filter expects field=value or field>=value / <= / > / <, got ${item}`);
+    }
+  }
+  return out;
+}
+
 async function runQuery(argv: QueryArgs): Promise<void> {
   const { sheet } = await loadRepoAndSheet(argv);
   const filter = (argv.filter as RecordLike | undefined) ?? {};
@@ -935,17 +982,9 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           .option('filter', {
             type: 'string',
             array: true,
-            describe: 'Equality filter as field=value (repeatable)',
-            coerce: (raw: string[] | string): Record<string, string> => {
-              const items = Array.isArray(raw) ? raw : [raw];
-              const out: Record<string, string> = {};
-              for (const item of items) {
-                const eq = item.indexOf('=');
-                if (eq === -1) throw new Error(`--filter expects field=value, got ${item}`);
-                out[item.slice(0, eq)] = item.slice(eq + 1);
-              }
-              return out;
-            },
+            describe:
+              'Filter clause (repeatable): field=value equality, or field>=value / field<=value / field>value / field<value range bounds',
+            coerce: parseCliFilters,
           })
           .option('fields', { type: 'string', array: true })
           .option('limit', { type: 'number' })

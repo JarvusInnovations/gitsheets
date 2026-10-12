@@ -138,3 +138,61 @@ describe('distinct', () => {
     expect(stdout).toContain('public,3');
   });
 });
+
+describe('range pushdown on date-bucket path fields', () => {
+  const POSTS_TOML = `[gitsheet]
+root = 'posts'
+path = '\${{ publishedAt: YYYY/MM/DD }}/\${{ slug }}'
+`;
+  const POSTS = JSON.stringify([
+    { slug: 'a', publishedAt: '2025-10-05T10:00:00Z', kind: 'note' },
+    { slug: 'b', publishedAt: '2025-11-19T23:59:59Z', kind: 'post' },
+    { slug: 'c', publishedAt: '2025-11-20T00:00:00Z', kind: 'post' },
+    { slug: 'd', publishedAt: '2025-12-31T23:00:00Z', kind: 'note' },
+    { slug: 'e', publishedAt: '2026-02-03T00:00:00Z', kind: 'post' },
+    { slug: 'f', publishedAt: '2026-02-03T09:00:00Z', kind: 'post' },
+    { slug: 'g', publishedAt: '2026-06-01T00:00:00Z', kind: 'note' },
+  ]);
+
+  async function seededPosts(): Promise<TestRepoHandle> {
+    const fixture = await testRepo({ withInitialCommit: true });
+    handles.push(fixture);
+    await mkdir(join(fixture.path, '.gitsheets'), { recursive: true });
+    await writeFile(join(fixture.path, '.gitsheets', 'posts.toml'), POSTS_TOML);
+    await fixture.git('add', '.gitsheets/');
+    await fixture.git('commit', '-m', 'add posts sheet');
+    await runCli(['upsert', 'posts', '--data', POSTS], fixture.path);
+    return fixture;
+  }
+
+  it('query results match the host-only semantics across a year boundary', async () => {
+    const fixture = await seededPosts();
+    const { stdout, exitCode } = await runCli(
+      ['query', 'posts', '--filter', 'publishedAt>=2025-11-20', '--filter', 'publishedAt<2026-02-03T09:00:00Z', '--sort', 'slug'],
+      fixture.path,
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('of 3 total');
+    for (const slug of ['c', 'd', 'e']) expect(stdout).toContain(slug);
+    for (const slug of ['a', 'b', 'f', 'g']) expect(stdout).not.toMatch(new RegExp(`^\\s*${slug},`, 'm'));
+  });
+
+  it('composes a pushed-down range with host-only clauses', async () => {
+    const fixture = await seededPosts();
+    const { stdout } = await runCli(
+      ['query', 'posts', '--filter', 'publishedAt>2025-11-19', '--filter', 'kind=note'],
+      fixture.path,
+    );
+    expect(stdout).toContain('of 2 total');
+  });
+
+  it('count and distinct honor the range with the full-sheet total', async () => {
+    const fixture = await seededPosts();
+    const count = await runCli(['count', 'posts', '--filter', 'publishedAt<2025-11-20T00:00:00Z'], fixture.path);
+    expect(count.stdout).toMatch(/count: 2\b/);
+    expect(count.stdout).toMatch(/of: 7\b/);
+    const distinct = await runCli(['distinct', 'posts', 'kind', '--filter', 'publishedAt>=2026-01-01'], fixture.path);
+    expect(distinct.stdout).toMatch(/note/);
+    expect(distinct.stdout).toMatch(/post/);
+  });
+});

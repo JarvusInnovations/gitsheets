@@ -977,7 +977,27 @@ fn parse_filter_pred(env: &Env, val: JsUnknown, engine: &mut Engine) -> Result<F
                 return Ok(FilterPred::Predicate(handle));
             }
         }
-        // A plain object is a nested-table filter.
+        // A `$`-keyed object is a range (`{ $gte, $lt, … }`); the core
+        // validates the vocabulary (an unknown `$` operator or a mix with
+        // ordinary keys is an error). Anything else is a nested-table filter.
+        let names = obj.get_property_names()?;
+        let n = names.get_array_length()?;
+        let mut has_operator = false;
+        for i in 0..n {
+            let key: JsString = names.get_element(i)?;
+            if key.into_utf8()?.as_str()?.starts_with('$') {
+                has_operator = true;
+                break;
+            }
+        }
+        if has_operator {
+            let jv = unsafe { JsValue::from_napi_value(env.raw(), val.raw())? };
+            let JsValue(Value::Table(map)) = jv else {
+                unreachable!("a JS object marshals to a core table");
+            };
+            let range = query::Range::from_table(&map).map_err(|err| raise_core_error(env, &err))?;
+            return Ok(FilterPred::Range(range));
+        }
         let nested = parse_filter(env, &obj, engine)?;
         return Ok(FilterPred::Nested(nested));
     }
@@ -989,8 +1009,10 @@ fn parse_filter_pred(env: &Env, val: JsUnknown, engine: &mut Engine) -> Result<F
 
 /// Query records under `base` in the tree `treeRef`, returning each matched
 /// `{ path, record }` in sorted path order. The template prunes the walk; the
-/// filter (equality / nested / `$pred` snippets) is applied to each candidate.
-/// Batch-first: the whole query crosses the FFI once.
+/// filter (equality / nested / `$pred` snippets / `{ $gt, $gte, $lt, $lte }` ranges)
+/// is applied to each candidate; a range on a date-bucket path field prunes
+/// the walk to the bounded span of partitions. Batch-first: the whole query
+/// crosses the FFI once.
 #[napi]
 pub fn record_query(
     env: Env,
@@ -1021,8 +1043,9 @@ pub fn record_query(
 
 /// The pruning candidate set alone (no content filter applied) — the direct
 /// parity target for the host `Template.queryTree`. `query` is a (partial)
-/// record of the path-template input fields. Returns candidate record paths
-/// (relative to `base`, no extension) in sorted order.
+/// record of the path-template input fields; a date-bucket field may carry a
+/// `{ $gte, $lt, … }` range object, which bounds the walk. Returns candidate
+/// record paths (relative to `base`, no extension) in sorted order.
 #[napi]
 pub fn record_query_candidates(
     env: Env,

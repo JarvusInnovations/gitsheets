@@ -82,6 +82,32 @@ O(records), but more I/O than the pruned form. Equality predicates on
 path-template fields are the fast path; function-valued filters (e.g.,
 `{ slug: (v) => v.startsWith('jane') }`) are opaque to pruning.
 
+### Range queries on date buckets
+
+A **range filter entry** on a date-bucketed field prunes the walk to the
+bounded span of partitions instead of visiting every year, month, or day:
+
+```typescript
+// template '${{ publishedAt: YYYY/MM/DD }}/${{ slug }}'
+// walks only 2025/11/20 … 2026/02/03 — every other partition is skipped
+const q1 = await posts.queryAll({
+  publishedAt: { $gte: '2025-11-20', $lt: new Date('2026-02-03T00:00:00Z') },
+});
+
+// one-sided ranges work too
+const recent = await posts.queryAll({ publishedAt: { $gt: '2026-01-01' } });
+```
+
+The four bounds are `$gt`, `$gte`, `$lt`, `$lte` in any combination. Bounds
+may be `Date`s or ISO 8601 strings (date-only, or a datetime with or without
+an offset — the same shapes the bucket itself accepts). Pruning is inclusive
+at the date level on both sides — the walk still visits the bound's own
+day — and the record-level comparison then applies the exact `$gt` / `$lt`
+cutoff, so results are identical to a full scan, just cheaper. A range on a
+plain `${{ field }}` component doesn't prune (unpadded values don't order
+like their directory names) but still filters record-level; `$in` / `$or`
+are not supported.
+
 ## Invalid characters
 
 The rendered path is rejected if it contains Windows-disallowed characters
