@@ -59,7 +59,9 @@ Owns everything bytes-determining or consistency-critical:
   core primitive over gitoxide. The binding spawns no `git` process on any
   record, config, or attachment read path — subprocesses are reserved for the
   few porcelain operations the core does not own (push, `diff-tree`
-  enumeration, working-tree materialization, repository discovery).
+  enumeration, `ls-tree` attachment listing, working-tree materialization,
+  repository discovery) and for `Repository.readBlobStream`, whose contract is
+  a true streaming read that never buffers the blob.
 - Diff + patch semantics (RFC 7396 / RFC 6902).
 - The `Sheet` / `Transaction` / `Store` state machine.
 
