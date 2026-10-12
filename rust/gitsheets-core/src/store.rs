@@ -13,7 +13,7 @@
 //! [`Transaction`]: crate::transaction::Transaction
 //! [`Sheet`]: crate::sheet::Sheet
 
-use holo_tree::MutableTree;
+use holo_tree::{Context, MutableTree};
 
 use crate::error::{Error, Result};
 use crate::record;
@@ -29,17 +29,17 @@ const TOML_EXTENSION: &str = ".toml";
 /// files (e.g. a `.gitsheets/sub/x.toml`) are ignored, matching the JS
 /// `openSheets` which enumerates the directory's immediate `.toml` blobs.
 pub fn discover_sheets(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     open_root: &str,
 ) -> Result<Vec<String>> {
     let dir = join_path(&[open_root, ".gitsheets"]);
     let dir_arg = if dir.is_empty() { ".".to_string() } else { dir };
-    let subtree = match tree.get_subtree(repo, &dir_arg).map_err(record::map_ht)? {
+    let subtree = match tree.get_subtree(ctx, &dir_arg).map_err(record::map_ht)? {
         Some(t) => t,
         None => return Ok(Vec::new()),
     };
-    let blob_map = subtree.get_blob_map(repo).map_err(record::map_ht)?;
+    let blob_map = subtree.get_blob_map(ctx).map_err(record::map_ht)?;
     let mut names: Vec<String> = Vec::new();
     for (path, _) in blob_map {
         // Direct children only: no nested directory component.
@@ -75,6 +75,11 @@ pub fn check_validators(declared: &[String], validator_names: &[String]) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tree-op context over a test-lifetime cache (holo-tree 0.5).
+    fn tctx(repo: &gix::Repository) -> holo_tree::Context<'_> {
+        holo_tree::Context::new(repo, Box::leak(Box::new(holo_tree::TreeCache::new())))
+    }
     use crate::record::{write_records, TOML_EXTENSION as EXT};
     use crate::value::Value;
     use indexmap::IndexMap;
@@ -105,10 +110,10 @@ mod tests {
             m.insert("gitsheet".to_string(), Value::Table(gs));
             m
         });
-        write_records(&repo, &mut tree, ".gitsheets", &[("users".into(), cfg.clone())], EXT).unwrap();
-        write_records(&repo, &mut tree, ".gitsheets", &[("projects".into(), cfg)], EXT).unwrap();
+        write_records(&tctx(&repo), &mut tree, ".gitsheets", &[("users".into(), cfg.clone())], EXT).unwrap();
+        write_records(&tctx(&repo), &mut tree, ".gitsheets", &[("projects".into(), cfg)], EXT).unwrap();
 
-        let names = discover_sheets(&repo, &mut tree, ".").unwrap();
+        let names = discover_sheets(&tctx(&repo), &mut tree, ".").unwrap();
         assert_eq!(names, vec!["projects".to_string(), "users".to_string()]);
     }
 
@@ -116,11 +121,11 @@ mod tests {
     fn empty_repo_yields_no_sheets() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        assert!(discover_sheets(&repo, &mut tree, ".").unwrap().is_empty());
+        assert!(discover_sheets(&tctx(&repo), &mut tree, ".").unwrap().is_empty());
         // A non-sheet write doesn't create `.gitsheets`.
-        write_records(&repo, &mut tree, "people", &[("jane".into(), table(&[("slug", "jane")]))], EXT)
+        write_records(&tctx(&repo), &mut tree, "people", &[("jane".into(), table(&[("slug", "jane")]))], EXT)
             .unwrap();
-        assert!(discover_sheets(&repo, &mut tree, ".").unwrap().is_empty());
+        assert!(discover_sheets(&tctx(&repo), &mut tree, ".").unwrap().is_empty());
     }
 
     #[test]

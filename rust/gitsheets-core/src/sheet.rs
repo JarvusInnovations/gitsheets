@@ -34,7 +34,7 @@
 
 use std::collections::HashMap;
 
-use holo_tree::MutableTree;
+use holo_tree::{Context, MutableTree};
 
 use crate::canonical;
 use crate::codec;
@@ -144,7 +144,7 @@ impl Sheet {
     /// optional sub-prefix under `config.root`. A missing config is
     /// [`Error::ConfigMissing`].
     pub fn open(
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         name: &str,
         config_blob_path: &str,
@@ -152,7 +152,7 @@ impl Sheet {
         prefix: &str,
     ) -> Result<Self> {
         let bytes = tree
-            .read_blob(repo, config_blob_path)
+            .read_blob(ctx, config_blob_path)
             .map_err(record::map_ht)?
             .ok_or_else(|| Error::ConfigMissing {
                 message: format!("sheet config not found at {config_blob_path}"),
@@ -189,7 +189,7 @@ impl Sheet {
         // "Composition and enforcement"). A declared contract that's missing
         // or invalid surfaces here as `ContractError`, at sheet-open.
         let schema = contract::compile_effective_schema(
-            repo,
+            ctx,
             tree,
             open_root,
             &config.implements,
@@ -252,11 +252,11 @@ impl Sheet {
     /// for TOML sheets. Returns sheet-relative paths in sorted order.
     fn read_all(
         &self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         with_body: bool,
     ) -> Result<Vec<(String, Value)>> {
-        let texts = record::list_record_texts(repo, tree, &self.base, self.extension())?;
+        let texts = record::list_record_texts(ctx, tree, &self.base, self.extension())?;
         let mut out = Vec::with_capacity(texts.len());
         for (path, text) in texts {
             let record = if with_body {
@@ -305,7 +305,7 @@ impl Sheet {
     /// body-presence guard.
     pub fn prepare_upsert(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record: &Value,
         previous_path: Option<String>,
@@ -347,7 +347,7 @@ impl Sheet {
 
         // Pre-write unique-index conflict check (against the built index for the
         // current tree) — throws before any mutation.
-        self.check_unique_conflicts(repo, tree, &normalized, &record_path)?;
+        self.check_unique_conflicts(ctx, tree, &normalized, &record_path)?;
 
         // Serialize through the format codec: TOML records → canonical TOML;
         // markdown/mdx → frontmatter + body (with title-from-H1 enforcement).
@@ -366,7 +366,7 @@ impl Sheet {
     /// Invalidates the index cache (the tree just changed).
     pub fn stage_upsert(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         candidate: &UpsertCandidate,
     ) -> Result<StageOutcome> {
@@ -374,12 +374,12 @@ impl Sheet {
             if prev != &candidate.record_path {
                 let old_full = join_record_path(&self.base, prev, self.extension());
                 // Best effort — the old path may not exist.
-                let _ = tree.delete_child_deep(repo, &old_full).map_err(record::map_ht);
+                let _ = tree.delete_child_deep(ctx, &old_full).map_err(record::map_ht);
             }
         }
         let full = join_record_path(&self.base, &candidate.record_path, self.extension());
         let blob_id = tree
-            .write_child(repo, &full, &candidate.next_text)
+            .write_child(ctx, &full, &candidate.next_text)
             .map_err(record::map_ht)?;
         self.index_cache = None;
         Ok(StageOutcome {
@@ -393,15 +393,15 @@ impl Sheet {
     /// Matches `Sheet.willChange`.
     pub fn will_change(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record: &Value,
         previous_path: Option<String>,
         allow_missing_body: bool,
     ) -> Result<WillChange> {
-        let candidate = self.prepare_upsert(repo, tree, record, previous_path, allow_missing_body)?;
+        let candidate = self.prepare_upsert(ctx, tree, record, previous_path, allow_missing_body)?;
         let full = join_record_path(&self.base, &candidate.record_path, self.extension());
-        match read_blob_text(repo, tree, &full)? {
+        match read_blob_text(ctx, tree, &full)? {
             None => Ok(WillChange {
                 changed: true,
                 path: candidate.record_path,
@@ -422,13 +422,13 @@ impl Sheet {
     /// deletes the record's attachment directory. Matches `Sheet.delete`.
     pub fn delete_at_path(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record_path: &str,
     ) -> Result<()> {
         let full = join_record_path(&self.base, record_path, self.extension());
         let existed = tree
-            .read_blob(repo, &full)
+            .read_blob(ctx, &full)
             .map_err(record::map_ht)?
             .is_some();
         if !existed {
@@ -436,19 +436,19 @@ impl Sheet {
                 message: format!("{}: no record at {record_path}", self.name),
             });
         }
-        tree.delete_child_deep(repo, &full).map_err(record::map_ht)?;
+        tree.delete_child_deep(ctx, &full).map_err(record::map_ht)?;
         // Cascade-delete the attachment directory at `<recordPath>/`, if any.
         let attach_dir = join_path(&[&self.base, record_path]);
-        let _ = tree.delete_child_deep(repo, &attach_dir).map_err(record::map_ht);
+        let _ = tree.delete_child_deep(ctx, &attach_dir).map_err(record::map_ht);
         self.index_cache = None;
         Ok(())
     }
 
     /// `O(1)` clear of the sheet's data subtree *(mutating)*. Matches
     /// `Sheet.clear`.
-    pub fn clear(&mut self, repo: &gix::Repository, tree: &mut MutableTree) -> Result<()> {
+    pub fn clear(&mut self, ctx: &Context<'_>, tree: &mut MutableTree) -> Result<()> {
         let base_arg = if self.base.is_empty() { "." } else { &self.base };
-        tree.clear_children(repo, base_arg).map_err(record::map_ht)?;
+        tree.clear_children(ctx, base_arg).map_err(record::map_ht)?;
         self.index_cache = None;
         Ok(())
     }
@@ -481,7 +481,7 @@ impl Sheet {
     /// same name is overwritten. Matches `Sheet.setAttachments`.
     pub fn set_attachments(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record_path: &str,
         attachments: &[(String, String)],
@@ -493,7 +493,7 @@ impl Sheet {
             // header (no byte read + re-hash), so a large attachment isn't read
             // back just to re-place it (hologit#477). 0o100644 = regular file.
             let oid = record::parse_oid(blob_hash)?;
-            tree.write_child_hash(repo, &full, oid, 0o100644)
+            tree.write_child_hash(ctx, &full, oid, 0o100644)
                 .map_err(record::map_ht)?;
         }
         self.index_cache = None;
@@ -505,15 +505,15 @@ impl Sheet {
     /// `Sheet.getAttachments` (returns `null` for no dir).
     pub fn get_attachments(
         &self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record_path: &str,
     ) -> Result<Option<Vec<(String, String)>>> {
         let dir = self.attachment_dir(record_path);
         let barg = if dir.is_empty() { ".".to_string() } else { dir };
-        match tree.get_subtree(repo, &barg).map_err(record::map_ht)? {
+        match tree.get_subtree(ctx, &barg).map_err(record::map_ht)? {
             Some(sub) => {
-                let blob_map = sub.get_blob_map(repo).map_err(record::map_ht)?;
+                let blob_map = sub.get_blob_map(ctx).map_err(record::map_ht)?;
                 Ok(Some(
                     blob_map
                         .into_iter()
@@ -529,13 +529,13 @@ impl Sheet {
     /// `Sheet.getAttachment`.
     pub fn get_attachment(
         &self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record_path: &str,
         name: &str,
     ) -> Result<Option<String>> {
         let full = self.attachment_path(record_path, name);
-        match tree.get_child(repo, &full).map_err(record::map_ht)? {
+        match tree.get_child(ctx, &full).map_err(record::map_ht)? {
             Some(holo_tree::Child::Blob { hash, .. }) => Ok(Some(hash.to_string())),
             _ => Ok(None),
         }
@@ -547,14 +547,14 @@ impl Sheet {
     /// Matches `Sheet.deleteAttachment`.
     pub fn delete_attachment(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record_path: &str,
         name: &str,
     ) -> Result<()> {
         let full = self.attachment_path(record_path, name);
         let is_blob = matches!(
-            tree.get_child(repo, &full).map_err(record::map_ht)?,
+            tree.get_child(ctx, &full).map_err(record::map_ht)?,
             Some(holo_tree::Child::Blob { .. })
         );
         if !is_blob {
@@ -566,7 +566,7 @@ impl Sheet {
                 ),
             });
         }
-        tree.delete_child_deep(repo, &full).map_err(record::map_ht)?;
+        tree.delete_child_deep(ctx, &full).map_err(record::map_ht)?;
         self.index_cache = None;
         Ok(())
     }
@@ -578,19 +578,19 @@ impl Sheet {
     /// `Sheet.deleteAttachments`.
     pub fn delete_attachments(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record_path: &str,
     ) -> Result<bool> {
         let full = self.attachment_dir(record_path);
         let is_tree = matches!(
-            tree.get_child(repo, &full).map_err(record::map_ht)?,
+            tree.get_child(ctx, &full).map_err(record::map_ht)?,
             Some(holo_tree::Child::Tree(_))
         );
         if !is_tree {
             return Ok(false);
         }
-        tree.delete_child_deep(repo, &full).map_err(record::map_ht)?;
+        tree.delete_child_deep(ctx, &full).map_err(record::map_ht)?;
         self.index_cache = None;
         Ok(true)
     }
@@ -601,11 +601,11 @@ impl Sheet {
     /// path); it is a no-op for TOML sheets.
     pub fn list(
         &self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         with_body: bool,
     ) -> Result<Vec<(String, Value)>> {
-        self.read_all(repo, tree, with_body)
+        self.read_all(ctx, tree, with_body)
     }
 
     /// Query the sheet's records in `tree` — the transaction-bound read (spec:
@@ -616,14 +616,14 @@ impl Sheet {
     /// engine (see [`Sheet::engine_mut`]). Read-only.
     pub fn query(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         filter: &Filter,
         with_body: bool,
     ) -> Result<Vec<(String, Value)>> {
         let extension = self.extension();
         query::query_records_format(
-            repo,
+            ctx,
             tree,
             &self.base,
             &self.template,
@@ -641,13 +641,13 @@ impl Sheet {
     /// a subtree, lives there; `with_body` is the lazy-body switch.
     pub fn read_one(
         &self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         record_path: &str,
         with_body: bool,
     ) -> Result<Option<Value>> {
         let full = format!("{}/{}{}", self.base, record_path, self.extension());
-        let Some((_, bytes)) = record::read_blob_entry(repo, tree, &full)? else {
+        let Some((_, bytes)) = record::read_blob_entry(ctx, tree, &full)? else {
             return Ok(None);
         };
         let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
@@ -687,12 +687,12 @@ impl Sheet {
     /// tree on demand (cached). [`Error::IndexNotDefined`] if undeclared.
     pub fn find_by_unique_index(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         name: &str,
         key: &str,
     ) -> Result<Option<Value>> {
-        self.ensure_indexes_built(repo, tree)?;
+        self.ensure_indexes_built(ctx, tree)?;
         let cache = self.index_cache.as_ref().expect("built");
         let idx = cache.unique.get(name).ok_or_else(|| Error::IndexNotDefined {
             message: format!("index {name:?} is not defined on sheet {:?}", self.name),
@@ -703,12 +703,12 @@ impl Sheet {
     /// Look up records by a non-unique index. Builds on demand (cached).
     pub fn find_by_multi_index(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         name: &str,
         key: &str,
     ) -> Result<Vec<Value>> {
-        self.ensure_indexes_built(repo, tree)?;
+        self.ensure_indexes_built(ctx, tree)?;
         let cache = self.index_cache.as_ref().expect("built");
         let idx = cache.multi.get(name).ok_or_else(|| Error::IndexNotDefined {
             message: format!("index {name:?} is not defined on sheet {:?}", self.name),
@@ -720,10 +720,10 @@ impl Sheet {
     /// the current data-tree hash once, and rebuild only when the hash moves.
     fn ensure_indexes_built(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
     ) -> Result<()> {
-        let tree_hash = self.data_tree_hash(repo, tree)?;
+        let tree_hash = self.data_tree_hash(ctx, tree)?;
         if let Some(cache) = &self.index_cache {
             if cache.tree_hash == tree_hash {
                 return Ok(());
@@ -733,7 +733,7 @@ impl Sheet {
         // identifier): a keyFn referencing the body field sees it absent and the
         // record degenerates out of the index. Matches the JS contract in
         // specs/behaviors/content-types.md#indexes.
-        let records = self.read_all(repo, tree, false)?;
+        let records = self.read_all(ctx, tree, false)?;
         let mut unique = HashMap::new();
         let mut multi = HashMap::new();
         for def in &self.indexes {
@@ -759,10 +759,10 @@ impl Sheet {
 
     /// The hash of the sheet's data subtree (the cache key). Falls back to the
     /// empty-tree hash when the subtree doesn't exist yet.
-    fn data_tree_hash(&self, repo: &gix::Repository, tree: &mut MutableTree) -> Result<String> {
+    fn data_tree_hash(&self, ctx: &Context<'_>, tree: &mut MutableTree) -> Result<String> {
         let base_arg = if self.base.is_empty() { "." } else { &self.base };
-        match tree.get_subtree(repo, base_arg).map_err(record::map_ht)? {
-            Some(sub) => Ok(sub.write(repo).map_err(record::map_ht)?.to_string()),
+        match tree.get_subtree(ctx, base_arg).map_err(record::map_ht)? {
+            Some(sub) => Ok(sub.write(ctx).map_err(record::map_ht)?.to_string()),
             None => Ok(record::EMPTY_TREE_HASH.to_string()),
         }
     }
@@ -772,7 +772,7 @@ impl Sheet {
     /// owned by a *different* path is [`Error::IndexUniqueConflict`].
     fn check_unique_conflicts(
         &mut self,
-        repo: &gix::Repository,
+        ctx: &Context<'_>,
         tree: &mut MutableTree,
         normalized: &Value,
         record_path: &str,
@@ -780,7 +780,7 @@ impl Sheet {
         if !self.indexes.iter().any(|d| d.unique) {
             return Ok(());
         }
-        self.ensure_indexes_built(repo, tree)?;
+        self.ensure_indexes_built(ctx, tree)?;
         // Collect conflicts first to release the immutable cache borrow before
         // re-borrowing the engine for key computation.
         let defs: Vec<(String, SnippetHandle)> = self
@@ -937,16 +937,16 @@ fn join_record_path(base: &str, record_path: &str, extension: &str) -> String {
 
 /// Read a blob's hash + UTF-8 text at a full tree path. `None` when absent.
 fn read_blob_text(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     full: &str,
 ) -> Result<Option<(String, String)>> {
-    let hash = match tree.get_child(repo, full).map_err(record::map_ht)? {
+    let hash = match tree.get_child(ctx, full).map_err(record::map_ht)? {
         Some(holo_tree::Child::Blob { hash, .. }) => *hash,
         _ => return Ok(None),
     };
     let bytes = tree
-        .read_blob(repo, full)
+        .read_blob(ctx, full)
         .map_err(record::map_ht)?
         .ok_or_else(|| Error::RecordNotFound {
             message: format!("blob vanished at {full}"),
@@ -960,6 +960,11 @@ fn read_blob_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tree-op context over a test-lifetime cache (holo-tree 0.5).
+    fn tctx(repo: &gix::Repository) -> holo_tree::Context<'_> {
+        holo_tree::Context::new(repo, Box::leak(Box::new(holo_tree::TreeCache::new())))
+    }
     use crate::record::{write_records, TOML_EXTENSION};
     use indexmap::IndexMap;
 
@@ -981,11 +986,11 @@ mod tests {
     }
 
     /// A tree pre-loaded with a `.gitsheets/people.toml` config blob.
-    fn tree_with_config(repo: &gix::Repository, config: Value) -> MutableTree {
+    fn tree_with_config(ctx: &Context<'_>, config: Value) -> MutableTree {
         let mut tree = MutableTree::empty();
-        write_records(repo, &mut tree, ".gitsheets", &[("people".into(), config)], TOML_EXTENSION)
+        write_records(ctx, &mut tree, ".gitsheets", &[("people".into(), config)], TOML_EXTENSION)
             .unwrap();
-        tree.write(repo).unwrap();
+        tree.write(ctx).unwrap();
         tree
     }
 
@@ -998,15 +1003,15 @@ mod tests {
         Value::Table(top)
     }
 
-    fn open(repo: &gix::Repository, tree: &mut MutableTree) -> Sheet {
-        Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap()
+    fn open(ctx: &Context<'_>, tree: &mut MutableTree) -> Sheet {
+        Sheet::open(ctx, tree, "people", ".gitsheets/people.toml", ".", "").unwrap()
     }
 
     #[test]
     fn open_resolves_config_and_base() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let sheet = open(&tctx(&repo), &mut tree);
         assert_eq!(sheet.name(), "people");
         assert_eq!(sheet.base(), "people");
     }
@@ -1015,7 +1020,7 @@ mod tests {
     fn missing_config_is_config_missing() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        let err = Sheet::open(&repo, &mut tree, "ghost", ".gitsheets/ghost.toml", ".", "")
+        let err = Sheet::open(&tctx(&repo), &mut tree, "ghost", ".gitsheets/ghost.toml", ".", "")
             .err()
             .unwrap();
         assert_eq!(err.code(), "config_missing");
@@ -1024,10 +1029,10 @@ mod tests {
     #[test]
     fn prepare_renders_normalizes_and_serializes() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let r = rec(&[("slug", s("jane")), ("email", s("jane@x.org"))]);
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
         assert_eq!(cand.record_path, "jane");
         // canonical bytes: keys sorted.
         assert_eq!(cand.next_text, "email = \"jane@x.org\"\nslug = \"jane\"\n");
@@ -1036,18 +1041,18 @@ mod tests {
     #[test]
     fn will_change_true_then_false_after_stage() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let r = rec(&[("slug", s("jane")), ("email", s("jane@x.org"))]);
 
-        let wc = sheet.will_change(&repo, &mut tree, &r, None, false).unwrap();
+        let wc = sheet.will_change(&tctx(&repo), &mut tree, &r, None, false).unwrap();
         assert!(wc.changed);
         assert_eq!(wc.current_blob_hash, None);
 
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &cand).unwrap();
 
-        let wc2 = sheet.will_change(&repo, &mut tree, &r, None, false).unwrap();
+        let wc2 = sheet.will_change(&tctx(&repo), &mut tree, &r, None, false).unwrap();
         assert!(!wc2.changed, "byte-identical re-upsert is a no-op");
         assert!(wc2.current_blob_hash.is_some());
     }
@@ -1055,19 +1060,19 @@ mod tests {
     #[test]
     fn stage_rename_deletes_old_path() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         // Write at slug=jane.
         let r1 = rec(&[("slug", s("jane"))]);
-        let c1 = sheet.prepare_upsert(&repo, &mut tree, &r1, None, false).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &c1).unwrap();
+        let c1 = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r1, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c1).unwrap();
         // Re-upsert with new slug, carrying previous_path=jane → old deleted.
         let r2 = rec(&[("slug", s("jane-doe"))]);
         let c2 = sheet
-            .prepare_upsert(&repo, &mut tree, &r2, Some("jane".into()), false)
+            .prepare_upsert(&tctx(&repo), &mut tree, &r2, Some("jane".into()), false)
             .unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &c2).unwrap();
-        let listed = sheet.list(&repo, &mut tree, true).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c2).unwrap();
+        let listed = sheet.list(&tctx(&repo), &mut tree, true).unwrap();
         let paths: Vec<&str> = listed.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["jane-doe"]);
     }
@@ -1075,37 +1080,37 @@ mod tests {
     #[test]
     fn delete_missing_is_record_not_found() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        let err = sheet.delete_at_path(&repo, &mut tree, "ghost").err().unwrap();
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        let err = sheet.delete_at_path(&tctx(&repo), &mut tree, "ghost").err().unwrap();
         assert_eq!(err.code(), "record_not_found");
     }
 
     #[test]
     fn delete_removes_existing_record() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let r = rec(&[("slug", s("jane"))]);
-        let c = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &c).unwrap();
-        sheet.delete_at_path(&repo, &mut tree, "jane").unwrap();
-        assert!(sheet.list(&repo, &mut tree, true).unwrap().is_empty());
+        let c = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c).unwrap();
+        sheet.delete_at_path(&tctx(&repo), &mut tree, "jane").unwrap();
+        assert!(sheet.list(&tctx(&repo), &mut tree, true).unwrap().is_empty());
     }
 
     #[test]
     fn clear_empties_the_subtree() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         for slug in ["a", "b", "c"] {
             let r = rec(&[("slug", s(slug))]);
-            let c = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
-            sheet.stage_upsert(&repo, &mut tree, &c).unwrap();
+            let c = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+            sheet.stage_upsert(&tctx(&repo), &mut tree, &c).unwrap();
         }
-        assert_eq!(sheet.list(&repo, &mut tree, true).unwrap().len(), 3);
-        sheet.clear(&repo, &mut tree).unwrap();
-        assert!(sheet.list(&repo, &mut tree, true).unwrap().is_empty());
+        assert_eq!(sheet.list(&tctx(&repo), &mut tree, true).unwrap().len(), 3);
+        sheet.clear(&tctx(&repo), &mut tree).unwrap();
+        assert!(sheet.list(&tctx(&repo), &mut tree, true).unwrap().is_empty());
     }
 
     #[test]
@@ -1123,8 +1128,8 @@ mod tests {
         top.insert("gitsheet".to_string(), Value::Table(gs));
 
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, Value::Table(top));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), Value::Table(top));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let r = rec(&[
             ("slug", s("jane")),
             ("tags", Value::Array(vec![s("charlie"), s("alpha"), s("bravo")])),
@@ -1145,21 +1150,21 @@ mod tests {
     #[test]
     fn unique_index_conflict_blocks_upsert() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         sheet
             .define_index("byEmail", true, "(r) => ( r.email )")
             .unwrap();
 
         // Stage jane@x.org as slug=jane.
         let r1 = rec(&[("slug", s("jane")), ("email", s("dup@x.org"))]);
-        let c1 = sheet.prepare_upsert(&repo, &mut tree, &r1, None, false).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &c1).unwrap();
+        let c1 = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r1, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c1).unwrap();
 
         // A different slug claiming the same email → conflict.
         let r2 = rec(&[("slug", s("bob")), ("email", s("dup@x.org"))]);
         let err = sheet
-            .prepare_upsert(&repo, &mut tree, &r2, None, false)
+            .prepare_upsert(&tctx(&repo), &mut tree, &r2, None, false)
             .err()
             .unwrap();
         assert_eq!(err.code(), "index_unique_conflict");
@@ -1167,24 +1172,24 @@ mod tests {
 
         // The same slug re-claiming its own email is fine (no conflict).
         let r3 = rec(&[("slug", s("jane")), ("email", s("dup@x.org"))]);
-        assert!(sheet.prepare_upsert(&repo, &mut tree, &r3, None, false).is_ok());
+        assert!(sheet.prepare_upsert(&tctx(&repo), &mut tree, &r3, None, false).is_ok());
     }
 
     #[test]
     fn find_by_index_lookup() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         sheet.define_index("byTeam", false, "(r) => ( r.team )").unwrap();
         for (slug, team) in [("a", "eng"), ("b", "eng"), ("c", "design")] {
             let r = rec(&[("slug", s(slug)), ("team", s(team))]);
-            let c = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
-            sheet.stage_upsert(&repo, &mut tree, &c).unwrap();
+            let c = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+            sheet.stage_upsert(&tctx(&repo), &mut tree, &c).unwrap();
         }
-        assert_eq!(sheet.find_by_multi_index(&repo, &mut tree, "byTeam", "eng").unwrap().len(), 2);
-        assert_eq!(sheet.find_by_multi_index(&repo, &mut tree, "byTeam", "design").unwrap().len(), 1);
+        assert_eq!(sheet.find_by_multi_index(&tctx(&repo), &mut tree, "byTeam", "eng").unwrap().len(), 2);
+        assert_eq!(sheet.find_by_multi_index(&tctx(&repo), &mut tree, "byTeam", "design").unwrap().len(), 1);
         let err = sheet
-            .find_by_multi_index(&repo, &mut tree, "nope", "x")
+            .find_by_multi_index(&tctx(&repo), &mut tree, "nope", "x")
             .err()
             .unwrap();
         assert_eq!(err.code(), "index_not_defined");
@@ -1193,7 +1198,7 @@ mod tests {
     // ── markdown / content-typed sheets ──────────────────────────────────────
 
     /// A tree pre-loaded with a markdown `posts` sheet config.
-    fn markdown_tree(repo: &gix::Repository, title: bool) -> MutableTree {
+    fn markdown_tree(ctx: &Context<'_>, title: bool) -> MutableTree {
         let mut gs = IndexMap::new();
         gs.insert("path".to_string(), s("${{ slug }}"));
         gs.insert("root".to_string(), s("posts"));
@@ -1207,25 +1212,25 @@ mod tests {
         let mut top = IndexMap::new();
         top.insert("gitsheet".to_string(), Value::Table(gs));
         let mut tree = MutableTree::empty();
-        write_records(repo, &mut tree, ".gitsheets", &[("people".into(), Value::Table(top))], TOML_EXTENSION).unwrap();
-        tree.write(repo).unwrap();
+        write_records(ctx, &mut tree, ".gitsheets", &[("people".into(), Value::Table(top))], TOML_EXTENSION).unwrap();
+        tree.write(ctx).unwrap();
         tree
     }
 
     #[test]
     fn markdown_upsert_writes_md_and_round_trips() {
         let (_d, repo) = temp_repo();
-        let mut tree = markdown_tree(&repo, false);
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = markdown_tree(&tctx(&repo), false);
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let r = rec(&[("slug", s("hello")), ("title", s("Hello")), ("body", s("# Hello\n\nFirst post.\n"))]);
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
         assert_eq!(cand.record_path, "hello");
         assert!(cand.next_text.starts_with("+++\n"));
         assert!(cand.next_text.contains("+++\n\n# Hello\n\nFirst post.\n"));
-        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &cand).unwrap();
 
         // Stored at posts/hello.md (not .toml).
-        let listed = sheet.list(&repo, &mut tree, true).unwrap();
+        let listed = sheet.list(&tctx(&repo), &mut tree, true).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].0, "hello");
         let Value::Table(m) = &listed[0].1 else { panic!() };
@@ -1236,18 +1241,18 @@ mod tests {
     #[test]
     fn markdown_list_without_body_omits_body() {
         let (_d, repo) = temp_repo();
-        let mut tree = markdown_tree(&repo, false);
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = markdown_tree(&tctx(&repo), false);
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let r = rec(&[("slug", s("a")), ("title", s("A")), ("body", s("HUGE BODY"))]);
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &cand).unwrap();
 
-        let with = sheet.list(&repo, &mut tree, true).unwrap();
+        let with = sheet.list(&tctx(&repo), &mut tree, true).unwrap();
         assert_eq!(with[0].1.type_name(), "table");
         let Value::Table(m) = &with[0].1 else { panic!() };
         assert_eq!(m.get("body"), Some(&s("HUGE BODY")));
 
-        let without = sheet.list(&repo, &mut tree, false).unwrap();
+        let without = sheet.list(&tctx(&repo), &mut tree, false).unwrap();
         let Value::Table(m2) = &without[0].1 else { panic!() };
         assert_eq!(m2.get("body"), None);
         assert_eq!(m2.get("title"), Some(&s("A")));
@@ -1256,19 +1261,19 @@ mod tests {
     #[test]
     fn markdown_missing_body_guard_and_opt_in() {
         let (_d, repo) = temp_repo();
-        let mut tree = markdown_tree(&repo, false);
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = markdown_tree(&tctx(&repo), false);
+        let mut sheet = open(&tctx(&repo), &mut tree);
 
         // Missing body without opt-in → validation_failed.
         let r = rec(&[("slug", s("a")), ("title", s("A"))]);
-        let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
+        let err = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).err().unwrap();
         assert_eq!(err.code(), "validation_failed");
         assert!(err.message().contains("missing the body field"));
 
         // With allow_missing_body → writes an empty body.
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, true).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
-        let listed = sheet.list(&repo, &mut tree, true).unwrap();
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, true).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &cand).unwrap();
+        let listed = sheet.list(&tctx(&repo), &mut tree, true).unwrap();
         let Value::Table(m) = &listed[0].1 else { panic!() };
         assert_eq!(m.get("body"), Some(&s("")));
     }
@@ -1276,71 +1281,71 @@ mod tests {
     #[test]
     fn markdown_title_from_h1_derivation_and_disagreement() {
         let (_d, repo) = temp_repo();
-        let mut tree = markdown_tree(&repo, true);
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = markdown_tree(&tctx(&repo), true);
+        let mut sheet = open(&tctx(&repo), &mut tree);
 
         // Derives title from the body H1 when omitted.
         let r = rec(&[("slug", s("hello")), ("body", s("# Hello, world\n\nA post."))]);
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
-        let listed = sheet.list(&repo, &mut tree, false).unwrap(); // body-less still has title
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &cand).unwrap();
+        let listed = sheet.list(&tctx(&repo), &mut tree, false).unwrap(); // body-less still has title
         let Value::Table(m) = &listed[0].1 else { panic!() };
         assert_eq!(m.get("title"), Some(&s("Hello, world")));
         assert_eq!(m.get("body"), None);
 
         // Disagreeing supplied title throws.
         let bad = rec(&[("slug", s("x")), ("title", s("X")), ("body", s("# Y\n\nbody"))]);
-        let err = sheet.prepare_upsert(&repo, &mut tree, &bad, None, false).err().unwrap();
+        let err = sheet.prepare_upsert(&tctx(&repo), &mut tree, &bad, None, false).err().unwrap();
         assert_eq!(err.code(), "validation_failed");
     }
 
     #[test]
     fn markdown_reupsert_is_idempotent() {
         let (_d, repo) = temp_repo();
-        let mut tree = markdown_tree(&repo, false);
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = markdown_tree(&tctx(&repo), false);
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let r = rec(&[("slug", s("a")), ("title", s("A")), ("body", s("body bytes"))]);
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
-        sheet.stage_upsert(&repo, &mut tree, &cand).unwrap();
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &cand).unwrap();
 
         // Read back the full record and re-upsert it → no byte change.
-        let listed = sheet.list(&repo, &mut tree, true).unwrap();
-        let wc = sheet.will_change(&repo, &mut tree, &listed[0].1, None, false).unwrap();
+        let listed = sheet.list(&tctx(&repo), &mut tree, true).unwrap();
+        let wc = sheet.will_change(&tctx(&repo), &mut tree, &listed[0].1, None, false).unwrap();
         assert!(!wc.changed, "byte-identical markdown re-upsert is a no-op");
     }
 
     // ── attachments ──────────────────────────────────────────────────────────
 
     /// Stage a record at `record_path` in `tree`.
-    fn stage_record(sheet: &mut Sheet, repo: &gix::Repository, tree: &mut MutableTree, slug: &str) {
+    fn stage_record(sheet: &mut Sheet, ctx: &Context<'_>, tree: &mut MutableTree, slug: &str) {
         let r = rec(&[("slug", s(slug))]);
-        let c = sheet.prepare_upsert(repo, tree, &r, None, false).unwrap();
-        sheet.stage_upsert(repo, tree, &c).unwrap();
+        let c = sheet.prepare_upsert(ctx, tree, &r, None, false).unwrap();
+        sheet.stage_upsert(ctx, tree, &c).unwrap();
     }
 
     /// Write `bytes` to the ODB and place it as attachment `name` on `record_path`.
-    fn attach(sheet: &mut Sheet, repo: &gix::Repository, tree: &mut MutableTree, record_path: &str, name: &str, bytes: &[u8]) {
-        let hash = crate::record::write_blob(repo, bytes).unwrap();
-        sheet.set_attachments(repo, tree, record_path, &[(name.to_string(), hash)]).unwrap();
+    fn attach(sheet: &mut Sheet, ctx: &Context<'_>, tree: &mut MutableTree, record_path: &str, name: &str, bytes: &[u8]) {
+        let hash = crate::record::write_blob(ctx.repo, bytes).unwrap();
+        sheet.set_attachments(ctx, tree, record_path, &[(name.to_string(), hash)]).unwrap();
     }
 
     #[test]
     fn set_get_attachments_round_trips_by_hash() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        stage_record(&mut sheet, &repo, &mut tree, "jane");
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        stage_record(&mut sheet, &tctx(&repo), &mut tree, "jane");
 
         let avatar_hash = crate::record::write_blob(&repo, b"AVATAR-BYTES").unwrap();
         let cover_hash = crate::record::write_blob(&repo, b"COVER-BYTES").unwrap();
         sheet
-            .set_attachments(&repo, &mut tree, "jane", &[
+            .set_attachments(&tctx(&repo), &mut tree, "jane", &[
                 ("avatar.jpg".into(), avatar_hash.clone()),
                 ("cover.png".into(), cover_hash.clone()),
             ])
             .unwrap();
 
-        let got = sheet.get_attachments(&repo, &mut tree, "jane").unwrap().unwrap();
+        let got = sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap().unwrap();
         assert_eq!(
             got,
             vec![
@@ -1349,8 +1354,8 @@ mod tests {
             ]
         );
         // Single lookup + absent name.
-        assert_eq!(sheet.get_attachment(&repo, &mut tree, "jane", "avatar.jpg").unwrap(), Some(avatar_hash));
-        assert_eq!(sheet.get_attachment(&repo, &mut tree, "jane", "nope.png").unwrap(), None);
+        assert_eq!(sheet.get_attachment(&tctx(&repo), &mut tree, "jane", "avatar.jpg").unwrap(), Some(avatar_hash));
+        assert_eq!(sheet.get_attachment(&tctx(&repo), &mut tree, "jane", "nope.png").unwrap(), None);
 
         // The record file is NOT reported as an attachment (it's a sibling).
         let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
@@ -1360,47 +1365,47 @@ mod tests {
     #[test]
     fn set_attachments_rejects_missing_and_non_blob_hashes() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        stage_record(&mut sheet, &repo, &mut tree, "jane");
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        stage_record(&mut sheet, &tctx(&repo), &mut tree, "jane");
 
         // A well-formed but absent hash is rejected — the placement is validated
         // (via write_child_hash's header lookup) before any tree mutation.
         let absent = "0".repeat(40);
         assert!(sheet
-            .set_attachments(&repo, &mut tree, "jane", &[("x.bin".into(), absent)])
+            .set_attachments(&tctx(&repo), &mut tree, "jane", &[("x.bin".into(), absent)])
             .is_err());
 
         // A tree hash (not a blob) is rejected with a clear message.
-        let tree_hash = tree.write(&repo).unwrap().to_string();
+        let tree_hash = tree.write(&tctx(&repo)).unwrap().to_string();
         let err = sheet
-            .set_attachments(&repo, &mut tree, "jane", &[("x.bin".into(), tree_hash)])
+            .set_attachments(&tctx(&repo), &mut tree, "jane", &[("x.bin".into(), tree_hash)])
             .err()
             .unwrap();
         assert!(err.to_string().contains("not a blob"), "got: {err}");
 
         // The rejections left no stray attachment behind.
-        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
+        assert_eq!(sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap(), None);
     }
 
     #[test]
     fn get_attachments_is_none_without_a_dir() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        stage_record(&mut sheet, &repo, &mut tree, "jane");
-        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        stage_record(&mut sheet, &tctx(&repo), &mut tree, "jane");
+        assert_eq!(sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap(), None);
     }
 
     #[test]
     fn overwrite_attachment_replaces_the_blob() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        stage_record(&mut sheet, &repo, &mut tree, "jane");
-        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"V1");
-        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"V2");
-        let got = sheet.get_attachments(&repo, &mut tree, "jane").unwrap().unwrap();
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        stage_record(&mut sheet, &tctx(&repo), &mut tree, "jane");
+        attach(&mut sheet, &tctx(&repo), &mut tree, "jane", "avatar.jpg", b"V1");
+        attach(&mut sheet, &tctx(&repo), &mut tree, "jane", "avatar.jpg", b"V2");
+        let got = sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap().unwrap();
         assert_eq!(got.len(), 1);
         let expected = crate::record::write_blob(&repo, b"V2").unwrap();
         assert_eq!(got[0].1, expected);
@@ -1409,19 +1414,19 @@ mod tests {
     #[test]
     fn delete_attachment_is_strict_and_leaves_siblings() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        stage_record(&mut sheet, &repo, &mut tree, "jane");
-        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"A");
-        attach(&mut sheet, &repo, &mut tree, "jane", "cover.png", b"C");
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        stage_record(&mut sheet, &tctx(&repo), &mut tree, "jane");
+        attach(&mut sheet, &tctx(&repo), &mut tree, "jane", "avatar.jpg", b"A");
+        attach(&mut sheet, &tctx(&repo), &mut tree, "jane", "cover.png", b"C");
 
         // Missing → RecordNotFound.
-        let err = sheet.delete_attachment(&repo, &mut tree, "jane", "nope.png").err().unwrap();
+        let err = sheet.delete_attachment(&tctx(&repo), &mut tree, "jane", "nope.png").err().unwrap();
         assert_eq!(err.code(), "record_not_found");
 
         // Existing → removed, sibling intact.
-        sheet.delete_attachment(&repo, &mut tree, "jane", "avatar.jpg").unwrap();
-        let got = sheet.get_attachments(&repo, &mut tree, "jane").unwrap().unwrap();
+        sheet.delete_attachment(&tctx(&repo), &mut tree, "jane", "avatar.jpg").unwrap();
+        let got = sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap().unwrap();
         let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["cover.png"]);
     }
@@ -1429,31 +1434,31 @@ mod tests {
     #[test]
     fn delete_attachments_removes_dir_and_no_ops_when_absent() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        stage_record(&mut sheet, &repo, &mut tree, "jane");
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        stage_record(&mut sheet, &tctx(&repo), &mut tree, "jane");
 
         // No attachment dir → no-op (returns false, caller leaves tx unmutated).
-        assert!(!sheet.delete_attachments(&repo, &mut tree, "jane").unwrap());
+        assert!(!sheet.delete_attachments(&tctx(&repo), &mut tree, "jane").unwrap());
 
-        attach(&mut sheet, &repo, &mut tree, "jane", "a.bin", b"a");
-        attach(&mut sheet, &repo, &mut tree, "jane", "b.bin", b"b");
-        assert!(sheet.delete_attachments(&repo, &mut tree, "jane").unwrap());
-        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
+        attach(&mut sheet, &tctx(&repo), &mut tree, "jane", "a.bin", b"a");
+        attach(&mut sheet, &tctx(&repo), &mut tree, "jane", "b.bin", b"b");
+        assert!(sheet.delete_attachments(&tctx(&repo), &mut tree, "jane").unwrap());
+        assert_eq!(sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap(), None);
         // The record itself is intact.
-        assert_eq!(sheet.list(&repo, &mut tree, true).unwrap().len(), 1);
+        assert_eq!(sheet.list(&tctx(&repo), &mut tree, true).unwrap().len(), 1);
     }
 
     #[test]
     fn deleting_the_record_cascades_its_attachments() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, config("${{ slug }}", "people"));
-        let mut sheet = open(&repo, &mut tree);
-        stage_record(&mut sheet, &repo, &mut tree, "jane");
-        attach(&mut sheet, &repo, &mut tree, "jane", "avatar.jpg", b"A");
-        sheet.delete_at_path(&repo, &mut tree, "jane").unwrap();
-        assert_eq!(sheet.get_attachments(&repo, &mut tree, "jane").unwrap(), None);
-        assert!(sheet.list(&repo, &mut tree, true).unwrap().is_empty());
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        stage_record(&mut sheet, &tctx(&repo), &mut tree, "jane");
+        attach(&mut sheet, &tctx(&repo), &mut tree, "jane", "avatar.jpg", b"A");
+        sheet.delete_at_path(&tctx(&repo), &mut tree, "jane").unwrap();
+        assert_eq!(sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap(), None);
+        assert!(sheet.list(&tctx(&repo), &mut tree, true).unwrap().is_empty());
     }
 
     // ── schema contracts (specs/behaviors/contracts.md) ──────────────────────
@@ -1477,10 +1482,10 @@ mod tests {
     /// Vendor a contract document at its derived path, through the canonical
     /// encoder (so it's canonical bytes — matching how `contracts adopt`
     /// would commit it).
-    fn write_contract(repo: &gix::Repository, tree: &mut MutableTree, name: &str, doc: Value) {
+    fn write_contract(ctx: &Context<'_>, tree: &mut MutableTree, name: &str, doc: Value) {
         let text = canonical::serialize(&doc).unwrap();
         let full = format!(".gitsheets/contracts/{name}.toml");
-        tree.write_child(repo, &full, &text).unwrap();
+        tree.write_child(ctx, &full, &text).unwrap();
     }
 
     fn contract_doc(id: &str, required: &[&str], properties: Value) -> Value {
@@ -1510,8 +1515,8 @@ mod tests {
         let (_d, repo) = temp_repo();
         let name = "example.com/ghost/v1";
         let mut tree =
-            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
-        let err = Sheet::open(&repo, &mut tree, "people", ".gitsheets/people.toml", ".", "")
+            tree_with_config(&tctx(&repo), config_with_implements("${{ slug }}", "people", &[name], None));
+        let err = Sheet::open(&tctx(&repo), &mut tree, "people", ".gitsheets/people.toml", ".", "")
             .err()
             .unwrap();
         assert_eq!(err.code(), "contract_missing");
@@ -1523,14 +1528,14 @@ mod tests {
         let (_d, repo) = temp_repo();
         let name = "example.com/bad/v1";
         let mut tree =
-            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
+            tree_with_config(&tctx(&repo), config_with_implements("${{ slug }}", "people", &[name], None));
         // $id mismatched against the derived path — a document-requirement
         // violation, checked at sheet-open (re-check-on-compile).
         let mut m = IndexMap::new();
         m.insert("$id".to_string(), s("https://example.com/bad/v2"));
         m.insert("type".to_string(), s("object"));
-        write_contract(&repo, &mut tree, name, Value::Table(m));
-        let err = Sheet::open(&repo, &mut tree, "people", ".gitsheets/people.toml", ".", "")
+        write_contract(&tctx(&repo), &mut tree, name, Value::Table(m));
+        let err = Sheet::open(&tctx(&repo), &mut tree, "people", ".gitsheets/people.toml", ".", "")
             .err()
             .unwrap();
         assert_eq!(err.code(), "contract_invalid");
@@ -1541,17 +1546,17 @@ mod tests {
         let (_d, repo) = temp_repo();
         let name = "example.com/people/v1";
         let mut tree =
-            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
+            tree_with_config(&tctx(&repo), config_with_implements("${{ slug }}", "people", &[name], None));
         write_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name,
             contract_doc(&format!("https://{name}"), &["email"], string_properties(&["email"])),
         );
-        let mut sheet = open(&repo, &mut tree);
+        let mut sheet = open(&tctx(&repo), &mut tree);
 
         let r = rec(&[("slug", s("jane"))]); // missing the contract-required `email`
-        let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
+        let err = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).err().unwrap();
         assert_eq!(err.code(), "validation_failed");
         let issue = err
             .issues()
@@ -1564,7 +1569,7 @@ mod tests {
         // mentions — no local schema declared here, so anything else is
         // allowed) succeeds.
         let ok = rec(&[("slug", s("jane")), ("email", s("jane@x.org")), ("extra", s("z"))]);
-        sheet.prepare_upsert(&repo, &mut tree, &ok, None, false).unwrap();
+        sheet.prepare_upsert(&tctx(&repo), &mut tree, &ok, None, false).unwrap();
     }
 
     #[test]
@@ -1575,7 +1580,7 @@ mod tests {
         local_schema_fields.insert("type".to_string(), s("object"));
         local_schema_fields.insert("required".to_string(), Value::Array(vec![s("fullName")]));
         let mut tree = tree_with_config(
-            &repo,
+            &tctx(&repo),
             config_with_implements(
                 "${{ slug }}",
                 "people",
@@ -1584,17 +1589,17 @@ mod tests {
             ),
         );
         write_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name,
             contract_doc(&format!("https://{name}"), &["email"], string_properties(&["email"])),
         );
-        let mut sheet = open(&repo, &mut tree);
+        let mut sheet = open(&tctx(&repo), &mut tree);
 
         // Missing both the contract-required `email` AND the local-required
         // `fullName`.
         let r = rec(&[("slug", s("jane"))]);
-        let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
+        let err = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).err().unwrap();
         let issues = err.issues();
         assert!(
             issues.iter().any(|i| i.contract.as_deref() == Some(name)),
@@ -1612,26 +1617,26 @@ mod tests {
         let name1 = "example.com/a/v1";
         let name2 = "example.com/b/v1";
         let mut tree = tree_with_config(
-            &repo,
+            &tctx(&repo),
             config_with_implements("${{ slug }}", "people", &[name1, name2], None),
         );
         write_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name1,
             contract_doc(&format!("https://{name1}"), &["a"], string_properties(&["a"])),
         );
         write_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name2,
             contract_doc(&format!("https://{name2}"), &["b"], string_properties(&["b"])),
         );
-        let mut sheet = open(&repo, &mut tree);
+        let mut sheet = open(&tctx(&repo), &mut tree);
 
         // Missing both declared contracts' required fields → both attributed.
         let r = rec(&[("slug", s("jane"))]);
-        let err = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).err().unwrap();
+        let err = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).err().unwrap();
         let issues = err.issues();
         assert!(issues.iter().any(|i| i.contract.as_deref() == Some(name1)));
         assert!(issues.iter().any(|i| i.contract.as_deref() == Some(name2)));
@@ -1639,7 +1644,7 @@ mod tests {
         // Conforming write, with an extra field neither contract mentions,
         // succeeds — contracts stay open by construction.
         let ok = rec(&[("slug", s("jane")), ("a", s("x")), ("b", s("y")), ("extra", s("z"))]);
-        sheet.prepare_upsert(&repo, &mut tree, &ok, None, false).unwrap();
+        sheet.prepare_upsert(&tctx(&repo), &mut tree, &ok, None, false).unwrap();
     }
 
     #[test]
@@ -1658,12 +1663,12 @@ mod tests {
         let doc = contract_doc(&format!("https://{name}"), &[], Value::Table(props));
 
         let mut tree =
-            tree_with_config(&repo, config_with_implements("${{ slug }}", "people", &[name], None));
-        write_contract(&repo, &mut tree, name, doc);
-        let mut sheet = open(&repo, &mut tree);
+            tree_with_config(&tctx(&repo), config_with_implements("${{ slug }}", "people", &[name], None));
+        write_contract(&tctx(&repo), &mut tree, name, doc);
+        let mut sheet = open(&tctx(&repo), &mut tree);
 
         let r = rec(&[("slug", s("jane"))]); // omits `role` entirely
-        let cand = sheet.prepare_upsert(&repo, &mut tree, &r, None, false).unwrap();
+        let cand = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
         assert!(
             !cand.next_text.contains("role"),
             "a contract default must not get injected into the written record: {}",
@@ -1677,7 +1682,7 @@ mod tests {
         let name = "example.com/shared/v1";
         let mut tree = MutableTree::empty();
         write_records(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             ".gitsheets",
             &[
@@ -1693,21 +1698,21 @@ mod tests {
             TOML_EXTENSION,
         )
         .unwrap();
-        tree.write(&repo).unwrap();
+        tree.write(&tctx(&repo)).unwrap();
         write_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name,
             contract_doc(&format!("https://{name}"), &["tag"], string_properties(&["tag"])),
         );
 
-        let mut people = Sheet::open(&repo, &mut tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
+        let mut people = Sheet::open(&tctx(&repo), &mut tree, "people", ".gitsheets/people.toml", ".", "").unwrap();
         let mut projects =
-            Sheet::open(&repo, &mut tree, "projects", ".gitsheets/projects.toml", ".", "").unwrap();
+            Sheet::open(&tctx(&repo), &mut tree, "projects", ".gitsheets/projects.toml", ".", "").unwrap();
 
         let bad = rec(&[("slug", s("x"))]); // missing the shared contract's `tag`
-        let err1 = people.prepare_upsert(&repo, &mut tree, &bad, None, false).err().unwrap();
-        let err2 = projects.prepare_upsert(&repo, &mut tree, &bad, None, false).err().unwrap();
+        let err1 = people.prepare_upsert(&tctx(&repo), &mut tree, &bad, None, false).err().unwrap();
+        let err2 = projects.prepare_upsert(&tctx(&repo), &mut tree, &bad, None, false).err().unwrap();
         assert_eq!(err1.issues()[0].contract.as_deref(), Some(name));
         assert_eq!(err2.issues()[0].contract.as_deref(), Some(name));
     }
@@ -1730,20 +1735,20 @@ mod tests {
     #[test]
     fn sheet_query_prunes_and_decodes_on_the_live_tree() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, md_config("${{ ring }}/${{ slug }}", "posts"));
-        let mut sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), md_config("${{ ring }}/${{ slug }}", "posts"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
         let fmt = sheet.config().format.clone();
         // Stage markdown records straight into the (uncommitted) tree — the
         // query must see them without any ref/commit in between.
         for (ring, slug) in [("a", "one"), ("a", "two"), ("b", "three")] {
             let record = rec(&[("ring", s(ring)), ("slug", s(slug)), ("body", s("# Hi\n"))]);
             let text = codec::serialize(&record, &fmt).unwrap();
-            tree.write_child_bytes(&repo, &format!("posts/{ring}/{slug}.md"), text.as_bytes()).unwrap();
+            tree.write_child_bytes(&tctx(&repo), &format!("posts/{ring}/{slug}.md"), text.as_bytes()).unwrap();
         }
 
         let mut filter = crate::query::Filter::new();
         filter.push("ring", crate::query::FilterPred::Equals(s("b")));
-        let out = sheet.query(&repo, &mut tree, &filter, false).unwrap();
+        let out = sheet.query(&tctx(&repo), &mut tree, &filter, false).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "b/three");
         let Value::Table(r) = &out[0].1 else { panic!() };
@@ -1753,7 +1758,7 @@ mod tests {
         let handle = sheet.engine_mut().compile("(value, record) => ( value.startsWith('t') )").unwrap();
         let mut filter = crate::query::Filter::new();
         filter.push("slug", crate::query::FilterPred::Predicate(handle));
-        let out = sheet.query(&repo, &mut tree, &filter, true).unwrap();
+        let out = sheet.query(&tctx(&repo), &mut tree, &filter, true).unwrap();
         let paths: Vec<&str> = out.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["a/two", "b/three"]);
         let Value::Table(r) = &out[0].1 else { panic!() };
@@ -1763,22 +1768,22 @@ mod tests {
     #[test]
     fn read_one_decodes_by_path_on_the_live_tree() {
         let (_d, repo) = temp_repo();
-        let mut tree = tree_with_config(&repo, md_config("${{ ring }}/${{ slug }}", "posts"));
-        let sheet = open(&repo, &mut tree);
+        let mut tree = tree_with_config(&tctx(&repo), md_config("${{ ring }}/${{ slug }}", "posts"));
+        let sheet = open(&tctx(&repo), &mut tree);
         let fmt = sheet.config().format.clone();
         let record = rec(&[("ring", s("a")), ("slug", s("one")), ("body", s("# One\n"))]);
         let text = codec::serialize(&record, &fmt).unwrap();
-        tree.write_child_bytes(&repo, "posts/a/one.md", text.as_bytes()).unwrap();
+        tree.write_child_bytes(&tctx(&repo), "posts/a/one.md", text.as_bytes()).unwrap();
 
-        let full = sheet.read_one(&repo, &mut tree, "a/one", true).unwrap().unwrap();
+        let full = sheet.read_one(&tctx(&repo), &mut tree, "a/one", true).unwrap().unwrap();
         let Value::Table(r) = &full else { panic!() };
         assert_eq!(r.get("body"), Some(&s("# One")));
-        let lazy = sheet.read_one(&repo, &mut tree, "a/one", false).unwrap().unwrap();
+        let lazy = sheet.read_one(&tctx(&repo), &mut tree, "a/one", false).unwrap().unwrap();
         let Value::Table(r) = &lazy else { panic!() };
         assert!(!r.contains_key("body"));
         assert_eq!(r.get("slug"), Some(&s("one")));
         // Absent path and a subtree are None, not errors.
-        assert!(sheet.read_one(&repo, &mut tree, "a/two", true).unwrap().is_none());
-        assert!(sheet.read_one(&repo, &mut tree, "a", true).unwrap().is_none());
+        assert!(sheet.read_one(&tctx(&repo), &mut tree, "a/two", true).unwrap().is_none());
+        assert!(sheet.read_one(&tctx(&repo), &mut tree, "a", true).unwrap().is_none());
     }
 }

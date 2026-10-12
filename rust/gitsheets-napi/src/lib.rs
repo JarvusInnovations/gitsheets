@@ -35,6 +35,19 @@ use gitsheets_core::path_template::Template;
 use gitsheets_core::query::{self, Filter, FilterPred};
 use gitsheets_core::validation::CompiledSchema;
 use gitsheets_core::{record, Datetime, Value};
+use gitsheets_core::record::{Context, TreeCache};
+
+thread_local! {
+    /// The per-thread tree cache behind ref-path reads (holo-tree 0.5: caches
+    /// are consumer-owned, never thread-implicit). Leaked once per thread so a
+    /// `Context` can borrow it for the duration of a call; transactions own
+    /// their own cache (`Transaction::split`).
+    static TREE_CACHE: &'static TreeCache = Box::leak(Box::new(TreeCache::new()));
+}
+
+fn tree_cache() -> &'static TreeCache {
+    TREE_CACHE.with(|c| *c)
+}
 use napi::bindgen_prelude::*;
 use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, ValueType};
 use napi_derive::napi;
@@ -533,9 +546,10 @@ pub fn contract_load(
     name: String,
 ) -> Result<String> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree =
         record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    let json = gitsheets_core::contract::load_contract(&repo, &mut tree, &open_root, &name)
+    let json = gitsheets_core::contract::load_contract(&ctx, &mut tree, &open_root, &name)
         .map_err(|err| raise_core_error(&env, &err))?;
     Ok(json.to_string())
 }
@@ -578,9 +592,10 @@ pub fn verify_sheet_contract(
     mode: Option<String>,
 ) -> Result<JsConformanceReport> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree =
         record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    let sheet = match CoreSheet::open(&repo, &mut tree, &sheet_name, &config_path, &open_root, &prefix)
+    let sheet = match CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, &prefix)
     {
         Ok(s) => s,
         Err(err) => return Err(raise_core_error(&env, &err)),
@@ -617,7 +632,7 @@ pub fn verify_sheet_contract(
         }
     };
 
-    match gitsheets_core::verify_sheet_contract(&repo, &mut tree, &open_root, &sheet, core_input, verify_mode) {
+    match gitsheets_core::verify_sheet_contract(&ctx, &mut tree, &open_root, &sheet, core_input, verify_mode) {
         Ok(report) => Ok(JsConformanceReport {
             name: report.name,
             rung: report.rung.as_str().to_string(),
@@ -933,6 +948,7 @@ pub fn substrate_stats() -> JsSubstrateStats {
 #[napi]
 pub fn substrate_reset() {
     record::substrate_reset();
+    tree_cache().clear();
 }
 
 // ── query traversal + filtering ───────────────────────────────────────────────
@@ -1036,6 +1052,7 @@ pub fn record_query(
 ) -> Result<Vec<JsRecordEntry>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
@@ -1044,7 +1061,7 @@ pub fn record_query(
         Some(body) => {
             let format = content_format(&ext, body, title_field);
             query::query_records_format(
-                &repo,
+                &ctx,
                 &mut tree,
                 &base,
                 &compiled,
@@ -1055,7 +1072,7 @@ pub fn record_query(
                 with_body.unwrap_or(true),
             )
         }
-        None => query::query_records(&repo, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
+        None => query::query_records(&ctx, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
     };
     match rows {
         Ok(rows) => Ok(rows
@@ -1087,8 +1104,9 @@ fn content_format(extension: &str, body_field: String, title_field: Option<Strin
 #[napi]
 pub fn tree_read_blob(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<JsBlobEntry>> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    match record::read_blob_entry(&repo, &mut tree, &path) {
+    match record::read_blob_entry(&ctx, &mut tree, &path) {
         Ok(Some((hash, bytes))) => Ok(Some(JsBlobEntry {
             hash,
             content: Buffer::from(bytes),
@@ -1103,8 +1121,9 @@ pub fn tree_read_blob(env: Env, git_dir: String, tree_ref: String, path: String)
 #[napi]
 pub fn tree_entry_hash(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<String>> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    match record::tree_entry_hash(&repo, &mut tree, &path) {
+    match record::tree_entry_hash(&ctx, &mut tree, &path) {
         Ok(hash) => Ok(hash.map(|h| h.to_string())),
         Err(err) => Err(raise_core_error(&env, &err)),
     }
@@ -1145,10 +1164,11 @@ pub fn record_query_candidates(
 ) -> Result<Vec<String>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
-    query::query_candidate_paths(&repo, &mut tree, &base, &compiled, &query.0, &mut engine, &ext)
+    query::query_candidate_paths(&ctx, &mut tree, &base, &compiled, &query.0, &mut engine, &ext)
         .map_err(|err| raise_core_error(&env, &err))
 }
 
@@ -1635,8 +1655,8 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
-        match CoreSheet::open(repo, tree, &name, &config_path, &open_root, &prefix) {
+        let (ctx, tree) = tx.split();
+        match CoreSheet::open(&ctx, tree, &name, &config_path, &open_root, &prefix) {
             Ok(sheet) => {
                 sheets.insert(name, sheet);
                 Ok(())
@@ -1666,12 +1686,12 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         let candidate = match sheet.prepare_upsert(
-            repo,
+            &ctx,
             tree,
             &record.0,
             previous_path,
@@ -1712,11 +1732,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let outcome = {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            match sheet.stage_upsert(repo, tree, &candidate) {
+            match sheet.stage_upsert(&ctx, tree, &candidate) {
                 Ok(o) => o,
                 Err(err) => return Err(raise_core_error(&env, &err)),
             }
@@ -1743,12 +1763,12 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         let wc = match sheet.will_change(
-            repo,
+            &ctx,
             tree,
             &record.0,
             previous_path,
@@ -1777,11 +1797,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.delete_at_path(repo, tree, &record_path) {
+            if let Err(err) = sheet.delete_at_path(&ctx, tree, &record_path) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -1797,11 +1817,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.clear(repo, tree) {
+            if let Err(err) = sheet.clear(&ctx, tree) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -1827,11 +1847,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.set_attachments(repo, tree, &record_path, &items) {
+            if let Err(err) = sheet.set_attachments(&ctx, tree, &record_path, &items) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -1865,8 +1885,8 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let hash = {
-            let (repo, tree) = tx.split();
-            match tree.write_child_bytes(repo, &path, content.as_bytes()) {
+            let (ctx, tree) = tx.split();
+            match tree.write_child_bytes(&ctx, &path, content.as_bytes()) {
                 Ok(h) => h.to_string(),
                 Err(e) => {
                     let core_err = gitsheets_core::Error::CommitFailed {
@@ -1891,8 +1911,8 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let existed = {
-            let (repo, tree) = tx.split();
-            match tree.delete_child_deep(repo, &path) {
+            let (ctx, tree) = tx.split();
+            match tree.delete_child_deep(&ctx, &path) {
                 Ok(existed) => existed,
                 Err(e) => {
                     let core_err = gitsheets_core::Error::CommitFailed {
@@ -1922,11 +1942,11 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        match sheet.get_attachments(repo, tree, &record_path) {
+        match sheet.get_attachments(&ctx, tree, &record_path) {
             Ok(Some(entries)) => Ok(Some(
                 entries
                     .into_iter()
@@ -1951,12 +1971,12 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         sheet
-            .get_attachment(repo, tree, &record_path, &attachment_name)
+            .get_attachment(&ctx, tree, &record_path, &attachment_name)
             .map_err(|err| raise_core_error(&env, &err))
     }
 
@@ -1975,11 +1995,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            if let Err(err) = sheet.delete_attachment(repo, tree, &record_path, &attachment_name) {
+            if let Err(err) = sheet.delete_attachment(&ctx, tree, &record_path, &attachment_name) {
                 return Err(raise_core_error(&env, &err));
             }
         }
@@ -2003,11 +2023,11 @@ impl CoreTransaction {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let removed = {
-            let (repo, tree) = tx.split();
+            let (ctx, tree) = tx.split();
             let sheet = sheets.get_mut(&name).ok_or_else(|| {
                 Error::new(Status::InvalidArg, format!("sheet {name:?} not opened"))
             })?;
-            match sheet.delete_attachments(repo, tree, &record_path) {
+            match sheet.delete_attachments(&ctx, tree, &record_path) {
                 Ok(r) => r,
                 Err(err) => return Err(raise_core_error(&env, &err)),
             }
@@ -2028,11 +2048,11 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        match sheet.list(repo, tree, with_body) {
+        match sheet.list(&ctx, tree, with_body) {
             Ok(rows) => Ok(rows
                 .into_iter()
                 .map(|(path, record)| JsRecordEntry {
@@ -2062,12 +2082,12 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
-        match sheet.query(repo, tree, &parsed, with_body) {
+        match sheet.query(&ctx, tree, &parsed, with_body) {
             Ok(rows) => Ok(rows
                 .into_iter()
                 .map(|(path, record)| JsRecordEntry {
@@ -2095,11 +2115,11 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (repo, tree) = tx.split();
+        let (ctx, tree) = tx.split();
         let sheet = sheets
             .get(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        match sheet.read_one(repo, tree, &record_path, with_body) {
+        match sheet.read_one(&ctx, tree, &record_path, with_body) {
             Ok(record) => Ok(record.map(JsValue)),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
@@ -2148,9 +2168,10 @@ pub fn core_discover_sheets(
     open_root: String,
 ) -> Result<Vec<String>> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
     let mut tree =
         record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
-    store::discover_sheets(&repo, &mut tree, &open_root).map_err(|err| raise_core_error(&env, &err))
+    store::discover_sheets(&ctx, &mut tree, &open_root).map_err(|err| raise_core_error(&env, &err))
 }
 
 /// The `openStore` `config_missing` check: every validator must name a declared

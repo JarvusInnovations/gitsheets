@@ -18,7 +18,7 @@
 //! keeps `sheet.rs` focused on orchestration:
 //! [`compile_effective_schema`] is the one entry point `Sheet::open` calls.
 
-use holo_tree::MutableTree;
+use holo_tree::{Context, MutableTree};
 use indexmap::IndexMap;
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
@@ -128,14 +128,14 @@ pub fn contract_path(name: &str) -> String {
 ///   requirement) → [`Error::ContractInvalid`] (`contract_invalid`), naming
 ///   the violated rule
 pub fn load_contract(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     open_root: &str,
     name: &str,
 ) -> Result<Json> {
     let full_path = format!("{}.toml", join_path(&[open_root, ".gitsheets/contracts", name]));
     let bytes = tree
-        .read_blob(repo, &full_path)
+        .read_blob(ctx, &full_path)
         .map_err(record::map_ht)?
         .ok_or_else(|| Error::ContractMissing {
             message: format!(
@@ -329,7 +329,7 @@ pub fn check_contract_document(name: &str, json: &Json) -> Result<()> {
 /// surfaces here as `ContractError` (`contract_missing` / `contract_invalid`)
 /// — sheet-open time, per the failure-modes table.
 pub(crate) fn compile_effective_schema(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     open_root: &str,
     implements: &[String],
@@ -344,7 +344,7 @@ pub(crate) fn compile_effective_schema(
 
     let mut all_of = Vec::with_capacity(implements.len() + 1);
     for name in implements {
-        all_of.push(load_contract(repo, tree, open_root, name)?);
+        all_of.push(load_contract(ctx, tree, open_root, name)?);
     }
     let local_json = match local_schema {
         Some(s) => {
@@ -509,13 +509,13 @@ fn contract_name_from_document(json: &Json) -> Result<String> {
 /// refuse" (`specs/behaviors/contracts.md` principles) applies just as much to
 /// a vendored-read hiccup as to a hash mismatch.
 fn read_vendored_text(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     open_root: &str,
     name: &str,
 ) -> Option<String> {
     let full_path = format!("{}.toml", join_path(&[open_root, ".gitsheets/contracts", name]));
-    let bytes = tree.read_blob(repo, &full_path).ok().flatten()?;
+    let bytes = tree.read_blob(ctx, &full_path).ok().flatten()?;
     String::from_utf8(bytes).ok()
 }
 
@@ -536,7 +536,7 @@ fn read_vendored_text(
 ///   records to produce field-level issues), or one [`ValidationIssue`] per
 ///   failing field per record (tagged `record`/`contract`) for a rung-2 miss.
 pub fn verify_sheet_contract(
-    repo: &gix::Repository,
+    ctx: &Context<'_>,
     tree: &mut MutableTree,
     open_root: &str,
     sheet: &Sheet,
@@ -550,7 +550,7 @@ pub fn verify_sheet_contract(
     if !matches!(mode, VerifyMode::Structural) {
         let declared = sheet.config().implements.iter().any(|n| n == &name);
         if declared {
-            if let Some(vendored_text) = read_vendored_text(repo, tree, open_root, &name) {
+            if let Some(vendored_text) = read_vendored_text(ctx, tree, open_root, &name) {
                 let vendored_hash =
                     canonical_contract_hash(ContractHashInput::Toml(vendored_text))?;
                 let consumer_hash = canonical_contract_hash(ContractHashInput::Data(value.clone()))?;
@@ -584,7 +584,7 @@ pub fn verify_sheet_contract(
     // composed with the sheet's own schema/contracts) and validate every
     // current record against it.
     let compiled = CompiledSchema::compile(&value)?;
-    let records = sheet.list(repo, tree, true)?;
+    let records = sheet.list(ctx, tree, true)?;
     let mut issues = Vec::new();
     for (path, record) in &records {
         for mut issue in compiled.validate(record) {
@@ -677,6 +677,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tree-op context over a test-lifetime cache (holo-tree 0.5).
+    fn tctx(repo: &gix::Repository) -> holo_tree::Context<'_> {
+        holo_tree::Context::new(repo, Box::leak(Box::new(holo_tree::TreeCache::new())))
+    }
 
     // ── name rules ────────────────────────────────────────────────────────────
 
@@ -913,19 +918,19 @@ mod tests {
         (dir, repo)
     }
 
-    fn write_contract_toml(repo: &gix::Repository, tree: &mut MutableTree, name: &str, toml: &str) {
+    fn write_contract_toml(ctx: &Context<'_>, tree: &mut MutableTree, name: &str, toml: &str) {
         let value = canonical::parse(toml).expect("contract toml parses");
         // Vendor at the exact canonical bytes so the canonical-form check passes.
         let canonical_bytes = canonical::serialize(&value).expect("serialize");
         let path = format!(".gitsheets/contracts/{name}.toml");
-        tree.write_child(repo, &path, &canonical_bytes).unwrap();
+        tree.write_child(ctx, &path, &canonical_bytes).unwrap();
     }
 
     #[test]
     fn missing_vendored_document_is_contract_missing() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        let err = load_contract(&repo, &mut tree, ".", "example.com/c/v1").unwrap_err();
+        let err = load_contract(&tctx(&repo), &mut tree, ".", "example.com/c/v1").unwrap_err();
         assert_eq!(err.code(), "contract_missing");
         assert_eq!(err.contract(), Some("example.com/c/v1"));
     }
@@ -936,7 +941,7 @@ mod tests {
         let mut tree = MutableTree::empty();
         let name = "example.com/c/v1";
         write_contract_toml(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name,
             &format!(
@@ -944,7 +949,7 @@ mod tests {
                  [properties.slug]\ntype = 'string'\n"
             ),
         );
-        let json = load_contract(&repo, &mut tree, ".", name).unwrap();
+        let json = load_contract(&tctx(&repo), &mut tree, ".", name).unwrap();
         assert_eq!(json["$id"], Json::String(format!("https://{name}")));
     }
 
@@ -958,8 +963,8 @@ mod tests {
             "type = 'object'\n'$id' = 'https://{name}'\nrequired = ['slug']\n"
         );
         let path = format!(".gitsheets/contracts/{name}.toml");
-        tree.write_child(&repo, &path, &non_canonical).unwrap();
-        let err = load_contract(&repo, &mut tree, ".", name).unwrap_err();
+        tree.write_child(&tctx(&repo), &path, &non_canonical).unwrap();
+        let err = load_contract(&tctx(&repo), &mut tree, ".", name).unwrap_err();
         assert_eq!(err.code(), "contract_invalid");
         assert!(err.message().contains("canonical"));
     }
@@ -972,13 +977,13 @@ mod tests {
         let mut tree = MutableTree::empty();
         let name = "example.com/c/v1";
         write_contract_toml(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name,
             &format!("'$id' = 'https://{name}'\ntype = 'object'\n"),
         );
-        let a = load_contract(&repo, &mut tree, ".", name).unwrap();
-        let b = load_contract(&repo, &mut tree, ".", name).unwrap();
+        let a = load_contract(&tctx(&repo), &mut tree, ".", name).unwrap();
+        let b = load_contract(&tctx(&repo), &mut tree, ".", name).unwrap();
         assert_eq!(a, b);
     }
 
@@ -988,16 +993,16 @@ mod tests {
         let mut tree = MutableTree::empty();
         let name = "example.com/c/v1";
         write_contract_toml(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             name,
             &format!("'$id' = 'https://{name}'\ntype = 'object'\n"),
         );
         // The document above is vendored at the repo root's
         // `.gitsheets/contracts/...`. It's absent when scoped under `sub`...
-        assert!(load_contract(&repo, &mut tree, "sub", name).is_err());
+        assert!(load_contract(&tctx(&repo), &mut tree, "sub", name).is_err());
         // ...but visible at the (default) repo root.
-        let json = load_contract(&repo, &mut tree, ".", name).unwrap();
+        let json = load_contract(&tctx(&repo), &mut tree, ".", name).unwrap();
         assert_eq!(json["$id"], Json::String(format!("https://{name}")));
     }
 
@@ -1054,6 +1059,10 @@ mod tests {
 #[cfg(test)]
 mod verify_tests {
     use super::*;
+
+    fn tctx(repo: &gix::Repository) -> holo_tree::Context<'_> {
+        holo_tree::Context::new(repo, Box::leak(Box::new(holo_tree::TreeCache::new())))
+    }
     use crate::record::{write_records, TOML_EXTENSION};
 
     fn temp_repo() -> (tempfile::TempDir, gix::Repository) {
@@ -1065,11 +1074,11 @@ mod verify_tests {
     /// Vendor `doc` at contract `name`'s derived path, through the same
     /// canonical encoder `load_contract`'s canonical-bytes check compares
     /// against.
-    fn vendor_contract(repo: &gix::Repository, tree: &mut MutableTree, name: &str, doc: &Json) {
+    fn vendor_contract(ctx: &Context<'_>, tree: &mut MutableTree, name: &str, doc: &Json) {
         let value = json_to_value(doc).unwrap();
         let bytes = canonical::serialize(&value).unwrap();
         let path = contract_path(name);
-        tree.write_child(repo, &path, &bytes).unwrap();
+        tree.write_child(ctx, &path, &bytes).unwrap();
     }
 
     fn sheet_config(implements: &[&str]) -> Value {
@@ -1092,12 +1101,12 @@ mod verify_tests {
         Value::Table(top)
     }
 
-    fn write_config(repo: &gix::Repository, tree: &mut MutableTree, config: Value) {
-        write_records(repo, tree, ".gitsheets", &[("people".into(), config)], TOML_EXTENSION)
+    fn write_config(ctx: &Context<'_>, tree: &mut MutableTree, config: Value) {
+        write_records(ctx, tree, ".gitsheets", &[("people".into(), config)], TOML_EXTENSION)
             .unwrap();
     }
 
-    fn write_record(repo: &gix::Repository, tree: &mut MutableTree, slug: &str, fields: &[(&str, &str)]) {
+    fn write_record(ctx: &Context<'_>, tree: &mut MutableTree, slug: &str, fields: &[(&str, &str)]) {
         let mut m = IndexMap::new();
         m.insert("slug".to_string(), Value::String(slug.to_string()));
         for (k, v) in fields {
@@ -1105,11 +1114,11 @@ mod verify_tests {
         }
         let value = Value::Table(m);
         let bytes = canonical::serialize(&value).unwrap();
-        tree.write_child(repo, &format!("people/{slug}.toml"), &bytes).unwrap();
+        tree.write_child(ctx, &format!("people/{slug}.toml"), &bytes).unwrap();
     }
 
-    fn open_people(repo: &gix::Repository, tree: &mut MutableTree) -> Sheet {
-        Sheet::open(repo, tree, "people", ".gitsheets/people.toml", ".", "").unwrap()
+    fn open_people(ctx: &Context<'_>, tree: &mut MutableTree) -> Sheet {
+        Sheet::open(ctx, tree, "people", ".gitsheets/people.toml", ".", "").unwrap()
     }
 
     const NAME: &str = "example.com/people/v1";
@@ -1127,16 +1136,16 @@ mod verify_tests {
     fn rung1_passes_with_zero_record_reads() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        write_config(&repo, &mut tree, sheet_config(&[NAME]));
+        write_config(&tctx(&repo), &mut tree, sheet_config(&[NAME]));
         let doc = consumer_doc(NAME, &["email"]);
-        vendor_contract(&repo, &mut tree, NAME, &doc);
+        vendor_contract(&tctx(&repo), &mut tree, NAME, &doc);
         // A garbage record that would blow up `Sheet::list` if rung 1 ever
         // fell through to reading records — proves the zero-record-read claim.
-        tree.write_child(&repo, "people/garbage.toml", "not [ valid toml").unwrap();
-        let sheet = open_people(&repo, &mut tree);
+        tree.write_child(&tctx(&repo), "people/garbage.toml", "not [ valid toml").unwrap();
+        let sheet = open_people(&tctx(&repo), &mut tree);
 
         let report = verify_sheet_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             ".",
             &sheet,
@@ -1155,18 +1164,18 @@ mod verify_tests {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
         // Producer declares the NEWER, data-compatible version…
-        write_config(&repo, &mut tree, sheet_config(&[NAME_V1_1]));
+        write_config(&tctx(&repo), &mut tree, sheet_config(&[NAME_V1_1]));
         let doc_v1_1 = consumer_doc(NAME_V1_1, &["email"]);
-        vendor_contract(&repo, &mut tree, NAME_V1_1, &doc_v1_1);
-        write_record(&repo, &mut tree, "jane", &[("email", "jane@x.org")]);
-        let sheet = open_people(&repo, &mut tree);
+        vendor_contract(&tctx(&repo), &mut tree, NAME_V1_1, &doc_v1_1);
+        write_record(&tctx(&repo), &mut tree, "jane", &[("email", "jane@x.org")]);
+        let sheet = open_people(&tctx(&repo), &mut tree);
 
         // …but the consumer still holds v1 — a rung-1 miss (name not
         // declared) that falls through to a rung-2 pass (the data satisfies
         // v1 too).
         let doc_v1 = consumer_doc(NAME, &["email"]);
         let report = verify_sheet_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             ".",
             &sheet,
@@ -1182,14 +1191,14 @@ mod verify_tests {
     fn rung2_failure_reports_record_and_field_level_issues() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        write_config(&repo, &mut tree, sheet_config(&[])); // contract-unaware
-        write_record(&repo, &mut tree, "jane", &[("email", "jane@x.org")]);
-        write_record(&repo, &mut tree, "bob", &[]); // missing email
-        let sheet = open_people(&repo, &mut tree);
+        write_config(&tctx(&repo), &mut tree, sheet_config(&[])); // contract-unaware
+        write_record(&tctx(&repo), &mut tree, "jane", &[("email", "jane@x.org")]);
+        write_record(&tctx(&repo), &mut tree, "bob", &[]); // missing email
+        let sheet = open_people(&tctx(&repo), &mut tree);
 
         let doc = consumer_doc(NAME, &["email"]);
         let err = verify_sheet_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             ".",
             &sheet,
@@ -1210,13 +1219,13 @@ mod verify_tests {
     fn declared_mode_fails_fast_without_reading_records() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        write_config(&repo, &mut tree, sheet_config(&[])); // not declared
-        tree.write_child(&repo, "people/garbage.toml", "not [ valid toml").unwrap();
-        let sheet = open_people(&repo, &mut tree);
+        write_config(&tctx(&repo), &mut tree, sheet_config(&[])); // not declared
+        tree.write_child(&tctx(&repo), "people/garbage.toml", "not [ valid toml").unwrap();
+        let sheet = open_people(&tctx(&repo), &mut tree);
 
         let doc = consumer_doc(NAME, &["email"]);
         let err = verify_sheet_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             ".",
             &sheet,
@@ -1235,13 +1244,13 @@ mod verify_tests {
     fn structural_mode_ignores_declarations_and_duck_types() {
         let (_d, repo) = temp_repo();
         let mut tree = MutableTree::empty();
-        write_config(&repo, &mut tree, sheet_config(&[])); // no implements at all
-        write_record(&repo, &mut tree, "jane", &[("email", "jane@x.org")]);
-        let sheet = open_people(&repo, &mut tree);
+        write_config(&tctx(&repo), &mut tree, sheet_config(&[])); // no implements at all
+        write_record(&tctx(&repo), &mut tree, "jane", &[("email", "jane@x.org")]);
+        let sheet = open_people(&tctx(&repo), &mut tree);
 
         let doc = consumer_doc(NAME, &["email"]);
         let report = verify_sheet_contract(
-            &repo,
+            &tctx(&repo),
             &mut tree,
             ".",
             &sheet,
