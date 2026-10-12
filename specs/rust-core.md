@@ -191,8 +191,15 @@ below) and upgraded deliberately.
 **Two constraints this creates:**
 
 - **Thread-confinement.** Embedded JS contexts are single-threaded (`!Send`).
-  The persistent context is pinned to the `Store`'s owning thread — the same
-  thread-model discipline holo-tree's cache already needs.
+  The persistent context is pinned to the `Store`'s owning thread.
+- **Tree caches are consumer-owned, never thread-implicit.** holo-tree's
+  parsed-tree cache (`TreeCache`, threaded through a `Context` alongside the
+  repository handle) is owned by whoever owns the logical operation: a
+  `Transaction` carries one for the lifetime of its private tree, and each
+  binding keeps one per thread for committed-ref reads (`recordQuery`,
+  `treeReadBlob`, …). Nothing in the core reaches for a global or thread-local
+  cache, so an operation that moves between threads carries its cache with it
+  and the substrate counters stay the only process-wide state.
 - **The engine is part of the canonical-behavior contract.** Sort order and
   partition paths depend on its JS semantics, so the **engine version is pinned**
   and an upgrade is treated like a normalization change (same discipline as the
