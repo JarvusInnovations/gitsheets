@@ -635,6 +635,32 @@ impl Sheet {
         )
     }
 
+    /// Read the one record at `record_path` (relative to the sheet's base, no
+    /// extension) in `tree`, decoded through the format codec — the by-path
+    /// read behind `Sheet.get` (spec: `api/sheet.md`). `None` when nothing, or
+    /// a subtree, lives there; `with_body` is the lazy-body switch.
+    pub fn read_one(
+        &self,
+        repo: &gix::Repository,
+        tree: &mut MutableTree,
+        record_path: &str,
+        with_body: bool,
+    ) -> Result<Option<Value>> {
+        let full = format!("{}/{}{}", self.base, record_path, self.extension());
+        let Some((_, bytes)) = record::read_blob_entry(repo, tree, &full)? else {
+            return Ok(None);
+        };
+        let text = String::from_utf8(bytes).map_err(|e| Error::ConfigInvalid {
+            message: format!("record at {full} is not valid UTF-8: {e}"),
+        })?;
+        let record = if with_body {
+            codec::parse(&text, &self.config.format)?
+        } else {
+            codec::parse_header_only(&text, &self.config.format)?
+        };
+        Ok(Some(record))
+    }
+
     /// The sheet's embedded engine — bindings parse a [`Sheet::query`] filter
     /// against it so predicate snippets compile into the engine that evaluates
     /// them.
@@ -1732,5 +1758,27 @@ mod tests {
         assert_eq!(paths, vec!["a/two", "b/three"]);
         let Value::Table(r) = &out[0].1 else { panic!() };
         assert_eq!(r.get("body"), Some(&s("# Hi")));
+    }
+
+    #[test]
+    fn read_one_decodes_by_path_on_the_live_tree() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&repo, md_config("${{ ring }}/${{ slug }}", "posts"));
+        let sheet = open(&repo, &mut tree);
+        let fmt = sheet.config().format.clone();
+        let record = rec(&[("ring", s("a")), ("slug", s("one")), ("body", s("# One\n"))]);
+        let text = codec::serialize(&record, &fmt).unwrap();
+        tree.write_child_bytes(&repo, "posts/a/one.md", text.as_bytes()).unwrap();
+
+        let full = sheet.read_one(&repo, &mut tree, "a/one", true).unwrap().unwrap();
+        let Value::Table(r) = &full else { panic!() };
+        assert_eq!(r.get("body"), Some(&s("# One")));
+        let lazy = sheet.read_one(&repo, &mut tree, "a/one", false).unwrap().unwrap();
+        let Value::Table(r) = &lazy else { panic!() };
+        assert!(!r.contains_key("body"));
+        assert_eq!(r.get("slug"), Some(&s("one")));
+        // Absent path and a subtree are None, not errors.
+        assert!(sheet.read_one(&repo, &mut tree, "a/two", true).unwrap().is_none());
+        assert!(sheet.read_one(&repo, &mut tree, "a", true).unwrap().is_none());
     }
 }
