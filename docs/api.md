@@ -88,7 +88,8 @@ const store = await openStore(repo, {
 | `repo.startPushDaemon(opts)` | Start async push to a configured remote |
 | `repo.resolveRef(ref)` | Resolve a ref or commit hash; returns `string \| null` |
 | `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` auto-refreshes) |
-| `repo.readBlobStream(ref, path)` | `Promise<Readable>` — stream a blob's bytes at `<ref>:<path>`, resolved at call time. Throws `RefError` / `NotFoundError` |
+| `repo.readBlob(ref, path)` | `Promise<BlobHandle>` — the blob at `<ref>:<path>`, resolved at call time: `hash`, `size` (from the object header), `read()`, `stream()`. Throws `RefError` / `NotFoundError` |
+| `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()`: in-core up to 1 MiB, piped from `git cat-file blob` above that |
 
 `opts.prefix` scopes records to a sub-tree under each sheet's configured root — useful for multi-tenant deployments where one git repo holds many tenants under `<root>/<tenant>/...`. Mirrors the CLI `--prefix` flag (env `GITSHEETS_PREFIX`). The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped.
 
@@ -130,8 +131,8 @@ All write methods route through a transaction — permissive mode auto-opens one
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.getAttachment(record, name)` | One attachment's `AttachmentBlobHandle` or null |
-| `sheet.getAttachments(record)` | Map of name → `AttachmentBlobHandle` |
+| `sheet.getAttachment(record, name)` | One attachment's `BlobHandle` (`hash`, `size`, `read()`, `stream()`) or null |
+| `sheet.getAttachments(record)` | Map of name → `BlobHandle` |
 | `sheet.getAttachmentStream(recordOrPath, name)` | `Promise<Readable \| null>` — stream an attachment's bytes without materializing the record |
 | `sheet.setAttachment(record, name, content)` | Add or replace — `content` may be raw bytes (`Buffer`/`Uint8Array`), a UTF-8 `string`, or a `BlobHandle` |
 | `sheet.setAttachments(record, map)` | Bulk variant; values accept the same types, mixed freely |
