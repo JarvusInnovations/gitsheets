@@ -37,6 +37,26 @@ await repo.transact({ message: '...' }, async (tx) => {
 
 `tx.sheet(name, opts?)` returns a `Sheet` with the same API as the outer `Repository.openSheet(name)` — except all writes route through the transaction's private tree. `opts` accepts `validator?: StandardSchema` (used by [`Store.transact`](store.md) to thread per-sheet validators through to tx scope) and `prefix?: string` (sub-prefix under the sheet's configured root — same shape as `Repository.openSheet({ prefix })`; useful when a multi-tenant request handler opens a transaction and needs every sheet within it scoped to one tenant).
 
+### Raw files: `tx.writeFile(path, content)` / `tx.deleteFile(path)`
+
+A transaction can also stage files that are not records — a sheet config, a vendored contract, a fixture, a README beside the data — so they land in the **same commit** as the record changes they belong with:
+
+```typescript
+await repo.transact({ message: 'add the events sheet + seed' }, async (tx) => {
+  tx.writeFile('.gitsheets/events.toml', eventsConfigToml);        // string → UTF-8
+  tx.writeFile('fixtures/banner.png', pngBytes);                   // Buffer / Uint8Array → raw bytes
+  await tx.sheet('events').upsert({ slug: 'launch', title: 'Launch' });
+  tx.deleteFile('fixtures/old.csv');                               // true if something was there
+});
+```
+
+- `path` is **repo-root-relative** (`a/b/c.txt`), never absolute and never `..`; intermediate directories are created. It is independent of `openSheet({ root })` and of any sheet's `root`.
+- `content` is a `string` (written as UTF-8) or raw bytes (`Buffer` / `Uint8Array`). `writeFile` returns a `BlobHandle` (`hash`, `read()`) for the written blob and marks the transaction mutated.
+- `deleteFile` returns whether a blob existed at `path`; a miss is a no-op that does not mark the transaction mutated.
+- **Raw means raw.** Nothing is validated, normalized, or rendered: writing into a sheet's data tree bypasses the sheet entirely. Use `tx.sheet(name)` for records; use these for everything else. The CLI's `init` / `infer` / `migrate-config` / `contracts adopt` / `contracts prune` are built on them.
+
+Both are synchronous: they stage into the private tree and return. The Python binding exposes the same pair (`tx.write_file(path, content: str | bytes) -> str` (the blob hash), `tx.delete_file(path) -> bool`).
+
 ## Read isolation
 
 Reads through `tx.sheet(name)` see the transaction's in-flight mutations. Reads outside the transaction (e.g., a concurrent `repo.openSheet(name).queryFirst(...)`) see the *committed* state — the pre-transaction tree — until the transaction commits.
@@ -84,6 +104,11 @@ In **strict mode** (`repo.requireExplicitTransactions()`), mutations outside `re
 - If `opts.parent` is a branch name (e.g., `main`), the transaction's parent commit is `main`'s tip at transaction open; on commit, `main` advances to the new commit.
 - If `opts.parent` is a commit hash, the transaction commits onto that hash; if `opts.branch` is also set, that branch is updated.
 - If neither is set, defaults to `HEAD`'s ref.
+- If `opts.parent` is **`null`**, the transaction is an **orphan**: it starts from the empty tree, `parentCommitHash` is `null`, and the commit has no parents — a fresh root for a snapshot, a scrubbed export, or a seed branch. An orphan always commits (there is no parent tree to compare against), even when the handler leaves the tree empty. With `opts.branch`, the branch is **created** pointing at the new root; an orphan refuses to land on a branch that already exists (`TransactionError` `commit_failed` at open — delete the ref or pick another name), because there is no parent to make the move safe. Without `opts.branch`, the result is a detached root commit (`ref: null`) the consumer tags or pushes by hash.
+
+### `opts.branch` may name a branch that does not exist yet
+
+`opts.branch` is the ref to advance on success. When it names a branch other than the parent ref, its tip is captured at open; at commit it must still be there (compare-and-swap, else `TransactionError` `commit_failed`) — or **absent**, in which case the branch is created. So `transact({ parent: 'main', branch: 'review/batch-7' }, …)` forks a new branch from `main` in one call, with `main` left where it was. A branch that is also the parent ref keeps the `parent_moved` check described below.
 
 If the parent ref moves between transaction open and commit (a separate process committed), the transaction throws `TransactionError` (`parent_moved`). The handler's tree changes are discarded.
 
@@ -182,6 +207,7 @@ await repo.transact({ message: '...' }, async (tx) => {
 | `TransactionError` | `parent_moved` | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | `git commit-tree` / `update-ref` returned non-zero, **or** a malformed trailer key/value was rejected at option-normalization time (HTTP-header-style key, string value with no newlines) |
 | `RefError` | `ref_not_found` | `opts.parent` is a branch name that doesn't exist |
+| `TransactionError` | `commit_failed` | `opts.parent: null` with an `opts.branch` that already exists (an orphan only creates a branch); or `opts.branch` (≠ parent ref) moved between open and commit |
 | (any) | (any) | Errors thrown by the handler propagate out after tree discard |
 
 ## Coordinates with
