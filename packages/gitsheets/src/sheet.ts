@@ -867,6 +867,13 @@ export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
    * specs/api/cli.md and #148.
    */
   readonly prefix?: string;
+  /**
+   * Non-transactional: the ref this sheet is pinned to (`openSheet({ ref })`).
+   * A pinned sheet is read-only, is not registered for the repository's
+   * auto-refresh / `repo.refresh()`, and re-resolves this ref only on an
+   * explicit `refresh()`. See specs/behaviors/freshness.md "Ref-pinned sheets".
+   */
+  readonly pinnedRef?: string;
 }
 
 export class Sheet<T extends RecordLike = RecordLike> {
@@ -883,6 +890,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #dataBase: string;
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
   readonly #prefix: string;
+  readonly #pinnedRef: string | undefined;
   readonly #indexes = new Map<string, IndexState<T>>();
   #configPromise: Promise<SheetConfig> | undefined;
   /** Set by {@link verifyContract} on a successful `openSheet({ contract })`. */
@@ -906,11 +914,19 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#dataBase = (opts.dataBase ?? '').replace(/^\/+|\/+$/g, '');
     this.#validator = opts.validator;
     this.#prefix = (opts.prefix ?? '').replace(/^\/+|\/+$/g, '');
-    if (this.#transaction === undefined) {
+    this.#pinnedRef = opts.pinnedRef;
+    if (this.#transaction === undefined && this.#pinnedRef === undefined) {
       // Participate in the freshness model: the Repository rebinds every live
       // non-tx sheet after each of its own commits, and on repo.refresh().
+      // A ref-pinned sheet stays out: its snapshot moves only on its own
+      // refresh() (specs/behaviors/freshness.md "Ref-pinned sheets").
       this.#repo.registerSheet(this as unknown as Sheet);
     }
+  }
+
+  /** The ref this sheet is pinned to (`openSheet({ ref })`), or `undefined` for a live sheet. */
+  get pinnedRef(): string | undefined {
+    return this.#pinnedRef;
   }
 
   /** The git dir this sheet reads/writes through. */
@@ -1077,7 +1093,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
         'Sheet.refresh() is not available on a transaction-bound Sheet — it reads the transaction’s private tree',
       );
     }
-    this.rebindReadTree(await this.#repo.currentReadTree());
+    // A pinned sheet re-resolves its own ref (a branch catches up with its
+    // tip; a commit/tree hash resolves to the same tree), never HEAD.
+    const tree =
+      this.#pinnedRef !== undefined
+        ? await this.#repo.resolveTreeForRef(this.#pinnedRef)
+        : await this.#repo.currentReadTree();
+    this.rebindReadTree(tree);
   }
 
   /**
@@ -1522,6 +1544,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (this.#dataBase) Object.assign(opts, { dataBase: this.#dataBase });
     if (this.#validator !== undefined) Object.assign(opts, { validator: this.#validator });
     if (this.#prefix) Object.assign(opts, { prefix: this.#prefix });
+    if (this.#pinnedRef !== undefined) Object.assign(opts, { pinnedRef: this.#pinnedRef });
     return new Sheet<T>(opts);
   }
 
@@ -1911,6 +1934,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
   // --- Private helpers ---
 
   #checkStrictMode(): void {
+    if (this.#pinnedRef !== undefined) {
+      throw new TransactionError(
+        'transaction_required',
+        `Sheet.${this.#name} is pinned to ${this.#pinnedRef} and read-only — write through repo.transact({ parent: ${JSON.stringify(this.#pinnedRef)} }, …)`,
+      );
+    }
     if (this.#repo.isStrictMode()) {
       throw new TransactionError(
         'transaction_required',

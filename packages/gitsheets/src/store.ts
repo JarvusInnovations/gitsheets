@@ -25,6 +25,12 @@ export type InferRecord<V> =
 
 export interface OpenStoreOptions<V extends ValidatorMap = ValidatorMap> {
   readonly validators?: V;
+  /**
+   * Pin every sheet at this ref (read-only store). `store.refresh()` then
+   * re-resolves the ref for each sheet instead of delegating to
+   * `repo.refresh()`. See specs/api/store.md "Pinned stores".
+   */
+  readonly ref?: string;
 }
 
 /**
@@ -71,7 +77,7 @@ export async function openStore<V extends ValidatorMap = ValidatorMap>(
   repo: Repository,
   opts: OpenStoreOptions<V> = {},
 ): Promise<Store<V>> {
-  const sheetsBase = await repo.openSheets();
+  const sheetsBase = await repo.openSheets(opts.ref !== undefined ? { ref: opts.ref } : {});
   const declared = new Set(Object.keys(sheetsBase));
 
   // Verify the validator map only names sheets that exist.
@@ -92,7 +98,7 @@ export async function openStore<V extends ValidatorMap = ValidatorMap>(
   for (const name of declared) {
     const validator = opts.validators?.[name];
     if (validator !== undefined) {
-      sheets[name] = await repo.openSheet(name, { validator });
+      sheets[name] = await repo.openSheet(name, opts.ref !== undefined ? { validator, ref: opts.ref } : { validator });
     } else {
       sheets[name] = sheetsBase[name]!;
     }
@@ -116,7 +122,12 @@ export async function openStore<V extends ValidatorMap = ValidatorMap>(
     return repo.transact(txOpts, innerHandler);
   };
 
-  const refresh = (): Promise<void> => repo.refresh();
+  const refresh = async (): Promise<void> => {
+    if (opts.ref === undefined) return repo.refresh();
+    // A pinned store: repo.refresh() never touches pinned sheets, so
+    // re-resolve the ref for each of ours.
+    await Promise.all(Object.values(sheets).map((s) => s.refresh()));
+  };
 
   return Object.assign(Object.create(null), sheets, { transact, refresh }) as Store<V>;
 }
