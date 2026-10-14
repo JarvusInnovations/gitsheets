@@ -87,7 +87,9 @@ const store = await openStore(repo, {
 | `repo.requireExplicitTransactions()` | Switch to strict mode (one-way) |
 | `repo.startPushDaemon(opts)` | Start async push to a configured remote |
 | `repo.resolveRef(ref)` | Resolve a ref or commit hash; returns `string \| null` |
-| `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` auto-refreshes) |
+| `repo.sync(opts?)` | Bring a branch up to date with a remote other writers push to: fetch, then fast-forward / replay local commits / preserve-on-conflict under the write lock; rebinds live sheets; hands new tips to the push daemon. Outcomes `in-sync` · `fast-forwarded` · `ahead` · `rebased` · `conflict` · `conflict-escaped` · `fetch-failed` |
+| `repo.isAncestor(a, b)` | `Promise<boolean>` — is commit `a` reachable from `b` |
+| `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |
 | `repo.readBlob(ref, path)` | `Promise<BlobHandle>` — the blob at `<ref>:<path>`, resolved at call time: `hash`, `size` (from the object header), `read()`, `stream()`. Throws `RefError` / `NotFoundError` |
 | `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()`: in-core up to 1 MiB, piped from `git cat-file blob` above that |
 
