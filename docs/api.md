@@ -161,6 +161,10 @@ All write methods route through a transaction — permissive mode auto-opens one
 | `tx.sheet<T>(name, opts?)` | Sheet bound to the tx's tree; `opts.validator`, `opts.prefix` |
 | `tx.parentCommitHash` | Commit hash the tx parents on (may be `null` for fresh repos) |
 | `tx.parentRef` / `tx.branchRef` | Refs being read from / advanced |
+| `tx.writeFile(path, content)` | Stage a raw file (repo-root-relative; `string` as UTF-8 or `Buffer`/`Uint8Array`) in the same commit as record changes — sheet configs, contracts, fixtures. Returns a `BlobHandle`. Not validated or normalized |
+| `tx.deleteFile(path)` | Remove a raw file; returns whether it existed (a miss leaves the tx unmutated) |
+
+`repo.transact` options: `parent` (ref or hash; default HEAD; **`null` for an orphan root commit** — empty start, no parents, always commits, `branch` created and must not exist), `branch` (ref to advance; **created if absent**), `author`, `committer`, `message`, `trailers`.
 
 Consumers don't construct `Transaction` directly — it comes from `repo.transact`'s handler. `tx.sheet(name)` may be called any number of times; writes are atomic within the handler.
 
