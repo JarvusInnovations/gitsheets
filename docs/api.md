@@ -248,7 +248,7 @@ Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 
 ## Path Template
 
-`Template.fromString(s)` — parse + cache. Most consumers don't construct `Template` directly; it's exposed for advanced use cases (path template diagnostics, custom queryTree integrations).
+`Template.fromString(s)` — parse + cache. Most consumers don't construct `Template` directly; it's exposed for advanced use cases (path template diagnostics, custom queryTree integrations). `getFieldNames()` lists every field the template may read (expression identifiers included, best-effort); `getStaticFieldNames()` lists only the plain / recursive references and date-bucket base fields — the set the open-time [template check](path-templates.md#template-fields-must-be-schema-required) requires the schema to list.
 
 → [path templates doc](path-templates.md) · [`specs/behaviors/path-templates.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md)
 
