@@ -367,7 +367,7 @@ pub fn merge_sheets(repo: &gix::Repository, opts: &MergeOptions) -> Result<Merge
             }
         }
         result.outcome = if opts.commit { MergeOutcome::FastForward } else { MergeOutcome::DryRun };
-        result.commit = Some(theirs.to_string());
+        result.commit = opts.commit.then(|| theirs.to_string());
         result.tree = Some(tree_of(repo, theirs)?.to_string());
         return Ok(result);
     }
@@ -728,6 +728,11 @@ mod tests {
         holo_repo::update_ref(&repo, "refs/heads/import", t2, Some(t)).unwrap();
         let mut ff = opts(Prefer::Fail);
         ff.ours = "linear".into();
+        let mut dry = ff.clone();
+        dry.commit = false;
+        let r = merge_sheets(&repo, &dry).unwrap();
+        assert_eq!((r.outcome, r.commit.is_none(), r.tree.is_some()), (MergeOutcome::DryRun, true, true));
+        assert_eq!(tip(&repo, "refs/heads/linear"), t);
         let r = merge_sheets(&repo, &ff).unwrap();
         assert_eq!(r.outcome, MergeOutcome::FastForward);
         assert_eq!(tip(&repo, "refs/heads/linear"), t2);
