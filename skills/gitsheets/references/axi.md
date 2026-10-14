@@ -213,7 +213,7 @@ Single mode throws `NOT_FOUND` if the query matches no record.
 
 ### `gitsheets-axi rename <sheet> <old-path> <new-path>`
 
-Re-key a record: read it, write it at `<new-path>`, delete the old one — atomically in **one commit**. Supported for a bare single-field path template (`path = '${{ field }}'`), where `<new-path>` maps directly onto the field's value; refuses to overwrite an existing target, errors on a missing source. For decorated/multi-field templates, use `patch` to change the path fields (or `upsert --delete-missing`). This reads as intent in git history vs. a manual write-new + delete-old.
+Re-key a record: read it, write it at `<new-path>` with rename semantics (the old file goes and the record's attachments move with it, v2.8+) — atomically in **one commit**. Supported for a bare single-field path template (`path = '${{ field }}'`), where `<new-path>` maps directly onto the field's value; refuses to overwrite an existing target, errors on a missing source. For decorated/multi-field templates, use `patch` to change the path fields (or `upsert --delete-missing`). This reads as intent in git history vs. a manual write-new + delete-old.
 
 ### `gitsheets-axi delete <sheet> <path> [flags]` · bulk: `delete <sheet> --filter … | --stdin`
 

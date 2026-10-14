@@ -400,4 +400,6 @@ const sheetName = (jane as Record<symbol, unknown>)[RECORD_SHEET_KEY];  // 'user
 const recordPath = (jane as Record<symbol, unknown>)[RECORD_PATH_KEY]; // 'jane'
 ```
 
-These annotations let `Sheet.upsert` detect renames (if the rendered path differs from `RECORD_PATH_KEY`, the old file is deleted). Symbols are stripped before writing to disk.
+These annotations let `Sheet.upsert` detect renames: if the rendered path differs from `RECORD_PATH_KEY`, the old file is deleted **and the record's attachment directory moves to the new path** (v2.8+). Symbols are stripped before writing to disk.
+
+So the rename idiom is "load, change the key, upsert the same object" — `await sheet.upsert({ ...person, slug: 'new' })` (spread keeps symbol keys). Do **not** `delete` then `upsert`: `delete` cascades to the attachment directory first, so the attachments are lost. A validator that drops symbol keys (Zod `.parse`) needs the annotation re-applied — `parsed[RECORD_PATH_KEY] = person[RECORD_PATH_KEY]` — or pass the validator via `openSheet({ validator })` so the sheet carries it across itself.

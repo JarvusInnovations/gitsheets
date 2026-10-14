@@ -114,7 +114,7 @@ const store = await openStore(repo, {
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for content-typed sheets |
+| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. A record loaded from the sheet whose rendered path changes is **renamed**: the old file is deleted and its attachment directory moves with it. `opts.allowMissingBody` for content-typed sheets |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachments |
 | `sheet.patch(query, partial)` | RFC 7396 merge patch over an existing record. For content-typed sheets with `[gitsheet.format].title` configured (v1.3): a title-only patch rewrites the body's H1; a body-only patch re-derives the title |
 | `sheet.willChange(record, opts?)` | Pre-flight idempotency check — returns `{ changed, path, currentBlobHash?, nextText }` without mutating the tree (v1.3) |
