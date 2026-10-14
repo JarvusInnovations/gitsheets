@@ -437,7 +437,7 @@ fn head_branch_ref(repo: &gix::Repository) -> Option<String> {
     head.referent_name().map(|n| n.as_bstr().to_string())
 }
 
-fn is_likely_branch(p: &str) -> bool {
+pub(crate) fn is_likely_branch(p: &str) -> bool {
     let ref_like = !p.is_empty()
         && p.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'));

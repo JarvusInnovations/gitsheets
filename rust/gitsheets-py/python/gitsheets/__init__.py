@@ -66,6 +66,8 @@ blob_read = _core.blob_read
 blob_header = _core.blob_header
 sync_branch = _core.sync_branch
 is_ancestor = _core.is_ancestor
+merge_sheets = _core.merge_sheets
+merge_record_texts = _core.merge_record_texts
 template_field_names = _core.template_field_names
 record_index_unique = _core.record_index_unique
 record_index_multi = _core.record_index_multi
@@ -117,6 +119,8 @@ __all__ = [
     "blob_header",
     "sync_branch",
     "is_ancestor",
+    "merge_sheets",
+    "merge_record_texts",
     "template_field_names",
     "record_index_unique",
     "record_index_multi",

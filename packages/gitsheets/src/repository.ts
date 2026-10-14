@@ -122,6 +122,45 @@ export interface SyncResult {
   readonly fetchError?: string;
 }
 
+/** Options for {@link Repository.merge}. See specs/behaviors/merge.md. */
+export interface MergeOptions {
+  /** Branch, tag, or commit to merge in. */
+  readonly theirs: string;
+  /** Branch (or commit) to merge into; default: HEAD's branch. */
+  readonly ours?: string;
+  /** How to resolve conflicts the field merge cannot decide; default `fail` (report, write nothing). */
+  readonly prefer?: 'fail' | 'ours' | 'theirs';
+  /** Default true; false writes the merged tree and moves nothing (`dry-run`). */
+  readonly commit?: boolean;
+  /** Default `Merge <theirs> into <ours>`. */
+  readonly message?: string;
+  readonly author?: Author;
+  readonly committer?: Author;
+  /** `openSheet({ root })` scoping for sheet discovery; default `.`. */
+  readonly root?: string;
+}
+
+/** One unresolved conflict from {@link Repository.merge}. */
+export interface MergeConflict {
+  readonly path: string;
+  readonly kind: 'field' | 'delete-modify' | 'blob' | 'tree';
+  readonly field?: string;
+  readonly ours?: string;
+  readonly theirs?: string;
+}
+
+/** The outcome of {@link Repository.merge}. */
+export interface MergeResult {
+  readonly outcome: 'up-to-date' | 'fast-forward' | 'merged' | 'conflict' | 'dry-run';
+  readonly oursCommit: string;
+  readonly theirsCommit: string;
+  readonly base: string | null;
+  readonly tree: string | null;
+  readonly commit: string | null;
+  readonly mergedRecords: readonly string[];
+  readonly conflicts: readonly MergeConflict[];
+}
+
 /** Resolve the absolute `.git` directory for `gitDir` (or discovered from `cwd`). */
 async function resolveGitDir(gitDir: string | undefined): Promise<string> {
   const cwd = gitDir ?? process.cwd();
@@ -542,6 +581,61 @@ export class Repository {
         Object.assign(result, { conflictBranchPushed: true });
       } catch {
         Object.assign(result, { conflictBranchPushed: false });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Sheet-aware merge of `opts.theirs` into `opts.ours` (default: HEAD's
+   * branch): record files changed on both sides are field-merged and written
+   * canonically; conflicts follow `opts.prefer` or are reported (never
+   * thrown). Runs under the write lock; rebinds live sheets when HEAD's
+   * branch moved. See specs/behaviors/merge.md.
+   */
+  async merge(opts: MergeOptions): Promise<MergeResult> {
+    let ours = opts.ours;
+    if (ours === undefined) {
+      const headRef = await this.#headBranchRef();
+      if (!headRef) {
+        throw new RefError('ref_not_found', 'repo.merge: HEAD is detached or the repo is fresh — pass opts.ours');
+      }
+      ours = headRef.replace(/^refs\/heads\//, '');
+    }
+    const coreOpts: import('@gitsheets/core-napi').JsMergeOptions = {
+      ours,
+      theirs: opts.theirs,
+      openRoot: opts.root ?? '.',
+      prefer: opts.prefer ?? 'fail',
+      commit: opts.commit ?? true,
+      timeSeconds: Math.floor(Date.now() / 1000),
+      offsetMinutes: -new Date().getTimezoneOffset(),
+    };
+    if (opts.message !== undefined) coreOpts.message = opts.message;
+    if (opts.author !== undefined) coreOpts.author = opts.author;
+    if (opts.committer !== undefined) coreOpts.committer = opts.committer;
+    const oursArg = ours;
+    const raw = await this.withLock(() => callCore(() => addon.mergeSheets(this.#gitDir, coreOpts)));
+    const result: MergeResult = {
+      outcome: raw.outcome as MergeResult['outcome'],
+      oursCommit: raw.oursCommit,
+      theirsCommit: raw.theirsCommit,
+      base: raw.base ?? null,
+      tree: raw.tree ?? null,
+      commit: raw.commit ?? null,
+      mergedRecords: raw.mergedRecords,
+      conflicts: raw.conflicts.map((c) => {
+        const out: MergeConflict = { path: c.path, kind: c.kind as MergeConflict['kind'] };
+        if (c.field != null) Object.assign(out, { field: c.field });
+        if (c.ours != null) Object.assign(out, { ours: c.ours });
+        if (c.theirs != null) Object.assign(out, { theirs: c.theirs });
+        return out;
+      }),
+    };
+    if ((result.outcome === 'merged' || result.outcome === 'fast-forward') && result.commit !== result.oursCommit) {
+      const headRef = await this.#headBranchRef();
+      if (headRef === `refs/heads/${oursArg.replace(/^refs\/heads\//, '')}`) {
+        this.#rebindLiveSheets(await this.#resolveReadTree());
       }
     }
     return result;

@@ -10,6 +10,9 @@ export type {
   OpenSheetsOptions,
   SyncOptions,
   SyncResult,
+  MergeOptions,
+  MergeConflict,
+  MergeResult,
 } from './repository.js';
 
 export { Sheet, RECORD_PATH_KEY, RECORD_SHEET_KEY } from './sheet.js';

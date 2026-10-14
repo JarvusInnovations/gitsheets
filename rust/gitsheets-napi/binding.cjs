@@ -172,6 +172,8 @@ module.exports = {
   coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
   syncBranch: wrap(addon.syncBranch),
   isAncestor: wrap(addon.isAncestor),
+  mergeSheets: wrap(addon.mergeSheets),
+  mergeRecordTexts: wrap(addon.mergeRecordTexts),
   coreCheckValidators: wrap(addon.coreCheckValidators),
   sheetConfigCheck: wrap(addon.sheetConfigCheck),
   // Consumer-side contract verification — the two-rung ladder behind

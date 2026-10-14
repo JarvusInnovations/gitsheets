@@ -14,6 +14,7 @@
 - [init](#init) — scaffold a sheet config
 - [infer](#infer) — scan records → starter JSON Schema
 - [migrate-config](#migrate-config) — pre-v1.0 fields → v1.0 schema
+- [merge](#merge-v28)
 - [Exit codes](#exit-codes)
 - [Error output](#error-output)
 
@@ -153,7 +154,15 @@ git add $(git diff --cached --name-only --diff-filter=ACM 'posts/*.md')
 gitsheets check posts posts/hello.md
 ```
 
-### Exit codes
+### merge (v2.8+)
+
+```bash
+gitsheets merge <theirs> [--into <ours>] [--prefer ours|theirs] [--message m] [--dry-run]
+```
+
+Sheet-aware merge: record files changed on both sides are field-merged and written canonically (no mixed serializations); non-record files merge as git would. Conflicts (field / delete-modify / blob) are listed on stderr and exit 1 with nothing written unless `--prefer` picks a side. `--dry-run` prints the merged tree hash and moves nothing. Prefer this over a plain `git merge` of a data repo — or install the driver so `git merge` does it: `git config merge.gitsheets.driver "git sheet merge-driver %O %A %B %P"` plus a `.gitattributes` line `users/**/*.toml merge=gitsheets`.
+
+## Exit codes
 
 - `0` — file is canonical and valid (or `--fix` rewrote it)
 - `1` — file is parseable + valid but not canonical (without `--fix`)
