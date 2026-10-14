@@ -108,6 +108,31 @@ plain `${{ field }}` component doesn't prune (unpadded values don't order
 like their directory names) but still filters record-level; `$in` / `$or`
 are not supported.
 
+## Template fields must be schema-required
+
+A record the template can't render against can't be stored: every `upsert`
+of it throws `path_render_failed` and aborts the transaction. So when a sheet
+declares a persisted schema (`[gitsheet.schema]`, declared contracts, or
+both), gitsheets checks the template against it **at sheet open**: every
+static field the template names — `${{ field }}`, `${{ field/** }}`, or the
+base field of a date bucket — must be in a top-level `required` list of the
+local schema or of a declared contract. Otherwise the open throws
+`ConfigError(config_invalid)` naming the field. Expression components
+(`${{ slug || legacyId }}`) are exempt.
+
+If your writer supplies a path field before upsert that the record schema
+never declares (a tenant or parent key injected by the service), list it in
+`injectedFields`:
+
+```toml
+[gitsheet]
+root = 'roles'
+path = '${{ projectSlug }}/${{ slug }}'
+injectedFields = ['projectSlug']
+```
+
+Sheets with no schema and no contracts are not checked.
+
 ## Invalid characters
 
 The rendered path is rejected if it contains Windows-disallowed characters

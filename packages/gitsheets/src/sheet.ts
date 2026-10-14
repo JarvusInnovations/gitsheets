@@ -16,6 +16,7 @@ import {
   readTreeBlob,
   readTreeBlobText,
   treeEntryHash,
+  sheetConfigCheck,
 } from './core.js';
 import type { ConformanceReport, OpenSheetContractOptions } from './contracts.js';
 import {
@@ -457,9 +458,30 @@ async function loadConfig(
     );
   }
 
+  // The core's open-time validation on top of the host parse above: contract
+  // load/compile and template coherence (every static template field must be
+  // schema-required or declared in `injectedFields` —
+  // specs/behaviors/path-templates.md "Template fields must be
+  // schema-required"). Once per distinct config blob, via the cache below.
+  sheetConfigCheck(gitDir, treeRef, sheetNameFromConfigPath(configPath), configPath, openRootFromConfigPath(configPath));
+
   const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };
   CONFIG_CACHE.set(hash, config);
   return config;
+}
+
+/** `<openRoot>/.gitsheets/<name>.toml` → `<name>`. */
+function sheetNameFromConfigPath(configPath: string): string {
+  const file = configPath.slice(configPath.lastIndexOf('/') + 1);
+  return file.endsWith('.toml') ? file.slice(0, -'.toml'.length) : file;
+}
+
+/** `<openRoot>/.gitsheets/<name>.toml` → `<openRoot>` (`.` at the repo root). */
+function openRootFromConfigPath(configPath: string): string {
+  const marker = '.gitsheets/';
+  const idx = configPath.lastIndexOf(marker);
+  if (idx <= 0) return '.';
+  return configPath.slice(0, idx).replace(/\/+$/, '') || '.';
 }
 
 function validateSortRule(sort: unknown, configPath: string, field: string): void {

@@ -134,13 +134,13 @@ Scan existing records and write a starter `[gitsheet.schema]` to `.gitsheets/<sh
 git sheet infer users
 ```
 
-Output is conservative — observed types only, no inferred regex/format constraints. The result is a starting point the user edits.
+Output is conservative — observed types only, no inferred regex/format constraints. The result is a starting point the user edits. `required` lists every field present on every record **plus the template's static fields** (always, so the written config passes the open-time template check — [behaviors/path-templates.md](../behaviors/path-templates.md#template-fields-must-be-schema-required)).
 
 See [#130](https://github.com/JarvusInnovations/gitsheets/issues/130).
 
 ### `git sheet migrate-config <sheet>`
 
-Convert a pre-v1.0 `[gitsheet.fields]` config to a v1.0 `[gitsheet.schema]` config. Lossless for `type`/`enum`/`default`; surfaces `trueValues`/`falseValues` as a warning suggesting the CSV-ingest helper.
+Convert a pre-v1.0 `[gitsheet.fields]` config to a v1.0 `[gitsheet.schema]` config. Lossless for `type`/`enum`/`default`; surfaces `trueValues`/`falseValues` as a warning suggesting the CSV-ingest helper. The written schema's `required` lists the template's static fields (pre-v1.0 configs had no notion of required; the template fields are the one set that must be present — [behaviors/path-templates.md](../behaviors/path-templates.md#template-fields-must-be-schema-required)).
 
 ```bash
 git sheet migrate-config users
@@ -175,7 +175,7 @@ git sheet contracts adopt ./meals-v1.schema.json
 
 #### `git sheet contracts verify [<sheet>]...`
 
-Offline conformance gate (CI-friendly; no network). For the named sheets (default: all declaring sheets): every declared name resolves to a vendored document; each document satisfies the document requirements, is byte-canonical, and its `$id` matches its path; every record validates against the sheet's effective schema. Warns when a declaring sheet's local schema sets `additionalProperties: false`. Non-zero exit on any failure.
+Offline conformance gate (CI-friendly; no network). For the named sheets (default: all declaring sheets): every declared name resolves to a vendored document; each document satisfies the document requirements, is byte-canonical, and its `$id` matches its path; every record validates against the sheet's effective schema. Warns when a declaring sheet's local schema sets `additionalProperties: false`. A sheet whose config fails to open — including a path template naming a field the effective schema does not require ([behaviors/path-templates.md](../behaviors/path-templates.md#template-fields-must-be-schema-required)) — is a failure, reported with the config error. Non-zero exit on any failure.
 
 #### `git sheet contracts test <sheet> --against <file-or-name>`
 

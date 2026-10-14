@@ -17,6 +17,10 @@ A failure at either layer throws `ValidationError`. Validation runs synchronousl
 - [api/repository.md](../api/repository.md) — `openSheet(name, { validator? })`
 - [api/store.md](../api/store.md) — `openStore(repo, { validators? })`
 
+## Template coherence
+
+The persisted schema also gates the sheet's **path template**: at sheet open, every static field the template names must be in a top-level `required` list (local schema or a declared contract) or in `[gitsheet].injectedFields`, else `ConfigError` (`config_invalid`). See [behaviors/path-templates.md](path-templates.md#template-fields-must-be-schema-required).
+
 ## Why two layers
 
 What gets persisted with the data vs. what lives in consumer code:
@@ -131,7 +135,7 @@ Each `ValidationIssue` carries a `source` field identifying which layer raised i
 | `sort: ...` | `[gitsheet.fields.<name>.sort]` (unchanged) | Stays — different concept (canonical normalization, not validation) |
 | `trueValues: [...]`, `falseValues: [...]` | Moves to CSV-ingest helper | Validation-time boolean coercion was always CSV-input-specific; surfaced separately |
 
-The `git sheet migrate-config <sheet>` CLI command (see [api/cli.md](../api/cli.md)) performs this migration. Lossless for the first three rows; emits a warning for the fourth pointing at the CSV-ingest helper.
+The `git sheet migrate-config <sheet>` CLI command (see [api/cli.md](../api/cli.md)) performs this migration. Lossless for the first three rows; emits a warning for the fourth pointing at the CSV-ingest helper. The written schema's `required` lists the path template's static fields, so the migrated config passes the open-time template check ([Template coherence](#template-coherence)).
 
 ## Schema inference
 
@@ -141,6 +145,7 @@ The `git sheet migrate-config <sheet>` CLI command (see [api/cli.md](../api/cli.
 - For string properties, conservatively _omits_ `pattern` / `format` constraints (consumer adds these manually)
 - For numbers, records observed min/max as a hint
 - For arrays, records the element type
+- `required` = fields present on every record ∪ the path template's static fields ([Template coherence](#template-coherence))
 
 Output is a starting point. The user reviews and tightens before committing.
 

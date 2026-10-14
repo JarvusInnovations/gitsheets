@@ -328,23 +328,34 @@ pub fn check_contract_document(name: &str, json: &Json) -> Result<()> {
 /// A declared contract that fails to load or violates a document requirement
 /// surfaces here as `ContractError` (`contract_missing` / `contract_invalid`)
 /// — sheet-open time, per the failure-modes table.
+///
+/// Alongside the compiled validator, returns the union of every document's
+/// top-level `required` list (local schema + each loaded contract) — the
+/// input to `Sheet::open`'s template-coherence check, gathered here so the
+/// contracts are loaded once.
 pub(crate) fn compile_effective_schema(
     ctx: &Context<'_>,
     tree: &mut MutableTree,
     open_root: &str,
     implements: &[String],
     local_schema: &Option<Value>,
-) -> Result<Option<CompiledSchema>> {
+) -> Result<Option<EffectiveSchema>> {
     if implements.is_empty() {
         return match local_schema {
-            Some(s) => Ok(Some(CompiledSchema::compile(s)?)),
+            Some(s) => Ok(Some(EffectiveSchema {
+                compiled: CompiledSchema::compile(s)?,
+                required: top_level_required(&validation::value_to_json(s)),
+            })),
             None => Ok(None),
         };
     }
 
+    let mut required: Vec<String> = Vec::new();
     let mut all_of = Vec::with_capacity(implements.len() + 1);
     for name in implements {
-        all_of.push(load_contract(ctx, tree, open_root, name)?);
+        let doc = load_contract(ctx, tree, open_root, name)?;
+        required.extend(top_level_required(&doc));
+        all_of.push(doc);
     }
     let local_json = match local_schema {
         Some(s) => {
@@ -356,12 +367,32 @@ pub(crate) fn compile_effective_schema(
         // to exactly the declared contracts' constraints.
         None => Json::Object(serde_json::Map::new()),
     };
+    required.extend(top_level_required(&local_json));
     all_of.push(local_json);
 
     let mut composed = serde_json::Map::new();
     composed.insert("allOf".to_string(), Json::Array(all_of));
     let compiled = CompiledSchema::compile_composed(Json::Object(composed), implements.to_vec())?;
-    Ok(Some(compiled))
+    required.sort();
+    required.dedup();
+    Ok(Some(EffectiveSchema { compiled, required }))
+}
+
+/// The effective schema of a sheet: the compiled validator plus the union of
+/// the top-level `required` lists of the documents composing it.
+pub(crate) struct EffectiveSchema {
+    pub compiled: CompiledSchema,
+    pub required: Vec<String>,
+}
+
+/// The string entries of a schema document's top-level `required` keyword
+/// (empty when absent or malformed — the compile step reports malformed
+/// schemas, not this).
+fn top_level_required(doc: &Json) -> Vec<String> {
+    doc.get("required")
+        .and_then(Json::as_array)
+        .map(|items| items.iter().filter_map(Json::as_str).map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 // ── the identity primitive: canonical_contract_hash ───────────────────────────
@@ -1084,6 +1115,10 @@ mod verify_tests {
     fn sheet_config(implements: &[&str]) -> Value {
         let mut gs = IndexMap::new();
         gs.insert("path".to_string(), Value::String("${{ slug }}".into()));
+// The fixtures template on `slug`, which the fixture contracts do not
+// require — declare it writer-injected so the template-coherence check
+// (specs/behaviors/path-templates.md) stays out of these tests' way.
+gs.insert("injectedFields".to_string(), Value::Array(vec![Value::String("slug".into())]));
         gs.insert("root".to_string(), Value::String("people".into()));
         if !implements.is_empty() {
             gs.insert(

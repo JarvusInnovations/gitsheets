@@ -530,3 +530,16 @@ describe('Template date buckets — queryTree', () => {
     expect(found.sort()).toEqual(['2025/12/c', '2026/03/a', '2026/04/b']);
   });
 });
+
+describe('getStaticFieldNames', () => {
+  it('lists plain, recursive and bucket base fields, skipping expressions and literals', () => {
+    const t = Template.fromString('${{ org }}/${{ publishedAt: YYYY/MM }}/lit-${{ slug || legacyId }}/${{ path/** }}');
+    expect([...t.getStaticFieldNames()]).toEqual(['org', 'publishedAt', 'path']);
+    // getFieldNames still includes the expression identifiers.
+    expect([...t.getFieldNames()]).toEqual(expect.arrayContaining(['slug', 'legacyId']));
+  });
+
+  it('de-duplicates and treats a dotted reference as an expression', () => {
+    expect([...Template.fromString('${{ a }}/${{ a }}/${{ meta.slug }}').getStaticFieldNames()]).toEqual(['a']);
+  });
+});

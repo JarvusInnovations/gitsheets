@@ -382,6 +382,15 @@ export interface JsAttachmentEntry {
  */
 export declare function coreDiscoverSheets(gitDir: string, treeRef: string, openRoot: string): Array<string>
 /**
+ * Open the sheet whose config blob lives at `configPath` in the tree `treeRef`
+ * and discard it — the full open-time validation the core performs
+ * (config parse, contract load/compile, template coherence per
+ * specs/behaviors/path-templates.md "Template fields must be
+ * schema-required") surfaced to the host as typed errors. The host calls it
+ * once per distinct config blob from `repo.openSheet`.
+ */
+export declare function sheetConfigCheck(gitDir: string, treeRef: string, sheetName: string, configPath: string, openRoot: string): void
+/**
  * The `openStore` `config_missing` check: every validator must name a declared
  * sheet. Throws `ConfigError(config_missing)` otherwise.
  */
