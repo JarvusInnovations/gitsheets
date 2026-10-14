@@ -96,7 +96,7 @@ const { blob, path } = await sheet.upsert({
 - Validates the record (JSON Schema + optional Standard Schema; see [behaviors/validation.md](../behaviors/validation.md))
 - Applies canonical normalization
 - Renders the record's path from the template
-- If the record was loaded from disk (has the `Symbol.for('gitsheets-path')` annotation) and the new rendered path differs, the old path's file is deleted (rename semantics)
+- If the record was loaded from disk (has the `Symbol.for('gitsheets-path')` annotation) and the new rendered path differs, the old path's file is deleted and its attachment directory moves to the new path (rename semantics — see [behaviors/attachments.md](../behaviors/attachments.md#move-on-record-rename))
 - Serializes through the configured sheet format (TOML by default, markdown/mdx for content-typed sheets — see [behaviors/content-types.md](../behaviors/content-types.md)) and writes the blob
 - Returns the staged blob + its path
 

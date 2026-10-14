@@ -161,7 +161,30 @@ If the handler throws, both changes are discarded.
 
 When a record is deleted via `Sheet.delete(record)`, **its attachment directory is also deleted in the same operation.** The pre-v1.0 behavior left attachments orphaned in the tree; v1.0 fixes this.
 
-For "preserve attachments across record deletion" use cases (rare), the consumer can move the attachment subtree to a different location before deleting the record.
+For "preserve attachments across record deletion" use cases (rare), the consumer can move the attachment subtree to a different location before deleting the record. To *rename* a record and keep its attachments, do not delete-then-upsert — upsert the loaded record with its new key (see [Move on record rename](#move-on-record-rename)).
+
+## Move on record rename
+
+When an `upsert` renames a record — the record carries the `RECORD_PATH_KEY` annotation and its newly rendered path differs — **its attachment directory moves with it in the same operation**: everything under `<sheetRoot>/<oldPath>/` lands under `<sheetRoot>/<newPath>/`, and the old directory is removed. Nested entries move too (the subtree is re-parented as a whole, not re-read blob by blob). If the destination already has an attachment directory, the moved entries are merged into it, overwriting same-named entries and leaving the rest.
+
+The rename idiom is therefore "load, change the key fields, upsert the same object":
+
+```typescript
+const person = await people.get('old-slug');
+await people.upsert({ ...person, slug: 'new-slug' });   // record moves; people/old-slug/* moves to people/new-slug/*
+```
+
+A `delete(old)` followed by `upsert(new)` is **not** a rename: `delete` cascades to the attachment directory (above), so the attachments are gone before the new record is written. Keep the annotation on the object you upsert. A consumer that validates with a library that drops symbol keys (Zod's `.parse` does) re-applies it, or passes the validator through `openSheet({ validator })` so the sheet runs it and carries the annotation across itself:
+
+```typescript
+const parsed = PersonSchema.parse(person);
+(parsed as Record<symbol, unknown>)[RECORD_PATH_KEY] = (person as Record<symbol, unknown>)[RECORD_PATH_KEY];
+await people.upsert(parsed);
+```
+
+Object spread copies own enumerable symbol keys, so `{ ...person, slug }` keeps the annotation without ceremony.
+
+`gitsheets-axi rename` uses this idiom, so attachments follow a CLI rename as well. This was [#302](https://github.com/JarvusInnovations/gitsheets/issues/302): a rename-on-upsert orphaned the attachments under the old path, and the delete-plus-upsert workaround dropped them.
 
 ## Query interaction
 
