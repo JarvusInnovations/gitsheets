@@ -134,13 +134,13 @@ Scan existing records and write a starter `[gitsheet.schema]` to `.gitsheets/<sh
 git sheet infer users
 ```
 
-Output is conservative — observed types only, no inferred regex/format constraints. The result is a starting point the user edits.
+Output is conservative — observed types only, no inferred regex/format constraints. The result is a starting point the user edits. `required` lists every field present on every record **plus the template's static fields** (always, so the written config passes the open-time template check — [behaviors/path-templates.md](../behaviors/path-templates.md#template-fields-must-be-schema-required)).
 
 See [#130](https://github.com/JarvusInnovations/gitsheets/issues/130).
 
 ### `git sheet migrate-config <sheet>`
 
-Convert a pre-v1.0 `[gitsheet.fields]` config to a v1.0 `[gitsheet.schema]` config. Lossless for `type`/`enum`/`default`; surfaces `trueValues`/`falseValues` as a warning suggesting the CSV-ingest helper.
+Convert a pre-v1.0 `[gitsheet.fields]` config to a v1.0 `[gitsheet.schema]` config. Lossless for `type`/`enum`/`default`; surfaces `trueValues`/`falseValues` as a warning suggesting the CSV-ingest helper. The written schema's `required` lists the template's static fields (pre-v1.0 configs had no notion of required; the template fields are the one set that must be present — [behaviors/path-templates.md](../behaviors/path-templates.md#template-fields-must-be-schema-required)).
 
 ```bash
 git sheet migrate-config users
