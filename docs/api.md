@@ -70,6 +70,7 @@ Typed wrapper over `Repository.openSheets()` that binds per-sheet Standard Schem
 ```typescript
 const store = await openStore(repo, {
   validators: { users: UserSchema, projects: ProjectSchema },
+  // ref: 'published',   // optional: a read-only store pinned at a ref; store.refresh() re-resolves it
 });
 ```
 
@@ -79,8 +80,8 @@ const store = await openStore(repo, {
 
 | Method | Purpose |
 | --- | --- |
-| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix`, `opts.contract` (verify against a [contract](contracts.md) before returning — result on `sheet.contractVerification`) |
-| `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix` |
+| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix`, `opts.ref` (pin reads to a branch/tag/commit — read-only, excluded from auto-refresh; `sheet.refresh()` re-resolves the ref), `opts.contract` (verify against a [contract](contracts.md) before returning — result on `sheet.contractVerification`) |
+| `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix`, `opts.ref` |
 | `repo.transact(opts, handler)` | Run a handler in a single-commit transaction |
 | `repo.withLock(fn)` | Run `fn` holding the write lock transact uses — coordinate non-transact git ops. Not reentrant (`lock_held`) |
 | `repo.requireExplicitTransactions()` | Switch to strict mode (one-way) |

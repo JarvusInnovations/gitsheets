@@ -31,6 +31,7 @@ Returns a `Sheet` handle bound to this repository's current state.
 const users = await repo.openSheet('users', {
   root?: string,              // default: '.'
   prefix?: string,            // optional sub-prefix under the sheet's configured root
+  ref?: string,               // pin reads to a ref / commit / tree (read-only sheet) — see "Ref-pinned sheets"
   validator?: StandardSchema, // optional Standard Schema validator
   contract?: {                // consumer-side contract verification — behaviors/contracts.md
     schema: object | string,  // the contract document the consumer holds (parsed data, or JSON/TOML text)
@@ -44,6 +45,12 @@ const users = await repo.openSheet('users', {
 `opts.prefix` scopes record reads/writes to `<configRoot>/<prefix>/<rendered-path>.<ext>`. Useful for multi-tenant sub-tree partitioning. The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped. Mirrors the CLI `--prefix` global flag (env `GITSHEETS_PREFIX`). See [api/cli.md](cli.md#global-flags) for the CLI surface.
 
 Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolved root.
+
+**`opts.ref`** opens a **ref-pinned, read-only** sheet: every read (records, config, attachments, indexes, contract verification) resolves against the tree `ref` pointed at when the sheet was opened — a branch, a tag, a commit hash, or a tree hash, anything `git rev-parse <ref>^{tree}` accepts. `RefError` (`ref_not_found`) if it does not resolve. Operator tooling reads another branch's records this way (a reviewer sampling a staging branch, an importer reading the previous snapshot to keep ids stable) without moving `HEAD`, opening a throwaway transaction, or hand-parsing `cat-file` output.
+
+- **Pinned means pinned.** The sheet is excluded from the owning repository's auto-refresh and from `repo.refresh()` ([behaviors/freshness.md](../behaviors/freshness.md#ref-pinned-sheets)). Only an explicit `sheet.refresh()` re-resolves `ref` — so a branch-pinned sheet can be told to catch up with its branch; a commit-pinned sheet is immutable.
+- **Read-only.** The permissive-mode write methods (`upsert`, `delete`, `patch`, `clear`, `setAttachment(s)`, `deleteAttachment(s)`) throw `TransactionError` (`transaction_required`) naming the ref. To write onto that history, open a transaction with `parent: ref`.
+- `sheet.clone()` of a pinned sheet is pinned to the same ref. `tx.sheet(name)` inside a transaction is unaffected (it reads the transaction's tree as always).
 
 **`opts.contract`** verifies the sheet against a contract document the consumer holds, per the two-rung ladder in [behaviors/contracts.md](../behaviors/contracts.md#consumer-verification). The document is canonicalized and hashed by the core regardless of input form. Modes:
 
@@ -61,6 +68,7 @@ Returns `{ [sheetName]: Sheet }` covering every sheet declared in `.gitsheets/`.
 const sheets = await repo.openSheets({
   root?: string,
   prefix?: string,            // applied to every discovered sheet
+  ref?: string,               // discover and pin every sheet at this ref (read-only) — see openSheet
 });
 ```
 
@@ -192,7 +200,8 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 
 | Class | Code | When |
 | --- | --- | --- |
-| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlobStream` ref doesn't resolve |
+| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlobStream` ref doesn't resolve; `openSheet` / `openSheets` / `openStore` `opts.ref` doesn't resolve to a tree |
+| `TransactionError` | `transaction_required` | A permissive-mode write on a ref-pinned (read-only) sheet |
 | `NotFoundError` | `record_not_found` | `readBlobStream` path absent under the ref, or not a blob |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
 | `TransactionError` | `lock_held` | `withLock` / `transact` attempted while the caller's own async context already holds the write lock (not reentrant) |

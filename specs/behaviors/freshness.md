@@ -60,9 +60,9 @@ downstream of it:
 - A rebind to a tree hash identical to the current snapshot is a no-op
   (memoized config and index builds are kept).
 - Rebinding applies to every live `Sheet` the `Repository` instance has
-  issued — via `openSheet`, `openSheets`, `openStore`, or `Sheet.clone()`.
-  Sheets are tracked weakly; holding a `Sheet` does not leak, and dropping one
-  requires no lifecycle call.
+  issued — via `openSheet`, `openSheets`, `openStore`, or `Sheet.clone()` —
+  **except ref-pinned sheets** (below). Sheets are tracked weakly; holding a
+  `Sheet` does not leak, and dropping one requires no lifecycle call.
 - `repo.refresh()` re-resolves `HEAD^{tree}` once and rebinds every live
   sheet. `sheet.refresh()` rebinds only that sheet (the "did my row land?"
   primitive). `store.refresh()` delegates to `repo.refresh()` — a Store's
@@ -87,11 +87,26 @@ A `query()` async iterator captures the snapshot when iteration starts and
 continues against it even if a rebind happens mid-iteration. The rebind
 affects subsequent calls, never an in-flight traversal.
 
-### Pinned / historical reads
+### Ref-pinned sheets
 
-There is no API to pin a `Sheet` to an old tree. Point-in-time reads go
-through explicit refs: `sheet.diffFrom(srcRef)` for record-level change
-feeds, `repo.readBlobStream(ref, path)` for raw blob bytes at any ref.
+`repo.openSheet(name, { ref })`, `repo.openSheets({ ref })`, and
+`openStore(repo, { ref })` open **ref-pinned** sheets: the read snapshot is
+the tree `ref` resolved to at open time, and it is **never rebound
+implicitly** — not by the owning repository's commits, not by
+`repo.refresh()`. The pin is the point: an operator reading a staging branch
+must not have the view shift under them because the service committed to
+`main`. Two explicit ways to move it:
+
+- `sheet.refresh()` on a pinned sheet re-resolves *its own ref* (a branch
+  catches up with its tip; a commit or tree hash resolves to the same tree
+  and is effectively immutable).
+- `store.refresh()` on a pinned store does the same for each of its sheets.
+
+Pinned sheets are read-only: permissive-mode writes throw `TransactionError`
+(`transaction_required`) — write onto that history through
+`repo.transact({ parent: ref }, …)`. Other point-in-time reads remain:
+`sheet.diffFrom(srcRef)` for record-level change feeds,
+`repo.readBlobStream(ref, path)` for raw blob bytes at any ref.
 
 ## Principles
 
@@ -105,7 +120,8 @@ feeds, `repo.readBlobStream(ref, path)` for raw blob bytes at any ref.
   already holds. (First production consumers universally worked around the
   pinned-snapshot behavior rather than relying on it — see
   [#184](https://github.com/JarvusInnovations/gitsheets/issues/184).) Pinned
-  historical reads go through explicit refs, not through withholding refresh.
+  historical reads go through an explicit ref — `openSheet({ ref })` — not
+  through withholding refresh on a live sheet.
 
 ## Coordinates with
 

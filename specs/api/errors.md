@@ -53,7 +53,7 @@ try {
 | `ConfigError` | `config_invalid` | 500 | Sheet config TOML malformed or schema unparseable |
 | `ValidationError` | `validation_failed` | 422 | Record failed JSON Schema or Standard Schema validation |
 | `TransactionError` | `transaction_in_progress` | 409 | Concurrent `repo.transact` attempt |
-| `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode |
+| `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode, or a permissive-mode write on a ref-pinned (read-only) sheet |
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero |
 | `TransactionError` | `push_daemon_running` | 409 | `repo.startPushDaemon` while one is already active |

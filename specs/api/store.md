@@ -35,6 +35,7 @@ const store = await openStore(repo, {
     projects: ProjectSchema,
     // sheets without entries here still work, typed as Sheet<Record<string, unknown>>
   },
+  // ref?: 'published'   — a read-only Store pinned at a ref; see "Pinned stores" below
 });
 
 // fully typed against UserSchema
@@ -77,6 +78,10 @@ A sheet present in `.gitsheets/` but missing from `validators` is not exposed on
 ### `prefix` is not threaded through `openStore`
 
 `openStore` calls `repo.openSheets()` internally without a `prefix` parameter, so the typed `Store` surface always opens sheets without sub-tree scoping. For prefix-scoped typed access, open each prefix-scoped sheet via `repo.openSheet(name, { prefix, validator })` and assemble a wrapper manually. This is a deliberate scope cut — multi-tenant deployments typically open one `Store` per tenant, not one `Store` that spans tenants.
+
+### Pinned stores
+
+`openStore(repo, { ref })` opens every sheet ref-pinned and read-only ([api/repository.md](repository.md#repoopensheetname-opts) `opts.ref`): `store.<sheet>` reads at that ref, `store.transact` still opens an ordinary transaction (pass `parent: ref` to write onto that history), and `store.refresh()` re-resolves the ref for every sheet in the store instead of delegating to `repo.refresh()` (which never touches pinned sheets).
 
 ## Transactions
 

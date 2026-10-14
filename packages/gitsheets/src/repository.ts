@@ -60,6 +60,14 @@ export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
    * sub-tree partitioning of a sheet's records. See specs/api/cli.md and #148.
    */
   readonly prefix?: string;
+  /**
+   * Pin reads to the tree `ref` resolves to now (a branch, tag, commit, or
+   * tree hash): a read-only sheet excluded from auto-refresh and
+   * `repo.refresh()`; only `sheet.refresh()` re-resolves the ref. Writes throw
+   * `TransactionError(transaction_required)`. See specs/api/repository.md
+   * `opts.ref` and specs/behaviors/freshness.md "Ref-pinned sheets".
+   */
+  readonly ref?: string;
   /** Standard Schema validator; runs after the persisted JSON Schema. */
   readonly validator?: StandardSchemaV1<unknown, T>;
   /**
@@ -78,6 +86,8 @@ export interface OpenSheetsOptions {
   readonly root?: string;
   /** Optional sub-prefix applied to every sheet opened. See {@link OpenSheetOptions}. */
   readonly prefix?: string;
+  /** Discover and pin every sheet at this ref (read-only). See {@link OpenSheetOptions.ref}. */
+  readonly ref?: string;
 }
 
 /** Resolve the absolute `.git` directory for `gitDir` (or discovered from `cwd`). */
@@ -154,6 +164,25 @@ export class Repository {
    */
   async currentReadTree(): Promise<string> {
     return this.#resolveReadTree();
+  }
+
+  /**
+   * @internal — the tree hash `ref` (a branch, tag, commit, or tree hash)
+   * resolves to right now; `RefError(ref_not_found)` when it doesn't. The
+   * snapshot a ref-pinned Sheet reads through, and what `Sheet.refresh`
+   * re-resolves for one.
+   */
+  async resolveTreeForRef(ref: string): Promise<string> {
+    try {
+      const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', `${ref}^{tree}`], {
+        cwd: this.#gitDir,
+      });
+      const hash = stdout.trim();
+      if (hash) return hash;
+    } catch {
+      // fall through
+    }
+    throw new RefError('ref_not_found', `ref does not resolve to a tree: ${ref}`);
   }
 
   /**
@@ -275,7 +304,7 @@ export class Repository {
     opts: OpenSheetOptions<T> = {},
   ): Promise<Sheet<T>> {
     const root = opts.root ?? '.';
-    const readRef = await this.#resolveReadTree();
+    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
     const configPath = joinTreePath(root, '.gitsheets', `${name}.toml`);
     const sheetOpts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
@@ -289,6 +318,9 @@ export class Repository {
     }
     if (opts.prefix !== undefined) {
       Object.assign(sheetOpts, { prefix: opts.prefix });
+    }
+    if (opts.ref !== undefined) {
+      Object.assign(sheetOpts, { pinnedRef: opts.ref });
     }
     const sheet = new Sheet<T>(sheetOpts);
     // Eagerly validate config exists by reading once.
@@ -305,7 +337,7 @@ export class Repository {
   /** Discover every sheet declared in `<root>/.gitsheets/*.toml`. */
   async openSheets(opts: OpenSheetsOptions = {}): Promise<Record<string, Sheet>> {
     const root = opts.root ?? '.';
-    const readRef = await this.#resolveReadTree();
+    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
     let names: string[];
     try {
       names = callCore(() => addon.coreDiscoverSheets(this.#gitDir, readRef, root));
@@ -324,6 +356,9 @@ export class Repository {
       };
       if (opts.prefix !== undefined) {
         Object.assign(sheetOpts, { prefix: opts.prefix });
+      }
+      if (opts.ref !== undefined) {
+        Object.assign(sheetOpts, { pinnedRef: opts.ref });
       }
       out[sheetName] = new Sheet(sheetOpts);
     }
