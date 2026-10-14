@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/path-templates.md
   - specs/behaviors/validation.md
   - specs/api/cli.md
 issues: [304]
+pr: 309
 ---
 
 # Plan: flag path-template fields the schema does not require
@@ -56,19 +57,19 @@ reads; the point is to fail before the first write), and inspecting
 
 ## Validation
 
-- [ ] `cargo test`: open fails for a plain field, a recursive field, and a
+- [x] `cargo test`: open fails for a plain field, a recursive field, and a
       bucket base that the schema does not require; passes when required
       locally, required by a contract, or listed in `injectedFields`; an
       expression-only template is never checked; a sheet with no schema is
       never checked; a non-array `injectedFields` is `config_invalid`.
-- [ ] napi `node --test`: `sheetConfigCheck` throws `config_invalid` with the
+- [x] napi `node --test`: `sheetConfigCheck` throws `config_invalid` with the
       field named, and passes with `injectedFields`.
-- [ ] vitest (`gitsheets`): `repo.openSheet` throws `ConfigError`
+- [x] vitest (`gitsheets`): `repo.openSheet` throws `ConfigError`
       (`config_invalid`) for the bad template; `contracts verify` exits
       non-zero on it; `injectedFields` unblocks the open; existing suites
       unchanged.
-- [ ] pytest: `Sheet` open raises the config error for the bad template.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean;
+- [x] pytest: `Sheet` open raises the config error for the bad template.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` clean;
       `npm run type-check` clean.
 
 ## Risks / unknowns
@@ -85,8 +86,22 @@ reads; the point is to fail before the first write), and inspecting
 
 ## Notes
 
-(Populated at closeout.)
+- Error, not warning, at open: a library has no warning channel anyone reads.
+  The escape hatch is `[gitsheet].injectedFields`; the message names both
+  remedies.
+- A dotted plain reference (`${{ meta.slug }}`) parses as an *expression* in
+  the template grammar, so it is exempt like any expression; only a date
+  bucket contributes a dotted base field.
+- Static field extraction lives in both the core (`Template::static_field_names`)
+  and the host `Template.getStaticFieldNames()` — one implementation per
+  side, mirroring the existing `getFieldNames` pair — because `infer` /
+  `migrate-config` run host-side (both CLIs) and need it to write `required`.
+- Nine test fixtures across the suites templated on `slug` while their
+  schemas required other fields: exactly the bug class, fixed by declaring
+  `slug` injected or required.
+- The napi test script enumerates files; `sheet-config-check.mjs` was added
+  but not registered until #311 wired it in.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.
