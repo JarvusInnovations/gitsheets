@@ -14,6 +14,9 @@ to the current `HEAD` tree**:
 2. **Explicitly**, via `sheet.refresh()`, `store.refresh()`, or
    `repo.refresh()` — the consumer's tool after **out-of-band ref movement**
    (another process committed, a `git fetch` + reset, a hot-reload merge).
+3. **After `repo.sync()`** moves the branch `HEAD` points at
+   ([push-sync.md](push-sync.md#sync-opt-in-explicit)) — the library moved
+   the ref itself, so it rebinds before `sync` resolves, like a commit.
 
 gitsheets never watches the ref: there is no polling and no automatic detection
 of commits made outside the `Repository` instance. That is deliberate — the

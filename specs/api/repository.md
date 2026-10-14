@@ -157,6 +157,40 @@ const result = await repo.withLock(async () => {
 - **Not reentrant — deliberately.** The lock has no hold-count. Calling `repo.withLock` inside a `withLock` callback, calling `repo.withLock` inside a `repo.transact` handler (the transaction already holds the lock), or calling `repo.transact` (or any permissive-mode mutation, which auto-opens a transaction) inside a `withLock` callback would self-deadlock — each is detected via async-context tracking and throws `TransactionError` (`lock_held`) instead of hanging.
 - The lock is **in-process, per-`Repository`-instance** — the same scope as the transaction mutex ([behaviors/transactions.md](../behaviors/transactions.md#single-writer-model)). It does not coordinate across processes or across two `Repository` instances opened on the same git dir.
 
+### `repo.sync(opts?)`
+
+Bring `opts.branch` (default: the branch `HEAD` points at) up to date with `opts.remote` (default `origin`): fetch outside the write lock, then fast-forward / replay / escape under it, then refresh live sheets if the branch moved. Returns `Promise<SyncResult>`; the full state machine, option set, and outcome table are in [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
+
+```typescript
+interface SyncOptions {
+  remote?: string;                            // default 'origin'
+  branch?: string;                            // default: HEAD's branch; RefError if HEAD is detached
+  fetch?: boolean;                            // default true; false = the caller already fetched
+  onConflict?: 'fail' | 'preserve-branch';    // default 'fail'
+  conflictBranchPrefix?: string;              // default 'conflicts/'
+  pushConflictBranch?: boolean;               // default true (best-effort)
+  committer?: { name: string; email: string } // for replayed commits; default: the repo's identity
+}
+interface SyncResult {
+  outcome: 'in-sync' | 'fast-forwarded' | 'ahead' | 'rebased' | 'conflict' | 'conflict-escaped' | 'fetch-failed';
+  oldCommit: string;      // the branch tip before
+  newCommit: string;      // the branch tip after (== oldCommit when nothing moved)
+  ahead: number;          // local commits the remote lacked
+  behind: number;         // remote commits the local lacked
+  conflictCommit?: string;        // 'conflict' / 'conflict-escaped': the local commit that would not replay
+  conflictBranch?: string;        // 'conflict-escaped': where the local history was preserved
+  conflictBranchPushed?: boolean; // 'conflict-escaped': whether that branch reached the remote
+  fetchError?: string;            // 'fetch-failed'
+}
+```
+
+- Throws `TransactionError` (`lock_held`) inside a transaction handler or a `withLock` callback; `RefError` (`ref_not_found`) when the branch or its remote-tracking ref does not exist after the fetch; `RefError` (`not_an_ancestor`) when the two histories are unrelated.
+- A running push daemon is handed the new tip after `ahead` / `rebased` (it pushes; `sync` itself never pushes the branch).
+
+### `repo.isAncestor(a, b)`
+
+`Promise<boolean>` — whether commit `a` is reachable from commit `b` (or equal). `RefError` (`ref_not_found`) when either does not resolve to a commit.
+
 ### `repo.requireExplicitTransactions()`
 
 Opt into strict mode. After this is called on a `Repository`, calling `Sheet.upsert` / `delete` / `patch` outside a transaction throws `TransactionError` with `code: 'transaction_required'`.
@@ -214,7 +248,8 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | `TransactionError` | `transaction_required` | A permissive-mode write on a ref-pinned (read-only) sheet |
 | `NotFoundError` | `record_not_found` | `readBlob` / `readBlobStream` path absent under the ref, or not a blob |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
-| `TransactionError` | `lock_held` | `withLock` / `transact` attempted while the caller's own async context already holds the write lock (not reentrant) |
+| `TransactionError` | `lock_held` | `withLock` / `transact` / `sync` attempted while the caller's own async context already holds the write lock (not reentrant) |
+| `RefError` | `not_an_ancestor` | `sync`: the local branch and the remote-tracking branch share no history |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit |
 | `ConfigError` | `config_missing` | `.gitsheets/<name>.toml` not found in `openSheet` |
