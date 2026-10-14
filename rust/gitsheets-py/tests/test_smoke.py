@@ -667,3 +667,19 @@ def test_blob_header_reports_kind_and_size(fresh_repo):
     h = gitsheets.write_blob(git_dir, b"hello")
     assert gitsheets.blob_header(git_dir, h) == {"kind": "blob", "size": 5}
     assert gitsheets.blob_header(git_dir, "0" * 40) is None
+
+
+def test_sync_branch_fast_forwards_and_is_ancestor(seeded_repo):
+    d, git_dir = seeded_repo
+    rev = lambda r: subprocess.run(["git", "-C", d, "rev-parse", r], check=True, capture_output=True).stdout.decode().strip()
+    base = rev("main")
+    # Simulate a fetched remote tip one commit ahead.
+    with gitsheets.transact(git_dir, "remote work", 1_700_000_000, author=("Seed", "seed@x.org"), parent="main", branch="refs/remotes/origin/main") as tx:
+        tx.write_file("remote.txt", "r")
+    remote_tip = tx.result["commit_hash"]
+    r = gitsheets.sync_branch(git_dir, "main", "refs/remotes/origin/main", 1_700_000_000)
+    assert r["outcome"] == "fast-forwarded"
+    assert (r["old_commit"], r["new_commit"], r["ahead"], r["behind"]) == (base, remote_tip, 0, 1)
+    assert rev("main") == remote_tip
+    assert gitsheets.is_ancestor(git_dir, base, remote_tip) is True
+    assert gitsheets.is_ancestor(git_dir, remote_tip, base) is False

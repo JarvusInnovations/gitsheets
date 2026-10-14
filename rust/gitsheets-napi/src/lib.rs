@@ -2188,6 +2188,87 @@ impl CoreTransaction {
     }
 }
 
+// ── repo.sync() — the object-database half (specs/behaviors/push-sync.md) ──────
+
+/// Options for [`sync_branch`].
+#[napi(object)]
+pub struct JsSyncOptions {
+    /// Local branch (bare name or qualified ref).
+    pub branch: String,
+    /// Remote-tracking ref (or any commit-ish), e.g. `refs/remotes/origin/main`.
+    pub remote_ref: String,
+    /// `'fail'` (default) or `'preserve-branch'`.
+    pub on_conflict: Option<String>,
+    /// Prefix for the preserved branch; default `conflicts/`.
+    pub conflict_branch_prefix: Option<String>,
+    /// Committer for replayed commits; default: the repository's identity.
+    pub committer: Option<JsAuthor>,
+    pub time_seconds: i64,
+    pub offset_minutes: i32,
+}
+
+/// The result of [`sync_branch`].
+#[napi(object)]
+pub struct JsSyncResult {
+    pub outcome: String,
+    pub old_commit: String,
+    pub new_commit: String,
+    pub ahead: u32,
+    pub behind: u32,
+    pub conflict_commit: Option<String>,
+    pub conflict_branch: Option<String>,
+}
+
+/// Classify the local branch against the remote-tracking tip and move it
+/// (fast-forward, replay, or preserve-on-conflict). The host fetches first
+/// and holds the write lock. See specs/behaviors/push-sync.md "Sync".
+#[napi]
+pub fn sync_branch(env: Env, git_dir: String, opts: JsSyncOptions) -> Result<JsSyncResult> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let on_conflict = match opts.on_conflict.as_deref() {
+        None | Some("fail") => gitsheets_core::ConflictPolicy::Fail,
+        Some("preserve-branch") => gitsheets_core::ConflictPolicy::PreserveBranch {
+            prefix: opts.conflict_branch_prefix.unwrap_or_else(|| "conflicts/".to_string()),
+        },
+        Some(other) => {
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                format!("syncBranch: unknown onConflict {other:?} — expected 'fail' or 'preserve-branch'"),
+            ))
+        }
+    };
+    let core_opts = gitsheets_core::SyncOptions {
+        branch: opts.branch,
+        remote_ref: opts.remote_ref,
+        on_conflict,
+        committer: opts.committer.map(|a| CoreAuthor {
+            name: a.name,
+            email: a.email,
+        }),
+        time_seconds: opts.time_seconds,
+        offset_minutes: opts.offset_minutes,
+    };
+    match gitsheets_core::sync_branch(&repo, &core_opts) {
+        Ok(r) => Ok(JsSyncResult {
+            outcome: r.outcome.as_str().to_string(),
+            old_commit: r.old_commit,
+            new_commit: r.new_commit,
+            ahead: r.ahead,
+            behind: r.behind,
+            conflict_commit: r.conflict_commit,
+            conflict_branch: r.conflict_branch,
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Whether commit `a` is reachable from commit `b` (or equal).
+#[napi]
+pub fn is_ancestor(env: Env, git_dir: String, a: String, b: String) -> Result<bool> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    gitsheets_core::is_ancestor(&repo, &a, &b).map_err(|err| raise_core_error(&env, &err))
+}
+
 /// Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
 /// `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
 #[napi]

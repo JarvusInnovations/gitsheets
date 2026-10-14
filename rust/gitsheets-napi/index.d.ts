@@ -396,6 +396,39 @@ export interface JsAttachmentEntry {
   name: string
   hash: string
 }
+/** Options for [`sync_branch`]. */
+export interface JsSyncOptions {
+  /** Local branch (bare name or qualified ref). */
+  branch: string
+  /** Remote-tracking ref (or any commit-ish), e.g. `refs/remotes/origin/main`. */
+  remoteRef: string
+  /** `'fail'` (default) or `'preserve-branch'`. */
+  onConflict?: string
+  /** Prefix for the preserved branch; default `conflicts/`. */
+  conflictBranchPrefix?: string
+  /** Committer for replayed commits; default: the repository's identity. */
+  committer?: JsAuthor
+  timeSeconds: number
+  offsetMinutes: number
+}
+/** The result of [`sync_branch`]. */
+export interface JsSyncResult {
+  outcome: string
+  oldCommit: string
+  newCommit: string
+  ahead: number
+  behind: number
+  conflictCommit?: string
+  conflictBranch?: string
+}
+/**
+ * Classify the local branch against the remote-tracking tip and move it
+ * (fast-forward, replay, or preserve-on-conflict). The host fetches first
+ * and holds the write lock. See specs/behaviors/push-sync.md "Sync".
+ */
+export declare function syncBranch(gitDir: string, opts: JsSyncOptions): JsSyncResult
+/** Whether commit `a` is reachable from commit `b` (or equal). */
+export declare function isAncestor(gitDir: string, a: string, b: string): boolean
 /**
  * Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
  * `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
