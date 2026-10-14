@@ -1688,6 +1688,7 @@
 <p>Typed wrapper over <code>Repository.openSheets()</code> that binds per-sheet Standard Schema validators. <code>store.&lt;sheet&gt;</code> is <code>Sheet&lt;InferRecord&lt;V[sheet]&gt;&gt;</code> for every sheet in <code>opts.validators</code>.</p>
 <div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">store</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openStore</span><span class="p">(</span><span class="nx">repo</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="nx">validators</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">users</span><span class="o">:</span><span class="w"> </span><span class="kt">UserSchema</span><span class="p">,</span><span class="w"> </span><span class="nx">projects</span><span class="o">:</span><span class="w"> </span><span class="kt">ProjectSchema</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="c1">// ref: 'published',   // optional: a read-only store pinned at a ref; store.refresh() re-resolves it</span>
 <span class="p">});</span>
 </code></pre></div>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/store.md"><code>specs/api/store.md</code></a> · <a href="../recipes/typed-sheet-with-zod/">recipe</a></p>
@@ -1702,11 +1703,11 @@
 <tbody>
 <tr>
 <td><code>repo.openSheet&lt;T&gt;(name, opts?)</code></td>
-<td>Sheet handle; <code>opts.validator</code> (Standard Schema), <code>opts.root</code>, <code>opts.prefix</code>, <code>opts.contract</code> (verify against a <a href="../contracts/">contract</a> before returning — result on <code>sheet.contractVerification</code>)</td>
+<td>Sheet handle; <code>opts.validator</code> (Standard Schema), <code>opts.root</code>, <code>opts.prefix</code>, <code>opts.ref</code> (pin reads to a branch/tag/commit — read-only, excluded from auto-refresh; <code>sheet.refresh()</code> re-resolves the ref), <code>opts.contract</code> (verify against a <a href="../contracts/">contract</a> before returning — result on <code>sheet.contractVerification</code>)</td>
 </tr>
 <tr>
 <td><code>repo.openSheets(opts?)</code></td>
-<td>All sheets keyed by name; <code>opts.root</code>, <code>opts.prefix</code></td>
+<td>All sheets keyed by name; <code>opts.root</code>, <code>opts.prefix</code>, <code>opts.ref</code></td>
 </tr>
 <tr>
 <td><code>repo.transact(opts, handler)</code></td>
