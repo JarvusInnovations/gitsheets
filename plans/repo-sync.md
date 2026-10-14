@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/push-sync.md
   - specs/api/repository.md
   - specs/behaviors/freshness.md
 issues: [301]
+pr: 316
 ---
 
 # Plan: opt-in repo.sync()
@@ -48,15 +49,15 @@ merge commits non-linearly (local history is linearized like
 
 ## Validation
 
-- [ ] `cargo test`: the six core outcomes; replay preserves author +
+- [x] `cargo test`: the six core outcomes; replay preserves author +
       message and sets the committer; `is_ancestor`.
-- [ ] vitest: in-sync, fast-forward (+ live sheets see it), ahead (+
+- [x] vitest: in-sync, fast-forward (+ live sheets see it), ahead (+
       daemon pushes), rebased (+ remote record visible, local commit on
       top), conflict (fail), conflict-escaped (branch preserved + pushed),
       fetch-failed, lock_held inside transact, isAncestor.
-- [ ] napi + pytest: `syncBranch` / `sync_branch` fast-forward and
+- [x] napi + pytest: `syncBranch` / `sync_branch` fast-forward and
       `isAncestor` / `is_ancestor` round-trip.
-- [ ] clippy / type-check clean.
+- [x] clippy / type-check clean.
 
 ## Risks / unknowns
 
@@ -67,8 +68,21 @@ merge commits non-linearly (local history is linearized like
 
 ## Notes
 
-(Populated at closeout.)
+- The outcome vocabulary is the consumer's reconcile module's (`in-sync`,
+  `fast-forwarded`, `ahead` (was `pushed-ahead`), `rebased`, `conflict`,
+  `conflict-escaped`, `fetch-failed`) so its logs and alerts carry over.
+- Replay is pure plumbing in the core (gix `merge_trees` per local commit,
+  `commit_tree` with the original author and a set committer); nothing to
+  abort, no working tree. Only the fetch and the conflict-branch push spawn
+  git.
+- `onConflict: 'fail'` is the default (nothing moves, the offending commit is
+  named); `'preserve-branch'` is the consumer's boot-time choice.
+- `ahead` / `rebased` tips are handed to a running push daemon via
+  `notifyCommit`; sync never pushes the branch itself.
+- The daemon hand-off test waits 500 ms for the daemon's deferred
+  startup-backlog check before creating work, else that check pushes first.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Tracked as: a CLI / `gitsheets-axi sync` command when a consumer asks (the
+  library surface is the deliverable here).
