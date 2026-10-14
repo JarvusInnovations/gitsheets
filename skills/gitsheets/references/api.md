@@ -165,7 +165,7 @@ const cloned = await sheet.clone();                // staging copy
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for markdown sheets. |
+| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for markdown sheets — only for an absent/`undefined` body; an explicit `null` body is accepted as-is and written empty (v2.8+). |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachment directory |
 | `sheet.patch(query, partial)` | RFC 7396 merge: `null` deletes a field, arrays replace, objects merge |
 | `sheet.clear()` | Wipe the sheet's tree |
