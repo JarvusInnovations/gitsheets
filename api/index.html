@@ -1925,8 +1925,17 @@
 <td><code>tx.parentRef</code> / <code>tx.branchRef</code></td>
 <td>Refs being read from / advanced</td>
 </tr>
+<tr>
+<td><code>tx.writeFile(path, content)</code></td>
+<td>Stage a raw file (repo-root-relative; <code>string</code> as UTF-8 or <code>Buffer</code>/<code>Uint8Array</code>) in the same commit as record changes — sheet configs, contracts, fixtures. Returns a <code>BlobHandle</code>. Not validated or normalized</td>
+</tr>
+<tr>
+<td><code>tx.deleteFile(path)</code></td>
+<td>Remove a raw file; returns whether it existed (a miss leaves the tx unmutated)</td>
+</tr>
 </tbody>
 </table>
+<p><code>repo.transact</code> options: <code>parent</code> (ref or hash; default HEAD; <strong><code>null</code> for an orphan root commit</strong> — empty start, no parents, always commits, <code>branch</code> created and must not exist), <code>branch</code> (ref to advance; <strong>created if absent</strong>), <code>author</code>, <code>committer</code>, <code>message</code>, <code>trailers</code>.</p>
 <p>Consumers don&rsquo;t construct <code>Transaction</code> directly — it comes from <code>repo.transact</code>&rsquo;s handler. <code>tx.sheet(name)</code> may be called any number of times; writes are atomic within the handler.</p>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/transaction.md"><code>specs/api/transaction.md</code></a> · <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/transactions.md"><code>specs/behaviors/transactions.md</code></a> · <a href="../recipes/request-bound-transactions/">request-bound recipe</a></p>
 <h2 id="transactionresult">TransactionResult<a class="headerlink" href="#transactionresult" title="Permanent link"> ¶</a></h2>
