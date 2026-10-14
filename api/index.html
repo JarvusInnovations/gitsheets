@@ -2052,7 +2052,7 @@
 <p>Consumers switch on <code>instanceof</code> or <code>err.code</code> — never on <code>err.message</code>.</p>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/errors.md"><code>specs/api/errors.md</code></a> — full code table</p>
 <h2 id="path-template">Path Template<a class="headerlink" href="#path-template" title="Permanent link"> ¶</a></h2>
-<p><code>Template.fromString(s)</code> — parse + cache. Most consumers don&rsquo;t construct <code>Template</code> directly; it&rsquo;s exposed for advanced use cases (path template diagnostics, custom queryTree integrations).</p>
+<p><code>Template.fromString(s)</code> — parse + cache. Most consumers don&rsquo;t construct <code>Template</code> directly; it&rsquo;s exposed for advanced use cases (path template diagnostics, custom queryTree integrations). <code>getFieldNames()</code> lists every field the template may read (expression identifiers included, best-effort); <code>getStaticFieldNames()</code> lists only the plain / recursive references and date-bucket base fields — the set the open-time <a href="../path-templates/#template-fields-must-be-schema-required">template check</a> requires the schema to list.</p>
 <p>→ <a href="../path-templates/">path templates doc</a> · <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md"><code>specs/behaviors/path-templates.md</code></a></p>
 <h2 id="utility">Utility<a class="headerlink" href="#utility" title="Permanent link"> ¶</a></h2>
 <h3 id="mergepatchtarget-patch"><code>mergePatch(target, patch)</code><a class="headerlink" href="#mergepatchtarget-patch" title="Permanent link"> ¶</a></h3>

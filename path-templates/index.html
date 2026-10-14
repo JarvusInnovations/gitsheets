@@ -636,6 +636,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#template-fields-must-be-schema-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template fields must be schema-required
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#invalid-characters" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1158,6 +1169,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#template-fields-must-be-schema-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template fields must be schema-required
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#invalid-characters" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1317,6 +1339,25 @@ cutoff, so results are identical to a full scan, just cheaper. A range on a
 plain <code>${{ field }}</code> component doesn&rsquo;t prune (unpadded values don&rsquo;t order
 like their directory names) but still filters record-level; <code>$in</code> / <code>$or</code>
 are not supported.</p>
+<h2 id="template-fields-must-be-schema-required">Template fields must be schema-required<a class="headerlink" href="#template-fields-must-be-schema-required" title="Permanent link"> ¶</a></h2>
+<p>A record the template can&rsquo;t render against can&rsquo;t be stored: every <code>upsert</code>
+of it throws <code>path_render_failed</code> and aborts the transaction. So when a sheet
+declares a persisted schema (<code>[gitsheet.schema]</code>, declared contracts, or
+both), gitsheets checks the template against it <strong>at sheet open</strong>: every
+static field the template names — <code>${{ field }}</code>, <code>${{ field/** }}</code>, or the
+base field of a date bucket — must be in a top-level <code>required</code> list of the
+local schema or of a declared contract. Otherwise the open throws
+<code>ConfigError(config_invalid)</code> naming the field. Expression components
+(<code>${{ slug || legacyId }}</code>) are exempt.</p>
+<p>If your writer supplies a path field before upsert that the record schema
+never declares (a tenant or parent key injected by the service), list it in
+<code>injectedFields</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'roles'</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ projectSlug }}/${{ slug }}'</span>
+<span class="n">injectedFields</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'projectSlug'</span><span class="p">]</span>
+</code></pre></div>
+<p>Sheets with no schema and no contracts are not checked.</p>
 <h2 id="invalid-characters">Invalid characters<a class="headerlink" href="#invalid-characters" title="Permanent link"> ¶</a></h2>
 <p>The rendered path is rejected if it contains Windows-disallowed characters
 (<code>&lt; &gt; : " | ? *</code> or control codes) — those throw
