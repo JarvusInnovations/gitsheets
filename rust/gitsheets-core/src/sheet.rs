@@ -392,8 +392,12 @@ impl Sheet {
     ) -> Result<StageOutcome> {
         if let Some(prev) = &candidate.previous_path {
             if prev != &candidate.record_path {
+                // Rename: the attachment directory moves with the record
+                // (specs/behaviors/attachments.md "Move on record rename"),
+                // then the old record file goes. Best effort on the file —
+                // the old path may not exist.
+                self.move_attachment_dir(ctx, tree, prev, &candidate.record_path)?;
                 let old_full = join_record_path(&self.base, prev, self.extension());
-                // Best effort — the old path may not exist.
                 let _ = tree.delete_child_deep(ctx, &old_full).map_err(record::map_ht);
             }
         }
@@ -491,6 +495,80 @@ impl Sheet {
     /// Full tree path of a single attachment (`<base>/<recordPath>/<name>`).
     fn attachment_path(&self, record_path: &str, name: &str) -> String {
         join_path(&[&self.base, record_path, name])
+    }
+
+    /// Re-parent a record's attachment directory from `old_path` to `new_path`
+    /// *(mutating)* — the rename half of `stage_upsert`. The subtree is
+    /// detached from its parent and attached under the new name as a whole
+    /// (O(1); a clean subtree keeps its hash), so nested entries move too.
+    /// When the destination directory already exists, the source entries are
+    /// merged into it, overwriting same-named entries. A record with no
+    /// attachment directory is a no-op.
+    fn move_attachment_dir(
+        &mut self,
+        ctx: &Context<'_>,
+        tree: &mut MutableTree,
+        old_path: &str,
+        new_path: &str,
+    ) -> Result<()> {
+        use holo_tree::Child;
+        let old_dir = self.attachment_dir(old_path);
+        let new_dir = self.attachment_dir(new_path);
+        if old_dir == new_dir {
+            return Ok(());
+        }
+        let (old_parent, old_name) = split_dir(&old_dir);
+        let moved = {
+            // `get_subtree` (not `get_or_create`) so a missing old directory
+            // leaves the tree untouched.
+            let Some(parent) = tree.get_subtree(ctx, old_parent).map_err(record::map_ht)? else {
+                return Ok(());
+            };
+            parent.ensure_children(ctx).map_err(record::map_ht)?;
+            let Some(children) = parent.children.as_mut() else {
+                return Ok(());
+            };
+            match children.get(old_name) {
+                Some(Child::Tree(_)) => {}
+                _ => return Ok(()),
+            }
+            parent.dirty = true;
+            children.remove(old_name)
+        };
+        let Some(Child::Tree(mut src)) = moved else {
+            return Ok(());
+        };
+        let (new_parent, new_name) = split_dir(&new_dir);
+        let parent = tree.get_or_create_subtree(ctx, new_parent).map_err(record::map_ht)?;
+        let children = parent.children.as_mut().expect("get_or_create_subtree loads children");
+        match children.get_mut(new_name) {
+            Some(Child::Tree(dst)) => {
+                // Merge into the existing destination directory.
+                src.ensure_children(ctx).map_err(record::map_ht)?;
+                dst.ensure_children(ctx).map_err(record::map_ht)?;
+                let dst_children = dst.children.as_mut().expect("ensured");
+                if let Some(src_children) = src.children.take() {
+                    for (name, child) in src_children {
+                        dst_children.insert(name, child);
+                    }
+                }
+                dst.dirty = true;
+            }
+            Some(_) => {
+                return Err(Error::CommitFailed {
+                    message: format!(
+                        "{}: cannot move attachments to {new_dir}: a blob already exists there",
+                        self.name
+                    ),
+                });
+            }
+            None => {
+                children.insert(new_name.to_string(), Child::Tree(src));
+            }
+        }
+        parent.dirty = true;
+        self.index_cache = None;
+        Ok(())
     }
 
     /// Stage attachments for a record *(mutating)*: place each `(name, blobHash)`
@@ -950,6 +1028,14 @@ pub fn join_path(parts: &[&str]) -> String {
     out.join("/")
 }
 
+/// Split a deep tree path into `(parent, name)`; a top-level name has parent `.`.
+fn split_dir(path: &str) -> (&str, &str) {
+    match path.rsplit_once('/') {
+        Some((d, f)) => (d, f),
+        None => (".", path),
+    }
+}
+
 /// Join `base` + `record_path` + `extension` into a full tree path.
 fn join_record_path(base: &str, record_path: &str, extension: &str) -> String {
     format!("{}{}", join_path(&[base, record_path]), extension)
@@ -1095,6 +1181,97 @@ mod tests {
         let listed = sheet.list(&tctx(&repo), &mut tree, true).unwrap();
         let paths: Vec<&str> = listed.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["jane-doe"]);
+    }
+
+    #[test]
+    fn stage_rename_moves_the_attachment_dir() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        let r1 = rec(&[("slug", s("jane"))]);
+        let c1 = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r1, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c1).unwrap();
+        let avatar = crate::record::write_blob(&repo, b"AVATAR").unwrap();
+        sheet
+            .set_attachments(&tctx(&repo), &mut tree, "jane", &[("avatar.jpg".into(), avatar.clone())])
+            .unwrap();
+        // A nested entry moves with the subtree too.
+        tree.write_child(&tctx(&repo), "people/jane/thumbs/small.jpg", "SMALL").unwrap();
+        tree.write(&tctx(&repo)).unwrap();
+
+        let r2 = rec(&[("slug", s("jane-doe"))]);
+        let c2 = sheet
+            .prepare_upsert(&tctx(&repo), &mut tree, &r2, Some("jane".into()), false)
+            .unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c2).unwrap();
+        tree.write(&tctx(&repo)).unwrap();
+
+        assert_eq!(sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap(), None);
+        // The blob map lists nested entries too, so the moved subtree shows whole.
+        let moved = sheet.get_attachments(&tctx(&repo), &mut tree, "jane-doe").unwrap().unwrap();
+        let names: Vec<&str> = moved.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["avatar.jpg", "thumbs/small.jpg"]);
+        assert_eq!(moved[0].1, avatar);
+        assert_eq!(
+            tree.read_blob(&tctx(&repo), "people/jane-doe/thumbs/small.jpg").unwrap().unwrap(),
+            b"SMALL"
+        );
+        assert!(tree.get_child(&tctx(&repo), "people/jane").unwrap().is_none());
+        assert!(tree.get_child(&tctx(&repo), "people/jane.toml").unwrap().is_none());
+    }
+
+    #[test]
+    fn stage_rename_merges_into_an_existing_attachment_dir() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        for slug in ["jane", "jane-doe"] {
+            let r = rec(&[("slug", s(slug))]);
+            let c = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).unwrap();
+            sheet.stage_upsert(&tctx(&repo), &mut tree, &c).unwrap();
+        }
+        let a = crate::record::write_blob(&repo, b"A").unwrap();
+        let b = crate::record::write_blob(&repo, b"B").unwrap();
+        let c = crate::record::write_blob(&repo, b"C").unwrap();
+        sheet
+            .set_attachments(&tctx(&repo), &mut tree, "jane", &[("avatar.jpg".into(), a.clone()), ("cv.pdf".into(), b.clone())])
+            .unwrap();
+        sheet
+            .set_attachments(&tctx(&repo), &mut tree, "jane-doe", &[("avatar.jpg".into(), c), ("cover.png".into(), b.clone())])
+            .unwrap();
+
+        let r2 = rec(&[("slug", s("jane-doe"))]);
+        let c2 = sheet
+            .prepare_upsert(&tctx(&repo), &mut tree, &r2, Some("jane".into()), false)
+            .unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c2).unwrap();
+        tree.write(&tctx(&repo)).unwrap();
+
+        // Source wins on a name clash; the destination's other entries stay.
+        let merged = sheet.get_attachments(&tctx(&repo), &mut tree, "jane-doe").unwrap().unwrap();
+        assert_eq!(
+            merged,
+            vec![("avatar.jpg".to_string(), a), ("cover.png".to_string(), b.clone()), ("cv.pdf".to_string(), b)]
+        );
+        assert_eq!(sheet.get_attachments(&tctx(&repo), &mut tree, "jane").unwrap(), None);
+    }
+
+    #[test]
+    fn stage_rename_without_attachments_is_unaffected() {
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&tctx(&repo), config("${{ slug }}", "people"));
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        let r1 = rec(&[("slug", s("jane"))]);
+        let c1 = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r1, None, false).unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c1).unwrap();
+        let r2 = rec(&[("slug", s("jane-doe"))]);
+        let c2 = sheet
+            .prepare_upsert(&tctx(&repo), &mut tree, &r2, Some("jane".into()), false)
+            .unwrap();
+        sheet.stage_upsert(&tctx(&repo), &mut tree, &c2).unwrap();
+        tree.write(&tctx(&repo)).unwrap();
+        assert!(tree.get_child(&tctx(&repo), "people/jane-doe").unwrap().is_none());
+        assert_eq!(sheet.get_attachments(&tctx(&repo), &mut tree, "jane-doe").unwrap(), None);
     }
 
     #[test]

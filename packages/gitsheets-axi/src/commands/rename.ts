@@ -115,13 +115,16 @@ export async function renameCommand(
     ]);
   }
 
-  const renamed = { ...stripSymbols(existing), [field]: flags.newPath };
+  // Spread keeps the record's symbol-keyed path annotation, so this upsert is
+  // a rename: the old file is deleted and its attachment directory moves with
+  // it (specs/behaviors/attachments.md "Move on record rename"). A separate
+  // delete would cascade the attachments away first.
+  const renamed = { ...existing, [field]: flags.newPath };
   const commitMessage = flags.message ?? `${flags.sheet} rename ${flags.oldPath} -> ${flags.newPath}`;
   try {
     const result = await repo.transact({ message: commitMessage }, async (tx) => {
       const txSheet = tx.sheet(flags.sheet, prefixOpts);
       await txSheet.upsert(renamed as never);
-      await txSheet.delete(flags.oldPath);
     });
     return joinBlocks(
       renderObject({
@@ -136,16 +139,6 @@ export async function renameCommand(
   } catch (error) {
     throw translateError(error);
   }
-}
-
-function stripSymbols(record: unknown): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (record && typeof record === 'object') {
-    for (const key of Object.keys(record as Record<string, unknown>)) {
-      out[key] = (record as Record<string, unknown>)[key];
-    }
-  }
-  return out;
 }
 
 function stripExtension(path: string): string {

@@ -61,6 +61,22 @@ describe('rename', () => {
     expect(neu).toContain('members: 1');
   });
 
+  it('carries the record\'s attachments to the new path', async () => {
+    const fixture = await seedTeams();
+    const set = await runCli(['attachment', 'set', 'teams', 'kevin-clough', 'logo.txt', '--data', 'LOGO'], fixture.path);
+    expect(set.exitCode).toBe(0);
+
+    const { exitCode } = await runCli(['rename', 'teams', 'kevin-clough', 'kingofthepark'], fixture.path);
+    expect(exitCode).toBe(0);
+
+    const moved = await runCli(['attachment', 'list', 'teams', 'kingofthepark'], fixture.path);
+    expect(moved.exitCode).toBe(0);
+    expect(moved.stdout).toContain('logo.txt');
+    const { stdout: tree } = await fixture.git('ls-tree', '-r', '--name-only', 'HEAD');
+    expect(tree).toContain('teams/kingofthepark/logo.txt');
+    expect(tree).not.toContain('teams/kevin-clough/logo.txt');
+  });
+
   it('refuses to overwrite an existing target', async () => {
     const fixture = await seedTeams();
     const { stdout, exitCode } = await runCli(['rename', 'teams', 'kevin-clough', 'sencha'], fixture.path);
