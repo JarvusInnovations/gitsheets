@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: [repo-sync]
 specs:
   - specs/behaviors/merge.md
   - specs/api/repository.md
   - specs/api/cli.md
 issues: [307]
+pr: 317
 ---
 
 # Plan: sheet-aware merge
@@ -53,12 +54,12 @@ renamed record is a delete + add to the record pass); octopus merges.
 
 ## Validation
 
-- [ ] `cargo test`: the cases above.
-- [ ] napi + pytest: a disjoint-field merge round-trips.
-- [ ] vitest: `repo.merge` outcomes; `git sheet merge --dry-run` / conflict
+- [x] `cargo test`: the cases above.
+- [x] napi + pytest: a disjoint-field merge round-trips.
+- [x] vitest: `repo.merge` outcomes; `git sheet merge --dry-run` / conflict
       exit 1 / `--prefer theirs`; a real `git merge` with the driver
       installed yields canonical records.
-- [ ] clippy / type-check clean.
+- [x] clippy / type-check clean.
 
 ## Risks / unknowns
 
@@ -68,8 +69,19 @@ renamed record is a delete + add to the record pass); octopus merges.
 
 ## Notes
 
-(Populated at closeout.)
+- The both-side record set comes from two gix tree diffs (base→ours,
+  base→theirs) with rename tracking off, intersected by path; the tree
+  merge's own result for those paths is overwritten by the field merge.
+- Leftover unresolved tree-merge conflicts (non-record paths) are reported
+  as `blob` / `tree`, or resolved from the conflict's stage entries under
+  `prefer`.
+- The driver test exercises `git sheet merge-driver` directly on three temp
+  files (canonical write, then the `git merge-file` marker fallback) rather
+  than through a real `git merge`, which would need the built CLI on PATH.
+- A dry run never reports a commit, fast-forward included.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Tracked as: a `gitsheets-axi merge` command, and rename-aware record
+  merging (a renamed record is a delete + add to the record pass), when a
+  consumer asks.
