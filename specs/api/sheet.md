@@ -214,8 +214,8 @@ Binary blobs colocated with a record.
 await sheet.setAttachment(record, 'avatar.jpg', bufferOrBlob);
 await sheet.setAttachments(record, { 'avatar.jpg': buffer1, 'avatar-128.jpg': blob2 });
 
-const attachments = await sheet.getAttachments(record); // current low-level surface
-const avatar = await sheet.getAttachment(record, 'avatar.jpg');
+const attachments = await sheet.getAttachments(record); // name → BlobHandle
+const avatar = await sheet.getAttachment(record, 'avatar.jpg'); // BlobHandle | null: { hash, size, read(), stream() }
 
 await sheet.deleteAttachment(record, 'avatar.jpg');     // throws NotFoundError if missing
 await sheet.deleteAttachments(record);                  // no-op if record has no attachment dir
@@ -241,7 +241,7 @@ for await (const { name, mimeType, blob } of sheet.attachments(record)) {
 }
 ```
 
-`mimeType` is inferred from the filename extension (with `application/octet-stream` for unknown extensions). `blob.read()` returns a `Buffer`; `blob.stream()` returns a `Readable` from `git cat-file blob <hash>` — useful for streaming large binary attachments without materializing the whole blob in memory.
+`mimeType` is inferred from the filename extension (with `application/octet-stream` for unknown extensions). `blob` is the same `BlobHandle` `getAttachment` returns: `hash`, `size`, `read()` (`Buffer`), `stream()` (a `Readable` with bounded buffering — in-core up to 1 MiB, piped from `git cat-file blob` above that; see [behaviors/attachments.md](../behaviors/attachments.md#blob-metadata-and-bounded-buffering)).
 
 ## Diff
 

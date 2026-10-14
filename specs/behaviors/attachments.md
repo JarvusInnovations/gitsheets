@@ -117,13 +117,24 @@ if (stream === null) reply.code(404);
 else stream.pipe(reply.raw);
 ```
 
-Accepts a record object or a rendered record path (like `getAttachment`); returns `Promise<Readable | null>` — `null` when the attachment is absent, mirroring `getAttachment`. Resolves through the sheet's read snapshot ([freshness.md](freshness.md)), so it reflects this repository's commits without re-opening the sheet.
+Accepts a record object or a rendered record path (like `getAttachment`); returns `Promise<Readable | null>` — `null` when the attachment is absent, mirroring `getAttachment`. Resolves through the sheet's read snapshot ([freshness.md](freshness.md)), so it reflects this repository's commits without re-opening the sheet. It is sugar for `(await sheet.getAttachment(recordOrPath, name))?.stream()`.
 
-### `repo.readBlobStream(ref, path)`
+### `repo.readBlob(ref, path)` / `repo.readBlobStream(ref, path)`
 
-The repository-level primitive for consumers whose attachment key **is** the tree path (`<sheetRoot>/<recordPath>/<name>`): resolves `<ref>:<path>` at call time — no sheet, no snapshot — and returns `Promise<Readable>`. Throws `RefError` (`ref_not_found`) / `NotFoundError` (`record_not_found`) rather than returning `null`, since the caller named an explicit ref. See [api/repository.md](../api/repository.md#reporeadblobstreamref-path).
+The repository-level primitives for consumers whose attachment key **is** the tree path (`<sheetRoot>/<recordPath>/<name>`): resolve `<ref>:<path>` at call time — no sheet, no snapshot. `readBlob` returns `Promise<BlobHandle>` (hash, size, `read()`, `stream()`); `readBlobStream` returns `Promise<Readable>` and is `(await repo.readBlob(ref, path)).stream()`. Both throw `RefError` (`ref_not_found`) / `NotFoundError` (`record_not_found`) rather than returning `null`, since the caller named an explicit ref. See [api/repository.md](../api/repository.md#reporeadblobref-path).
 
-Both are backed by a streamed `git cat-file blob` read — bytes are piped, never fully buffered by gitsheets.
+### Blob metadata and bounded buffering
+
+Every `BlobHandle` gitsheets hands out — from `getAttachment`, `getAttachments`, `attachments()`, `readBlob`, `upsert`, `diffFrom({ blobs: true })` — carries the blob's **`hash`** and **`size`** (bytes), read from the object header in the core with no subprocess and without inflating the blob. An HTTP handler sets `ETag` from the hash and `Content-Length` from the size, then pipes `stream()`:
+
+```typescript
+const avatar = await sheet.getAttachment('janedoe', 'avatar.jpg');
+if (!avatar) return reply.code(404);
+reply.header('ETag', `"${avatar.hash}"`).header('Content-Length', avatar.size);
+return reply.send(avatar.stream());
+```
+
+`stream()` buffers a bounded amount: a blob up to **1 MiB** is read in the core and delivered as a single chunk (one native call, no process spawn — the avatar case), and a larger blob is piped from `git cat-file blob <hash>` so it is never fully materialized by gitsheets. `read()` always returns the whole `Buffer`. This was [#306](https://github.com/JarvusInnovations/gitsheets/issues/306): the handle from `getAttachment` had no `size` and no `stream()`, `readBlobStream` spawned `cat-file -t` before the blob read and returned no metadata, and the iterator's "stream" was a single in-memory chunk at any size.
 
 ## Iterator API
 
@@ -138,6 +149,7 @@ for await (const { name, mimeType, blob } of sheet.attachments(record)) {
 ```
 
 - `name` — the attachment filename (relative to the record's attachment dir)
+- `blob` — the same `BlobHandle` `getAttachment` returns (`hash`, `size`, `read()`, `stream()`)
 - `mimeType` — inferred from extension; `application/octet-stream` for unknown extensions
 - `blob` — handle with `.hash`, `.read()` (Buffer), and `.stream()` (Readable backed by `git cat-file blob <hash>`)
 

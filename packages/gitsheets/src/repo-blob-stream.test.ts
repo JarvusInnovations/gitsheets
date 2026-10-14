@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { NotFoundError, RefError } from './errors.js';
 import { openRepo, type Repository } from './repository.js';
 import { testRepo, type TestRepoHandle } from './test-helpers/test-repo.js';
+import { STREAM_INLINE_LIMIT } from './working-tree.js';
 
 const handles: TestRepoHandle[] = [];
 afterEach(async () => {
@@ -134,5 +135,47 @@ describe('sheet.getAttachmentStream', () => {
     await commitAvatar(repo, Buffer.from('v2'));
     stream = await users.getAttachmentStream('jane', 'avatar.png');
     expect((await collect(stream!)).toString()).toBe('v2');
+  });
+});
+
+// specs/behaviors/attachments.md "Blob metadata and bounded buffering" (#306).
+describe('blob metadata + bounded buffering', () => {
+  it('readBlob carries hash and size from the object header; read() and stream() agree', async () => {
+    const { repo } = await seededRepo();
+    await commitAvatar(repo, BINARY);
+    const blob = await repo.readBlob('HEAD', 'users/jane/avatar.png');
+    expect(blob.hash).toMatch(/^[0-9a-f]{40}$/);
+    expect(blob.size).toBe(BINARY.length);
+    expect(Buffer.compare(await blob.read(), BINARY)).toBe(0);
+    expect(Buffer.compare(await collect(blob.stream()), BINARY)).toBe(0);
+    await expect(repo.readBlob('HEAD', 'users/jane/nope.png')).rejects.toBeInstanceOf(NotFoundError);
+    await expect(repo.readBlob('HEAD', 'users/jane')).rejects.toBeInstanceOf(NotFoundError); // a subtree
+    await expect(repo.readBlob('no-such-ref', 'users/jane/avatar.png')).rejects.toBeInstanceOf(RefError);
+  });
+
+  it('getAttachment / attachments() handles carry size and stream()', async () => {
+    const { repo } = await seededRepo();
+    await commitAvatar(repo, BINARY);
+    const users = await repo.openSheet('users');
+    const blob = await users.getAttachment('jane', 'avatar.png');
+    expect(blob!.size).toBe(BINARY.length);
+    expect(Buffer.compare(await collect(blob!.stream()), BINARY)).toBe(0);
+    for await (const entry of users.attachments('jane')) {
+      expect(entry.blob.size).toBe(BINARY.length);
+      expect(entry.blob.hash).toBe(blob!.hash);
+    }
+    const viaStream = await users.getAttachmentStream('jane', 'avatar.png');
+    expect(Buffer.compare(await collect(viaStream!), BINARY)).toBe(0);
+  });
+
+  it('a blob over the inline limit streams byte-identical through git cat-file', async () => {
+    const big = Buffer.alloc(STREAM_INLINE_LIMIT + 12_345);
+    for (let i = 0; i < big.length; i++) big[i] = (i * 31) & 0xff;
+    const { repo } = await seededRepo();
+    await commitAvatar(repo, big);
+    const blob = await repo.readBlob('HEAD', 'users/jane/avatar.png');
+    expect(blob.size).toBe(big.length);
+    expect(Buffer.compare(await collect(blob.stream()), big)).toBe(0);
+    expect(Buffer.compare(await collect(await repo.readBlobStream('HEAD', 'users/jane/avatar.png')), big)).toBe(0);
   });
 });

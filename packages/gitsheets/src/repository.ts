@@ -5,7 +5,7 @@
 // discovery, author config). See specs/api/repository.md.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 
@@ -208,41 +208,29 @@ export class Repository {
   }
 
   /**
-   * Stream a blob's bytes by `<ref>:<path>`, resolved at call time —
-   * independent of any Sheet's read snapshot. Returns a Node Readable piped
-   * from `git cat-file blob`; the blob is never fully buffered by gitsheets.
-   *
-   * Throws RefError(ref_not_found) when `ref` doesn't resolve to a tree-ish,
-   * NotFoundError(record_not_found) when `path` is absent under the ref's
-   * tree or names a non-blob. See specs/api/repository.md and
-   * specs/behaviors/attachments.md#streaming-reads-by-keypath.
+   * The blob at `<ref>:<path>`, resolved at call time — independent of any
+   * Sheet's read snapshot — as a BlobHandle: `hash`, `size` (from the object
+   * header, no inflate), `read()`, `stream()`. One native call for the
+   * metadata, no subprocess. Throws RefError (`ref_not_found`) when `ref`
+   * doesn't resolve and NotFoundError (`record_not_found`) when nothing — or
+   * a subtree — lives at `path`. See specs/api/repository.md#reporeadblobref-path.
+   */
+  async readBlob(ref: string, path: string): Promise<BlobHandle> {
+    const hash = callCore(() => addon.treeEntryHash(this.#gitDir, ref, path));
+    if (hash === null || hash === undefined) {
+      throw new NotFoundError('record_not_found', `readBlob: no blob at ${ref}:${path}`);
+    }
+    return makeBlobHandle(this.#gitDir, hash, '100644');
+  }
+
+  /**
+   * `(await repo.readBlob(ref, path)).stream()` — a Readable over the blob's
+   * bytes with bounded buffering (in-core up to STREAM_INLINE_LIMIT, piped
+   * from `git cat-file blob` above that). Same errors as readBlob.
+   * See specs/behaviors/attachments.md#streaming-reads-by-keypath.
    */
   async readBlobStream(ref: string, path: string): Promise<Readable> {
-    const spec = `${ref}:${path}`;
-    let type: string | null = null;
-    try {
-      const { stdout } = await exec('git', ['cat-file', '-t', spec], { cwd: this.#gitDir });
-      type = stdout.trim() || null;
-    } catch {
-      type = null;
-    }
-    if (type === null) {
-      // Distinguish a bad ref from a missing path for typed errors.
-      const refResolves = await revParseVerify(this.#gitDir, `${ref}^{tree}`);
-      if (!refResolves) {
-        throw new RefError('ref_not_found', `readBlobStream: ref does not resolve: ${ref}`);
-      }
-      throw new NotFoundError('record_not_found', `readBlobStream: no object at ${spec}`);
-    }
-    if (type !== 'blob') {
-      throw new NotFoundError(
-        'record_not_found',
-        `readBlobStream: object at ${spec} is a ${type}, not a blob`,
-      );
-    }
-    const child = spawn('git', ['cat-file', 'blob', spec], { cwd: this.#gitDir });
-    child.stdin.end();
-    return child.stdout;
+    return (await this.readBlob(ref, path)).stream();
   }
 
   /**
@@ -545,18 +533,6 @@ export class Repository {
 /** Convenience factory: `openRepo({ gitDir? })`. */
 export async function openRepo(opts: OpenRepoOptions = {}): Promise<Repository> {
   return Repository.open(opts);
-}
-
-/** True when `git rev-parse --verify --quiet <rev>` resolves. */
-async function revParseVerify(gitDir: string, rev: string): Promise<boolean> {
-  try {
-    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', rev], {
-      cwd: gitDir,
-    });
-    return stdout.trim().length > 0;
-  } catch {
-    return false;
-  }
 }
 
 /** Resolve a ref/commit-ish to its full commit hash via git rev-parse; null on failure. */

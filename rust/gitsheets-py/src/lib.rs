@@ -761,6 +761,23 @@ fn blob_read<'py>(py: Python<'py>, git_dir: String, hash: String) -> PyResult<Op
     }
 }
 
+/// The object header for `hash` as `{"kind", "size"}`, or `None` when no object
+/// has that id — read without inflating the object.
+#[pyfunction]
+fn blob_header<'py>(py: Python<'py>, git_dir: String, hash: String) -> PyResult<Option<Bound<'py, PyDict>>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    match record::blob_header(&repo, &hash) {
+        Ok(Some((kind, size))) => {
+            let d = PyDict::new(py);
+            d.set_item("kind", kind)?;
+            d.set_item("size", size)?;
+            Ok(Some(d))
+        }
+        Ok(None) => Ok(None),
+        Err(err) => Err(raise_core_error(py, &err)),
+    }
+}
+
 /// Write a batch of records (canonical TOML) under `base` starting from the tree
 /// `base_ref`. Returns `{ "tree_hash", "blob_hashes" }`. The bytes come from the
 /// core's bytes-authority, so two bindings writing the same record agree
@@ -1703,6 +1720,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Functions.
     m.add_function(wrap_pyfunction!(roundtrip, m)?)?;
+    m.add_function(wrap_pyfunction!(blob_header, m)?)?;
     m.add_function(wrap_pyfunction!(parse_records, m)?)?;
     m.add_function(wrap_pyfunction!(serialize_records, m)?)?;
     m.add_function(wrap_pyfunction!(render_paths_batch, m)?)?;

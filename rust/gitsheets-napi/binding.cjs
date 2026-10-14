@@ -152,6 +152,7 @@ module.exports = {
   treeReadBlob: wrap(addon.treeReadBlob),
   treeEntryHash: wrap(addon.treeEntryHash),
   blobRead: wrap(addon.blobRead),
+  blobHeader: wrap(addon.blobHeader),
   templateFieldNames: wrap(addon.templateFieldNames),
   // Secondary indexing (lazy, in-memory). A unique conflict surfaces as a typed
   // IndexError(index_unique_conflict).

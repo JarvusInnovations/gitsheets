@@ -224,6 +224,21 @@ pub fn read_blob_by_hash(repo: &gix::Repository, hash: &str) -> Result<Option<Ve
     }
 }
 
+/// The object header for `hash` — `(kind, size)` read without inflating the
+/// object (`specs/behaviors/attachments.md` "Blob metadata and bounded
+/// buffering"); `None` when no object has that id. The metadata half of a
+/// binding's blob handle (`size` for Content-Length, `hash` for ETag).
+pub fn blob_header(repo: &gix::Repository, hash: &str) -> Result<Option<(String, u64)>> {
+    let id = parse_object_id(hash)?;
+    match repo.try_find_header(id) {
+        Ok(Some(header)) => Ok(Some((header.kind().to_string(), header.size()))),
+        Ok(None) => Ok(None),
+        Err(e) => Err(Error::CommitFailed {
+            message: format!("could not read object header {hash}: {e}"),
+        }),
+    }
+}
+
 /// The blob at `path` (deep, relative to the tree root) as `(hash, bytes)`, or
 /// `None` when nothing — or a subtree — lives there. The by-`ref:path` read
 /// primitive behind sheet-config loading and lazy-body hydration.
@@ -1136,5 +1151,19 @@ mod tests {
         assert_eq!(read_blob_by_hash(&repo, &hash.to_string()).unwrap().unwrap(), bytes);
         assert!(read_blob_by_hash(&repo, &"0".repeat(40)).unwrap().is_none());
         assert!(matches!(read_blob_by_hash(&repo, "not-a-hash"), Err(Error::RefNotFound { .. })));
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    #[test]
+    fn blob_header_reports_kind_and_size_and_none_for_a_missing_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = gix::init(dir.path()).unwrap();
+        let hash = write_blob(&repo, b"hello").unwrap();
+        assert_eq!(blob_header(&repo, &hash).unwrap(), Some(("blob".to_string(), 5)));
+        assert_eq!(blob_header(&repo, &"0".repeat(40)).unwrap(), None);
     }
 }

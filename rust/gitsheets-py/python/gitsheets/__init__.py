@@ -63,6 +63,7 @@ record_query_candidates = _core.record_query_candidates
 tree_read_blob = _core.tree_read_blob
 tree_entry_hash = _core.tree_entry_hash
 blob_read = _core.blob_read
+blob_header = _core.blob_header
 template_field_names = _core.template_field_names
 record_index_unique = _core.record_index_unique
 record_index_multi = _core.record_index_multi
@@ -111,6 +112,7 @@ __all__ = [
     "tree_read_blob",
     "tree_entry_hash",
     "blob_read",
+    "blob_header",
     "template_field_names",
     "record_index_unique",
     "record_index_multi",

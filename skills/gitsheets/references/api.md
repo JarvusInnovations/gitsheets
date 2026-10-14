@@ -79,6 +79,8 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 | `repo.requireExplicitTransactions()` | One-way strict-mode switch — standalone Sheet writes throw |
 | `repo.startPushDaemon(opts)` | Start async push to a remote (returns `PushDaemon`) |
 | `repo.resolveRef(ref)` | `Promise<string \| null>` — resolve a ref or commit hash |
+| `repo.readBlob(ref, path)` | `Promise<BlobHandle>` (v2.8+) — the blob at `<ref>:<path>` resolved now: `hash`, `size`, `read()`, `stream()`; `RefError` / `NotFoundError` |
+| `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()` |
 
 ### `repo.transact`
 
@@ -185,7 +187,7 @@ await sheet.setAttachment(record, 'avatar.jpg', blob);
 await sheet.setAttachments(record, { 'avatar.jpg': blob, 'cover.png': otherBlob });
 
 const blob = await sheet.getAttachment(record, 'avatar.jpg');
-const map = await sheet.getAttachments(record);          // Map of name → BlobHandle
+const map = await sheet.getAttachments(record);          // Map of name → BlobHandle { hash, size, read(), stream() } (size + stream() v2.8+)
 
 await sheet.deleteAttachment(record, 'avatar.jpg');      // throws if missing
 await sheet.deleteAttachments(record);                   // no-op if no attachment dir

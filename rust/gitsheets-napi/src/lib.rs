@@ -1140,6 +1140,26 @@ pub fn blob_read(env: Env, git_dir: String, hash: String) -> Result<Option<Buffe
     }
 }
 
+/// An object header: `kind` (`blob` / `tree` / `commit` / `tag`) and `size` in
+/// bytes, read without inflating the object.
+#[napi(object)]
+pub struct JsBlobHeader {
+    pub kind: String,
+    pub size: f64,
+}
+
+/// The object header for `hash`, or `null` when no object has that id. The
+/// metadata behind a host `BlobHandle`'s `size` (specs/behaviors/attachments.md
+/// "Blob metadata and bounded buffering").
+#[napi]
+pub fn blob_header(env: Env, git_dir: String, hash: String) -> Result<Option<JsBlobHeader>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    match record::blob_header(&repo, &hash) {
+        Ok(h) => Ok(h.map(|(kind, size)| JsBlobHeader { kind, size: size as f64 })),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
 /// A blob read by `treeRef:path`: its object id and bytes.
 #[napi(object)]
 pub struct JsBlobEntry {
