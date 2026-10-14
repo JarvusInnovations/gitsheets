@@ -1557,6 +1557,10 @@ pub struct JsTrailer {
 #[napi(object)]
 pub struct JsTransactionOptions {
     pub parent: Option<String>,
+    /// `transact({ parent: null })`: an orphan root commit — empty starting
+    /// tree, no parents, always commits; `branch` is created (and must not
+    /// already exist). `parent` is ignored when set.
+    pub orphan: Option<bool>,
     pub branch: Option<String>,
     pub author: Option<JsAuthor>,
     pub committer: Option<JsAuthor>,
@@ -1611,6 +1615,7 @@ impl CoreTransaction {
     pub fn begin(env: Env, git_dir: String, opts: JsTransactionOptions) -> Result<Self> {
         let core_opts = TransactionOptions {
             parent: opts.parent,
+            orphan: opts.orphan.unwrap_or(false),
             branch: opts.branch,
             author: opts.author.map(|a| CoreAuthor {
                 name: a.name,
@@ -1874,19 +1879,24 @@ impl CoreTransaction {
         self.set_attachments(env, name, record_path, map)
     }
 
-    /// Stage a raw text file at `path` in this transaction's private tree
-    /// *(mutating)* — the generic file write the CLI uses to commit sheet-config
-    /// edits (`init` / `infer` / `migrate-config`) atomically alongside nothing
-    /// else. `path` is repo-root-relative. Returns the written blob hash.
+    /// Stage a raw file at `path` in this transaction's private tree
+    /// *(mutating)* — the public `tx.writeFile` (specs/api/transaction.md
+    /// "Raw files"): a sheet config, a contract, a fixture, committed with the
+    /// record changes it belongs with. `path` is repo-root-relative; `content`
+    /// is UTF-8 text or raw bytes. Returns the written blob hash.
     #[napi]
-    pub fn write_file(&mut self, env: Env, path: String, content: String) -> Result<String> {
+    pub fn write_file(&mut self, env: Env, path: String, content: Either<String, Buffer>) -> Result<String> {
         let Self { inner, .. } = self;
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
+        let bytes: Vec<u8> = match content {
+            Either::A(text) => text.into_bytes(),
+            Either::B(buf) => buf.to_vec(),
+        };
         let hash = {
             let (ctx, tree) = tx.split();
-            match tree.write_child_bytes(&ctx, &path, content.as_bytes()) {
+            match tree.write_child_bytes(&ctx, &path, &bytes) {
                 Ok(h) => h.to_string(),
                 Err(e) => {
                     let core_err = gitsheets_core::Error::CommitFailed {

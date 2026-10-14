@@ -614,3 +614,49 @@ def test_injected_fields_unblocks_a_writer_supplied_template_field(seeded_repo):
     _commit_roles_config(d, _ROLES_BAD.replace("root = 'roles'\n", "root = 'roles'\ninjectedFields = ['projectSlug']\n"))
     with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
         tx.open_sheet("roles", ".gitsheets/roles.toml")
+
+
+# ── raw files + orphan commits (specs/api/transaction.md) ──────────────────────
+
+
+def _parents(git_dir, commit):
+    out = subprocess.run(
+        ["git", "--git-dir", git_dir, "rev-list", "--parents", "-n", "1", commit],
+        check=True,
+        capture_output=True,
+    ).stdout.decode().split()
+    return out[1:]
+
+
+def test_write_file_and_delete_file_stage_raw_blobs(seeded_repo):
+    d, git_dir = seeded_repo
+    with gitsheets.transact(git_dir, "files", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+        h1 = tx.write_file("fixtures/readme.md", "hello\n")
+        h2 = tx.write_file("fixtures/blob.bin", b"\x00\x01\x02")
+        assert len(h1) == 40 and len(h2) == 40
+        assert tx.delete_file("fixtures/missing.txt") is False
+    commit = tx.result["commit_hash"]
+    show = lambda p: subprocess.run(["git", "--git-dir", git_dir, "show", f"{commit}:{p}"], check=True, capture_output=True).stdout
+    assert show("fixtures/readme.md") == b"hello\n"
+    assert show("fixtures/blob.bin") == b"\x00\x01\x02"
+
+    with gitsheets.transact(git_dir, "rm", 1_700_000_001, author=("Seed", "seed@x.org")) as tx:
+        assert tx.delete_file("fixtures/blob.bin") is True
+    tree = subprocess.run(["git", "--git-dir", git_dir, "ls-tree", "-r", "--name-only", tx.result["commit_hash"]], check=True, capture_output=True).stdout.decode()
+    assert "fixtures/blob.bin" not in tree and "fixtures/readme.md" in tree
+
+
+def test_orphan_transaction_starts_empty_and_creates_its_branch(seeded_repo):
+    d, git_dir = seeded_repo
+    with gitsheets.transact(git_dir, "snapshot", 1_700_000_000, author=("Seed", "seed@x.org"), branch="snapshot", orphan=True) as tx:
+        assert tx.parent_commit_hash is None
+        tx.write_file("README.md", "scrubbed\n")
+    commit = tx.result["commit_hash"]
+    assert _parents(git_dir, commit) == []
+    assert tx.result["ref_name"] == "refs/heads/snapshot"
+    tree = subprocess.run(["git", "--git-dir", git_dir, "ls-tree", "-r", "--name-only", commit], check=True, capture_output=True).stdout.decode().split()
+    assert tree == ["README.md"]  # nothing inherited from main
+
+    with pytest.raises(gitsheets.TransactionError):
+        with gitsheets.transact(git_dir, "again", 1_700_000_001, author=("Seed", "seed@x.org"), branch="snapshot", orphan=True) as tx:
+            pass

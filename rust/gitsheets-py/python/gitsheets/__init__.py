@@ -206,6 +206,19 @@ class Transaction:
         """Remove a single named attachment (strict — raises if absent)."""
         self._inner.delete_attachment(sheet, record_path, name)
 
+    def write_file(self, path: str, content: "str | bytes") -> str:
+        """Stage a raw file at ``path`` (repo-root-relative) in this
+        transaction's tree — a sheet config, a contract, a fixture — so it
+        lands in the same commit as the record changes. ``str`` is written as
+        UTF-8, ``bytes`` as-is. Nothing is validated or normalized. Returns the
+        blob hash. See specs/api/transaction.md "Raw files"."""
+        return self._inner.write_file(path, content)
+
+    def delete_file(self, path: str) -> bool:
+        """Delete the raw file at ``path`` — ``write_file``'s inverse. Returns
+        whether a blob existed there; a miss leaves the transaction unmutated."""
+        return self._inner.delete_file(path)
+
     def delete_attachments(self, sheet: str, record_path: str) -> bool:
         """Remove all attachments for a record (no-op when none). Returns removed?"""
         return self._inner.delete_attachments(sheet, record_path)
@@ -227,8 +240,14 @@ def transact(
     author: Optional[tuple[str, str]] = None,
     committer: Optional[tuple[str, str]] = None,
     trailers: Optional[list[tuple[str, str]]] = None,
+    orphan: bool = False,
 ) -> Iterator[Transaction]:
     """Open a transaction, commit on success, discard on error.
+
+    ``orphan=True`` opens an orphan root commit: the tree starts empty,
+    ``parent`` is ignored, the commit has no parents and always lands;
+    ``branch`` is created and must not already exist
+    (specs/api/transaction.md "Parent ref handling").
 
     Yields a :class:`Transaction`. On clean exit the transaction is finalized
     (commit-on-success-only, with no-op detection); on exception it is
@@ -247,6 +266,7 @@ def transact(
         author,
         committer,
         trailers,
+        orphan,
     )
     facade = Transaction(inner)
     try:
