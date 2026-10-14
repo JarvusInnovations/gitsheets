@@ -100,7 +100,7 @@ const { blob, path } = await sheet.upsert({
 - Serializes through the configured sheet format (TOML by default, markdown/mdx for content-typed sheets — see [behaviors/content-types.md](../behaviors/content-types.md)) and writes the blob
 - Returns the staged blob + its path
 
-`opts.allowMissingBody?: boolean` — content-typed sheets only. Permits an upsert whose record omits the configured body field; without it, a missing body throws `TypeError` so a body-less upsert can't silently erase on-disk content. See [behaviors/content-types.md](../behaviors/content-types.md#upsert-with-a-body-less-record).
+`opts.allowMissingBody?: boolean` — content-typed sheets only. Permits an upsert whose record omits the configured body field (absent or `undefined`); without it, a missing body throws `TypeError` so a body-less upsert can't silently erase on-disk content. An explicit `null` body needs no opt-in: it is written as an empty body. See [behaviors/content-types.md](../behaviors/content-types.md#upsert-with-a-body-less-record).
 
 Throws `ValidationError` on invalid input. Throws `PathTemplateError` if the template can't render against the record.
 

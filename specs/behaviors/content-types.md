@@ -177,8 +177,10 @@ The body-less path uses `format.parseHeaderOnly`, which reads bytes from the blo
 
 ### Upsert with a body-less record
 
-- `sheet.upsert(record)` where the body field is `undefined` throws `TypeError` unless the consumer passes `upsert(record, { allowMissingBody: true })`.
+- `sheet.upsert(record)` where the body field is **absent or `undefined`** throws `TypeError` unless the consumer passes `upsert(record, { allowMissingBody: true })`.
 - Rationale: `upsert` is a full-record replace. A body-less record would erase the on-disk body, which is rarely the intent. Explicit opt-in keeps the trade visible.
+- An **explicit `null`** body is not a forgotten field — it states that the record has no body — so `upsert({ ..., body: null })` is accepted **without** the opt-in and writes frontmatter with an empty body, exactly as `allowMissingBody: true` would. A consumer whose schema declares the body as `string | null` (an event with no description, a post with no content yet) never has to disable the guard for the writes it exists to protect. The null is dropped before serialization like any other null-valued key ([normalization.md](normalization.md) "Null / undefined handling"); on disk there is no difference between a null body, an empty-string body, and an opted-in missing body.
+- Reads do not distinguish them either: an empty body reads back as `''` (the body field is always a string on a content-typed sheet). Consumers with a nullable body field fold `''` to `null` on read. Reading an empty body back as `null` would be the first place a record carried a null and is out of scope until a spec decision says otherwise ([#308](https://github.com/JarvusInnovations/gitsheets/issues/308), point 2).
 - Consumers wanting body-preserving frontmatter updates use `sheet.patch(query, partial)`.
 
 ### CLI
