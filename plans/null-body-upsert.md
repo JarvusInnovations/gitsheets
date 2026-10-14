@@ -1,10 +1,11 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/content-types.md
   - specs/api/sheet.md
 issues: [308]
+pr: 312
 ---
 
 # Plan: accept an explicit null body on markdown upsert
@@ -39,8 +40,8 @@ normalization rule; parked until a spec decision.
 
 ## Validation
 
-- [ ] vitest: the three cases above; existing suites unchanged.
-- [ ] `npm run type-check` clean.
+- [x] vitest: the three cases above; existing suites unchanged.
+- [x] `npm run type-check` clean.
 
 ## Risks / unknowns
 
@@ -49,8 +50,15 @@ normalization rule; parked until a spec decision.
 
 ## Notes
 
-(Populated at closeout.)
+- Root cause: the napi marshal drops null-valued keys (a contract a
+  downstream consumer relies on), so the core saw a null body as absent. The
+  fix sits in the host guard, the only place `null` is still observable, and
+  passes the opt-in through; the marshal is untouched.
+- The guard runs in both `#prepareUpsert` and the `willChange` path, which
+  share the block verbatim.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#318](https://github.com/JarvusInnovations/gitsheets/issues/318) —
+  reading an empty body back as `null` (point 2 of #308), parked behind a
+  spec decision against the normalization null rule.
