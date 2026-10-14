@@ -83,6 +83,7 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 | `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()` |
 | `repo.sync(opts?)` | `Promise<SyncResult>` (v2.8+) — fetch + fast-forward / replay / preserve-on-conflict under the write lock; see PushDaemon section |
 | `repo.isAncestor(a, b)` | `Promise<boolean>` (v2.8+) — is commit `a` reachable from `b` |
+| `repo.merge({ theirs, ours?, prefer?, commit?, message? })` | `Promise<MergeResult>` (v2.8+) — sheet-aware merge: records changed on both sides are field-merged and written canonically; `prefer: 'fail'` (default) reports conflicts in `result.conflicts` with nothing written, `'ours'` / `'theirs'` resolves field, delete/modify and blob conflicts; `commit: false` = dry run. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
 
 ### `repo.transact`
 
