@@ -574,15 +574,11 @@ export interface QueryOptions {
 // --- Attachments iterator (#140) ---
 
 /**
- * Handle on an attachment's bytes, returned by `Sheet.attachments()`. Wraps
- * the raw blob hash with consumer-friendly `read()` (Buffer) and `stream()`
- * (Readable) accessors. Spawns `git cat-file blob <hash>` under the hood.
+ * The blob handle yielded by `sheet.attachments()` — the same `BlobHandle`
+ * `getAttachment` returns (`hash`, `size`, `read()`, `stream()`). Kept as a
+ * named alias for consumers that imported it.
  */
-export interface AttachmentBlobHandle {
-  readonly hash: string;
-  read(): Promise<Buffer>;
-  stream(): Readable;
-}
+export type AttachmentBlobHandle = BlobHandle;
 
 export interface AttachmentEntry {
   readonly name: string;
@@ -651,30 +647,6 @@ function inferMimeType(filename: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
-/**
- * A handle over an attachment blob, read through the core by object id (no
- * `git cat-file` subprocess). `stream()` yields the buffered bytes as a
- * single-chunk `Readable` — the content is held in memory once, which fits
- * the human-scale premise; it is not a streaming read of a huge object.
- */
-function makeAttachmentBlobHandle(gitDir: string, hash: string): AttachmentBlobHandle {
-  const load = (): Buffer => {
-    const bytes = readBlobBytes(gitDir, hash);
-    if (bytes === null) {
-      throw new NotFoundError('record_not_found', `no blob object ${hash}`);
-    }
-    return bytes;
-  };
-  return {
-    hash,
-    async read(): Promise<Buffer> {
-      return load();
-    },
-    stream(): Readable {
-      return Readable.from([load()]);
-    },
-  };
-}
 
 // --- diffFrom (specs/api/sheet.md) ---
 
@@ -1799,7 +1771,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async getAttachmentStream(record: T | string, name: string): Promise<Readable | null> {
     const blob = await this.getAttachment(record, name);
     if (blob === null) return null;
-    return makeAttachmentBlobHandle(this.#gitDir, blob.hash).stream();
+    return blob.stream();
   }
 
   /**
@@ -1815,15 +1787,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async *attachments(record: T | string): AsyncGenerator<AttachmentEntry> {
     const blobMap = await this.getAttachments(record);
     if (!blobMap) return;
-    const gitDir = this.#repo.gitDir;
     for (const name in blobMap) {
       const blob = blobMap[name];
       if (!blob) continue;
-      yield {
-        name,
-        mimeType: inferMimeType(name),
-        blob: makeAttachmentBlobHandle(gitDir, blob.hash),
-      };
+      yield { name, mimeType: inferMimeType(name), blob };
     }
   }
 

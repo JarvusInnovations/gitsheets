@@ -119,6 +119,14 @@ export function readBlobBytes(gitDir: string, hash: string): Buffer | null {
   return callCore(() => addon.blobRead(gitDir, hash)) ?? null;
 }
 
+/**
+ * An object's header (`kind`, `size` in bytes) by id, read without inflating
+ * it; `null` when no such object exists. The metadata behind `BlobHandle.size`.
+ */
+export function blobHeader(gitDir: string, hash: string): { kind: string; size: number } | null {
+  return callCore(() => addon.blobHeader(gitDir, hash)) ?? null;
+}
+
 // --- Structured error mapping -------------------------------------------------
 
 /**
