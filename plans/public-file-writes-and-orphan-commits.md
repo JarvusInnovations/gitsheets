@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/api/transaction.md
   - specs/behaviors/transactions.md
   - specs/api/repository.md
 issues: [305]
+pr: 311
 ---
 
 # Plan: public tx.writeFile/deleteFile, orphan commits, branch creation
@@ -55,13 +56,13 @@ orphan (delete the ref first).
 
 ## Validation
 
-- [ ] `cargo test`: orphan begin/finalize (no parents, empty start, branch
+- [x] `cargo test`: orphan begin/finalize (no parents, empty start, branch
       created, existing branch refused, detached when no branch); fork
       branch created from `main`; CAS on a moved non-parent branch fails.
-- [ ] napi + pytest: orphan option round-trips; `write_file` bytes/str;
+- [x] napi + pytest: orphan option round-trips; `write_file` bytes/str;
       `delete_file`.
-- [ ] vitest: the host tests above; existing CLI config-write tests pass.
-- [ ] clippy / type-check clean.
+- [x] vitest: the host tests above; existing CLI config-write tests pass.
+- [x] clippy / type-check clean.
 
 ## Risks / unknowns
 
@@ -72,8 +73,16 @@ orphan (delete the ref first).
 
 ## Notes
 
-(Populated at closeout.)
+- An orphan onto an existing branch is refused at `begin` with `commit_failed`
+  rather than a new error code — there is no parent to make a move safe.
+- `branch` naming a ref other than the parent captures that ref's tip at
+  open and compare-and-swaps at commit; absent means created (holo-tree's
+  `update_ref` has no must-not-exist mode, so creation is an unconditional
+  set — acceptable under the single-writer premise).
+- napi `begin` is a factory: its errors arrive as plain `Error` with the typed
+  `code`, which the host's `callCore` maps; the boundary test checks the code.
+- pyo3 0.29: `Bound::cast` not `downcast`; `extract::<String>()` for str.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.
