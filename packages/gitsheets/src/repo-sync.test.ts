@@ -98,6 +98,9 @@ describe('repo.sync()', () => {
   it('ahead → nothing moves; a running push daemon is handed the tip and pushes it', async () => {
     const { repo, remote, local } = await world();
     const daemon = await repo.startPushDaemon({ remote: 'origin', maxRetries: 2 });
+    // Let the daemon's deferred startup-backlog check (fetch + rev-list) settle
+    // before creating work, so the only push can come from sync's hand-off.
+    await new Promise((resolve) => setTimeout(resolve, 500));
     // A commit the daemon never heard about (made with plain git, not transact).
     await mkdir(join(local.path, 'users'), { recursive: true });
     await writeFile(join(local.path, 'users', 'jane.toml'), 'email = "jane@x.org"\nslug = "jane"\n');
