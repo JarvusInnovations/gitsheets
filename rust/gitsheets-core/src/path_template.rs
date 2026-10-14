@@ -299,6 +299,32 @@ impl Template {
         out
     }
 
+    /// The top-level field of every *static* component part — a plain or
+    /// recursive field reference, or a date bucket's base field — in source
+    /// order, de-duplicated. Expression parts are skipped: which fields an
+    /// expression needs is not statically decidable, so they are exempt from
+    /// the template-coherence check (`specs/behaviors/path-templates.md`
+    /// "Template fields must be schema-required"). A dotted bucket reference
+    /// contributes its first segment; a dotted plain reference is an
+    /// expression and so is skipped.
+    pub fn static_field_names(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for c in &self.components {
+            for p in &c.parts {
+                let name = match p {
+                    Part::Field { name, .. } => name.clone(),
+                    Part::Bucket { field, .. } => field[0].clone(),
+                    Part::Expression { .. } | Part::Literal(_) => continue,
+                };
+                if seen.insert(name.clone()) {
+                    out.push(name);
+                }
+            }
+        }
+        out
+    }
+
     /// Render each component against a (possibly partial) `query` for the
     /// query-tree walk: the value the component renders to (`None` when a field
     /// or expression it needs is absent → the walk expands across all subtrees
