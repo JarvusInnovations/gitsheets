@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { AxiError } from 'axi-sdk-js';
-import { parseToml, stringifyRecord } from 'gitsheets';
+import { Template, parseToml, stringifyRecord } from 'gitsheets';
 import type { RecordLike } from 'gitsheets';
 
 import type { GitsheetsContext } from '../context.js';
@@ -140,7 +140,14 @@ export async function migrateConfigCommand(
   }
   if (Object.keys(remainingFields).length > 0) newGitsheet['fields'] = remainingFields;
   if (Object.keys(properties).length > 0) {
-    newGitsheet['schema'] = { type: 'object', properties };
+    // The template's static fields are always required: a record missing one
+    // can never be stored, and the open-time template-coherence check
+    // (specs/behaviors/path-templates.md) rejects a schema that omits them.
+    const required = Template.fromString(String(gitsheet['path'] ?? '')).getStaticFieldNames();
+    const schema: RecordLike = { type: 'object' };
+    if (required.length > 0) schema['required'] = [...required];
+    schema['properties'] = properties;
+    newGitsheet['schema'] = schema;
   }
   parsed['gitsheet'] = newGitsheet;
   const newText = stringifyRecord(parsed);

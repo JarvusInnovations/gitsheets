@@ -90,6 +90,21 @@ export function readTreeBlobText(gitDir: string, treeRef: string, path: string):
 }
 
 /** The object id of the blob at `<treeRef>:<path>`, or `null` when absent / not a blob. */
+/**
+ * The core's open-time sheet validation (config, contracts, template
+ * coherence) for the config blob at `configPath` in `treeRef`. Throws the
+ * typed error; returns nothing on success.
+ */
+export function sheetConfigCheck(
+  gitDir: string,
+  treeRef: string,
+  sheetName: string,
+  configPath: string,
+  openRoot: string,
+): void {
+  callCore(() => addon.sheetConfigCheck(gitDir, treeRef, sheetName, configPath, openRoot));
+}
+
 export function treeEntryHash(gitDir: string, treeRef: string, path: string): string | null {
   try {
     return callCore(() => addon.treeEntryHash(gitDir, treeRef, path)) ?? null;

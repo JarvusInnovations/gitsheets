@@ -229,6 +229,7 @@ describe('rebind re-derivations', () => {
     const withSchema = `${USERS}
 [gitsheet.schema]
 type = 'object'
+required = ['slug']
 
 [gitsheet.schema.properties.slug]
 type = 'string'

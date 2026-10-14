@@ -1,5 +1,6 @@
 // CLI entry. See specs/api/cli.md.
 
+import { Template } from '../path-template/index.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -18,7 +19,8 @@ import {
   TransactionError,
   ValidationError,
 } from '../errors.js';
-import { readTreeBlobText } from '../core.js';
+import { readTreeBlobText,
+} from '../core.js';
 import { openRepo } from '../repository.js';
 import type { Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
@@ -553,10 +555,14 @@ async function runInfer(argv: InferArgs): Promise<void> {
     if (info.max !== undefined) prop['maximum'] = info.max;
     properties[field] = prop;
   }
-  const required = [...presence.entries()]
-    .filter(([, count]) => count === recordCount)
-    .map(([n]) => n)
-    .sort();
+  // Fields present on every record, plus the template's static fields (always
+  // required — see migrate-config and specs/behaviors/path-templates.md).
+  const required = [
+    ...new Set([
+      ...[...presence.entries()].filter(([, count]) => count === recordCount).map(([n]) => n),
+      ...Template.fromString((await sheet.readConfig()).path).getStaticFieldNames(),
+    ]),
+  ].sort();
 
   // Read existing config and merge schema into it (preserving root / path / fields).
   const ref = argv.ref ?? 'HEAD';
@@ -681,7 +687,14 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
   }
   if (Object.keys(remainingFields).length > 0) newGitsheet['fields'] = remainingFields;
   if (Object.keys(properties).length > 0) {
-    newGitsheet['schema'] = { type: 'object', properties };
+    // The template's static fields are always required: a record missing one
+    // can never be stored, and the open-time template-coherence check
+    // (specs/behaviors/path-templates.md) rejects a schema that omits them.
+    const required = Template.fromString(String(gitsheet['path'] ?? '')).getStaticFieldNames();
+    const schema: RecordLike = { type: 'object' };
+    if (required.length > 0) schema['required'] = required;
+    schema['properties'] = properties;
+    newGitsheet['schema'] = schema;
   }
   parsed['gitsheet'] = newGitsheet;
 
