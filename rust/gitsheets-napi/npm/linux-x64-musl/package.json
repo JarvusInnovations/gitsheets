@@ -1,6 +1,6 @@
 {
   "name": "@gitsheets/core-napi-linux-x64-musl",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "os": [
     "linux"
   ],
