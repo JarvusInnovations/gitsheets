@@ -579,3 +579,38 @@ def test_blob_primitives_read_the_object_database(markdown_repo):
     assert gitsheets.blob_read(git_dir, "0" * 40) is None
     with pytest.raises(gitsheets.RefError):
         gitsheets.tree_read_blob(git_dir, "no-such-ref", "x")
+
+
+# ── template coherence (specs/behaviors/path-templates.md) ─────────────────────
+# A static template field the persisted schema does not require fails sheet
+# open with ConfigError; `injectedFields` is the escape hatch. Same core check
+# as the Node binding (rust/gitsheets-napi/test/sheet-config-check.mjs).
+
+_ROLES_BAD = (
+    "[gitsheet]\npath = '${{ projectSlug }}/${{ slug }}'\nroot = 'roles'\n\n"
+    "[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n"
+)
+
+
+def _commit_roles_config(d, config):
+    with open(os.path.join(d, ".gitsheets", "roles.toml"), "w") as fh:
+        fh.write(config)
+    _git(["add", ".gitsheets/roles.toml"], cwd=d)
+    _git(["commit", "-q", "-m", "roles"], cwd=d)
+
+
+def test_template_field_not_required_by_schema_fails_sheet_open(seeded_repo):
+    d, git_dir = seeded_repo
+    _commit_roles_config(d, _ROLES_BAD)
+    with pytest.raises(gitsheets.ConfigError) as info:
+        with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+            tx.open_sheet("roles", ".gitsheets/roles.toml")
+    assert '"projectSlug"' in str(info.value)
+    assert "injectedFields" in str(info.value)
+
+
+def test_injected_fields_unblocks_a_writer_supplied_template_field(seeded_repo):
+    d, git_dir = seeded_repo
+    _commit_roles_config(d, _ROLES_BAD.replace("root = 'roles'\n", "root = 'roles'\ninjectedFields = ['projectSlug']\n"))
+    with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+        tx.open_sheet("roles", ".gitsheets/roles.toml")

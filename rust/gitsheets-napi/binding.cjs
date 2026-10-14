@@ -170,6 +170,7 @@ module.exports = {
   CoreTransaction: addon.CoreTransaction,
   coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
   coreCheckValidators: wrap(addon.coreCheckValidators),
+  sheetConfigCheck: wrap(addon.sheetConfigCheck),
   // Consumer-side contract verification — the two-rung ladder behind
   // `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
   // verification"). A verification failure raises a typed

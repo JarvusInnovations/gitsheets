@@ -2174,6 +2174,30 @@ pub fn core_discover_sheets(
     store::discover_sheets(&ctx, &mut tree, &open_root).map_err(|err| raise_core_error(&env, &err))
 }
 
+/// Open the sheet whose config blob lives at `configPath` in the tree `treeRef`
+/// and discard it — the full open-time validation the core performs
+/// (config parse, contract load/compile, template coherence per
+/// specs/behaviors/path-templates.md "Template fields must be
+/// schema-required") surfaced to the host as typed errors. The host calls it
+/// once per distinct config blob from `repo.openSheet`.
+#[napi]
+pub fn sheet_config_check(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+) -> Result<()> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree =
+        record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, "")
+        .map(|_| ())
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
 /// The `openStore` `config_missing` check: every validator must name a declared
 /// sheet. Throws `ConfigError(config_missing)` otherwise.
 #[napi]
