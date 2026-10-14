@@ -445,7 +445,7 @@ fn is_likely_branch(p: &str) -> bool {
     ref_like && !hash_like
 }
 
-fn qualify_ref(name: &str) -> String {
+pub(crate) fn qualify_ref(name: &str) -> String {
     if name.starts_with("refs/") {
         name.to_string()
     } else {
@@ -453,7 +453,7 @@ fn qualify_ref(name: &str) -> String {
     }
 }
 
-fn resolve_author(repo: &gix::Repository, explicit: Option<Author>) -> Author {
+pub(crate) fn resolve_author(repo: &gix::Repository, explicit: Option<Author>) -> Author {
     if let Some(a) = explicit {
         return a;
     }
@@ -523,7 +523,7 @@ pub fn format_commit_message(message: &str, trailers: &[(String, String)]) -> St
     format!("{body}\n\n{}\n", lines.join("\n"))
 }
 
-fn build_signature(
+pub(crate) fn build_signature(
     author: &Author,
     seconds: i64,
     offset_minutes: i32,
