@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/attachments.md
   - specs/api/repository.md
   - specs/api/sheet.md
 issues: [306]
+pr: 315
 ---
 
 # Plan: blob metadata with streaming reads
@@ -51,11 +52,11 @@ objects; the spawn path covers the large case).
 
 ## Validation
 
-- [ ] `cargo test`: `blob_header` kind/size, `None` for a missing id.
-- [ ] napi + pytest: `blobHeader` / `blob_header` parity.
-- [ ] vitest: the host cases above; existing attachment, iterator, diff and
+- [x] `cargo test`: `blob_header` kind/size, `None` for a missing id.
+- [x] napi + pytest: `blobHeader` / `blob_header` parity.
+- [x] vitest: the host cases above; existing attachment, iterator, diff and
       blob-stream suites pass.
-- [ ] clippy / type-check clean.
+- [x] clippy / type-check clean.
 
 ## Risks / unknowns
 
@@ -64,8 +65,16 @@ objects; the spawn path covers the large case).
 
 ## Notes
 
-(Populated at closeout.)
+- `size` is eager on every handle (one `try_find_header` read); the blob is
+  never inflated for it.
+- `stream()` serves ≤ `STREAM_INLINE_LIMIT` (1 MiB) from one in-core read and
+  pipes `git cat-file blob <hash>` above that — the only spawn left on the
+  read side, kept because gix inflates whole objects.
+- `readBlobStream` lost its `cat-file -t` / `rev-parse` spawns: the core's
+  `treeEntryHash` resolves the ref (RefError) and the path (null →
+  NotFoundError).
+- `AttachmentBlobHandle` is a type alias of `BlobHandle` now.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.
