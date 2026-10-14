@@ -73,8 +73,8 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 
 | Method | Purpose |
 | --- | --- |
-| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix` |
-| `repo.openSheets(opts?)` | `Record<string, Sheet>` of every sheet declared under `.gitsheets/` |
+| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix`, `opts.ref` (v2.8+: pin reads to a branch/tag/commit — read-only, never auto-refreshed; `sheet.refresh()` re-resolves the ref; writes throw `TransactionError(transaction_required)` — write via `repo.transact({ parent: ref })`) |
+| `repo.openSheets(opts?)` | `Record<string, Sheet>` of every sheet declared under `.gitsheets/`; `opts.ref` pins them all |
 | `repo.transact(opts, handler)` | Single-commit transaction; see below |
 | `repo.requireExplicitTransactions()` | One-way strict-mode switch — standalone Sheet writes throw |
 | `repo.startPushDaemon(opts)` | Start async push to a remote (returns `PushDaemon`) |
@@ -273,6 +273,7 @@ const ProjectSchema = z.object({ id: z.string(), name: z.string() });
 
 const store = await openStore(repo, {
   validators: { users: UserSchema, projects: ProjectSchema },
+  // ref: 'published',  // v2.8+: read-only store pinned at a ref; store.refresh() re-resolves it
 });
 
 // Each named sheet is Sheet<InferRecord<schema>>:
