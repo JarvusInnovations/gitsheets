@@ -371,6 +371,7 @@ export class Repository {
         offsetMinutes: -new Date().getTimezoneOffset(),
       };
       if (normalized.parent !== undefined) coreOpts.parent = normalized.parent;
+      if (normalized.orphan) coreOpts.orphan = true;
       if (normalized.branch !== undefined) coreOpts.branch = normalized.branch;
 
       const coreTx = callCore(() => CoreTransaction.begin(this.#gitDir, coreOpts));
