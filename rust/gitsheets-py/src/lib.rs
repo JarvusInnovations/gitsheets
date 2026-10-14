@@ -827,6 +827,96 @@ fn sync_branch<'py>(
     Ok(d)
 }
 
+/// Sheet-aware merge of `theirs` into `ours` (specs/behaviors/merge.md). Returns
+/// `{outcome, ours_commit, theirs_commit, base, tree, commit, merged_records, conflicts}`.
+#[pyfunction]
+#[pyo3(signature = (git_dir, ours, theirs, time_seconds, offset_minutes=0, open_root=".", prefer="fail", commit=true, message=None, author=None, committer=None))]
+#[allow(clippy::too_many_arguments)]
+fn merge_sheets<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    ours: String,
+    theirs: String,
+    time_seconds: i64,
+    offset_minutes: i32,
+    open_root: &str,
+    prefer: &str,
+    commit: bool,
+    message: Option<String>,
+    author: Option<(String, String)>,
+    committer: Option<(String, String)>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let prefer = gitsheets_core::Prefer::parse(prefer)
+        .ok_or_else(|| PyValueError::new_err(format!("merge_sheets: unknown prefer {prefer:?} — expected 'fail', 'ours', or 'theirs'")))?;
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let opts = gitsheets_core::MergeOptions {
+        ours,
+        theirs,
+        open_root: open_root.to_string(),
+        prefer,
+        commit,
+        message,
+        author: author.map(|(name, email)| CoreAuthor { name, email }),
+        committer: committer.map(|(name, email)| CoreAuthor { name, email }),
+        time_seconds,
+        offset_minutes,
+    };
+    let r = gitsheets_core::merge_sheets(&repo, &opts).map_err(|e| raise_core_error(py, &e))?;
+    let d = PyDict::new(py);
+    d.set_item("outcome", r.outcome.as_str())?;
+    d.set_item("ours_commit", r.ours_commit)?;
+    d.set_item("theirs_commit", r.theirs_commit)?;
+    d.set_item("base", r.base)?;
+    d.set_item("tree", r.tree)?;
+    d.set_item("commit", r.commit)?;
+    d.set_item("merged_records", r.merged_records)?;
+    let conflicts = PyList::empty(py);
+    for c in r.conflicts {
+        let cd = PyDict::new(py);
+        cd.set_item("path", c.path)?;
+        cd.set_item("kind", c.kind)?;
+        cd.set_item("field", c.field)?;
+        cd.set_item("ours", c.ours)?;
+        cd.set_item("theirs", c.theirs)?;
+        conflicts.append(cd)?;
+    }
+    d.set_item("conflicts", conflicts)?;
+    Ok(d)
+}
+
+/// Field-merge one record's base / ours / theirs texts through the sheet at
+/// `tree_ref` (the merge-driver primitive). Returns `{"text", "conflicts"}`.
+#[pyfunction]
+#[pyo3(signature = (git_dir, tree_ref, sheet_name, config_path, open_root, base, ours, theirs, prefer="fail"))]
+#[allow(clippy::too_many_arguments)]
+fn merge_record_texts<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+    base: Option<String>,
+    ours: String,
+    theirs: String,
+    prefer: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let prefer = gitsheets_core::Prefer::parse(prefer)
+        .ok_or_else(|| PyValueError::new_err(format!("merge_record_texts: unknown prefer {prefer:?}")))?;
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    let mut sheet = CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, "")
+        .map_err(|e| raise_core_error(py, &e))?;
+    let r = gitsheets_core::merge_record_texts(&mut sheet, base.as_deref(), &ours, &theirs, prefer)
+        .map_err(|e| raise_core_error(py, &e))?;
+    let d = PyDict::new(py);
+    d.set_item("text", r.text)?;
+    d.set_item("conflicts", r.conflicts)?;
+    Ok(d)
+}
+
 /// Whether commit `a` is reachable from commit `b` (or equal).
 #[pyfunction]
 fn is_ancestor(py: Python<'_>, git_dir: String, a: String, b: String) -> PyResult<bool> {
@@ -1779,6 +1869,8 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(blob_header, m)?)?;
     m.add_function(wrap_pyfunction!(sync_branch, m)?)?;
     m.add_function(wrap_pyfunction!(is_ancestor, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_sheets, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_record_texts, m)?)?;
     m.add_function(wrap_pyfunction!(parse_records, m)?)?;
     m.add_function(wrap_pyfunction!(serialize_records, m)?)?;
     m.add_function(wrap_pyfunction!(render_paths_batch, m)?)?;

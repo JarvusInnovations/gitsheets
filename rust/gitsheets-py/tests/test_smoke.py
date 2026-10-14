@@ -683,3 +683,23 @@ def test_sync_branch_fast_forwards_and_is_ancestor(seeded_repo):
     assert rev("main") == remote_tip
     assert gitsheets.is_ancestor(git_dir, base, remote_tip) is True
     assert gitsheets.is_ancestor(git_dir, remote_tip, base) is False
+
+
+def test_merge_sheets_field_merges_and_writes_canonically(seeded_repo):
+    d, git_dir = seeded_repo
+    rev = lambda r: subprocess.run(["git", "-C", d, "rev-parse", r], check=True, capture_output=True).stdout.decode().strip()
+    with gitsheets.transact(git_dir, "jane", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+        tx.write_file("people/jane.toml", 'email = "jane@x.org"\nname = "Jane"\nslug = "jane"\n')
+    base = tx.result["commit_hash"]
+    with gitsheets.transact(git_dir, "ours", 1_700_000_001, author=("Seed", "seed@x.org"), parent="main") as tx:
+        tx.write_file("people/jane.toml", 'email = "jane@new.org"\nname = "Jane"\nslug = "jane"\n')
+    with gitsheets.transact(git_dir, "theirs", 1_700_000_002, author=("Seed", "seed@x.org"), parent=base, branch="import") as tx:
+        tx.write_file("people/jane.toml", 'slug = "jane"\nname = "Jane"\nemail = "jane@x.org"\ngithubUserId = 458_494\n')
+    r = gitsheets.merge_sheets(git_dir, "main", "import", 1_700_000_003, author=("M", "m@x.org"))
+    assert r["outcome"] == "merged"
+    assert r["merged_records"] == ["people/jane.toml"]
+    show = subprocess.run(["git", "-C", d, "show", f"{r['commit']}:people/jane.toml"], check=True, capture_output=True).stdout.decode()
+    assert show == 'email = "jane@new.org"\ngithubUserId = 458494\nname = "Jane"\nslug = "jane"\n'
+    assert rev("main") == r["commit"]
+    one = gitsheets.merge_record_texts(git_dir, "HEAD", "people", ".gitsheets/people.toml", ".", 'a = 1\nslug = "x"\n', 'a = 2\nslug = "x"\n', 'a = 3\nslug = "x"\n')
+    assert one["text"] is None and one["conflicts"] == ["a"]

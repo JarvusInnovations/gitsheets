@@ -2269,6 +2269,126 @@ pub fn is_ancestor(env: Env, git_dir: String, a: String, b: String) -> Result<bo
     gitsheets_core::is_ancestor(&repo, &a, &b).map_err(|err| raise_core_error(&env, &err))
 }
 
+// ── sheet-aware merge (specs/behaviors/merge.md) ───────────────────────────────
+
+#[napi(object)]
+pub struct JsMergeOptions {
+    pub ours: String,
+    pub theirs: String,
+    pub open_root: Option<String>,
+    /// `fail` (default) | `ours` | `theirs`.
+    pub prefer: Option<String>,
+    /// Default true; false writes the tree and moves nothing.
+    pub commit: Option<bool>,
+    pub message: Option<String>,
+    pub author: Option<JsAuthor>,
+    pub committer: Option<JsAuthor>,
+    pub time_seconds: i64,
+    pub offset_minutes: i32,
+}
+
+#[napi(object)]
+pub struct JsMergeConflict {
+    pub path: String,
+    pub kind: String,
+    pub field: Option<String>,
+    pub ours: Option<String>,
+    pub theirs: Option<String>,
+}
+
+#[napi(object)]
+pub struct JsMergeResult {
+    pub outcome: String,
+    pub ours_commit: String,
+    pub theirs_commit: String,
+    pub base: Option<String>,
+    pub tree: Option<String>,
+    pub commit: Option<String>,
+    pub merged_records: Vec<String>,
+    pub conflicts: Vec<JsMergeConflict>,
+}
+
+fn parse_prefer(s: Option<&str>) -> Result<gitsheets_core::Prefer> {
+    gitsheets_core::Prefer::parse(s.unwrap_or("fail")).ok_or_else(|| {
+        napi::Error::new(
+            Status::InvalidArg,
+            format!("unknown prefer {:?} — expected 'fail', 'ours', or 'theirs'", s.unwrap_or("")),
+        )
+    })
+}
+
+/// Sheet-aware merge of `theirs` into `ours` — record files changed on both
+/// sides are field-merged and written canonically; conflicts follow `prefer`
+/// or are reported. The host holds the write lock.
+#[napi]
+pub fn merge_sheets(env: Env, git_dir: String, opts: JsMergeOptions) -> Result<JsMergeResult> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let core_opts = gitsheets_core::MergeOptions {
+        ours: opts.ours,
+        theirs: opts.theirs,
+        open_root: opts.open_root.unwrap_or_else(|| ".".to_string()),
+        prefer: parse_prefer(opts.prefer.as_deref())?,
+        commit: opts.commit.unwrap_or(true),
+        message: opts.message,
+        author: opts.author.map(|a| CoreAuthor { name: a.name, email: a.email }),
+        committer: opts.committer.map(|a| CoreAuthor { name: a.name, email: a.email }),
+        time_seconds: opts.time_seconds,
+        offset_minutes: opts.offset_minutes,
+    };
+    match gitsheets_core::merge_sheets(&repo, &core_opts) {
+        Ok(r) => Ok(JsMergeResult {
+            outcome: r.outcome.as_str().to_string(),
+            ours_commit: r.ours_commit,
+            theirs_commit: r.theirs_commit,
+            base: r.base,
+            tree: r.tree,
+            commit: r.commit,
+            merged_records: r.merged_records,
+            conflicts: r
+                .conflicts
+                .into_iter()
+                .map(|c| JsMergeConflict { path: c.path, kind: c.kind, field: c.field, ours: c.ours, theirs: c.theirs })
+                .collect(),
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+#[napi(object)]
+pub struct JsRecordMergeOutcome {
+    pub text: Option<String>,
+    pub conflicts: Vec<String>,
+}
+
+/// Field-merge one record's base / ours / theirs texts through the sheet at
+/// `treeRef` (the merge-driver primitive): canonical text, or the conflicting
+/// field paths.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn merge_record_texts(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+    base: Option<String>,
+    ours: String,
+    theirs: String,
+    prefer: Option<String>,
+) -> Result<JsRecordMergeOutcome> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut sheet = CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, "")
+        .map_err(|err| raise_core_error(&env, &err))?;
+    let prefer = parse_prefer(prefer.as_deref())?;
+    match gitsheets_core::merge_record_texts(&mut sheet, base.as_deref(), &ours, &theirs, prefer) {
+        Ok(r) => Ok(JsRecordMergeOutcome { text: r.text, conflicts: r.conflicts }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
 /// Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
 /// `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
 #[napi]

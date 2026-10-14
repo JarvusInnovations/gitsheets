@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { CoreTransaction, writeBlob, blobHeader, syncBranch, isAncestor } = require('../binding.cjs');
+const { CoreTransaction, writeBlob, blobHeader, syncBranch, isAncestor, mergeSheets, mergeRecordTexts } = require('../binding.cjs');
 
 function setupRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'gitsheets-orphan-'));
@@ -134,6 +134,35 @@ test('syncBranch fast-forwards a behind branch; isAncestor follows reachability'
     assert.equal(git(dir, 'rev-parse', 'main').trim(), remoteTip);
     assert.equal(isAncestor(gitDir, base, remoteTip), true);
     assert.equal(isAncestor(gitDir, remoteTip, base), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('mergeSheets field-merges a record changed on both sides and writes it canonically', () => {
+  const { dir, gitDir } = setupRepo();
+  try {
+    const seed = CoreTransaction.begin(gitDir, opts('jane'));
+    seed.writeFile('people/jane.toml', 'email = "jane@x.org"\nname = "Jane"\nslug = "jane"\n');
+    const base = seed.finalize().commitHash;
+    const o = CoreTransaction.begin(gitDir, opts('ours', { parent: 'main' }));
+    o.writeFile('people/jane.toml', 'email = "jane@new.org"\nname = "Jane"\nslug = "jane"\n');
+    o.finalize();
+    const t = CoreTransaction.begin(gitDir, opts('theirs', { parent: base, branch: 'import' }));
+    t.writeFile('people/jane.toml', 'slug = "jane"\nname = "Jane"\nemail = "jane@x.org"\ngithubUserId = 458_494\n');
+    t.finalize();
+    const r = mergeSheets(gitDir, { ours: 'main', theirs: 'import', timeSeconds: 1_700_000_000, offsetMinutes: 0, author: { name: 'M', email: 'm@x.org' } });
+    assert.equal(r.outcome, 'merged');
+    assert.deepEqual(r.mergedRecords, ['people/jane.toml']);
+    const merged = execFileSync('git', ['-C', dir, 'show', `${r.commit}:people/jane.toml`]).toString();
+    assert.equal(merged, 'email = "jane@new.org"\ngithubUserId = 458494\nname = "Jane"\nslug = "jane"\n');
+    assert.equal(git(dir, 'rev-parse', 'main').trim(), r.commit);
+
+    const one = mergeRecordTexts(gitDir, 'HEAD', 'people', '.gitsheets/people.toml', '.', 'a = 1\nslug = "x"\n', 'a = 2\nslug = "x"\n', 'a = 1\nb = 3\nslug = "x"\n', 'fail');
+    assert.equal(one.text, 'a = 2\nb = 3\nslug = "x"\n');
+    const conflict = mergeRecordTexts(gitDir, 'HEAD', 'people', '.gitsheets/people.toml', '.', 'a = 1\nslug = "x"\n', 'a = 2\nslug = "x"\n', 'a = 3\nslug = "x"\n', 'fail');
+    assert.equal(conflict.text ?? null, null);
+    assert.deepEqual(conflict.conflicts, ['a']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

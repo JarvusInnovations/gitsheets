@@ -429,6 +429,53 @@ export interface JsSyncResult {
 export declare function syncBranch(gitDir: string, opts: JsSyncOptions): JsSyncResult
 /** Whether commit `a` is reachable from commit `b` (or equal). */
 export declare function isAncestor(gitDir: string, a: string, b: string): boolean
+export interface JsMergeOptions {
+  ours: string
+  theirs: string
+  openRoot?: string
+  /** `fail` (default) | `ours` | `theirs`. */
+  prefer?: string
+  /** Default true; false writes the tree and moves nothing. */
+  commit?: boolean
+  message?: string
+  author?: JsAuthor
+  committer?: JsAuthor
+  timeSeconds: number
+  offsetMinutes: number
+}
+export interface JsMergeConflict {
+  path: string
+  kind: string
+  field?: string
+  ours?: string
+  theirs?: string
+}
+export interface JsMergeResult {
+  outcome: string
+  oursCommit: string
+  theirsCommit: string
+  base?: string
+  tree?: string
+  commit?: string
+  mergedRecords: Array<string>
+  conflicts: Array<JsMergeConflict>
+}
+/**
+ * Sheet-aware merge of `theirs` into `ours` — record files changed on both
+ * sides are field-merged and written canonically; conflicts follow `prefer`
+ * or are reported. The host holds the write lock.
+ */
+export declare function mergeSheets(gitDir: string, opts: JsMergeOptions): JsMergeResult
+export interface JsRecordMergeOutcome {
+  text?: string
+  conflicts: Array<string>
+}
+/**
+ * Field-merge one record's base / ours / theirs texts through the sheet at
+ * `treeRef` (the merge-driver primitive): canonical text, or the conflicting
+ * field paths.
+ */
+export declare function mergeRecordTexts(gitDir: string, treeRef: string, sheetName: string, configPath: string, openRoot: string, base: string | undefined | null, ours: string, theirs: string, prefer?: string | undefined | null): JsRecordMergeOutcome
 /**
  * Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
  * `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
