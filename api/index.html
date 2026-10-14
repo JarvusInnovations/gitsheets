@@ -1796,7 +1796,7 @@
 <tbody>
 <tr>
 <td><code>sheet.upsert(record, opts?)</code></td>
-<td>Insert or replace; returns <code>{ blob, path }</code>. A record loaded from the sheet whose rendered path changes is <strong>renamed</strong>: the old file is deleted and its attachment directory moves with it. <code>opts.allowMissingBody</code> for content-typed sheets</td>
+<td>Insert or replace; returns <code>{ blob, path }</code>. A record loaded from the sheet whose rendered path changes is <strong>renamed</strong>: the old file is deleted and its attachment directory moves with it. <code>opts.allowMissingBody</code> for content-typed sheets (an explicit <code>null</code> body needs no opt-in; absent/<code>undefined</code> throws)</td>
 </tr>
 <tr>
 <td><code>sheet.delete(recordOrPath)</code></td>
