@@ -1959,6 +1959,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
         `Sheet.upsert: record is missing the body field ${JSON.stringify(bodyField)}. Pass { allowMissingBody: true } to opt in, or use Sheet.patch for body-preserving frontmatter updates.`,
       );
     }
+    // An explicit `null` body states "no body" (specs/behaviors/content-types.md
+    // "Upsert with a body-less record"): it needs no opt-in. The marshal drops
+    // null-valued keys, so the core would see it as absent — pass the opt-in
+    // through on the consumer's behalf.
+    const allowMissing =
+      (opts.allowMissingBody ?? false) ||
+      (bodyField !== undefined && (record as Record<string, unknown>)[bodyField] === null);
 
     // Standard Schema validator (host-side; may transform). JSON Schema +
     // normalization + path rendering happen in the core's prepareUpsert (which
@@ -1978,7 +1985,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     // Phase 1 (non-mutating): JSON Schema + normalize + render, in the core.
     const candidate = callCore(() =>
-      tx.coreTx.prepareUpsert(this.#name, input, prevArg, opts.allowMissingBody ?? false),
+      tx.coreTx.prepareUpsert(this.#name, input, prevArg, allowMissing),
     ) as unknown as { path: string; nextText: string; record: RecordLike };
 
     // Pre-write unique-index check — throws before staging any bytes.
@@ -2036,6 +2043,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
         `Sheet.upsert: record is missing the body field ${JSON.stringify(bodyField)}. Pass { allowMissingBody: true } to opt in, or use Sheet.patch for body-preserving frontmatter updates.`,
       );
     }
+    // An explicit `null` body states "no body" (specs/behaviors/content-types.md
+    // "Upsert with a body-less record"): it needs no opt-in. The marshal drops
+    // null-valued keys, so the core would see it as absent — pass the opt-in
+    // through on the consumer's behalf.
+    const allowMissing =
+      (opts.allowMissingBody ?? false) ||
+      (bodyField !== undefined && (record as Record<string, unknown>)[bodyField] === null);
     let input: RecordLike = stripSymbols(record as RecordLike);
     if (this.#validator !== undefined) {
       input = await validateRecord({
@@ -2047,7 +2061,6 @@ export class Sheet<T extends RecordLike = RecordLike> {
     }
     const previous = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
     const prevArg = typeof previous === 'string' ? previous : undefined;
-    const allowMissing = opts.allowMissingBody ?? false;
 
     const { candidate, wc } = await this.#withCoreTx((coreTx) => {
       // prepareUpsert (non-mutating) yields the normalized candidate for the

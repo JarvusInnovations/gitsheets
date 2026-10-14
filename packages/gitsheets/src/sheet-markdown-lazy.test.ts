@@ -172,6 +172,29 @@ describe('Sheet.upsert allowMissingBody', () => {
     expect(a!['body']).toBe(''); // serialized as empty body
   });
 
+  it('accepts an explicit null body without the opt-in and writes an empty body (#308)', async () => {
+    const fixture = await seedRepoWithPosts();
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    await repo.transact({ message: 'null body' }, async (tx) => {
+      const posts = tx.sheet('posts');
+      expect((await posts.willChange({ slug: 'n', title: 'N', body: null })).changed).toBe(true);
+      await posts.upsert({ slug: 'n', title: 'N', body: null });
+    });
+    const posts = await repo.openSheet('posts');
+    const n = await posts.queryFirst({ slug: 'n' });
+    expect(n!['title']).toBe('N');
+    expect(n!['body']).toBe(''); // on disk: frontmatter + empty body
+    const { stdout } = await fixture.git('show', 'HEAD:posts/n.md');
+    expect(stdout).toBe('+++\nslug = "n"\ntitle = "N"\n+++\n\n\n');
+
+    // Permissive mode too, and re-upserting the same null body is a no-op.
+    await posts.upsert({ slug: 'm', title: 'M', body: null });
+    expect((await posts.willChange({ slug: 'm', title: 'M', body: null })).changed).toBe(false);
+
+    // `undefined` is still a forgotten field.
+    await expect(posts.upsert({ slug: 'u', title: 'U', body: undefined })).rejects.toThrow(/missing the body field/);
+  });
+
   it('Sheet.patch preserves the body when patching only frontmatter', async () => {
     const fixture = await seedRepoWithPosts();
     const repo = await openRepo({ gitDir: fixture.gitDir });
