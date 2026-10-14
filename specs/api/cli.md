@@ -160,6 +160,14 @@ Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '$
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
 ```
 
+### `git sheet merge <theirs> [--into <ours>] [--prefer ours|theirs] [--message <m>] [--dry-run]`
+
+Sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)): record files changed on both sides are field-merged and written canonically. `--into` defaults to `HEAD`'s branch. Without `--prefer`, any conflict lists every conflicting path (and field) on stderr and exits **1** with nothing written; `--prefer ours|theirs` resolves them. `--dry-run` reports the merged tree hash and moves nothing. Prints the outcome and the merge commit on success.
+
+### `git sheet merge-driver <base> <ours> <theirs> <path>`
+
+The git merge driver ([behaviors/merge.md](../behaviors/merge.md#merge-driver)). Resolves the sheet owning `<path>` from `HEAD`'s configs, field-merges the three files, writes the canonical result over `<ours>`, exits 0. On a field conflict it writes git's own text merge (`git merge-file` markers) and exits 1. A `<path>` under no sheet is text-merged the same way. Install with `git config merge.gitsheets.driver "git sheet merge-driver %O %A %B %P"` and a `.gitattributes` `merge=gitsheets` pattern.
+
 ### `git sheet contracts <subcommand>`
 
 Manage schema contracts ([behaviors/contracts.md](../behaviors/contracts.md)). All state these commands write lives under `.gitsheets/contracts/`; sheet configs are never rewritten by tooling — adding a name to `implements` is the author's edit.

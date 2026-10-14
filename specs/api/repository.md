@@ -190,6 +190,33 @@ interface SyncResult {
 ### `repo.isAncestor(a, b)`
 
 `Promise<boolean>` — whether commit `a` is reachable from commit `b` (or equal). `RefError` (`ref_not_found`) when either does not resolve to a commit.
+### `repo.merge(opts)`
+
+Sheet-aware merge of `opts.theirs` into `opts.ours` (default: the branch `HEAD` points at) per [behaviors/merge.md](../behaviors/merge.md): record files changed on both sides are field-merged and written canonically; conflicts follow `opts.prefer` or are reported. Returns `Promise<MergeResult>`; never throws on a conflict.
+
+```typescript
+interface MergeOptions {
+  theirs: string;                         // branch, tag, or commit to merge in
+  ours?: string;                          // branch to merge into; default HEAD's branch
+  prefer?: 'fail' | 'ours' | 'theirs';    // default 'fail'
+  commit?: boolean;                       // default true; false = write the tree, move nothing (dry-run)
+  message?: string;                       // default `Merge <theirs> into <ours>`
+  author?: { name: string; email: string };
+  committer?: { name: string; email: string };
+  root?: string;                          // openSheet({ root }) scoping; default '.'
+}
+interface MergeResult {
+  outcome: 'up-to-date' | 'fast-forward' | 'merged' | 'conflict' | 'dry-run';
+  oursCommit: string; theirsCommit: string; base: string | null;
+  tree: string | null;        // the merged tree (merged / dry-run)
+  commit: string | null;      // the merge commit (merged) or the tip adopted (fast-forward / up-to-date)
+  mergedRecords: string[];    // record paths re-done at the record level
+  conflicts: Array<{ path: string; kind: 'field' | 'delete-modify' | 'blob' | 'tree'; field?: string; ours?: string; theirs?: string }>;
+}
+```
+
+- `ours` may be a commit hash, in which case no ref moves and `commit` is the detached merge commit.
+- Throws `RefError` (`ref_not_found`) when a side does not resolve, `RefError` (`not_an_ancestor`) when the histories are unrelated, `TransactionError` (`lock_held`) inside a transaction or `withLock`. Runs under the write lock; a moved `HEAD` branch rebinds live sheets.
 
 ### `repo.requireExplicitTransactions()`
 
