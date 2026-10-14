@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/api/repository.md
@@ -7,6 +7,7 @@ specs:
   - specs/behaviors/freshness.md
   - specs/api/errors.md
 issues: [303]
+pr: 313
 ---
 
 # Plan: public read-only sheets at a ref
@@ -50,8 +51,8 @@ is the same thing), and pinning a transaction-bound sheet.
 
 ## Validation
 
-- [ ] vitest: the cases above; existing freshness suite unchanged.
-- [ ] `npm run type-check` clean.
+- [x] vitest: the cases above; existing freshness suite unchanged.
+- [x] `npm run type-check` clean.
 
 ## Risks / unknowns
 
@@ -60,8 +61,14 @@ is the same thing), and pinning a transaction-bound sheet.
 
 ## Notes
 
-(Populated at closeout.)
+- A pinned sheet is simply not registered with the repository's weak sheet
+  registry, so auto-refresh and `repo.refresh()` never see it; its own
+  `refresh()` re-resolves the pinned ref through `Repository.resolveTreeForRef`.
+- The read-only guard reuses `transaction_required` and names the ref plus
+  the `repo.transact({ parent })` route; no new error code.
+- `openStore({ ref })` makes `store.refresh()` refresh each sheet instead of
+  delegating to `repo.refresh()`.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.
