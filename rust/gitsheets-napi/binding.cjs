@@ -170,6 +170,8 @@ module.exports = {
   // `mapCoreError` where a typed instance is wanted.
   CoreTransaction: addon.CoreTransaction,
   coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
+  syncBranch: wrap(addon.syncBranch),
+  isAncestor: wrap(addon.isAncestor),
   coreCheckValidators: wrap(addon.coreCheckValidators),
   sheetConfigCheck: wrap(addon.sheetConfigCheck),
   // Consumer-side contract verification — the two-rung ladder behind

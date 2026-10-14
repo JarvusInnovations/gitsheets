@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, canonicalContractHash, validateContractName, contractPath, checkContractDocument, contractLoad, verifySheetContract, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, treeReadBlob, treeEntryHash, blobRead, blobHeader, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, coreDiscoverSheets, sheetConfigCheck, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
+const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, canonicalContractHash, validateContractName, contractPath, checkContractDocument, contractLoad, verifySheetContract, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, treeReadBlob, treeEntryHash, blobRead, blobHeader, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, syncBranch, isAncestor, coreDiscoverSheets, sheetConfigCheck, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
 
 module.exports.roundtrip = roundtrip
 module.exports.parseRecords = parseRecords
@@ -347,6 +347,8 @@ module.exports.applyMergePatch = applyMergePatch
 module.exports.diffRecords = diffRecords
 module.exports.simulateCoreError = simulateCoreError
 module.exports.CoreTransaction = CoreTransaction
+module.exports.syncBranch = syncBranch
+module.exports.isAncestor = isAncestor
 module.exports.coreDiscoverSheets = coreDiscoverSheets
 module.exports.sheetConfigCheck = sheetConfigCheck
 module.exports.coreCheckValidators = coreCheckValidators

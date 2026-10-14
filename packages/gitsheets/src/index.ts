@@ -8,6 +8,8 @@ export type {
   OpenRepoOptions,
   OpenSheetOptions,
   OpenSheetsOptions,
+  SyncOptions,
+  SyncResult,
 } from './repository.js';
 
 export { Sheet, RECORD_PATH_KEY, RECORD_SHEET_KEY } from './sheet.js';

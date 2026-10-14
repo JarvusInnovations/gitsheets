@@ -50,7 +50,7 @@ holo-tree = { git = "https://github.com/JarvusInnovations/hologit", tag = "holo-
 # depends on (0.83) so the `gix::Repository` handle this crate opens and passes
 # into holo-tree is one unified type. Default features (matching holo-tree) cover
 # rev-parse, object read/write, and repo open/init.
-gix = "0.83"
+gix = { version = "0.83", features = ["merge"] }
 
 # ── markdown-codec-core (the content-typed record format) ────────────────────
 # Faithful frontmatter-delimiter (`+++`) and first-H1 matching for the

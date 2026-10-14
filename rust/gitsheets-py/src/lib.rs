@@ -778,6 +778,62 @@ fn blob_header<'py>(py: Python<'py>, git_dir: String, hash: String) -> PyResult<
     }
 }
 
+/// The object-database half of `repo.sync()` (specs/behaviors/push-sync.md
+/// "Sync"): classify `branch` against `remote_ref` and move it. Returns a dict
+/// `{outcome, old_commit, new_commit, ahead, behind, conflict_commit, conflict_branch}`.
+#[pyfunction]
+#[pyo3(signature = (git_dir, branch, remote_ref, time_seconds, offset_minutes=0, on_conflict="fail", conflict_branch_prefix=None, committer=None))]
+#[allow(clippy::too_many_arguments)]
+fn sync_branch<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    branch: String,
+    remote_ref: String,
+    time_seconds: i64,
+    offset_minutes: i32,
+    on_conflict: &str,
+    conflict_branch_prefix: Option<String>,
+    committer: Option<(String, String)>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let policy = match on_conflict {
+        "fail" => gitsheets_core::ConflictPolicy::Fail,
+        "preserve-branch" => gitsheets_core::ConflictPolicy::PreserveBranch {
+            prefix: conflict_branch_prefix.unwrap_or_else(|| "conflicts/".to_string()),
+        },
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "sync_branch: unknown on_conflict {other:?} — expected 'fail' or 'preserve-branch'"
+            )))
+        }
+    };
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let opts = gitsheets_core::SyncOptions {
+        branch,
+        remote_ref,
+        on_conflict: policy,
+        committer: committer.map(|(name, email)| CoreAuthor { name, email }),
+        time_seconds,
+        offset_minutes,
+    };
+    let r = gitsheets_core::sync_branch(&repo, &opts).map_err(|e| raise_core_error(py, &e))?;
+    let d = PyDict::new(py);
+    d.set_item("outcome", r.outcome.as_str())?;
+    d.set_item("old_commit", r.old_commit)?;
+    d.set_item("new_commit", r.new_commit)?;
+    d.set_item("ahead", r.ahead)?;
+    d.set_item("behind", r.behind)?;
+    d.set_item("conflict_commit", r.conflict_commit)?;
+    d.set_item("conflict_branch", r.conflict_branch)?;
+    Ok(d)
+}
+
+/// Whether commit `a` is reachable from commit `b` (or equal).
+#[pyfunction]
+fn is_ancestor(py: Python<'_>, git_dir: String, a: String, b: String) -> PyResult<bool> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    gitsheets_core::is_ancestor(&repo, &a, &b).map_err(|e| raise_core_error(py, &e))
+}
+
 /// Write a batch of records (canonical TOML) under `base` starting from the tree
 /// `base_ref`. Returns `{ "tree_hash", "blob_hashes" }`. The bytes come from the
 /// core's bytes-authority, so two bindings writing the same record agree
@@ -1721,6 +1777,8 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Functions.
     m.add_function(wrap_pyfunction!(roundtrip, m)?)?;
     m.add_function(wrap_pyfunction!(blob_header, m)?)?;
+    m.add_function(wrap_pyfunction!(sync_branch, m)?)?;
+    m.add_function(wrap_pyfunction!(is_ancestor, m)?)?;
     m.add_function(wrap_pyfunction!(parse_records, m)?)?;
     m.add_function(wrap_pyfunction!(serialize_records, m)?)?;
     m.add_function(wrap_pyfunction!(render_paths_batch, m)?)?;

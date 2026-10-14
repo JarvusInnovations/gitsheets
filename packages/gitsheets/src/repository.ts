@@ -25,6 +25,7 @@ import {
   resolveAuthor,
   toTrailerArray,
   transactionContext,
+  type Author,
   type TransactionHandler,
   type TransactionOptions,
   type TransactionResult,
@@ -88,6 +89,37 @@ export interface OpenSheetsOptions {
   readonly prefix?: string;
   /** Discover and pin every sheet at this ref (read-only). See {@link OpenSheetOptions.ref}. */
   readonly ref?: string;
+}
+
+/** Options for {@link Repository.sync}. See specs/behaviors/push-sync.md "Sync". */
+export interface SyncOptions {
+  /** Remote name; default `origin`. */
+  readonly remote?: string;
+  /** Branch to sync; default: the branch HEAD points at (RefError when detached). */
+  readonly branch?: string;
+  /** Run `git fetch` first; default true. `false` when the caller already fetched. */
+  readonly fetch?: boolean;
+  /** On a replay conflict: leave everything (`fail`, default) or preserve the local tip on a side branch and adopt the remote. */
+  readonly onConflict?: 'fail' | 'preserve-branch';
+  /** Prefix for the preserved branch; default `conflicts/`. */
+  readonly conflictBranchPrefix?: string;
+  /** Push the preserved branch to the remote (best-effort); default true. */
+  readonly pushConflictBranch?: boolean;
+  /** Committer for replayed commits; default: the repository's identity. */
+  readonly committer?: Author;
+}
+
+/** The outcome of {@link Repository.sync}. */
+export interface SyncResult {
+  readonly outcome: 'in-sync' | 'fast-forwarded' | 'ahead' | 'rebased' | 'conflict' | 'conflict-escaped' | 'fetch-failed';
+  readonly oldCommit: string;
+  readonly newCommit: string;
+  readonly ahead: number;
+  readonly behind: number;
+  readonly conflictCommit?: string;
+  readonly conflictBranch?: string;
+  readonly conflictBranchPushed?: boolean;
+  readonly fetchError?: string;
 }
 
 /** Resolve the absolute `.git` directory for `gitDir` (or discovered from `cwd`). */
@@ -435,6 +467,92 @@ export class Repository {
     } finally {
       release();
     }
+  }
+
+  /**
+   * Bring `opts.branch` (default: HEAD's branch) up to date with `opts.remote`
+   * (default `origin`): fetch outside the write lock, then fast-forward /
+   * replay / preserve-on-conflict under it (in the core), then refresh live
+   * sheets if HEAD's branch moved and hand an ahead/replayed tip to a running
+   * push daemon. The single-writer model's one sanctioned reverse path.
+   * See specs/behaviors/push-sync.md "Sync (opt-in, explicit)".
+   */
+  async sync(opts: SyncOptions = {}): Promise<SyncResult> {
+    const remote = opts.remote ?? 'origin';
+    let branch = opts.branch;
+    if (branch === undefined) {
+      const headRef = await this.#headBranchRef();
+      if (!headRef) {
+        throw new RefError('ref_not_found', 'repo.sync: HEAD is detached or the repo is fresh — pass opts.branch');
+      }
+      branch = headRef.replace(/^refs\/heads\//, '');
+    }
+    const bare = branch.replace(/^refs\/heads\//, '');
+    const remoteRef = `refs/remotes/${remote}/${bare}`;
+
+    if (opts.fetch !== false) {
+      try {
+        await exec('git', ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`], { cwd: this.#gitDir });
+      } catch (err) {
+        const current = (await resolveCommit(this.#gitDir, `refs/heads/${bare}`)) ?? '';
+        return {
+          outcome: 'fetch-failed',
+          oldCommit: current,
+          newCommit: current,
+          ahead: 0,
+          behind: 0,
+          fetchError: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+
+    const coreOpts: import('@gitsheets/core-napi').JsSyncOptions = {
+      branch: `refs/heads/${bare}`,
+      remoteRef,
+      onConflict: opts.onConflict ?? 'fail',
+      conflictBranchPrefix: opts.conflictBranchPrefix ?? 'conflicts/',
+      timeSeconds: Math.floor(Date.now() / 1000),
+      offsetMinutes: -new Date().getTimezoneOffset(),
+    };
+    if (opts.committer !== undefined) coreOpts.committer = opts.committer;
+
+    const raw = await this.withLock(() => callCore(() => addon.syncBranch(this.#gitDir, coreOpts)));
+    const result: SyncResult = {
+      outcome: raw.outcome as SyncResult['outcome'],
+      oldCommit: raw.oldCommit,
+      newCommit: raw.newCommit,
+      ahead: raw.ahead,
+      behind: raw.behind,
+    };
+    if (raw.conflictCommit != null) Object.assign(result, { conflictCommit: raw.conflictCommit });
+    if (raw.conflictBranch != null) Object.assign(result, { conflictBranch: raw.conflictBranch });
+
+    // The library moved the ref itself: rebind live sheets like a commit would
+    // (specs/behaviors/freshness.md), when it was HEAD's branch.
+    if (result.newCommit !== result.oldCommit) {
+      const headRef = await this.#headBranchRef();
+      if (headRef === `refs/heads/${bare}`) this.#rebindLiveSheets(await this.#resolveReadTree());
+    }
+    if ((result.outcome === 'ahead' || result.outcome === 'rebased') && this.#pushDaemon) {
+      this.#pushDaemon.notifyCommit(result.newCommit);
+    }
+    if (result.outcome === 'conflict-escaped' && result.conflictBranch !== undefined && opts.pushConflictBranch !== false) {
+      try {
+        await exec('git', ['push', remote, `${result.conflictBranch}:${result.conflictBranch}`], { cwd: this.#gitDir });
+        Object.assign(result, { conflictBranchPushed: true });
+      } catch {
+        Object.assign(result, { conflictBranchPushed: false });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Whether commit `a` is reachable from commit `b` (or equal). RefError
+   * (`ref_not_found`) when either does not resolve to a commit.
+   */
+  async isAncestor(a: string, b: string): Promise<boolean> {
+    return callCore(() => addon.isAncestor(this.#gitDir, a, b));
   }
 
   /**

@@ -31,6 +31,7 @@ pub mod query;
 pub mod record;
 pub mod sheet;
 pub mod store;
+pub mod sync;
 pub mod transaction;
 pub mod validation;
 pub mod value;
@@ -51,6 +52,7 @@ pub use record::{
     WriteOutcome, EMPTY_TREE_HASH, TOML_EXTENSION,
 };
 pub use sheet::{Sheet, StageOutcome, UpsertCandidate, WillChange};
+pub use sync::{is_ancestor, sync_branch, ConflictPolicy, SyncOptions, SyncOutcome, SyncResult};
 pub use transaction::{Author, Transaction, TransactionOptions, TransactionResult};
 pub use value::{null_array_element_msg, null_value_msg, Datetime, DatetimeKind, Value};
 

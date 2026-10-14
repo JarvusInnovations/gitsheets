@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { CoreTransaction, writeBlob, blobHeader } = require('../binding.cjs');
+const { CoreTransaction, writeBlob, blobHeader, syncBranch, isAncestor } = require('../binding.cjs');
 
 function setupRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'gitsheets-orphan-'));
@@ -107,6 +107,33 @@ test('blobHeader: kind + size from the object header; null for a missing id', ()
     const hash = writeBlob(gitDir, Buffer.from([1, 2, 3, 4, 5]));
     assert.deepEqual(blobHeader(gitDir, hash), { kind: 'blob', size: 5 });
     assert.equal(blobHeader(gitDir, '0'.repeat(40)) ?? null, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('syncBranch fast-forwards a behind branch; isAncestor follows reachability', () => {
+  const { dir, gitDir } = setupRepo();
+  try {
+    const base = git(dir, 'rev-parse', 'main').trim();
+    // Simulate a fetched remote tip one commit ahead.
+    const tx = CoreTransaction.begin(gitDir, opts('remote work', { parent: 'main', branch: 'refs/remotes/origin/main' }));
+    tx.writeFile('remote.txt', 'r');
+    const remoteTip = tx.finalize().commitHash;
+    const r = syncBranch(gitDir, {
+      branch: 'main',
+      remoteRef: 'refs/remotes/origin/main',
+      onConflict: 'fail',
+      timeSeconds: 1_700_000_000,
+      offsetMinutes: 0,
+    });
+    assert.equal(r.outcome, 'fast-forwarded');
+    assert.equal(r.oldCommit, base);
+    assert.equal(r.newCommit, remoteTip);
+    assert.deepEqual([r.ahead, r.behind], [0, 1]);
+    assert.equal(git(dir, 'rev-parse', 'main').trim(), remoteTip);
+    assert.equal(isAncestor(gitDir, base, remoteTip), true);
+    assert.equal(isAncestor(gitDir, remoteTip, base), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

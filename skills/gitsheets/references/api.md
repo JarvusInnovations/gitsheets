@@ -81,6 +81,8 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 | `repo.resolveRef(ref)` | `Promise<string \| null>` — resolve a ref or commit hash |
 | `repo.readBlob(ref, path)` | `Promise<BlobHandle>` (v2.8+) — the blob at `<ref>:<path>` resolved now: `hash`, `size`, `read()`, `stream()`; `RefError` / `NotFoundError` |
 | `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()` |
+| `repo.sync(opts?)` | `Promise<SyncResult>` (v2.8+) — fetch + fast-forward / replay / preserve-on-conflict under the write lock; see PushDaemon section |
+| `repo.isAncestor(a, b)` | `Promise<boolean>` (v2.8+) — is commit `a` reachable from `b` |
 
 ### `repo.transact`
 
@@ -341,7 +343,15 @@ await daemon.stop({ timeoutMs: 30_000 });    // graceful drain
 
 On `startPushDaemon` the daemon runs a startup-backlog check (fetch + `rev-list --count <remote>/<branch>..<branch>`) and queues any commits ahead of the remote — useful for catching up after a restart.
 
-**Push-only.** Never pulls. The consumer process is the single writer.
+**Push-only.** Never pulls. The consumer process is the single writer — the reverse direction is `repo.sync()`:
+
+```typescript
+const r = await repo.sync({ remote: 'origin', branch: 'main', onConflict: 'preserve-branch' }); // v2.8+
+// r.outcome: 'in-sync' | 'fast-forwarded' | 'ahead' | 'rebased' | 'conflict' | 'conflict-escaped' | 'fetch-failed'
+// r.oldCommit, r.newCommit, r.ahead, r.behind, r.conflictBranch?, r.conflictCommit?, r.fetchError?
+```
+
+Fetch happens outside the write lock; classification and ref movement happen under it (no transaction can interleave); live sheets are rebound when HEAD's branch moved; `ahead` / `rebased` tips are handed to a running push daemon. `onConflict: 'fail'` (default) leaves everything in place and names the commit that would not replay; `'preserve-branch'` keeps the local history on `conflicts/<UTC>` (pushed best-effort) and adopts the remote. `repo.isAncestor(a, b)` is the "do I already have this commit?" short-circuit.
 
 ## Errors
 

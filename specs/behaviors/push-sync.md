@@ -6,14 +6,55 @@ A `Repository` can run an optional **push daemon** that asynchronously pushes ne
 
 ## Applies To
 
-- [api/repository.md](../api/repository.md) — `repo.startPushDaemon(opts)`
+- [api/repository.md](../api/repository.md) — `repo.startPushDaemon(opts)`, `repo.sync(opts)`, `repo.isAncestor(a, b)`
 - [api/transaction.md](../api/transaction.md) — commits produced by `repo.transact` are what the daemon pushes
+- [behaviors/freshness.md](freshness.md) — a sync that moves `HEAD`'s branch rebinds live sheets
 
-## Why push-only
+## Why the daemon is push-only
 
-A consumer process that writes to gitsheets is the *single writer* (see [behaviors/transactions.md](transactions.md)). Pulling from the remote at runtime would risk overwriting in-memory state and unstaged tree changes — neither is recoverable cleanly.
+A consumer process that writes to gitsheets is the *single writer* (see [behaviors/transactions.md](transactions.md)). A daemon that pulled on its own schedule would move the branch underneath open transactions and standing sheets — neither is recoverable cleanly. So the daemon never pulls.
 
-If a consumer needs to incorporate changes from elsewhere (a manual edit, a separate process), the canonical path is: stop the consumer, pull, restart. The library does not automate this.
+Incorporating changes from elsewhere (an importer, a person pushing to the data repo, a separate process) is a separate, **explicit, consumer-invoked** operation that runs under the write lock: [`repo.sync()`](#sync-opt-in-explicit) below. Without it the fallback is still: stop the consumer, pull, restart.
+
+## Sync (opt-in, explicit)
+
+`repo.sync(opts)` brings a local branch up to date with a remote that other writers also push to. It is the single-writer model's one sanctioned reverse path: the consumer decides *when* (at boot, from a webhook, on a timer), and the library guarantees that nothing else commits or reads a half-moved ref while it runs.
+
+```typescript
+const result = await repo.sync({
+  remote: 'origin',               // default 'origin'
+  branch: 'published',            // default: the branch HEAD points at
+  onConflict: 'preserve-branch',  // default 'fail'
+});
+// { outcome, oldCommit, newCommit, ahead, behind, conflictBranch?, conflictCommit?, fetchError? }
+```
+
+### Steps
+
+1. **Fetch, outside the lock.** `git fetch --prune <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>` — an explicit refspec, so a single-branch clone can still sync a branch it was not cloned with. A failed fetch (network, auth) is **not an error**: the outcome is `fetch-failed`, nothing moves, and `fetchError` carries the message. `fetch: false` skips the step when the caller already fetched.
+2. **Classify and move, inside the lock** — the same mutex `repo.transact` and `repo.withLock` take, so a transaction cannot open, commit, or observe a partially moved ref during the sync (and `sync` inside a transaction handler or a `withLock` callback is `lock_held`). With `L` the local tip, `R` the remote-tracking tip, `B` their merge base:
+
+   | Relation | Outcome | Ref movement |
+   | --- | --- | --- |
+   | `L == R` | `in-sync` | none |
+   | `L == B` (behind) | `fast-forwarded` | branch → `R` (compare-and-swap from `L`) |
+   | `R == B` (ahead) | `ahead` | none; the local commits are handed to the push daemon if one is running |
+   | diverged, replay clean | `rebased` | each local commit `B..L`, oldest first, is replayed onto `R` as a 3-way tree merge (parent tree, tip, commit tree); author, date and message preserved, committer set to `opts.committer` or the repository's identity; branch → new tip (compare-and-swap from `L`); the new tip is handed to the push daemon |
+   | diverged, replay conflicts, `onConflict: 'fail'` | `conflict` | none; `conflictCommit` names the local commit that could not be replayed |
+   | diverged, replay conflicts, `onConflict: 'preserve-branch'` | `conflict-escaped` | the local tip is preserved on a new branch `<conflictBranchPrefix><UTC timestamp>` (default prefix `conflicts/`, timestamp `YYYY-MM-DDTHH-MM-SSZ`), the branch is reset to `R`, and the conflict branch is pushed to the remote best-effort (`conflictBranchPushed`) so an operator can see it |
+   | `L` and `R` share no history | throws `RefError` (`not_an_ancestor`) | none |
+
+   `ahead` / `behind` are the commit counts `B..L` / `B..R`.
+
+3. **Refresh.** When the branch moved and it is the branch `HEAD` points at, every live sheet is rebound to the new tree before `sync` resolves — exactly as a committing transaction does ([freshness.md](freshness.md)). Ref-pinned sheets are untouched.
+
+The replay is pure object-database work (no working tree, no index, nothing to abort), done in the core; only the fetch and the conflict-branch push spawn git, because the network layer stays with git's own auth and transport. `sync` never force-pushes and never rewrites the remote: the only remote writes are the push daemon's fast-forward pushes and the conflict branch.
+
+### `repo.isAncestor(a, b)`
+
+`true` when commit `a` is reachable from commit `b` (or `a == b`). The short-circuit consumers use before a sync or a hot reload ("do I already have this commit?"). `RefError` (`ref_not_found`) if either does not resolve to a commit.
+
+This was [#301](https://github.com/JarvusInnovations/gitsheets/issues/301): a consumer with a push daemon *and* an external writer hand-rolled all of the above in ~500 lines of plumbing; the outcome vocabulary is that module's, kept so its logs and alerts carry over.
 
 ## Lifecycle
 
