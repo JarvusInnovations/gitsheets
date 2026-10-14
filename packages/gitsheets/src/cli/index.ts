@@ -19,7 +19,7 @@ import {
   TransactionError,
   ValidationError,
 } from '../errors.js';
-import { readTreeBlobText,
+import { readTreeBlobText, mergeRecordTexts,
 } from '../core.js';
 import { openRepo } from '../repository.js';
 import type { Sheet, UpsertResult } from '../sheet.js';
@@ -88,6 +88,20 @@ interface InitArgs extends GlobalArgs {
   path?: string;
   schema?: string;
   force?: boolean;
+}
+
+interface MergeArgs extends GlobalArgs {
+  theirs: string;
+  into?: string;
+  prefer?: string;
+  dryRun: boolean;
+}
+
+interface MergeDriverArgs extends GlobalArgs {
+  base: string;
+  ours: string;
+  theirs: string;
+  path: string;
 }
 
 interface CheckArgs extends GlobalArgs {
@@ -709,6 +723,92 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
 }
 
 /**
+ * `gitsheets merge <theirs>` — sheet-aware merge (specs/behaviors/merge.md).
+ * Conflicts are listed on stderr and exit 1 with nothing written unless
+ * `--prefer` resolves them.
+ */
+async function runMerge(argv: MergeArgs): Promise<void> {
+  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const opts: import('../repository.js').MergeOptions = {
+    theirs: argv.theirs,
+    commit: !argv.dryRun,
+    ...(argv.into ? { ours: argv.into } : {}),
+    ...(argv.prefer ? { prefer: argv.prefer as 'ours' | 'theirs' } : {}),
+    ...(argv.message ? { message: argv.message } : {}),
+    ...(argv.root ? { root: argv.root } : {}),
+    ...(argv.authorName && argv.authorEmail ? { author: { name: argv.authorName, email: argv.authorEmail } } : {}),
+  };
+  const r = await repo.merge(opts);
+  switch (r.outcome) {
+    case 'conflict':
+      for (const c of r.conflicts) {
+        const detail = c.kind === 'field' ? `field ${c.field}` : c.kind;
+        process.stderr.write(`gitsheets: merge conflict: ${c.path} (${detail})\n`);
+      }
+      throw new Error(`merge: ${r.conflicts.length} conflict(s) — nothing written; pass --prefer ours|theirs to resolve`);
+    case 'dry-run':
+      process.stdout.write(`dry-run: merged tree ${r.tree} (${r.mergedRecords.length} record(s) field-merged)\n`);
+      return;
+    case 'up-to-date':
+      process.stdout.write(`up-to-date: ${r.commit}\n`);
+      return;
+    case 'fast-forward':
+      process.stdout.write(`fast-forward: ${r.commit}\n`);
+      return;
+    case 'merged':
+      process.stdout.write(`merged: ${r.commit} (${r.mergedRecords.length} record(s) field-merged)\n`);
+      return;
+  }
+}
+
+/** Extension for a sheet's format type. */
+function extensionFor(type: string): string {
+  return type === 'markdown' ? '.md' : type === 'mdx' ? '.mdx' : '.toml';
+}
+
+/**
+ * `gitsheets merge-driver <base> <ours> <theirs> <path>` — the git merge
+ * driver (specs/behaviors/merge.md "Merge driver"). Field-merges a record
+ * through the sheet owning `<path>` at HEAD and writes the canonical result
+ * over `<ours>`; on a conflict (or a path no sheet owns) falls back to
+ * `git merge-file`, leaving git's markers, and exits 1.
+ */
+async function runMergeDriver(argv: MergeDriverArgs): Promise<void> {
+  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const root = argv.root && argv.root !== '/' ? argv.root : '.';
+  const [baseText, oursText, theirsText] = await Promise.all([
+    readFile(argv.base, 'utf8').catch(() => ''),
+    readFile(argv.ours, 'utf8'),
+    readFile(argv.theirs, 'utf8'),
+  ]);
+  const sheets = await repo.openSheets(root === '.' ? {} : { root });
+  let owner: { name: string; configPath: string } | undefined;
+  for (const [name, sheet] of Object.entries(sheets)) {
+    const config = await sheet.readConfig();
+    const base = [root === '.' ? '' : root, config.root === '.' ? '' : config.root].filter((p) => p.length > 0).join('/');
+    const under = base.length === 0 || argv.path.startsWith(`${base}/`);
+    if (under && argv.path.endsWith(extensionFor(config.format.type))) {
+      owner = { name, configPath: root === '.' ? `.gitsheets/${name}.toml` : `${root}/.gitsheets/${name}.toml` };
+      break;
+    }
+  }
+  if (owner !== undefined) {
+    const r = mergeRecordTexts(repo.gitDir, 'HEAD', owner.name, owner.configPath, root, baseText.length > 0 ? baseText : null, oursText, theirsText, 'fail');
+    if (r.text !== null) {
+      await writeFile(argv.ours, r.text, 'utf8');
+      return;
+    }
+    process.stderr.write(`gitsheets: merge-driver: ${argv.path}: conflicting field(s) ${r.conflicts.join(', ')} — leaving git's text merge\n`);
+  }
+  // Fallback: git's own text merge, markers and all (exit status = conflict count).
+  const { execFile } = await import('node:child_process');
+  await new Promise<void>((resolve) => {
+    execFile('git', ['merge-file', argv.ours, argv.base, argv.theirs], { cwd: dirname(argv.ours) }, () => resolve());
+  });
+  throw new Error(`merge-driver: ${argv.path} did not merge cleanly`);
+}
+
+/**
  * `gitsheets check <sheet> <file>` — verify a single record file in the
  * working tree is parseable, schema-valid, and in canonical form. Pass
  * `--fix` to also rewrite the file in canonical form when it isn't.
@@ -1085,6 +1185,28 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       "Convert a pre-v1.0 [gitsheet.fields] config to a v1.0 [gitsheet.schema] config",
       (y) => y.positional('sheet', { type: 'string', demandOption: true }),
       runMigrateConfig,
+    )
+    .command<MergeArgs>(
+      'merge <theirs>',
+      'Sheet-aware merge: record files changed on both sides are field-merged and written canonically (see specs/behaviors/merge.md)',
+      (y) =>
+        y
+          .positional('theirs', { type: 'string', demandOption: true, describe: 'Branch, tag, or commit to merge in' })
+          .option('into', { type: 'string', describe: "Branch to merge into (default: HEAD's branch)" })
+          .option('prefer', { type: 'string', choices: ['ours', 'theirs'], describe: 'Resolve conflicts in favour of a side' })
+          .option('dry-run', { type: 'boolean', default: false, describe: 'Write the merged tree, move nothing' }),
+      runMerge,
+    )
+    .command<MergeDriverArgs>(
+      'merge-driver <base> <ours> <theirs> <path>',
+      'Git merge driver for record files: `git config merge.gitsheets.driver "git sheet merge-driver %O %A %B %P"`',
+      (y) =>
+        y
+          .positional('base', { type: 'string', demandOption: true })
+          .positional('ours', { type: 'string', demandOption: true })
+          .positional('theirs', { type: 'string', demandOption: true })
+          .positional('path', { type: 'string', demandOption: true }),
+      runMergeDriver,
     )
     .command(
       'contracts',
