@@ -113,9 +113,19 @@ await repo.refresh();
 
 Cheap: one ref resolution, then a lazy rebind per sheet — records, attachments, config, and indexes re-derive on their next read. Consumers do **not** need to call this after their own `repo.transact` — a successful commit auto-refreshes (see below). See [behaviors/freshness.md](../behaviors/freshness.md).
 
+### `repo.readBlob(ref, path)`
+
+The blob at `<ref>:<path>`, resolved **at call time** — independent of any sheet's read snapshot — as a `BlobHandle`: `hash`, `size` (bytes, from the object header, no inflate), `read()` (`Promise<Buffer>`), `stream()` (`Readable`). One native call for the metadata, no subprocess.
+
+```typescript
+const blob = await repo.readBlob('HEAD', 'people/janedoe/avatar.jpg');
+reply.header('ETag', `"${blob.hash}"`).header('Content-Length', blob.size);
+blob.stream().pipe(reply.raw);
+```
+
 ### `repo.readBlobStream(ref, path)`
 
-Stream a blob's bytes by `<ref>:<path>`, resolved **at call time** — independent of any sheet's read snapshot. Returns `Promise<Readable>` (a Node stream); bytes are piped from the object store without materializing the whole blob in memory.
+`(await repo.readBlob(ref, path)).stream()`: a `Promise<Readable>` over the blob's bytes with bounded buffering — up to 1 MiB is served from one in-core read; larger blobs are piped from `git cat-file blob` without being materialized by gitsheets ([behaviors/attachments.md](../behaviors/attachments.md#blob-metadata-and-bounded-buffering)).
 
 ```typescript
 const stream = await repo.readBlobStream('HEAD', 'people/janedoe/avatar.jpg');
@@ -200,9 +210,9 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 
 | Class | Code | When |
 | --- | --- | --- |
-| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlobStream` ref doesn't resolve; `openSheet` / `openSheets` / `openStore` `opts.ref` doesn't resolve to a tree |
+| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlob` / `readBlobStream` ref doesn't resolve; `openSheet` / `openSheets` / `openStore` `opts.ref` doesn't resolve to a tree |
 | `TransactionError` | `transaction_required` | A permissive-mode write on a ref-pinned (read-only) sheet |
-| `NotFoundError` | `record_not_found` | `readBlobStream` path absent under the ref, or not a blob |
+| `NotFoundError` | `record_not_found` | `readBlob` / `readBlobStream` path absent under the ref, or not a blob |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
 | `TransactionError` | `lock_held` | `withLock` / `transact` attempted while the caller's own async context already holds the write lock (not reentrant) |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |
