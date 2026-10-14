@@ -253,12 +253,18 @@ The handler argument of `repo.transact`. Don't construct directly.
 
 ```typescript
 tx.sheet<T>(name, opts?)        // sheet bound to the tx's tree (opts: validator, prefix)
-tx.parentCommitHash             // may be null on fresh repos
+tx.parentCommitHash             // may be null on fresh repos and orphan commits
 tx.parentRef                    // ref the tx is reading from
 tx.branchRef                    // ref the tx will advance on commit
+tx.writeFile(path, content)     // raw file (string → UTF-8, or Buffer/Uint8Array) at a repo-root-relative path → BlobHandle (v2.8+)
+tx.deleteFile(path)             // → boolean: did a blob exist there (v2.8+)
 ```
 
 Writes inside the handler are atomic; throws from the handler discard the staged tree. Nested `repo.transact` throws `TransactionError(transaction_in_progress)`.
+
+`writeFile` / `deleteFile` are for non-record files that belong in the same commit — a `.gitsheets/<sheet>.toml`, a vendored contract, a fixture, a README. Nothing is validated or normalized; use `tx.sheet(name)` for records.
+
+**Orphan commits and new branches (v2.8+).** `repo.transact({ parent: null, branch: 'snapshot' }, …)` starts from the empty tree and commits with no parents (always, even if the handler stages nothing); the branch is created and must not already exist (`TransactionError(commit_failed)` at open). Without `branch` the result is a detached root (`ref: null`). Separately, `branch` may name a branch that does not exist yet: `transact({ parent: 'main', branch: 'review/x' }, …)` forks it from `main` in one call.
 
 ## openStore + Store
 

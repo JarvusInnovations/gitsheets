@@ -75,12 +75,12 @@ Run a handler inside a transaction. Returns `Promise<TransactionResult<T>>` wher
 ```typescript
 const result = await repo.transact(
   {
-    parent?: string,                 // ref or commit hash; default: current HEAD
+    parent?: string | null,          // ref or commit hash; default: current HEAD; null = orphan root commit
     author?: { name: string, email: string }, // default: git config
     committer?: { name: string, email: string }, // default: author
     message: string,                 // commit subject + body
     trailers?: Record<string, string>, // appended per `git interpret-trailers` rules
-    branch?: string,                  // ref to update on success; default: the parent ref if it was a branch
+    branch?: string,                  // ref to update on success (created if absent); default: the parent ref if it was a branch
   },
   async (tx: Transaction) => {
     // mutations via tx.sheet(name).upsert / delete / patch

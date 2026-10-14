@@ -345,6 +345,12 @@ export interface JsTrailer {
  */
 export interface JsTransactionOptions {
   parent?: string
+  /**
+   * `transact({ parent: null })`: an orphan root commit — empty starting
+   * tree, no parents, always commits; `branch` is created (and must not
+   * already exist). `parent` is ignored when set.
+   */
+  orphan?: boolean
   branch?: string
   author?: JsAuthor
   committer?: JsAuthor
@@ -511,12 +517,13 @@ export declare class CoreTransaction {
   /** Stage a single attachment *(mutating)* — sugar over [`Self::set_attachments`]. */
   setAttachment(name: string, recordPath: string, attachmentName: string, blobHash: string): void
   /**
-   * Stage a raw text file at `path` in this transaction's private tree
-   * *(mutating)* — the generic file write the CLI uses to commit sheet-config
-   * edits (`init` / `infer` / `migrate-config`) atomically alongside nothing
-   * else. `path` is repo-root-relative. Returns the written blob hash.
+   * Stage a raw file at `path` in this transaction's private tree
+   * *(mutating)* — the public `tx.writeFile` (specs/api/transaction.md
+   * "Raw files"): a sheet config, a contract, a fixture, committed with the
+   * record changes it belongs with. `path` is repo-root-relative; `content`
+   * is UTF-8 text or raw bytes. Returns the written blob hash.
    */
-  writeFile(path: string, content: string): string
+  writeFile(path: string, content: string | Buffer): string
   /**
    * Delete a raw file at `path` (repo-root-relative) in this transaction's
    * private tree *(mutating)* — `write_file`'s inverse. Returns whether a

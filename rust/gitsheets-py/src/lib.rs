@@ -1212,7 +1212,7 @@ impl CoreTransaction {
     /// `(name, email)` tuples; `trailers` a list of `(key, value)` tuples. A
     /// concurrent open on the same repo raises `TransactionError`.
     #[staticmethod]
-    #[pyo3(signature = (git_dir, message, time_seconds, offset_minutes=0, parent=None, branch=None, author=None, committer=None, trailers=None))]
+    #[pyo3(signature = (git_dir, message, time_seconds, offset_minutes=0, parent=None, branch=None, author=None, committer=None, trailers=None, orphan=false))]
     #[allow(clippy::too_many_arguments)]
     fn begin(
         py: Python<'_>,
@@ -1225,9 +1225,11 @@ impl CoreTransaction {
         author: Option<(String, String)>,
         committer: Option<(String, String)>,
         trailers: Option<Vec<(String, String)>>,
+        orphan: bool,
     ) -> PyResult<Self> {
         let core_opts = TransactionOptions {
             parent,
+            orphan,
             branch,
             author: author.map(|(name, email)| CoreAuthor { name, email }),
             committer: committer.map(|(name, email)| CoreAuthor { name, email }),
@@ -1522,6 +1524,62 @@ impl CoreTransaction {
         }
         tx.mark_mutated();
         Ok(())
+    }
+
+    /// Stage a raw file at `path` (repo-root-relative) in this transaction's
+    /// private tree — the public `tx.write_file` (specs/api/transaction.md
+    /// "Raw files"). `content` is `str` (UTF-8) or `bytes`. Returns the blob
+    /// hash and marks the transaction mutated.
+    fn write_file(&mut self, py: Python<'_>, path: String, content: Bound<'_, PyAny>) -> PyResult<String> {
+        let bytes: Vec<u8> = if let Ok(b) = content.cast::<PyBytes>() {
+            b.as_bytes().to_vec()
+        } else if content.cast::<PyString>().is_ok() {
+            content.extract::<String>()?.into_bytes()
+        } else {
+            return Err(PyTypeError::new_err("write_file: content must be str or bytes"));
+        };
+        let Self { inner, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let hash = {
+            let (ctx, tree) = tx.split();
+            tree.write_child_bytes(&ctx, &path, &bytes).map_err(|e| {
+                raise_core_error(
+                    py,
+                    &gitsheets_core::Error::CommitFailed {
+                        message: format!("write_file {path:?} failed: {e}"),
+                    },
+                )
+            })?
+        };
+        tx.mark_mutated();
+        Ok(hash.to_string())
+    }
+
+    /// Delete a raw file at `path` (repo-root-relative) — `write_file`'s
+    /// inverse. Returns whether a blob existed there; a miss does not mark
+    /// the transaction mutated.
+    fn delete_file(&mut self, py: Python<'_>, path: String) -> PyResult<bool> {
+        let Self { inner, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let existed = {
+            let (ctx, tree) = tx.split();
+            tree.delete_child_deep(&ctx, &path).map_err(|e| {
+                raise_core_error(
+                    py,
+                    &gitsheets_core::Error::CommitFailed {
+                        message: format!("delete_file {path:?} failed: {e}"),
+                    },
+                )
+            })?
+        };
+        if existed {
+            tx.mark_mutated();
+        }
+        Ok(existed)
     }
 
     /// Remove all attachments for a record *(mutating)*. A no-op when the record
