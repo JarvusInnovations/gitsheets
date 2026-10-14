@@ -781,6 +781,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-merge-theirs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets merge &lt;theirs&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-merge-driver-base-ours-theirs-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets merge-driver &lt;base&gt; &lt;ours&gt; &lt;theirs&gt; &lt;path&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-contracts-subcommand" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1307,6 +1329,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-merge-theirs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets merge &lt;theirs&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-merge-driver-base-ours-theirs-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets merge-driver &lt;base&gt; &lt;ours&gt; &lt;theirs&gt; &lt;path&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-contracts-subcommand" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1584,6 +1628,21 @@ gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w
 </tr>
 </tbody>
 </table>
+<h3 id="gitsheets-merge-theirs"><code>gitsheets merge &lt;theirs&gt;</code><a class="headerlink" href="#gitsheets-merge-theirs" title="Permanent link"> ¶</a></h3>
+<p>Sheet-aware merge (<a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/merge.md">spec</a>): record files changed on both sides since the merge base are merged <strong>field by field</strong> and written in canonical form, so a merged repo never carries a mix of serializations. Non-record files merge the way git merges them.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w">                      </span><span class="c1"># into HEAD's branch</span>
+gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w"> </span>--into<span class="w"> </span>published<span class="w">     </span><span class="c1"># into another branch</span>
+gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w"> </span>--dry-run<span class="w">            </span><span class="c1"># report the merged tree, move nothing</span>
+gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w"> </span>--prefer<span class="w"> </span>theirs<span class="w">      </span><span class="c1"># resolve field / delete-modify / blob conflicts for one side</span>
+</code></pre></div>
+<p>Without <code>--prefer</code>, any conflict is listed on stderr (<code>merge conflict: &lt;path&gt; (field &lt;name&gt; | delete-modify | blob)</code>) and the command exits 1 with nothing written. Up-to-date and fast-forward cases are reported as such.</p>
+<h3 id="gitsheets-merge-driver-base-ours-theirs-path"><code>gitsheets merge-driver &lt;base&gt; &lt;ours&gt; &lt;theirs&gt; &lt;path&gt;</code><a class="headerlink" href="#gitsheets-merge-driver-base-ours-theirs-path" title="Permanent link"> ¶</a></h3>
+<p>A git merge driver so a plain <code>git merge</code> / <code>rebase</code> / <code>cherry-pick</code> gets the same record-level behaviour for files changed on both sides:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>config<span class="w"> </span>merge.gitsheets.name<span class="w">   </span><span class="s2">"gitsheets record merge"</span>
+git<span class="w"> </span>config<span class="w"> </span>merge.gitsheets.driver<span class="w"> </span><span class="s2">"git sheet merge-driver %O %A %B %P"</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">'users/**/*.toml merge=gitsheets\n'</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>.gitattributes
+</code></pre></div>
+<p>The driver resolves the sheet owning <code>&lt;path&gt;</code> from HEAD&rsquo;s configs, field-merges the three files, and writes the canonical result over <code>&lt;ours&gt;</code> (exit 0). On a field conflict — or a path no sheet owns — it falls back to <code>git merge-file</code>, leaving git&rsquo;s usual markers, and exits 1.</p>
 <h3 id="gitsheets-contracts-subcommand"><code>gitsheets contracts &lt;subcommand&gt;</code><a class="headerlink" href="#gitsheets-contracts-subcommand" title="Permanent link"> ¶</a></h3>
 <p>Manage <a href="../contracts/">schema contracts</a> — vendored, immutable JSON Schema documents that sheets declare via <code>implements</code> and that compose into write-time validation. All writes land under <code>.gitsheets/contracts/</code>; sheet configs are never rewritten by tooling.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>contracts<span class="w"> </span>adopt<span class="w"> </span>&lt;source&gt;<span class="w"> </span><span class="o">[</span>--sheet<span class="w"> </span>&lt;name&gt;<span class="o">]</span>...<span class="w">     </span><span class="c1"># vendor a document (file, https:// URL, or - for stdin)</span>
