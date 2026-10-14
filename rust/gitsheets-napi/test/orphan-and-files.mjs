@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { CoreTransaction } = require('../binding.cjs');
+const { CoreTransaction, writeBlob, blobHeader } = require('../binding.cjs');
 
 function setupRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'gitsheets-orphan-'));
@@ -96,6 +96,17 @@ test('branch creates a missing branch from the parent', () => {
     assert.equal(result.refName, 'refs/heads/review/x');
     assert.equal(git(dir, 'rev-parse', 'refs/heads/review/x').trim(), result.commitHash);
     assert.equal(git(dir, 'rev-parse', 'refs/heads/main').trim(), main);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('blobHeader: kind + size from the object header; null for a missing id', () => {
+  const { dir, gitDir } = setupRepo();
+  try {
+    const hash = writeBlob(gitDir, Buffer.from([1, 2, 3, 4, 5]));
+    assert.deepEqual(blobHeader(gitDir, hash), { kind: 'blob', size: 5 });
+    assert.equal(blobHeader(gitDir, '0'.repeat(40)) ?? null, null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

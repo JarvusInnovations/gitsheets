@@ -265,6 +265,20 @@ export declare function treeEntryHash(gitDir: string, treeRef: string, path: str
  * attachment content reads and diff-side record reads.
  */
 export declare function blobRead(gitDir: string, hash: string): Buffer | null
+/**
+ * An object header: `kind` (`blob` / `tree` / `commit` / `tag`) and `size` in
+ * bytes, read without inflating the object.
+ */
+export interface JsBlobHeader {
+  kind: string
+  size: number
+}
+/**
+ * The object header for `hash`, or `null` when no object has that id. The
+ * metadata behind a host `BlobHandle`'s `size` (specs/behaviors/attachments.md
+ * "Blob metadata and bounded buffering").
+ */
+export declare function blobHeader(gitDir: string, hash: string): JsBlobHeader | null
 /** A blob read by `treeRef:path`: its object id and bytes. */
 export interface JsBlobEntry {
   hash: string

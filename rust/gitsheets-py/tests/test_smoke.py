@@ -660,3 +660,10 @@ def test_orphan_transaction_starts_empty_and_creates_its_branch(seeded_repo):
     with pytest.raises(gitsheets.TransactionError):
         with gitsheets.transact(git_dir, "again", 1_700_000_001, author=("Seed", "seed@x.org"), branch="snapshot", orphan=True) as tx:
             pass
+
+
+def test_blob_header_reports_kind_and_size(fresh_repo):
+    d, git_dir = fresh_repo
+    h = gitsheets.write_blob(git_dir, b"hello")
+    assert gitsheets.blob_header(git_dir, h) == {"kind": "blob", "size": 5}
+    assert gitsheets.blob_header(git_dir, "0" * 40) is None
