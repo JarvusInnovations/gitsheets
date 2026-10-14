@@ -175,7 +175,7 @@ git sheet contracts adopt ./meals-v1.schema.json
 
 #### `git sheet contracts verify [<sheet>]...`
 
-Offline conformance gate (CI-friendly; no network). For the named sheets (default: all declaring sheets): every declared name resolves to a vendored document; each document satisfies the document requirements, is byte-canonical, and its `$id` matches its path; every record validates against the sheet's effective schema. Warns when a declaring sheet's local schema sets `additionalProperties: false`. Non-zero exit on any failure.
+Offline conformance gate (CI-friendly; no network). For the named sheets (default: all declaring sheets): every declared name resolves to a vendored document; each document satisfies the document requirements, is byte-canonical, and its `$id` matches its path; every record validates against the sheet's effective schema. Warns when a declaring sheet's local schema sets `additionalProperties: false`. A sheet whose config fails to open — including a path template naming a field the effective schema does not require ([behaviors/path-templates.md](../behaviors/path-templates.md#template-fields-must-be-schema-required)) — is a failure, reported with the config error. Non-zero exit on any failure.
 
 #### `git sheet contracts test <sheet> --against <file-or-name>`
 

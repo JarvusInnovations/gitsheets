@@ -17,6 +17,10 @@ A failure at either layer throws `ValidationError`. Validation runs synchronousl
 - [api/repository.md](../api/repository.md) — `openSheet(name, { validator? })`
 - [api/store.md](../api/store.md) — `openStore(repo, { validators? })`
 
+## Template coherence
+
+The persisted schema also gates the sheet's **path template**: at sheet open, every static field the template names must be in a top-level `required` list (local schema or a declared contract) or in `[gitsheet].injectedFields`, else `ConfigError` (`config_invalid`). See [behaviors/path-templates.md](path-templates.md#template-fields-must-be-schema-required).
+
 ## Why two layers
 
 What gets persisted with the data vs. what lives in consumer code:
