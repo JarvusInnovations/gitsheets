@@ -1,10 +1,11 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/attachments.md
   - specs/api/sheet.md
 issues: [302]
+pr: 310
 ---
 
 # Plan: renaming a record moves its attachments
@@ -47,12 +48,12 @@ only if a consumer still asks after this ships.
 
 ## Validation
 
-- [ ] `cargo test`: rename moves the attachment subtree; merge into an
+- [x] `cargo test`: rename moves the attachment subtree; merge into an
       existing destination; records without attachments unaffected.
-- [ ] vitest (`gitsheets`): rename-on-upsert moves attachments (tx and
+- [x] vitest (`gitsheets`): rename-on-upsert moves attachments (tx and
       permissive); delete+upsert loses them (asserted, as documented).
-- [ ] vitest (`gitsheets-axi`): `rename` keeps attachments.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean;
+- [x] vitest (`gitsheets-axi`): `rename` keeps attachments.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` clean;
       `npm run type-check` clean.
 
 ## Risks / unknowns
@@ -64,8 +65,17 @@ only if a consumer still asks after this ships.
 
 ## Notes
 
-(Populated at closeout.)
+- The subtree is re-parented whole (`Child::Tree` detached from the old
+  parent, attached under the new name), so nested entries move and a clean
+  subtree keeps its hash; the blob map lists nested entries, which the core
+  test asserts.
+- Destination merge: source entries overwrite same-named destination entries,
+  the rest stay — the same rule the record file already follows on an upsert
+  onto an existing path.
+- `gitsheets-axi rename` dropped its explicit `delete(oldPath)`; the spread
+  `{ ...existing, [field]: newPath }` keeps the symbol annotation.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Tracked as: a `sheet.move(record, next)` API only if a consumer still asks
+  after the annotation idiom (now specced) ships.
