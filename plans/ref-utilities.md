@@ -1,9 +1,10 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/api/repository.md
 issues: [331]
+pr: 334
 ---
 
 # Plan: repo.tag() and repo.listTree()
@@ -29,8 +30,8 @@ Python.
 
 ## Validation
 
-- [ ] cargo test, napi, pytest, vitest.
-- [ ] clippy / type-check clean.
+- [x] cargo test, napi, pytest, vitest.
+- [x] clippy / type-check clean.
 
 ## Risks / unknowns
 
@@ -38,8 +39,11 @@ Python.
 
 ## Notes
 
-(Populated at closeout.)
+- An existing tag is refused with `commit_failed`, mirroring the orphan
+  transaction refusing an existing branch.
+- `listTree` returns `null` for a path holding a blob, so it cannot be
+  mistaken for an empty directory.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.

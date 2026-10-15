@@ -1,10 +1,11 @@
 ---
-status: in-progress
+status: done
 depends: [repo-sync]
 specs:
   - specs/behaviors/push-sync.md
   - specs/api/repository.md
 issues: [330]
+pr: 333
 ---
 
 # Plan: sync({ afterMove }) and repo.fetch()
@@ -31,8 +32,8 @@ and the rebind; `repo.fetch()` exposes sync's fetch step. Host-only.
 
 ## Validation
 
-- [ ] vitest: the cases above; existing sync suite unchanged.
-- [ ] type-check clean.
+- [x] vitest: the cases above; existing sync suite unchanged.
+- [x] type-check clean.
 
 ## Risks / unknowns
 
@@ -40,8 +41,12 @@ and the rebind; `repo.fetch()` exposes sync's fetch step. Host-only.
 
 ## Notes
 
-(Populated at closeout.)
+- The core move, the rebind and `afterMove` share one `withLock`; the daemon
+  hand-off and conflict push stay outside it.
+- A transaction started *from inside* `afterMove` inherits its async
+  context and is `lock_held`; one started from another context queues and
+  commits after the callback returns (the test asserts the ordering).
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.
