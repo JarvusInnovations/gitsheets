@@ -198,17 +198,16 @@ impl Sheet {
 
         // Template coherence: a record the template cannot render against
         // cannot be stored, so every static template field must be required
-        // by the persisted schema (local or a declared contract) or declared
-        // as writer-injected (specs/behaviors/path-templates.md "Template
-        // fields must be schema-required"). Unchecked without any schema.
+        // by the persisted schema (local or a declared contract) — no
+        // exemptions (specs/principles.md "Records carry their own path";
+        // specs/behaviors/path-templates.md "Template fields must be
+        // schema-required"). Unchecked without any schema.
         if let Some(eff) = &effective {
             for field in template.static_field_names() {
-                let required = eff.required.iter().any(|r| r == &field);
-                let injected = config.injected_fields.iter().any(|i| i == &field);
-                if !required && !injected {
+                if !eff.required.iter().any(|r| r == &field) {
                     return Err(Error::ConfigInvalid {
                         message: format!(
-                            "{config_blob_path}: gitsheet.path references field {field:?}, which the sheet's schema does not require — a record missing it cannot be stored (path_render_failed). Add {field:?} to the schema's `required` list, or declare it in gitsheet.injectedFields if the writer supplies it before upsert."
+                            "{config_blob_path}: gitsheet.path references field {field:?}, which the sheet's schema does not require — a record missing it cannot be stored (path_render_failed). A record carries every field its path renders: add {field:?} to the schema's `required` list."
                         ),
                     });
                 }
@@ -1664,17 +1663,32 @@ mod tests {
         let mut gs = IndexMap::new();
         gs.insert("path".to_string(), s(path));
         gs.insert("root".to_string(), s(root));
-        // The fixtures template on `slug`, which the fixture contracts do not
-        // require — declare it writer-injected so the template-coherence check
-        // (specs/behaviors/path-templates.md) stays out of these tests' way.
-        gs.insert("injectedFields".to_string(), Value::Array(vec![s("slug")]));
         gs.insert(
             "implements".to_string(),
             Value::Array(implements.iter().map(|n| s(n)).collect()),
         );
-        if let Some(schema) = schema {
-            gs.insert("schema".to_string(), schema);
-        }
+        // The fixtures template on `slug`, which the fixture contracts do not
+        // require — the local schema requires it, as the template-coherence
+        // check demands (specs/principles.md "Records carry their own path").
+        let schema = match schema {
+            Some(Value::Table(mut t)) => {
+                let req = t.entry("required".to_string()).or_insert_with(|| Value::Array(Vec::new()));
+                if let Value::Array(items) = req {
+                    if !items.iter().any(|v| v == &s("slug")) {
+                        items.push(s("slug"));
+                    }
+                }
+                Value::Table(t)
+            }
+            Some(other) => other,
+            None => {
+                let mut t = IndexMap::new();
+                t.insert("type".to_string(), s("object"));
+                t.insert("required".to_string(), Value::Array(vec![s("slug")]));
+                Value::Table(t)
+            }
+        };
+        gs.insert("schema".to_string(), schema);
         let mut top = IndexMap::new();
         top.insert("gitsheet".to_string(), Value::Table(gs));
         Value::Table(top)
@@ -1713,9 +1727,8 @@ mod tests {
 
     // ── template coherence (specs/behaviors/path-templates.md) ──────────────
 
-    /// A config with a local `[gitsheet.schema]` requiring `required`, and
-    /// optional `injectedFields`.
-    fn config_with_schema(path: &str, required: &[&str], injected: &[&str]) -> Value {
+    /// A config with a local `[gitsheet.schema]` requiring `required`.
+    fn config_with_schema(path: &str, required: &[&str]) -> Value {
         let mut gs = IndexMap::new();
         gs.insert("path".to_string(), s(path));
         gs.insert("root".to_string(), s("people"));
@@ -1726,12 +1739,6 @@ mod tests {
             Value::Array(required.iter().map(|f| s(f)).collect()),
         );
         gs.insert("schema".to_string(), Value::Table(schema));
-        if !injected.is_empty() {
-            gs.insert(
-                "injectedFields".to_string(),
-                Value::Array(injected.iter().map(|f| s(f)).collect()),
-            );
-        }
         let mut top = IndexMap::new();
         top.insert("gitsheet".to_string(), Value::Table(gs));
         Value::Table(top)
@@ -1745,39 +1752,52 @@ mod tests {
     #[test]
     fn template_field_not_required_by_local_schema_fails_open() {
         let (_d, repo) = temp_repo();
-        let err = open_err(&repo, config_with_schema("${{ org }}/${{ slug }}", &["slug"], &[])).unwrap();
+        let err = open_err(&repo, config_with_schema("${{ org }}/${{ slug }}", &["slug"])).unwrap();
         assert_eq!(err.code(), "config_invalid");
         assert!(err.message().contains("\"org\""), "{}", err.message());
-        assert!(err.message().contains("injectedFields"));
+        assert!(err.message().contains("`required`"));
     }
 
     #[test]
-    fn template_field_required_locally_or_injected_opens() {
+    fn injected_fields_key_is_rejected_at_open() {
         let (_d, repo) = temp_repo();
-        assert!(open_err(&repo, config_with_schema("${{ org }}/${{ slug }}", &["org", "slug"], &[])).is_none());
-        assert!(open_err(&repo, config_with_schema("${{ org }}/${{ slug }}", &["slug"], &["org"])).is_none());
+        let mut cfg = config_with_schema("${{ org }}/${{ slug }}", &["slug"]);
+        if let Value::Table(top) = &mut cfg {
+            if let Some(Value::Table(gs)) = top.get_mut("gitsheet") {
+                gs.insert("injectedFields".to_string(), Value::Array(vec![s("org")]));
+            }
+        }
+        let err = open_err(&repo, cfg).unwrap();
+        assert_eq!(err.code(), "config_invalid");
+        assert!(err.message().contains("injectedFields was removed"));
+    }
+
+    #[test]
+    fn template_field_required_locally_opens() {
+        let (_d, repo) = temp_repo();
+        assert!(open_err(&repo, config_with_schema("${{ org }}/${{ slug }}", &["org", "slug"])).is_none());
         // Recursive and dotted references contribute their top-level field.
-        assert!(open_err(&repo, config_with_schema("${{ path/** }}", &["path"], &[])).is_none());
+        assert!(open_err(&repo, config_with_schema("${{ path/** }}", &["path"])).is_none());
         // A dotted reference parses as an expression (member access) and is
         // therefore exempt.
-        assert!(open_err(&repo, config_with_schema("${{ meta.slug }}", &[], &[])).is_none());
+        assert!(open_err(&repo, config_with_schema("${{ meta.slug }}", &[])).is_none());
     }
 
     #[test]
     fn bucket_base_field_must_be_required() {
         let (_d, repo) = temp_repo();
-        let err = open_err(&repo, config_with_schema("${{ publishedAt: YYYY/MM }}/${{ slug }}", &["slug"], &[]))
+        let err = open_err(&repo, config_with_schema("${{ publishedAt: YYYY/MM }}/${{ slug }}", &["slug"]))
             .unwrap();
         assert_eq!(err.code(), "config_invalid");
         assert!(err.message().contains("\"publishedAt\""));
-        assert!(open_err(&repo, config_with_schema("${{ publishedAt: YYYY/MM }}/${{ slug }}", &["slug", "publishedAt"], &[])).is_none());
+        assert!(open_err(&repo, config_with_schema("${{ publishedAt: YYYY/MM }}/${{ slug }}", &["slug", "publishedAt"])).is_none());
     }
 
     #[test]
     fn expression_components_and_schemaless_sheets_are_not_checked() {
         let (_d, repo) = temp_repo();
         // Expression: which fields it needs is not statically decidable.
-        assert!(open_err(&repo, config_with_schema("${{ slug || legacyId }}", &[], &[])).is_none());
+        assert!(open_err(&repo, config_with_schema("${{ slug || legacyId }}", &[])).is_none());
         // No schema, no contracts: nothing to check against.
         assert!(open_err(&repo, config("${{ org }}/${{ slug }}", "people")).is_none());
     }
@@ -1786,7 +1806,7 @@ mod tests {
     fn template_field_required_by_a_contract_opens() {
         let (_d, repo) = temp_repo();
         let name = "example.com/orgs/v1";
-        // No injectedFields here: the contract's `required` must carry the field.
+        // The contract's `required` must carry the field.
         let mut gs = IndexMap::new();
         gs.insert("path".to_string(), s("${{ org }}"));
         gs.insert("root".to_string(), s("people"));

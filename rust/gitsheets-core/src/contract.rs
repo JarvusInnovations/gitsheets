@@ -1115,10 +1115,13 @@ mod verify_tests {
     fn sheet_config(implements: &[&str]) -> Value {
         let mut gs = IndexMap::new();
         gs.insert("path".to_string(), Value::String("${{ slug }}".into()));
-// The fixtures template on `slug`, which the fixture contracts do not
-// require — declare it writer-injected so the template-coherence check
-// (specs/behaviors/path-templates.md) stays out of these tests' way.
-gs.insert("injectedFields".to_string(), Value::Array(vec![Value::String("slug".into())]));
+        // The fixtures template on `slug`, which the fixture contracts do not
+        // require — a local schema requires it, as the template-coherence
+        // check demands (specs/principles.md "Records carry their own path").
+        let mut schema = IndexMap::new();
+        schema.insert("type".to_string(), Value::String("object".into()));
+        schema.insert("required".to_string(), Value::Array(vec![Value::String("slug".into())]));
+        gs.insert("schema".to_string(), Value::Table(schema));
         gs.insert("root".to_string(), Value::String("people".into()));
         if !implements.is_empty() {
             gs.insert(
