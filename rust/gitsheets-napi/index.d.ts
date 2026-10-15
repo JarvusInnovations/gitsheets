@@ -279,6 +279,24 @@ export interface JsBlobHeader {
  * "Blob metadata and bounded buffering").
  */
 export declare function blobHeader(gitDir: string, hash: string): JsBlobHeader | null
+/** One direct entry of a tree (`repo.listTree`). */
+export interface JsTreeEntry {
+  name: string
+  /** `blob` / `tree` / `commit`. */
+  type: string
+  mode: string
+  hash: string
+}
+/**
+ * The direct entries of the tree at `treeRef:path`, sorted by name; `null`
+ * when nothing (or a blob) is at `path`.
+ */
+export declare function treeList(gitDir: string, treeRef: string, path: string): Array<JsTreeEntry> | null
+/**
+ * Point the lightweight tag `refs/tags/<name>` at `target`; refuses an
+ * existing tag unless `force`. Returns the tagged object id.
+ */
+export declare function tagSet(gitDir: string, name: string, target: string, force: boolean): string
 /** A blob read by `treeRef:path`: its object id and bytes. */
 export interface JsBlobEntry {
   hash: string

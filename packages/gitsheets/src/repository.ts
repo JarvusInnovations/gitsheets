@@ -91,6 +91,15 @@ export interface OpenSheetsOptions {
   readonly ref?: string;
 }
 
+/** One direct entry of a tree, from {@link Repository.listTree}. */
+export interface TreeEntry {
+  readonly name: string;
+  readonly type: 'blob' | 'tree' | 'commit';
+  /** Git's octal mode string (`100644`, `100755`, `120000`, `040000`, `160000`). */
+  readonly mode: string;
+  readonly hash: string;
+}
+
 /** Options for {@link Repository.sync}. See specs/behaviors/push-sync.md "Sync". */
 export interface SyncOptions {
   /** Remote name; default `origin`. */
@@ -689,6 +698,26 @@ export class Repository {
       }
     }
     return result;
+  }
+
+  /**
+   * Point the lightweight tag `refs/tags/<name>` at `target` (default HEAD),
+   * in the core. Refuses an existing tag with TransactionError(commit_failed)
+   * unless `opts.force` (then moves it — `git tag -f`). Returns the tagged
+   * object id. See specs/api/repository.md#repotagname-target-opts.
+   */
+  async tag(name: string, target = 'HEAD', opts: { readonly force?: boolean } = {}): Promise<string> {
+    return callCore(() => addon.tagSet(this.#gitDir, name, target, opts.force ?? false));
+  }
+
+  /**
+   * The direct entries of the tree at `<ref>:<path>` (default the root),
+   * sorted by name, or `null` when nothing (or a blob) is at `path`.
+   * See specs/api/repository.md#repolisttreeref-path.
+   */
+  async listTree(ref: string, path = '.'): Promise<TreeEntry[] | null> {
+    const entries = callCore(() => addon.treeList(this.#gitDir, ref, path));
+    return entries == null ? null : entries.map((e) => ({ name: e.name, type: e.type as TreeEntry['type'], mode: e.mode, hash: e.hash }));
   }
 
   /**

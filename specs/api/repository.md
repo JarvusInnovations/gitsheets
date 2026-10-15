@@ -193,6 +193,14 @@ interface SyncResult {
 
 `git fetch --prune <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>` on its own — `sync`'s first step, without the lock. `opts.remote` defaults to `origin`, `opts.branch` to `HEAD`'s branch (`RefError` when detached). Returns `Promise<{ ok: true, remoteRef, remoteCommit } | { ok: false, remoteRef, error }>`; a network or auth failure is a value, not a throw. Pair with `sync({ fetch: false })`. See [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
 
+### `repo.tag(name, target?, opts?)`
+
+Point the lightweight tag `refs/tags/<name>` at `target` (any commit-ish; default `HEAD`), in the core with no subprocess. Returns `Promise<string>`, the object id tagged. An existing tag is refused with `TransactionError` (`commit_failed`) unless `opts.force` is `true`, in which case it is moved (the `git tag -f` equivalent). `RefError` (`ref_not_found`) when `target` does not resolve. Annotated tags are out of scope.
+
+### `repo.listTree(ref, path?)`
+
+The direct entries of the tree at `<ref>:<path>` (`path` defaults to the root), sorted by name: `Promise<Array<{ name, type: 'blob' | 'tree' | 'commit', mode, hash }> | null>` — `mode` as git's octal string (`100644`, `100755`, `120000`, `040000`, `160000`). `null` when nothing, or a blob, is at `path`. `RefError` (`ref_not_found`) when `ref` does not resolve. Not recursive: list a subdirectory by passing its path. Typical use: discovering `.gitsheets/` configs or vendored contracts at a ref.
+
 ### `repo.isAncestor(a, b)`
 
 `Promise<boolean>` — whether commit `a` is reachable from commit `b` (or equal). `RefError` (`ref_not_found`) when either does not resolve to a commit.

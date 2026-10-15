@@ -466,3 +466,26 @@ describe('tx-bound sheets read config from the transaction tree', () => {
     ).rejects.toMatchObject({ code: 'validation_failed' });
   });
 });
+
+// specs/api/repository.md — repo.tag / repo.listTree (#331).
+describe('repo.tag and repo.listTree', () => {
+  it('lists direct entries at a ref and sets / force-moves a lightweight tag', async () => {
+    const fixture = await makeRepo({ withInitialCommit: true });
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    const entries = await repo.listTree('HEAD', '.gitsheets');
+    expect(entries).toEqual([expect.objectContaining({ name: 'users.toml', type: 'blob', mode: '100644' })]);
+    expect(await repo.listTree('HEAD', 'nope')).toBeNull();
+    await expect(repo.listTree('no-such-ref')).rejects.toBeInstanceOf(RefError);
+
+    const head = (await fixture.git('rev-parse', 'HEAD')).stdout.trim();
+    expect(await repo.tag('snap')).toBe(head);
+    await expect(repo.tag('snap')).rejects.toMatchObject({ code: 'commit_failed' });
+    await repo.transact({ message: 'more' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'jane', email: 'jane@x.org' });
+    });
+    const next = (await fixture.git('rev-parse', 'HEAD')).stdout.trim();
+    expect(await repo.tag('snap', 'HEAD', { force: true })).toBe(next);
+    expect((await fixture.git('rev-parse', 'refs/tags/snap')).stdout.trim()).toBe(next);
+  });
+});

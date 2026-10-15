@@ -1160,6 +1160,42 @@ pub fn blob_header(env: Env, git_dir: String, hash: String) -> Result<Option<JsB
     }
 }
 
+/// One direct entry of a tree (`repo.listTree`).
+#[napi(object)]
+pub struct JsTreeEntry {
+    pub name: String,
+    /// `blob` / `tree` / `commit`.
+    #[napi(js_name = "type")]
+    pub kind: String,
+    pub mode: String,
+    pub hash: String,
+}
+
+/// The direct entries of the tree at `treeRef:path`, sorted by name; `null`
+/// when nothing (or a blob) is at `path`.
+#[napi]
+pub fn tree_list(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<Vec<JsTreeEntry>>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    match record::list_tree(&ctx, &mut tree, &path) {
+        Ok(entries) => Ok(entries.map(|es| {
+            es.into_iter()
+                .map(|e| JsTreeEntry { name: e.name, kind: e.kind.to_string(), mode: e.mode, hash: e.hash })
+                .collect()
+        })),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Point the lightweight tag `refs/tags/<name>` at `target`; refuses an
+/// existing tag unless `force`. Returns the tagged object id.
+#[napi]
+pub fn tag_set(env: Env, git_dir: String, name: String, target: String, force: bool) -> Result<String> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    record::set_tag(&repo, &name, &target, force).map_err(|err| raise_core_error(&env, &err))
+}
+
 /// A blob read by `treeRef:path`: its object id and bytes.
 #[napi(object)]
 pub struct JsBlobEntry {

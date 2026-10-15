@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { CoreTransaction, writeBlob, blobHeader, syncBranch, isAncestor, mergeSheets, mergeRecordTexts } = require('../binding.cjs');
+const { CoreTransaction, writeBlob, blobHeader, syncBranch, isAncestor, mergeSheets, mergeRecordTexts, treeList, tagSet } = require('../binding.cjs');
 
 function setupRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'gitsheets-orphan-'));
@@ -178,6 +178,22 @@ test('readFile sees a file staged earlier in the transaction', () => {
     assert.equal(entry.content.toString(), 'a = 1\n');
     assert.match(entry.hash, /^[0-9a-f]{40}$/);
     tx.discard();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('treeList lists direct entries; tagSet refuses an existing tag unless forced', () => {
+  const { dir, gitDir } = setupRepo();
+  try {
+    const entries = treeList(gitDir, 'HEAD', '.gitsheets');
+    assert.deepEqual(entries.map((e) => [e.name, e.type, e.mode]), [['people.toml', 'blob', '100644']]);
+    assert.equal(treeList(gitDir, 'HEAD', 'nope') ?? null, null);
+    const head = git(dir, 'rev-parse', 'HEAD').trim();
+    assert.equal(tagSet(gitDir, 'snap', 'HEAD', false), head);
+    assert.throws(() => tagSet(gitDir, 'snap', 'HEAD', false), (e) => e.code === 'commit_failed');
+    assert.equal(tagSet(gitDir, 'snap', 'HEAD', true), head);
+    assert.equal(git(dir, 'rev-parse', 'refs/tags/snap').trim(), head);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
