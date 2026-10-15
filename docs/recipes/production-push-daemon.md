@@ -1,12 +1,12 @@
 # Production push daemon
 
-Pattern: a long-running consumer process (web service, worker) holds an open `Repository` and runs a background push daemon that ships commits to a remote with retry/backoff. Push-only — the daemon never pulls.
+Pattern: a long-running consumer process (web service, worker) holds an open `Repository` and runs a background push daemon that ships commits to a remote with retry/backoff. Push-only — the daemon never pulls. Taking in commits from elsewhere is a separate, explicit call: [`repo.sync()`](#taking-in-other-writers-commits-reposync) below.
 
-## Why push-only
+## Why the daemon is push-only
 
-A consumer that writes to gitsheets is the **single writer** for the repo. Pulling from a remote at runtime would risk overwriting in-memory state and unstaged mutations — there's no good recovery. The daemon's contract is: take commits the consumer produces, get them to the remote, retry on transient failures, surface hard failures for human intervention.
+A consumer that writes to gitsheets is the **single writer** for the repo. A daemon that pulled on its own schedule would move the branch underneath open transactions and standing sheets — there's no good recovery. The daemon's contract is: take commits the consumer produces, get them to the remote, retry on transient failures, surface hard failures for human intervention.
 
-If a consumer needs to incorporate external changes (a manual edit, a separate process), the canonical path is: stop the consumer, pull, restart.
+Incorporating external changes (an importer, a person pushing to the data repo, a separate process) is the consumer's decision about *when*: at boot, from a webhook, on a timer. That is `repo.sync()`, and it runs under the same write lock as `transact`, so nothing commits or reads a half-moved ref while it works.
 
 ## Start it
 
@@ -179,7 +179,7 @@ When the remote contains work the daemon doesn't (a fast-forward isn't possible)
 - `daemon.status().lastError.reason` carries `'non-fast-forward'` so health checks / alerting can branch on it.
 - Subsequent `repo.transact` commits still trigger fresh push attempts. Each will also fail with `non-fast-forward` (and emit its own event) until the remote state is reconciled.
 
-The right intervention: stop the consumer, investigate the remote (something else committed to your branch), reconcile (rebase or merge), restart.
+The right intervention is a `repo.sync()` (below): it fetches, replays your local commits onto the remote tip, and hands the new tip back to the daemon — or, if the replay conflicts, preserves your local history on a `conflicts/<timestamp>` branch for an operator and adopts the remote. Stop-pull-restart still works, but it is no longer the only option.
 
 ```typescript
 daemon.on('error', ({ reason, err }) => {
@@ -191,6 +191,37 @@ daemon.on('error', ({ reason, err }) => {
   }
 });
 ```
+
+## Taking in other writers' commits: `repo.sync()`
+
+When something else also pushes to your branch — an importer, a person committing to the data repo, a second service — bring the local branch up to date with an explicit sync (v2.8+):
+
+```typescript
+const result = await repo.sync({
+  remote: 'origin',               // default
+  branch: 'main',                 // default: HEAD's branch
+  onConflict: 'preserve-branch',  // default 'fail'
+});
+
+switch (result.outcome) {
+  case 'in-sync':          // nothing to do
+  case 'fast-forwarded':   // remote had new commits; the branch moved, live sheets rebound
+  case 'ahead':            // only local commits; the running daemon was handed the tip
+  case 'rebased':          // both sides had commits; yours were replayed on top (author/message kept)
+  case 'conflict':         // onConflict: 'fail' — nothing moved; result.conflictCommit names the culprit
+  case 'conflict-escaped': // onConflict: 'preserve-branch' — local history kept on result.conflictBranch
+                           // (pushed best-effort), branch reset to the remote tip
+  case 'fetch-failed':     // network/auth; nothing moved; result.fetchError
+}
+```
+
+- The fetch runs **outside** the write lock (a slow network never blocks writes); classification and ref movement run **inside** it, in the core, with no working tree and nothing to abort. A conflict stops the replay before any ref moves.
+- When the synced branch is the one `HEAD` points at, every live sheet is rebound before `sync` resolves — the same auto-refresh a commit does.
+- `ahead` / `rebased` tips are handed to a running daemon via its normal path; `sync` never pushes the branch itself and never force-pushes anything.
+- Call it at boot before the daemon starts (so a `non-fast-forward` at startup is reconciled rather than alerted on), from a hot-reload webhook, or on a timer. `repo.isAncestor(remoteTip, localTip)` is the cheap "do I already have this?" check before a webhook-triggered sync.
+- `sync` inside a `transact` handler or a `withLock` callback throws `TransactionError('lock_held')`.
+
+For a full record-level merge of two branches (an import branch into the served branch, with canonical output and a conflict policy), see `repo.merge` in the [API reference](../api.md#repository) and `git sheet merge` in the [CLI reference](../cli.md#gitsheets-merge-theirs); `gitsheets merge --install-driver` makes plain `git merge` do the same.
 
 ## Multi-remote replication (still external)
 

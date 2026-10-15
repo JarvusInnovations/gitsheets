@@ -22,6 +22,7 @@ Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and 
 - **[`gitsheets-axi`](axi.md)** — the agent-facing companion CLI (TOON output, idempotent mutations, session hooks).
 - **[Path templates](path-templates.md)** — syntax, recursive fields, query pruning, invalid-char handling.
 - **[Validation](validation.md)** — JSON Schema in `.gitsheets/<sheet>.toml`, optional Standard Schema layering.
+- **Sync and merge** — [`repo.sync()`](recipes/production-push-daemon.md#taking-in-other-writers-commits-reposync) takes in other writers' commits under the write lock; [`repo.merge()` / `git sheet merge`](cli.md#gitsheets-merge-theirs) merges two branches record-by-record with canonical output, and `git sheet merge --install-driver` makes plain `git merge` do the same.
 
 ## Recipes
 
@@ -32,13 +33,13 @@ Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and 
 - **[Markdown CMS pattern](recipes/markdown-cms.md)** — content-typed sheets: records as `.md` with TOML frontmatter; lazy body loading.
 - **[Migrating a `[gitsheet.fields]` config](recipes/migrating-config.md)** — pre-v1.0 → v1.0 schema migration.
 
-## Migrating from pre-v1.0
+## Migrating
 
-If you're updating from a pre-v1.0 internal install, the [migration guide](migration-guide.md) covers the breaking changes (legacy `GitSheets` class removed, HTTP server removed, ESM-only, validation reshape).
+The [migration guide](migration-guide.md) covers every version step with a behavior change: pre-v1.0 → v1.0, v1.x → v2.0 (the Rust core), and v2.7 → v2.9 (template fields must be schema-required; `injectedFields` removed).
 
 ## Where the contracts live
 
-[`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs) is the source of truth. The docs you're reading are the consumer-facing tour; the specs are the authoritative API + behavior contract. When in doubt, the spec wins.
+[`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs) is the source of truth. The docs you're reading are the consumer-facing tour; the specs are the authoritative API + behavior contract. When in doubt, the spec wins. The decisive rules behind the unspecified cases — the project's principles — are in [`specs/principles.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/principles.md).
 
 ## License
 

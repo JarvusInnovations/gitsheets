@@ -160,7 +160,7 @@ gitsheets check posts posts/hello.md
 gitsheets merge <theirs> [--into <ours>] [--prefer ours|theirs] [--message m] [--dry-run]
 ```
 
-Sheet-aware merge: record files changed on both sides are field-merged and written canonically (no mixed serializations); non-record files merge as git would. Conflicts (field / delete-modify / blob) are listed on stderr and exit 1 with nothing written unless `--prefer` picks a side. `--dry-run` prints the merged tree hash and moves nothing. Prefer this over a plain `git merge` of a data repo — or install the driver so `git merge` does it: `git config merge.gitsheets.driver "git sheet merge-driver %O %A %B %P"` plus a `.gitattributes` line `users/**/*.toml merge=gitsheets`.
+Sheet-aware merge: record files changed on both sides are field-merged and written canonically (no mixed serializations); non-record files merge as git would. Conflicts (field / delete-modify / blob) are listed on stderr and exit 1 with nothing written unless `--prefer` picks a side. `--dry-run` prints the merged tree hash and moves nothing. Prefer this over a plain `git merge` of a data repo — or run `gitsheets merge --install-driver` once per clone so `git merge` / `rebase` / `cherry-pick` do it: it sets the `merge.gitsheets.*` git-config keys and adds a `<root>/**/*<ext> merge=gitsheets` line per sheet to `.gitattributes` (idempotent; commit the file). Fresh clones need the config step again — put `--install-driver` in the project's setup script.
 
 ## Exit codes
 

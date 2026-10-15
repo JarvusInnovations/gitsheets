@@ -91,10 +91,11 @@ interface InitArgs extends GlobalArgs {
 }
 
 interface MergeArgs extends GlobalArgs {
-  theirs: string;
+  theirs?: string;
   into?: string;
   prefer?: string;
   dryRun: boolean;
+  installDriver: boolean;
 }
 
 interface MergeDriverArgs extends GlobalArgs {
@@ -727,10 +728,73 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
  * Conflicts are listed on stderr and exit 1 with nothing written unless
  * `--prefer` resolves them.
  */
+/**
+ * `gitsheets merge --install-driver` — register the merge driver
+ * (specs/behaviors/merge.md "Merge driver"): the two `merge.gitsheets.*`
+ * git-config keys plus one `.gitattributes` line per sheet at HEAD, kept
+ * idempotent and never committed.
+ */
+async function runInstallDriver(argv: MergeArgs): Promise<void> {
+  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const git = async (...args: string[]): Promise<string> =>
+    (await exec('git', args, { cwd: repo.gitDir })).stdout.trim();
+
+  await git('config', 'merge.gitsheets.name', 'gitsheets record merge');
+  await git('config', 'merge.gitsheets.driver', 'git sheet merge-driver %O %A %B %P');
+  process.stdout.write('set: merge.gitsheets.name = "gitsheets record merge"\n');
+  process.stdout.write('set: merge.gitsheets.driver = "git sheet merge-driver %O %A %B %P"\n');
+
+  const root = argv.root && argv.root !== '/' ? argv.root : '.';
+  const sheets = await repo.openSheets(root === '.' ? {} : { root });
+  const wanted: string[] = [];
+  for (const name of Object.keys(sheets).sort()) {
+    const config = await sheets[name]!.readConfig();
+    const base = [root === '.' ? '' : root, config.root === '.' ? '' : config.root].filter((p) => p.length > 0).join('/');
+    const pattern = `${base.length > 0 ? `${base}/` : ''}**/*${extensionFor(config.format.type)}`;
+    const line = `${pattern} merge=gitsheets`;
+    if (!wanted.includes(line)) wanted.push(line);
+  }
+
+  // Running git inside `.git` itself reports "bare", so ask the config and
+  // resolve the top level from the directory that contains the git dir.
+  let workTree: string | null = null;
+  try {
+    const bare = (await exec('git', ['--git-dir', repo.gitDir, 'config', '--get', 'core.bare'])).stdout.trim();
+    if (bare !== 'true') {
+      workTree = (await exec('git', ['-C', dirname(repo.gitDir), 'rev-parse', '--show-toplevel'])).stdout.trim();
+    }
+  } catch {
+    workTree = null;
+  }
+  if (workTree === null) {
+    process.stdout.write('bare repository — add these lines to .gitattributes in a working tree:\n');
+    for (const line of wanted) process.stdout.write(`  ${line}\n`);
+    return;
+  }
+  const attributesPath = join(workTree, '.gitattributes');
+  const existing = await readFile(attributesPath, 'utf8').catch(() => '');
+  const have = new Set(existing.split('\n').map((l) => l.trim()).filter((l) => l.length > 0));
+  const added = wanted.filter((line) => !have.has(line));
+  for (const line of wanted) {
+    process.stdout.write(`${have.has(line) ? 'kept' : 'added'}: ${line}\n`);
+  }
+  if (added.length > 0) {
+    const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+    await writeFile(attributesPath, `${existing}${sep}${added.join('\n')}\n`, 'utf8');
+    process.stdout.write(`wrote ${attributesPath} — review and commit it\n`);
+  } else {
+    process.stdout.write(`${attributesPath} already up to date\n`);
+  }
+}
+
 async function runMerge(argv: MergeArgs): Promise<void> {
+  if (argv.installDriver) return runInstallDriver(argv);
   const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
   const opts: import('../repository.js').MergeOptions = {
-    theirs: argv.theirs,
+    theirs: argv.theirs!,
     commit: !argv.dryRun,
     ...(argv.into ? { ours: argv.into } : {}),
     ...(argv.prefer ? { prefer: argv.prefer as 'ours' | 'theirs' } : {}),
@@ -1187,14 +1251,25 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       runMigrateConfig,
     )
     .command<MergeArgs>(
-      'merge <theirs>',
+      'merge [theirs]',
       'Sheet-aware merge: record files changed on both sides are field-merged and written canonically (see specs/behaviors/merge.md)',
       (y) =>
         y
-          .positional('theirs', { type: 'string', demandOption: true, describe: 'Branch, tag, or commit to merge in' })
+          .positional('theirs', { type: 'string', describe: 'Branch, tag, or commit to merge in' })
           .option('into', { type: 'string', describe: "Branch to merge into (default: HEAD's branch)" })
           .option('prefer', { type: 'string', choices: ['ours', 'theirs'], describe: 'Resolve conflicts in favour of a side' })
-          .option('dry-run', { type: 'boolean', default: false, describe: 'Write the merged tree, move nothing' }),
+          .option('dry-run', { type: 'boolean', default: false, describe: 'Write the merged tree, move nothing' })
+          .option('install-driver', {
+            type: 'boolean',
+            default: false,
+            describe: 'Register the git merge driver (git config + .gitattributes) so plain `git merge` field-merges records',
+          })
+          .check((argv) => {
+            // A returned string is an argument error (exit 2), not a thrown one.
+            if (argv.installDriver && argv.theirs) return 'merge: --install-driver takes no <theirs>';
+            if (!argv.installDriver && !argv.theirs) return 'merge: <theirs> is required (or pass --install-driver)';
+            return true;
+          }),
       runMerge,
     )
     .command<MergeDriverArgs>(

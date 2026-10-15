@@ -30,7 +30,10 @@ f3a91c2 contacts upsert ada
 ```
 
 A record is a file. A change is a commit. Everything git can do with commits
-(blame, revert, branch, push, diff, sign) now applies to your data.
+(blame, revert, branch, push, diff, sign) now applies to your data — and
+gitsheets knows the files are records: two branches of a data repo merge
+field by field with canonical output, and a service can take in commits that
+other writers pushed without stopping.
 
 ## What people run on it
 
@@ -45,8 +48,9 @@ A record is a file. A change is a commit. Everything git can do with commits
   (keyed by subject and evaluator), one commit per pass, and nothing acts on a
   verdict until a human has read the diff. The schema rejects malformed model
   output at write time.
-- **Mirrors of external systems.** Extract an API into records, fix and merge
-  data in git where diffs and review are free, then load only the deltas back.
+- **Mirrors of external systems.** Extract an API into records on an import
+  branch, fix and review in git where diffs are free, merge it record-by-record
+  (`git sheet merge import`), then load only the deltas back.
 
 ## Getting started
 
@@ -147,7 +151,9 @@ storage, not records. If a conventional database is serving you well, keep it.
 ## Spec-driven
 
 [`specs/`](specs/) is the source of truth for behavior; start at
-[`specs/README.md`](specs/README.md). The library and CLI live in
+[`specs/README.md`](specs/README.md), and read
+[`specs/principles.md`](specs/principles.md) for the rules that decide the
+cases the specs do not enumerate. The library and CLI live in
 [`packages/gitsheets`](packages/gitsheets); the Rust core and bindings live
 under [`rust/`](rust/).
 
