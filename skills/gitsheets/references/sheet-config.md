@@ -32,7 +32,6 @@ That's it. Records live at `users/<slug>.toml`. No validation, no normalization 
 | --- | --- | --- |
 | `root` | string | Sub-directory under the data root where this sheet's records live. Required. |
 | `path` | string | Path template — see below. Required. Non-empty string. |
-| `injectedFields` | string[] | Template fields the writer supplies before upsert that the schema does not require (v2.8+). Exempts them from the open-time template check — see [Template fields must be schema-required](#template-fields-must-be-schema-required). |
 
 The sheet's full storage location is `<data-root>/<root>/<rendered-path>.<ext>`, where:
 
@@ -347,19 +346,18 @@ const aliceTasks = await sheet.findByIndex('byOwner', 'alice');
 
 ## Template fields must be schema-required
 
-When a sheet has a persisted schema (`[gitsheet.schema]` and/or `implements`), every *static* template field — `${{ field }}`, `${{ field/** }}`, or a date bucket's base field — must be in a top-level `required` list of the local schema or a declared contract, or be listed in `[gitsheet].injectedFields`. Otherwise `openSheet` (and every CLI command that opens the sheet, including `contracts verify`) fails with `ConfigError('config_invalid')` naming the field. Expression components are exempt; schemaless sheets are not checked.
+When a sheet has a persisted schema (`[gitsheet.schema]` and/or `implements`), every *static* template field — `${{ field }}`, `${{ field/** }}`, or a date bucket's base field — must be in a top-level `required` list of the local schema or a declared contract. Otherwise `openSheet` (and every CLI command that opens the sheet, including `contracts verify`) fails with `ConfigError('config_invalid')` naming the field. Expression components are exempt; schemaless sheets are not checked. **There is no exemption list** (the 2.8.0 `injectedFields` key was removed in 2.9.0 and is rejected by name).
 
-Why: a record missing a template field can never be stored (`path_render_failed` on every upsert), so a template on an optional or undeclared field is a config bug that would otherwise surface only on the first write.
+Why: a record carries every field its path renders — path rendering is a pure function of the stored record (specs/principles.md "Records carry their own path"). A path field the service "injects" before upsert (a tenant key, a parent's slug) belongs on the record and in `required`; when a child's path is keyed by its parent's handle, that handle *is* the reference to the parent. Don't suggest stripping or injecting path fields in consumer code — put them in the schema.
 
 ```toml
 [gitsheet]
 root = 'roles'
 path = '${{ projectSlug }}/${{ slug }}'
-injectedFields = ['projectSlug']   # the service adds projectSlug before upsert
 
 [gitsheet.schema]
 type = 'object'
-required = ['slug']
+required = ['projectSlug', 'slug']
 ```
 
 ## Validation behavior

@@ -460,9 +460,9 @@ async function loadConfig(
 
   // The core's open-time validation on top of the host parse above: contract
   // load/compile and template coherence (every static template field must be
-  // schema-required or declared in `injectedFields` —
-  // specs/behaviors/path-templates.md "Template fields must be
-  // schema-required"). Once per distinct config blob, via the cache below.
+  // schema-required, no exemptions — specs/behaviors/path-templates.md
+  // "Template fields must be schema-required"). Once per distinct config
+  // blob, via the cache below.
   sheetConfigCheck(gitDir, treeRef, sheetNameFromConfigPath(configPath), configPath, openRootFromConfigPath(configPath));
 
   const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };

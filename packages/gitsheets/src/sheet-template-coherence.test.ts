@@ -51,22 +51,17 @@ describe('template coherence at sheet open', () => {
     expect(err).toBeInstanceOf(ConfigError);
     expect((err as ConfigError).code).toBe('config_invalid');
     expect((err as ConfigError).message).toContain('"projectSlug"');
-    expect((err as ConfigError).message).toContain('injectedFields');
+    expect((err as ConfigError).message).toContain('`required`');
   });
 
-  it('opens when the field is required, or declared in injectedFields', async () => {
+  it('opens when the field is required (the writer stores it on the record)', async () => {
     const required = await seed(ROLES.replace("required = ['slug']", "required = ['slug', 'projectSlug']"));
-    const repoA = await openRepo({ gitDir: required.gitDir });
-    await expect(repoA.openSheet('roles')).resolves.toBeDefined();
-
-    const injected = await seed(ROLES.replace("root = 'roles'", "root = 'roles'\ninjectedFields = ['projectSlug']"));
-    const repoB = await openRepo({ gitDir: injected.gitDir });
-    const roles = await repoB.openSheet('roles');
-    // The writer injects the field before upsert; the schema never requires it.
-    await repoB.transact({ message: 'add role' }, async (tx) => {
+    const repo = await openRepo({ gitDir: required.gitDir });
+    const roles = await repo.openSheet('roles');
+    await repo.transact({ message: 'add role' }, async (tx) => {
       await tx.sheet('roles').upsert({ projectSlug: 'acme', slug: 'maintainer' });
     });
-    expect(await roles.get('acme/maintainer')).toMatchObject({ slug: 'maintainer' });
+    expect(await roles.get('acme/maintainer')).toMatchObject({ slug: 'maintainer', projectSlug: 'acme' });
   });
 
   it('does not check a sheet without a persisted schema', async () => {
@@ -75,11 +70,11 @@ describe('template coherence at sheet open', () => {
     await expect(repo.openSheet('roles')).resolves.toBeDefined();
   });
 
-  it('rejects a non-array injectedFields', async () => {
-    const fixture = await seed(ROLES.replace("root = 'roles'", "root = 'roles'\ninjectedFields = 'projectSlug'"));
+  it('rejects a config still carrying the removed injectedFields key, by name', async () => {
+    const fixture = await seed(ROLES.replace("root = 'roles'", "root = 'roles'\ninjectedFields = ['projectSlug']"));
     const repo = await openRepo({ gitDir: fixture.gitDir });
     const err = await repo.openSheet('roles').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConfigError);
-    expect((err as ConfigError).message).toContain('injectedFields must be an array');
+    expect((err as ConfigError).message).toContain('injectedFields was removed');
   });
 });

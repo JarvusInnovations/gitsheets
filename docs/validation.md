@@ -8,8 +8,8 @@ Records are validated on every write through two stacked layers, in order:
 A failure at either layer throws `ValidationError` with all issues from the failing layer. Validation runs synchronously inside `Sheet.upsert` / `Sheet.patch`, before any tree mutation.
 
 The persisted schema also gates the path template: at sheet open, every static
-template field must be schema-required (locally or by a declared contract) or
-listed in `[gitsheet].injectedFields`. See
+template field must be schema-required (locally or by a declared contract),
+with no exemption list. See
 [path templates](path-templates.md#template-fields-must-be-schema-required).
 
 ## Why two layers

@@ -36,11 +36,12 @@ def _canonical_toml(doc: dict) -> str:
 
 
 # `slug` is the template key; the fixture contracts require only `email`, so
-# declare it writer-injected (specs/behaviors/path-templates.md "Template
-# fields must be schema-required").
+# the local schema requires it (specs/principles.md "Records carry their own
+# path").
 SHEET_WITH_IMPLEMENTS = (
-    "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\ninjectedFields = ['slug']\n"
+    "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n"
     f"implements = ['{CONTRACT_NAME}']\n"
+    "[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n"
 )
 
 CONFORMING_CONTRACT = _canonical_toml(
@@ -229,8 +230,9 @@ def test_verify_rung1_passes_with_zero_record_reads():
 def test_verify_rung1_miss_on_newer_producer_version_falls_through_to_rung2_pass():
     name_v1_1 = "example.com/people/v1.1"
     sheet_config = (
-        "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\ninjectedFields = ['slug']\n"
+        "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n"
         f"implements = ['{name_v1_1}']\n"
+        "[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n"
     )
     contract_v1_1 = _canonical_toml(_consumer_doc(name_v1_1, ["email"]))
     with _setup_repo(sheet_config, contract_v1_1, contract_name=name_v1_1) as (d, git_dir):
