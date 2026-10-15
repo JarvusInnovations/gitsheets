@@ -1539,7 +1539,19 @@
 <li>When the synced branch is the one <code>HEAD</code> points at, every live sheet is rebound before <code>sync</code> resolves — the same auto-refresh a commit does.</li>
 <li><code>ahead</code> / <code>rebased</code> tips are handed to a running daemon via its normal path; <code>sync</code> never pushes the branch itself and never force-pushes anything.</li>
 <li>Call it at boot before the daemon starts (so a <code>non-fast-forward</code> at startup is reconciled rather than alerted on), from a hot-reload webhook, or on a timer. <code>repo.isAncestor(remoteTip, localTip)</code> is the cheap &ldquo;do I already have this?&rdquo; check before a webhook-triggered sync.</li>
-<li><code>sync</code> inside a <code>transact</code> handler or a <code>withLock</code> callback throws <code>TransactionError('lock_held')</code>.</li>
+<li>
+<p><code>sync</code> inside a <code>transact</code> handler or a <code>withLock</code> callback throws <code>TransactionError('lock_held')</code>. For a hot reload that must rebuild in-memory state with no transaction in between, pass <code>afterMove</code> — it runs under the lock after the move and the rebind:</p>
+<div class="highlight"><pre><span></span><code><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">sync</span><span class="p">({</span>
+<span class="w">  </span><span class="nx">onConflict</span><span class="o">:</span><span class="w"> </span><span class="s1">'preserve-branch'</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">afterMove</span><span class="o">:</span><span class="w"> </span><span class="kt">async</span><span class="w"> </span><span class="p">(</span><span class="nx">result</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">rebuildInMemoryState</span><span class="p">();</span><span class="w"> </span><span class="c1">// no transaction can commit until this returns</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="p">});</span>
+</code></pre></div>
+</li>
+</ul>
+<ul>
+<li><code>repo.fetch()</code> runs just the fetch step (outside any lock, failure as a value); follow it with <code>repo.sync({ fetch: false })</code>.</li>
 </ul>
 <p>For a full record-level merge of two branches (an import branch into the served branch, with canonical output and a conflict policy), see <code>repo.merge</code> in the <a href="../../api/#repository">API reference</a> and <code>git sheet merge</code> in the <a href="../../cli/#gitsheets-merge-theirs">CLI reference</a>; <code>gitsheets merge --install-driver</code> makes plain <code>git merge</code> do the same.</p>
 <h2 id="multi-remote-replication-still-external">Multi-remote replication (still external)<a class="headerlink" href="#multi-remote-replication-still-external" title="Permanent link"> ¶</a></h2>

@@ -1734,6 +1734,10 @@
 <td>Bring a branch up to date with a remote other writers push to: fetch, then fast-forward / replay local commits / preserve-on-conflict under the write lock; rebinds live sheets; hands new tips to the push daemon. Outcomes <code>in-sync</code> · <code>fast-forwarded</code> · <code>ahead</code> · <code>rebased</code> · <code>conflict</code> · <code>conflict-escaped</code> · <code>fetch-failed</code></td>
 </tr>
 <tr>
+<td><code>repo.fetch(opts?)</code></td>
+<td>The fetch step of <code>sync</code> on its own, outside any lock: <code>{ ok, remoteRef, remoteCommit \| error }</code> — failure is a value</td>
+</tr>
+<tr>
 <td><code>repo.isAncestor(a, b)</code></td>
 <td><code>Promise&lt;boolean&gt;</code> — is commit <code>a</code> reachable from <code>b</code></td>
 </tr>
