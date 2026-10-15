@@ -1742,6 +1742,14 @@
 <td><code>Promise&lt;boolean&gt;</code> — is commit <code>a</code> reachable from <code>b</code></td>
 </tr>
 <tr>
+<td><code>repo.tag(name, target?, { force? })</code></td>
+<td>Lightweight tag (default target <code>HEAD</code>); refuses an existing tag unless <code>force</code> — <code>git tag -f</code> without the spawn</td>
+</tr>
+<tr>
+<td><code>repo.listTree(ref, path?)</code></td>
+<td>Direct entries <code>{ name, type, mode, hash }</code> of the tree at <code>&lt;ref&gt;:&lt;path&gt;</code>, or <code>null</code> — <code>git ls-tree</code> without the spawn</td>
+</tr>
+<tr>
 <td><code>repo.merge({ theirs, ours?, prefer?, commit? })</code></td>
 <td>Sheet-aware merge: record files changed on both sides are field-merged and written canonically; conflicts follow <code>prefer</code> (<code>fail</code> · <code>ours</code> · <code>theirs</code>) or are reported in the result, never thrown. Outcomes <code>up-to-date</code> · <code>fast-forward</code> · <code>merged</code> · <code>conflict</code> · <code>dry-run</code></td>
 </tr>
