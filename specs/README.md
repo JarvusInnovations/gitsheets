@@ -27,6 +27,7 @@ PRs that change runtime behavior should include a spec change. If they don't, th
 ```text
 specs/
 ├── README.md             # This file — workflow + layout
+├── principles.md         # Project-wide principles — decisive rules that resolve unspecified cases
 ├── architecture.md       # Tech stack, packaging, foundational decisions
 ├── rust-core.md          # v-next target: Rust core + thin language bindings (forward-looking)
 ├── concepts.md           # Vocabulary: Repository, Sheet, Record, Transaction, Store, Index

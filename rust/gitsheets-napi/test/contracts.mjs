@@ -78,9 +78,10 @@ function setupRepo(sheetConfig, contractToml) {
 
 const SHEET_WITH_IMPLEMENTS =
   "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n" +
+  `implements = ['${CONTRACT_NAME}']\n` +
   // `slug` is the template key; the fixture contracts require only `email`,
-  // so declare it writer-injected (specs/behaviors/path-templates.md).
-  `injectedFields = ['slug']\nimplements = ['${CONTRACT_NAME}']\n`;
+  // so the local schema requires it (specs/principles.md).
+  "[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n";
 
 // A minimal conforming contract requiring `email`.
 const CONFORMING_CONTRACT = canonicalToml({

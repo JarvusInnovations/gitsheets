@@ -19,7 +19,7 @@ A failure at either layer throws `ValidationError`. Validation runs synchronousl
 
 ## Template coherence
 
-The persisted schema also gates the sheet's **path template**: at sheet open, every static field the template names must be in a top-level `required` list (local schema or a declared contract) or in `[gitsheet].injectedFields`, else `ConfigError` (`config_invalid`). See [behaviors/path-templates.md](path-templates.md#template-fields-must-be-schema-required).
+The persisted schema also gates the sheet's **path template**: at sheet open, every static field the template names must be in a top-level `required` list (local schema or a declared contract), else `ConfigError` (`config_invalid`) — no exemption list ([principles.md](../principles.md#records-carry-their-own-path)). See [behaviors/path-templates.md](path-templates.md#template-fields-must-be-schema-required).
 
 ## Why two layers
 

@@ -63,8 +63,8 @@ async function stageMealsConfig(
       : '';
   await writeFile(
     join(fixture.path, '.gitsheets/meals.toml'),
-    // `slug` is writer-injected: the fixture contracts require only `name`.
-    `[gitsheet]\nroot = 'meals'\npath = '\${{ slug }}'\ninjectedFields = ['slug']\n${implementsLine}`,
+    // The fixture contracts require only `name`; the local schema requires the template key.
+    `[gitsheet]\nroot = 'meals'\npath = '\${{ slug }}'\n${implementsLine}[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n`,
   );
   await fixture.git('add', '.gitsheets/meals.toml');
 }
