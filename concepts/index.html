@@ -620,6 +620,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#merging-branches-of-a-data-repo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Merging branches of a data repo
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#commits-as-audit-log" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1328,6 +1339,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#merging-branches-of-a-data-repo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Merging branches of a data repo
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#commits-as-audit-log" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1412,6 +1434,7 @@
 <span class="n">type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'string'</span>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'email'</span>
 </code></pre></div>
+<p>A sheet opened with <code>{ ref }</code> (<code>repo.openSheet('users', { ref: 'staging' })</code>, or a whole <code>openStore(repo, { ref })</code>) is <strong>pinned</strong>: it reads the tree that ref resolved to at open, is left alone by auto-refresh and <code>repo.refresh()</code>, re-resolves its ref only on its own <code>refresh()</code>, and rejects writes. Operator tooling reads another branch&rsquo;s records this way without moving <code>HEAD</code>.</p>
 <h2 id="record">Record<a class="headerlink" href="#record" title="Permanent link"> ¶</a></h2>
 <p>A single TOML document stored under the sheet&rsquo;s root, at the path rendered from the sheet&rsquo;s path template against the record&rsquo;s fields.</p>
 <p>Records are validated on every write — first against the persisted JSON Schema, then against any consumer-supplied Standard Schema validator.</p>
@@ -1435,7 +1458,7 @@ ${{ a }}/${{ b }}           # path segments separated by `/`
 <p>A transaction carries an <strong>author</strong>, <strong>committer</strong>, <strong>commit message</strong>, and <strong>trailers</strong> (git-style key/value metadata).</p>
 <div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">transact</span><span class="p">(</span>
 <span class="w">  </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">parent</span><span class="o">:</span><span class="w"> </span><span class="s1">'main'</span><span class="p">,</span><span class="w">                    </span><span class="c1">// ref name or commit hash; default: HEAD</span>
+<span class="w">    </span><span class="nx">parent</span><span class="o">:</span><span class="w"> </span><span class="s1">'main'</span><span class="p">,</span><span class="w">                    </span><span class="c1">// ref name or commit hash; default: HEAD; null = orphan root commit</span>
 <span class="w">    </span><span class="nx">author</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="w"> </span><span class="p">},</span><span class="w">           </span><span class="c1">// default: git config</span>
 <span class="w">    </span><span class="nx">message</span><span class="o">:</span><span class="w"> </span><span class="s1">'janedoe: POST /api/users'</span><span class="p">,</span>
 <span class="w">    </span><span class="nx">trailers</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">Action</span><span class="o">:</span><span class="w"> </span><span class="s1">'user.create'</span><span class="p">,</span><span class="w"> </span><span class="s1">'Subject-Slug'</span><span class="o">:</span><span class="w"> </span><span class="s1">'janedoe'</span><span class="w"> </span><span class="p">},</span>
@@ -1443,11 +1466,13 @@ ${{ a }}/${{ b }}           # path segments separated by `/`
 <span class="w">  </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">tx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">sheet</span><span class="p">(</span><span class="s1">'users'</span><span class="p">).</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'janedoe'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'jane@x.org'</span><span class="w"> </span><span class="p">});</span>
 <span class="w">    </span><span class="k">await</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">sheet</span><span class="p">(</span><span class="s1">'audits'</span><span class="p">).</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">action</span><span class="o">:</span><span class="w"> </span><span class="s1">'user.create'</span><span class="p">,</span><span class="w"> </span><span class="nx">subject</span><span class="o">:</span><span class="w"> </span><span class="s1">'janedoe'</span><span class="w"> </span><span class="p">});</span>
+<span class="w">    </span><span class="nx">tx</span><span class="p">.</span><span class="nx">writeFile</span><span class="p">(</span><span class="s1">'.gitsheets/audits.toml'</span><span class="p">,</span><span class="w"> </span><span class="nx">updatedConfigToml</span><span class="p">);</span><span class="w"> </span><span class="c1">// non-record files ride in the same commit</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">ok</span><span class="o">:</span><span class="w"> </span><span class="kt">true</span><span class="w"> </span><span class="p">};</span>
 <span class="w">  </span><span class="p">},</span>
 <span class="p">);</span>
 <span class="c1">// result: { value, commitHash, treeHash, ref, parentCommitHash }</span>
 </code></pre></div>
+<p><code>tx.writeFile(path, content)</code> / <code>tx.deleteFile(path)</code> stage raw files (a sheet config, a vendored contract, a fixture) beside record changes, unvalidated and unnormalized. <code>parent: null</code> opens an <strong>orphan</strong> root commit — empty starting tree, no parents — for snapshots and scrubbed exports; <code>branch</code> may name a branch that does not exist yet and it is created.</p>
 <p><strong>Mutations outside a transaction</strong> (permissive mode, the default) implicitly open and commit a single-mutation transaction with an auto-generated message. The transaction model is the same either way; only the explicit-vs-implicit framing differs.</p>
 <p><strong>Strict mode</strong> (<code>repo.requireExplicitTransactions()</code>) flips the default: standalone <code>Sheet.upsert</code> / <code>delete</code> / <code>patch</code> throws <code>TransactionError('transaction_required')</code>. Useful when you want every write to carry intentional metadata.</p>
 <h2 id="store">Store<a class="headerlink" href="#store" title="Permanent link"> ¶</a></h2>
@@ -1568,17 +1593,23 @@ and the <a href="../recipes/markdown-cms/">Markdown CMS recipe</a>.</p>
 <div class="highlight"><pre><span></span><code><span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">setAttachment</span><span class="p">(</span><span class="nx">record</span><span class="p">,</span><span class="w"> </span><span class="s1">'avatar.jpg'</span><span class="p">,</span><span class="w"> </span><span class="nx">blob</span><span class="p">);</span>
 <span class="kd">const</span><span class="w"> </span><span class="nx">avatarBlob</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">getAttachment</span><span class="p">(</span><span class="nx">record</span><span class="p">,</span><span class="w"> </span><span class="s1">'avatar.jpg'</span><span class="p">);</span>
 
+<span class="c1">// Every handle carries the blob's metadata (v2.8+):</span>
+<span class="nx">avatarBlob</span><span class="p">.</span><span class="nx">hash</span><span class="p">;</span><span class="w">   </span><span class="c1">// for an ETag</span>
+<span class="nx">avatarBlob</span><span class="p">.</span><span class="nx">size</span><span class="p">;</span><span class="w">   </span><span class="c1">// bytes, from the object header — for Content-Length</span>
+<span class="nx">avatarBlob</span><span class="p">.</span><span class="nx">stream</span><span class="p">().</span><span class="nx">pipe</span><span class="p">(</span><span class="nx">res</span><span class="p">);</span><span class="w">  </span><span class="c1">// Readable: one in-core chunk up to 1 MiB, piped from git above that</span>
+
 <span class="c1">// Iterator surface (v1.1):</span>
 <span class="k">for</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="p">(</span><span class="kd">const</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">mimeType</span><span class="p">,</span><span class="w"> </span><span class="nx">blob</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">attachments</span><span class="p">(</span><span class="nx">record</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">buf</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">blob</span><span class="p">.</span><span class="nx">read</span><span class="p">();</span><span class="w">   </span><span class="c1">// Buffer</span>
-<span class="w">  </span><span class="c1">// or pipe blob.stream() — Readable backed by `git cat-file blob &lt;hash&gt;`</span>
 <span class="p">}</span>
 
 <span class="c1">// Explicit removal (v1.1):</span>
 <span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">deleteAttachment</span><span class="p">(</span><span class="nx">record</span><span class="p">,</span><span class="w"> </span><span class="s1">'avatar.jpg'</span><span class="p">);</span><span class="w">  </span><span class="c1">// throws NotFoundError if missing</span>
 <span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">deleteAttachments</span><span class="p">(</span><span class="nx">record</span><span class="p">);</span><span class="w">               </span><span class="c1">// idempotent — removes the whole dir</span>
 </code></pre></div>
-<p>Attachments are first-class: included in tree commits, deleted with their record (cascade-on-record-delete), accessible per-record via <code>sheet.getAttachments(record)</code> (raw blob map) or the <code>sheet.attachments(record)</code> iterator (<code>{name, mimeType, blob}</code> with <code>.read()</code> / <code>.stream()</code>). The iterator&rsquo;s <code>mimeType</code> is inferred from the filename extension, defaulting to <code>application/octet-stream</code>.</p>
+<p>Attachments are first-class: included in tree commits, deleted with their record (cascade-on-record-delete), <strong>moved with their record when an upsert renames it</strong> (load the record, change its key field, upsert the same object — a <code>delete</code> followed by an <code>upsert</code> is not a rename and loses them), accessible per-record via <code>sheet.getAttachments(record)</code> (blob map) or the <code>sheet.attachments(record)</code> iterator (<code>{name, mimeType, blob}</code> with <code>.read()</code> / <code>.stream()</code>). The iterator&rsquo;s <code>mimeType</code> is inferred from the filename extension, defaulting to <code>application/octet-stream</code>. By key path without loading the record: <code>repo.readBlob(ref, 'users/jane/avatar.jpg')</code>.</p>
+<h2 id="merging-branches-of-a-data-repo">Merging branches of a data repo<a class="headerlink" href="#merging-branches-of-a-data-repo" title="Permanent link"> ¶</a></h2>
+<p>A plain <code>git merge</code> of record files merges lines, so each side&rsquo;s serialization survives and a merged repo can carry a mix no single gitsheets version would write. <code>repo.merge({ theirs })</code> (and <code>git sheet merge &lt;branch&gt;</code>) merges <strong>records</strong>: every record file changed on both sides since the merge base is field-merged from the parsed records and written in canonical form; delete/modify and field conflicts follow <code>prefer: 'ours' | 'theirs'</code> or are reported with nothing written. A git merge driver (<code>git sheet merge-driver</code>) gives a plain <code>git merge</code> the same record-level behavior. See <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/merge.md"><code>specs/behaviors/merge.md</code></a>.</p>
 <h2 id="commits-as-audit-log">Commits as audit log<a class="headerlink" href="#commits-as-audit-log" title="Permanent link"> ¶</a></h2>
 <p>There is no separate audit table. Every mutation produces a commit with author, committer, timestamp, full diff, message, and structured trailers. Queries an audit table would serve are answered by <code>git log --grep</code> / <code>--author</code> / <code>-- &lt;path&gt;/</code>.</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Every mutation that touched users/jane.toml</span>

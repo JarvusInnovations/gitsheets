@@ -1300,6 +1300,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v27-v29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.7 → v2.9
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v2.7 → v2.9">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-a-path-template-may-only-name-schema-required-fields-280" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. A path template may only name schema-required fields (2.8.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-injectedfields-is-gone-290-breaking-relative-to-280" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. injectedFields is gone (2.9.0, breaking relative to 2.8.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-additive-280" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Additive (2.8.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1661,6 +1711,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v27-v29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.7 → v2.9
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v2.7 → v2.9">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-a-path-template-may-only-name-schema-required-fields-280" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. A path template may only name schema-required fields (2.8.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-injectedfields-is-gone-290-breaking-relative-to-280" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. injectedFields is gone (2.9.0, breaking relative to 2.8.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-additive-280" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Additive (2.8.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1998,6 +2098,27 @@ cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </spa
 <p>(Or use <code>git sheet normalize &lt;sheet&gt;</code> per sheet from the CLI.) See the
 <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md#canonical-form-re-baseline-the-rust-serializer">canonical-form re-baseline notes</a>
 for the full contract.</p>
+<h2 id="v27-v29">v2.7 → v2.9<a class="headerlink" href="#v27-v29" title="Permanent link"> ¶</a></h2>
+<p>Two minor releases shipped together: 2.8.0 (eight consumer-filed features) and 2.9.0 (one removal). One check and one removal can stop a sheet from opening; everything else is additive.</p>
+<h3 id="1-a-path-template-may-only-name-schema-required-fields-280">1. A path template may only name schema-required fields (2.8.0)<a class="headerlink" href="#1-a-path-template-may-only-name-schema-required-fields-280" title="Permanent link"> ¶</a></h3>
+<p>When a sheet has a persisted schema (<code>[gitsheet.schema]</code>, declared contracts, or both), <code>openSheet</code> now fails with <code>ConfigError('config_invalid')</code> if a <em>static</em> template field — <code>${{ f }}</code>, <code>${{ f/** }}</code>, or a date bucket&rsquo;s base field — is not in a top-level <code>required</code> list of the local schema or a declared contract. Expression components are exempt; schemaless sheets are not checked. The fix is one line per sheet:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[gitsheet.schema]</span>
+<span class="n">required</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'projectSlug'</span><span class="p">,</span><span class="w"> </span><span class="s1">'slug'</span><span class="p">]</span><span class="w">   </span><span class="c1"># every static template field</span>
+</code></pre></div>
+<p>Why: a record missing a template field can never be stored (<code>path_render_failed</code> on every upsert, aborting the transaction), so a template on an optional field is a config bug the check now catches at open instead of on the first write. <code>infer</code> and <code>migrate-config</code> write template fields into <code>required</code> for you.</p>
+<h3 id="2-injectedfields-is-gone-290-breaking-relative-to-280">2. <code>injectedFields</code> is gone (2.9.0, breaking relative to 2.8.0)<a class="headerlink" href="#2-injectedfields-is-gone-290-breaking-relative-to-280" title="Permanent link"> ¶</a></h3>
+<p>2.8.0 shipped a <code>[gitsheet].injectedFields</code> list exempting &ldquo;writer-supplied&rdquo; fields from that check. 2.9.0 removes it: a config still carrying the key fails to open with an error naming it. The principle — <strong>a record carries every field needed to render its path</strong> — is in <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/principles.md#records-carry-their-own-path"><code>specs/principles.md</code></a>. A field your service used to splice in before the upsert (a tenant key, a parent&rsquo;s slug) belongs on the record and in <code>required</code>; when a child&rsquo;s path is keyed by its parent&rsquo;s handle, that handle is the reference to the parent.</p>
+<h3 id="3-additive-280">3. Additive (2.8.0)<a class="headerlink" href="#3-additive-280" title="Permanent link"> ¶</a></h3>
+<ul>
+<li><strong>Rename moves attachments.</strong> An upsert whose rendered path changes (the loaded record with its new key) moves the attachment directory too. <code>delete</code> then <code>upsert</code> is not a rename and never was.</li>
+<li><strong><code>tx.writeFile</code> / <code>tx.deleteFile</code> are public</strong>; <code>transact({ parent: null })</code> opens an orphan root commit; <code>branch</code> may name a branch that does not exist yet.</li>
+<li><strong>Ref-pinned sheets</strong>: <code>openSheet(name, { ref })</code>, <code>openSheets({ ref })</code>, <code>openStore(repo, { ref })</code> — read-only, never auto-refreshed.</li>
+<li><strong>Blob handles carry <code>size</code> and <code>stream()</code></strong> everywhere; <code>repo.readBlob(ref, path)</code>; streaming is in-core up to 1 MiB and piped from <code>git cat-file</code> above that. <code>AttachmentBlobHandle</code> is now an alias of <code>BlobHandle</code>.</li>
+<li><strong><code>repo.sync()</code></strong> brings a branch up to date with a remote other writers push to; <strong><code>repo.isAncestor(a, b)</code></strong>.</li>
+<li><strong><code>repo.merge()</code></strong>, <code>git sheet merge</code>, and the <code>git sheet merge-driver</code>: record-level 3-way merge with canonical output.</li>
+<li><strong>Markdown sheets accept an explicit <code>null</code> body</strong> without <code>allowMissingBody</code> (absent/<code>undefined</code> still throws).</li>
+<li>Python binding (<code>gitsheets</code> 0.4.0 / 0.5.0 on PyPI): <code>transact(orphan=)</code>, <code>write_file</code> / <code>delete_file</code>, <code>blob_header</code>, <code>sync_branch</code> / <code>is_ancestor</code>, <code>merge_sheets</code> / <code>merge_record_texts</code>.</li>
+</ul>
 <h2 id="going-forward">Going forward<a class="headerlink" href="#going-forward" title="Permanent link"> ¶</a></h2>
 <p>Once migrated, the recipes are the fastest path to common patterns:</p>
 <ul>
