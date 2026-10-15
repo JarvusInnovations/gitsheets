@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: [template-fields-require-schema]
 specs:
   - specs/principles.md
   - specs/behaviors/path-templates.md
   - specs/behaviors/validation.md
 issues: [304]
+pr: 321
 ---
 
 # Plan: remove injectedFields
@@ -40,12 +41,12 @@ the release notes.
 
 ## Validation
 
-- [ ] `cargo test`: the removed key is `config_invalid` naming it; the
+- [x] `cargo test`: the removed key is `config_invalid` naming it; the
       unrequired-field case names the remedy without an exemption.
-- [ ] napi + pytest: the same two cases.
-- [ ] vitest + axi: fixtures pass with `required` instead; the removed key
+- [x] napi + pytest: the same two cases.
+- [x] vitest + axi: fixtures pass with `required` instead; the removed key
       rejects at `openSheet`.
-- [ ] clippy / type-check clean.
+- [x] clippy / type-check clean.
 
 ## Risks / unknowns
 
@@ -53,8 +54,16 @@ the release notes.
 
 ## Notes
 
-(Populated at closeout.)
+- The removed key is rejected by name (`config_invalid`, "injectedFields was
+  removed", pointing at the principle) rather than passed as an unknown key,
+  so nobody silently loses the check they thought they had escaped.
+- The fixture replacement everywhere is a local `[gitsheet.schema]` that
+  requires the template key; builders that already took a schema add `slug`
+  to its `required`.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Tracked as: a possible `x-references` annotation keyword in contracts
+  (declaring `project-memberships.projectSlug → projects.slug`) if the
+  consumer's Zod-metadata prototype proves out; strict contract compilation
+  would need to accept it. Not committed to.
