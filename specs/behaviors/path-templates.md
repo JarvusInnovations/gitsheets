@@ -213,16 +213,9 @@ A record the template cannot render against cannot be stored — every `upsert` 
 
 The rule: every *static* field the template names — a plain field reference `${{ field }}`, a recursive reference `${{ field/** }}`, or the base field of a date bucket `${{ field: YYYY/MM }}` (the top-level segment of a dotted reference) — must appear in the top-level `required` list of the local `[gitsheet.schema]` or of at least one declared contract. Expression components (`${{ slug || legacyId }}`) are exempt: which fields an expression needs is not statically decidable, and a scan of its identifiers would produce false positives.
 
-A sheet whose writer supplies a path field at write time without declaring it in the schema (a multi-tenant key injected by the service, a parent id the record model does not carry) lists it in `[gitsheet].injectedFields`:
+There is **no exemption list**. A field the template renders is part of the record ([principles.md — Records carry their own path](../principles.md#records-carry-their-own-path)); a writer that "injects" a path field before upsert is holding data that belongs in the record and its schema. A config carrying the removed `[gitsheet].injectedFields` key fails to open with `ConfigError` (`config_invalid`) naming the key, so nobody silently loses the check.
 
-```toml
-[gitsheet]
-root = 'roles'
-path = '${{ projectSlug }}/${{ slug }}'
-injectedFields = ['projectSlug']   # the writer adds projectSlug before upsert; the schema does not require it
-```
-
-A static template field that is neither required nor injected fails the open with `ConfigError` (`config_invalid`), naming the field and both remedies. A sheet with no persisted schema and no contracts is not checked — there is nothing to check against. The check reads only the top-level `required` keyword of each document; a `required` nested inside `allOf` / `oneOf` / `if` is not consulted.
+A static template field that is not required fails the open with `ConfigError` (`config_invalid`), naming the field and the remedy. A sheet with no persisted schema and no contracts is not checked — there is nothing to check against. The check reads only the top-level `required` keyword of each document; a `required` nested inside `allOf` / `oneOf` / `if` is not consulted.
 
 This was [#304](https://github.com/JarvusInnovations/gitsheets/issues/304): two production sheets were templated on a field their records never carried, every write 500ed, and nothing caught it because the app's tests ran against corrected copies of the configs.
 
@@ -303,10 +296,17 @@ See [behaviors/attachments.md](attachments.md).
 
 Templates are parsed once per template string (process-wide cache by string). Re-parsing on every render would be wasteful and is avoided.
 
+## Principles
+
+**Inherited** — project principles that especially bite on this spec:
+
+- [Records carry their own path](../principles.md#records-carry-their-own-path) — every static template field is a required record field; path rendering is a pure function of the stored record, with no writer-side exemptions.
+
 ## Coordinates with
 
 - [api/sheet.md](../api/sheet.md)
 - [behaviors/attachments.md](attachments.md)
+- [principles.md](../principles.md)
 - [GitHub #105](https://github.com/JarvusInnovations/gitsheets/issues/105) — multi-variable component bug
 - [GitHub #14](https://github.com/JarvusInnovations/gitsheets/issues/14) — invalid character handling
 - [GitHub #252](https://github.com/JarvusInnovations/gitsheets/issues/252) — declarative date-bucket path keys
