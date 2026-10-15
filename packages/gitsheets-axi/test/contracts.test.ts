@@ -33,13 +33,16 @@ function canonicalContractText(): string {
 }
 
 // `slug` is the template key; the fixture contract requires only `name`, so
-// declare it writer-injected (specs/behaviors/path-templates.md "Template
-// fields must be schema-required").
+// the local schema requires it (specs/principles.md "Records carry their own
+// path").
 const MEALS_CONFIG = `[gitsheet]
 root = 'meals'
 path = '\${{ slug }}'
 implements = ['${CONTRACT_NAME}']
-injectedFields = ['slug']
+
+[gitsheet.schema]
+type = 'object'
+required = ['slug']
 `;
 
 const MEALS_CONFIG_CLOSED = `[gitsheet]

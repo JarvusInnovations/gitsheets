@@ -4,7 +4,8 @@
 // `sheetConfigCheck` opens a sheet against a committed tree and surfaces the
 // core's open-time validation: a static template field the persisted schema
 // does not require fails with ConfigError(config_invalid) naming the field;
-// `[gitsheet].injectedFields` is the escape hatch.
+// there is no exemption list (specs/principles.md); the removed
+// `injectedFields` key is itself rejected.
 //
 // Requires the addon to be built first: `npm run build:debug` (or `build`).
 
@@ -50,7 +51,7 @@ test('sheetConfigCheck: a template field the schema does not require is config_i
         assert.ok(err instanceof ConfigError, `expected ConfigError, got ${err?.constructor?.name}`);
         assert.equal(err.code, 'config_invalid');
         assert.match(err.message, /"projectSlug"/);
-        assert.match(err.message, /injectedFields/);
+        assert.match(err.message, /`required`/);
         return true;
       },
     );
@@ -59,12 +60,21 @@ test('sheetConfigCheck: a template field the schema does not require is config_i
   }
 });
 
-test('sheetConfigCheck: injectedFields unblocks a writer-supplied template field', () => {
+test('sheetConfigCheck: the removed injectedFields key is config_invalid by name; requiring the field opens', () => {
   const { dir, gitDir } = setupRepo(BAD.replace("root = 'roles'", "root = 'roles'\ninjectedFields = ['projectSlug']"));
   try {
-    assert.doesNotThrow(() => sheetConfigCheck(gitDir, 'HEAD', 'roles', '.gitsheets/roles.toml', '.'));
+    assert.throws(
+      () => sheetConfigCheck(gitDir, 'HEAD', 'roles', '.gitsheets/roles.toml', '.'),
+      (err) => err.code === 'config_invalid' && /injectedFields was removed/.test(err.message),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+  const ok = setupRepo(BAD.replace("required = ['slug']", "required = ['slug', 'projectSlug']"));
+  try {
+    assert.doesNotThrow(() => sheetConfigCheck(ok.gitDir, 'HEAD', 'roles', '.gitsheets/roles.toml', '.'));
+  } finally {
+    rmSync(ok.dir, { recursive: true, force: true });
   }
 });
 

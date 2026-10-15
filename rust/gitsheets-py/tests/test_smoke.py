@@ -583,7 +583,7 @@ def test_blob_primitives_read_the_object_database(markdown_repo):
 
 # ── template coherence (specs/behaviors/path-templates.md) ─────────────────────
 # A static template field the persisted schema does not require fails sheet
-# open with ConfigError; `injectedFields` is the escape hatch. Same core check
+# open with ConfigError; there is no exemption list (specs/principles.md). Same core check
 # as the Node binding (rust/gitsheets-napi/test/sheet-config-check.mjs).
 
 _ROLES_BAD = (
@@ -606,13 +606,17 @@ def test_template_field_not_required_by_schema_fails_sheet_open(seeded_repo):
         with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
             tx.open_sheet("roles", ".gitsheets/roles.toml")
     assert '"projectSlug"' in str(info.value)
-    assert "injectedFields" in str(info.value)
+    assert "`required`" in str(info.value)
 
 
-def test_injected_fields_unblocks_a_writer_supplied_template_field(seeded_repo):
+def test_removed_injected_fields_key_is_rejected_and_requiring_the_field_opens(seeded_repo):
     d, git_dir = seeded_repo
     _commit_roles_config(d, _ROLES_BAD.replace("root = 'roles'\n", "root = 'roles'\ninjectedFields = ['projectSlug']\n"))
-    with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+    with pytest.raises(gitsheets.ConfigError, match="injectedFields was removed"):
+        with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+            tx.open_sheet("roles", ".gitsheets/roles.toml")
+    _commit_roles_config(d, _ROLES_BAD.replace("required = ['slug']", "required = ['slug', 'projectSlug']"))
+    with gitsheets.transact(git_dir, "y", 1_700_000_001, author=("Seed", "seed@x.org")) as tx:
         tx.open_sheet("roles", ".gitsheets/roles.toml")
 
 
