@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, canonicalContractHash, validateContractName, contractPath, checkContractDocument, contractLoad, verifySheetContract, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, treeReadBlob, treeEntryHash, blobRead, blobHeader, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, syncBranch, isAncestor, mergeSheets, mergeRecordTexts, coreDiscoverSheets, sheetConfigCheck, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
+const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, canonicalContractHash, validateContractName, contractPath, checkContractDocument, contractLoad, verifySheetContract, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, treeReadBlob, treeEntryHash, blobRead, blobHeader, treeList, tagSet, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, syncBranch, isAncestor, mergeSheets, mergeRecordTexts, coreDiscoverSheets, sheetConfigCheck, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
 
 module.exports.roundtrip = roundtrip
 module.exports.parseRecords = parseRecords
@@ -338,6 +338,8 @@ module.exports.treeReadBlob = treeReadBlob
 module.exports.treeEntryHash = treeEntryHash
 module.exports.blobRead = blobRead
 module.exports.blobHeader = blobHeader
+module.exports.treeList = treeList
+module.exports.tagSet = tagSet
 module.exports.recordQueryCandidates = recordQueryCandidates
 module.exports.templateFieldNames = templateFieldNames
 module.exports.recordIndexUnique = recordIndexUnique

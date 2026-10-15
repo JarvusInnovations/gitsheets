@@ -718,3 +718,15 @@ def test_orphan_transaction_sees_a_config_staged_in_itself(seeded_repo):
         tx.upsert("events", {"slug": "launch"})
     tree = subprocess.run(["git", "--git-dir", git_dir, "ls-tree", "-r", "--name-only", tx.result["commit_hash"]], check=True, capture_output=True).stdout.decode().split()
     assert sorted(tree) == [".gitsheets/events.toml", "events/launch.toml"]
+
+
+def test_tree_list_and_tag_set(seeded_repo):
+    d, git_dir = seeded_repo
+    entries = gitsheets.tree_list(git_dir, "HEAD", ".gitsheets")
+    assert [(e["name"], e["type"], e["mode"]) for e in entries] == [("people.toml", "blob", "100644")]
+    assert gitsheets.tree_list(git_dir, "HEAD", "nope") is None
+    head = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"], check=True, capture_output=True).stdout.decode().strip()
+    assert gitsheets.tag_set(git_dir, "snap") == head
+    with pytest.raises(gitsheets.TransactionError):
+        gitsheets.tag_set(git_dir, "snap")
+    assert gitsheets.tag_set(git_dir, "snap", force=True) == head
