@@ -120,16 +120,14 @@ local schema or of a declared contract. Otherwise the open throws
 `ConfigError(config_invalid)` naming the field. Expression components
 (`${{ slug || legacyId }}`) are exempt.
 
-If your writer supplies a path field before upsert that the record schema
-never declares (a tenant or parent key injected by the service), list it in
-`injectedFields`:
-
-```toml
-[gitsheet]
-root = 'roles'
-path = '${{ projectSlug }}/${{ slug }}'
-injectedFields = ['projectSlug']
-```
+There is no exemption list, by principle: **a record contains every field
+needed to render its path**
+([spec](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/principles.md#records-carry-their-own-path)).
+A field your service used to splice in before the upsert (a tenant key, a
+parent's slug) belongs on the record and in its schema as `required` — that
+handle *is* how the record references its parent. The 2.8.0
+`[gitsheet].injectedFields` key was removed; a config still carrying it fails
+to open with an error naming the key.
 
 Sheets with no schema and no contracts are not checked.
 
