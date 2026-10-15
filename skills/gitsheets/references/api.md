@@ -84,6 +84,8 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 | `repo.sync(opts?)` | `Promise<SyncResult>` (v2.8+) — fetch + fast-forward / replay / preserve-on-conflict under the write lock; see PushDaemon section |
 | `repo.fetch(opts?)` | (v2.11+) sync's fetch step alone, outside any lock → `{ ok: true, remoteRef, remoteCommit }` or `{ ok: false, remoteRef, error }`; pair with `sync({ fetch: false })` |
 | `repo.isAncestor(a, b)` | `Promise<boolean>` (v2.8+) — is commit `a` reachable from `b` |
+| `repo.tag(name, target?, { force? })` | (v2.11+) lightweight tag in-core; existing tag refused unless `force` — use instead of shelling out to `git tag -f` |
+| `repo.listTree(ref, path?)` | (v2.11+) direct entries `{ name, type, mode, hash }` at `<ref>:<path>` or `null` — use instead of `git ls-tree` |
 | `repo.merge({ theirs, ours?, prefer?, commit?, message? })` | `Promise<MergeResult>` (v2.8+) — sheet-aware merge: records changed on both sides are field-merged and written canonically; `prefer: 'fail'` (default) reports conflicts in `result.conflicts` with nothing written, `'ours'` / `'theirs'` resolves field, delete/modify and blob conflicts; `commit: false` = dry run. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
 
 ### `repo.transact`
