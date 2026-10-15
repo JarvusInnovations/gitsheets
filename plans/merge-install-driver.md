@@ -1,10 +1,11 @@
 ---
-status: in-progress
+status: done
 depends: [sheet-aware-merge]
 specs:
   - specs/behaviors/merge.md
   - specs/api/cli.md
 issues: [307]
+pr: 327
 ---
 
 # Plan: `git sheet merge --install-driver`
@@ -38,8 +39,8 @@ committing. Bare repos get the config plus the printed lines.
 
 ## Validation
 
-- [ ] vitest: the cases above.
-- [ ] `npm run type-check` clean.
+- [x] vitest: the cases above.
+- [x] `npm run type-check` clean.
 
 ## Risks / unknowns
 
@@ -50,8 +51,12 @@ committing. Bare repos get the config plus the printed lines.
 
 ## Notes
 
-(Populated at closeout.)
+- Running git with `cwd` inside `.git` reports the repo as bare, so the
+  command reads `core.bare` via `--git-dir` and resolves the top level from
+  the git dir's parent.
+- yargs usage failures exit 2 through `process.exit`, which vitest
+  intercepts; the tests assert a non-zero code plus the message.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.
