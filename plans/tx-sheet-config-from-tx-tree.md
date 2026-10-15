@@ -1,9 +1,10 @@
 ---
-status: in-progress
+status: done
 depends: [public-file-writes-and-orphan-commits]
 specs:
   - specs/api/transaction.md
 issues: [329]
+pr: 332
 ---
 
 # Plan: transaction-bound sheets read config from the transaction tree
@@ -34,10 +35,10 @@ the core transaction so configs staged earlier in the same transaction
 
 ## Validation
 
-- [ ] vitest: both cases; existing suites unchanged.
-- [ ] napi + pytest: `readFile` sees staged content; Python orphan
+- [x] vitest: both cases; existing suites unchanged.
+- [x] napi + pytest: `readFile` sees staged content; Python orphan
       config-then-upsert.
-- [ ] clippy / type-check clean.
+- [x] clippy / type-check clean.
 
 ## Risks / unknowns
 
@@ -45,8 +46,11 @@ the core transaction so configs staged earlier in the same transaction
 
 ## Notes
 
-(Populated at closeout.)
+- The host now opens the core sheet before reading config, so the core's
+  open-time validation runs on the tx tree and its typed errors surface
+  first; the host parse skips its own `sheetConfigCheck` for tx-bound sheets.
+- Python already read from the tx tree; it only gained a regression test.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- None.
