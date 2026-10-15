@@ -194,3 +194,69 @@ describe('repo.sync()', () => {
     expect(TransactionError).toBeDefined();
   });
 });
+
+// specs/behaviors/push-sync.md — afterMove under the lock, repo.fetch() (#330).
+describe('repo.sync({ afterMove }) and repo.fetch()', () => {
+  it('afterMove runs under the lock after the move and rebind; a concurrent transact waits for it', async () => {
+    const { repo, other, local } = await world();
+    const users = await repo.openSheet('users');
+    const remoteTip = await otherWrites(other, 'bob', 'bob@x.org');
+    const events: string[] = [];
+    let entered!: () => void;
+    const inside = new Promise<void>((res) => { entered = res; });
+
+    const syncing = repo.sync({
+      afterMove: async (result) => {
+        events.push(`afterMove ${result.outcome}`);
+        // The ref moved and live sheets were rebound before the callback.
+        expect((await local.git('rev-parse', 'main')).stdout.trim()).toBe(remoteTip);
+        expect((await users.get('bob'))?.['email']).toBe('bob@x.org');
+        // A transaction from inside the critical section is lock_held.
+        await expect(repo.transact({ message: 'inner' }, async () => 0)).rejects.toMatchObject({ code: 'lock_held' });
+        entered();
+        await new Promise((res) => setTimeout(res, 150));
+        events.push('afterMove done');
+      },
+    });
+    // A transaction from another context, started mid-callback, queues behind the lock.
+    await inside;
+    const concurrent = repo.transact({ message: 'concurrent' }, async (tx) => {
+      events.push('transact');
+      await tx.sheet('users').upsert({ slug: 'cat', email: 'cat@x.org' });
+    });
+    const r = await syncing;
+    await concurrent;
+    expect(r.outcome).toBe('fast-forwarded');
+    expect(events).toEqual(['afterMove fast-forwarded', 'afterMove done', 'transact']);
+  });
+
+  it('afterMove is not called when nothing moved, and a throw propagates with the ref left moved', async () => {
+    const { repo, other, local } = await world();
+    let calls = 0;
+    expect((await repo.sync({ afterMove: () => { calls++; } })).outcome).toBe('in-sync');
+    expect(calls).toBe(0);
+    const remoteTip = await otherWrites(other, 'bob', 'bob@x.org');
+    await expect(repo.sync({ afterMove: () => { throw new Error('rebuild failed'); } })).rejects.toThrow('rebuild failed');
+    expect((await local.git('rev-parse', 'main')).stdout.trim()).toBe(remoteTip);
+    // The lock was released: a transaction can run.
+    await repo.transact({ message: 'after' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'dan', email: 'dan@x.org' });
+    });
+  });
+
+  it('repo.fetch() updates the remote-tracking ref without moving the branch; failure is a value', async () => {
+    const { repo, other, local } = await world();
+    const before = (await local.git('rev-parse', 'main')).stdout.trim();
+    const remoteTip = await otherWrites(other, 'bob', 'bob@x.org');
+    const f = await repo.fetch();
+    expect(f).toEqual({ ok: true, remoteRef: 'refs/remotes/origin/main', remoteCommit: remoteTip });
+    expect((await local.git('rev-parse', 'main')).stdout.trim()).toBe(before);
+    const r = await repo.sync({ fetch: false });
+    expect(r.outcome).toBe('fast-forwarded');
+
+    await local.git('remote', 'set-url', 'origin', '/nonexistent/remote.git');
+    const failed = await repo.fetch();
+    expect(failed.ok).toBe(false);
+    expect(failed.ok ? '' : failed.error).toBeTruthy();
+  });
+});

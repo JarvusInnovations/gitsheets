@@ -170,6 +170,7 @@ interface SyncOptions {
   conflictBranchPrefix?: string;              // default 'conflicts/'
   pushConflictBranch?: boolean;               // default true (best-effort)
   committer?: { name: string; email: string } // for replayed commits; default: the repo's identity
+  afterMove?: (result: SyncResult) => void | Promise<void> // runs under the write lock after a move + rebind
 }
 interface SyncResult {
   outcome: 'in-sync' | 'fast-forwarded' | 'ahead' | 'rebased' | 'conflict' | 'conflict-escaped' | 'fetch-failed';
@@ -186,6 +187,11 @@ interface SyncResult {
 
 - Throws `TransactionError` (`lock_held`) inside a transaction handler or a `withLock` callback; `RefError` (`ref_not_found`) when the branch or its remote-tracking ref does not exist after the fetch; `RefError` (`not_an_ancestor`) when the two histories are unrelated.
 - A running push daemon is handed the new tip after `ahead` / `rebased` (it pushes; `sync` itself never pushes the branch).
+- `afterMove` runs only when the branch moved, under the write lock and after live sheets were rebound, so no transaction can interleave between the move and the caller's rebuild; inside it `transact` / `withLock` are `lock_held`. Its throw propagates after the lock is released; the ref stays moved.
+
+### `repo.fetch(opts?)`
+
+`git fetch --prune <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>` on its own — `sync`'s first step, without the lock. `opts.remote` defaults to `origin`, `opts.branch` to `HEAD`'s branch (`RefError` when detached). Returns `Promise<{ ok: true, remoteRef, remoteCommit } | { ok: false, remoteRef, error }>`; a network or auth failure is a value, not a throw. Pair with `sync({ fetch: false })`. See [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
 
 ### `repo.isAncestor(a, b)`
 
