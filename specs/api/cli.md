@@ -164,6 +164,10 @@ git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
 
 Sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)): record files changed on both sides are field-merged and written canonically. `--into` defaults to `HEAD`'s branch. Without `--prefer`, any conflict lists every conflicting path (and field) on stderr and exits **1** with nothing written; `--prefer ours|theirs` resolves them. `--dry-run` reports the merged tree hash and moves nothing. Prints the outcome and the merge commit on success.
 
+### `git sheet merge --install-driver`
+
+Registers the merge driver ([behaviors/merge.md](../behaviors/merge.md#merge-driver)) so plain `git merge` / `rebase` / `cherry-pick` field-merge record files: sets `merge.gitsheets.name` and `merge.gitsheets.driver` in the repository's git config, and adds a `<root>/**/*<ext> merge=gitsheets` line per sheet discovered at `HEAD` to the working tree's `.gitattributes` (existing lines are kept; re-running adds nothing). Does not commit `.gitattributes`. In a bare repository, sets the config and prints the attribute lines. `<theirs>` is not accepted together with `--install-driver`.
+
 ### `git sheet merge-driver <base> <ours> <theirs> <path>`
 
 The git merge driver ([behaviors/merge.md](../behaviors/merge.md#merge-driver)). Resolves the sheet owning `<path>` from `HEAD`'s configs, field-merges the three files, writes the canonical result over `<ours>`, exits 0. On a field conflict it writes git's own text merge (`git merge-file` markers) and exits 1. A `<path>` under no sheet is text-merged the same way. Install with `git config merge.gitsheets.driver "git sheet merge-driver %O %A %B %P"` and a `.gitattributes` `merge=gitsheets` pattern.
