@@ -317,6 +317,36 @@ cargo run -p gitsheets-core --example normalize_tree -- path/to/records
 [canonical-form re-baseline notes](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/normalization.md#canonical-form-re-baseline-the-rust-serializer)
 for the full contract.
 
+## v2.7 → v2.9
+
+Two minor releases shipped together: 2.8.0 (eight consumer-filed features) and 2.9.0 (one removal). One check and one removal can stop a sheet from opening; everything else is additive.
+
+### 1. A path template may only name schema-required fields (2.8.0)
+
+When a sheet has a persisted schema (`[gitsheet.schema]`, declared contracts, or both), `openSheet` now fails with `ConfigError('config_invalid')` if a *static* template field — `${{ f }}`, `${{ f/** }}`, or a date bucket's base field — is not in a top-level `required` list of the local schema or a declared contract. Expression components are exempt; schemaless sheets are not checked. The fix is one line per sheet:
+
+```toml
+[gitsheet.schema]
+required = ['projectSlug', 'slug']   # every static template field
+```
+
+Why: a record missing a template field can never be stored (`path_render_failed` on every upsert, aborting the transaction), so a template on an optional field is a config bug the check now catches at open instead of on the first write. `infer` and `migrate-config` write template fields into `required` for you.
+
+### 2. `injectedFields` is gone (2.9.0, breaking relative to 2.8.0)
+
+2.8.0 shipped a `[gitsheet].injectedFields` list exempting "writer-supplied" fields from that check. 2.9.0 removes it: a config still carrying the key fails to open with an error naming it. The principle — **a record carries every field needed to render its path** — is in [`specs/principles.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/principles.md#records-carry-their-own-path). A field your service used to splice in before the upsert (a tenant key, a parent's slug) belongs on the record and in `required`; when a child's path is keyed by its parent's handle, that handle is the reference to the parent.
+
+### 3. Additive (2.8.0)
+
+- **Rename moves attachments.** An upsert whose rendered path changes (the loaded record with its new key) moves the attachment directory too. `delete` then `upsert` is not a rename and never was.
+- **`tx.writeFile` / `tx.deleteFile` are public**; `transact({ parent: null })` opens an orphan root commit; `branch` may name a branch that does not exist yet.
+- **Ref-pinned sheets**: `openSheet(name, { ref })`, `openSheets({ ref })`, `openStore(repo, { ref })` — read-only, never auto-refreshed.
+- **Blob handles carry `size` and `stream()`** everywhere; `repo.readBlob(ref, path)`; streaming is in-core up to 1 MiB and piped from `git cat-file` above that. `AttachmentBlobHandle` is now an alias of `BlobHandle`.
+- **`repo.sync()`** brings a branch up to date with a remote other writers push to; **`repo.isAncestor(a, b)`**.
+- **`repo.merge()`**, `git sheet merge`, and the `git sheet merge-driver`: record-level 3-way merge with canonical output.
+- **Markdown sheets accept an explicit `null` body** without `allowMissingBody` (absent/`undefined` still throws).
+- Python binding (`gitsheets` 0.4.0 / 0.5.0 on PyPI): `transact(orphan=)`, `write_file` / `delete_file`, `blob_header`, `sync_branch` / `is_ancestor`, `merge_sheets` / `merge_record_texts`.
+
 ## Going forward
 
 Once migrated, the recipes are the fastest path to common patterns:

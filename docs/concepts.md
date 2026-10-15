@@ -48,6 +48,8 @@ type = 'string'
 format = 'email'
 ```
 
+A sheet opened with `{ ref }` (`repo.openSheet('users', { ref: 'staging' })`, or a whole `openStore(repo, { ref })`) is **pinned**: it reads the tree that ref resolved to at open, is left alone by auto-refresh and `repo.refresh()`, re-resolves its ref only on its own `refresh()`, and rejects writes. Operator tooling reads another branch's records this way without moving `HEAD`.
+
 ## Record
 
 A single TOML document stored under the sheet's root, at the path rendered from the sheet's path template against the record's fields.
@@ -84,7 +86,7 @@ A transaction carries an **author**, **committer**, **commit message**, and **tr
 ```typescript
 const result = await repo.transact(
   {
-    parent: 'main',                    // ref name or commit hash; default: HEAD
+    parent: 'main',                    // ref name or commit hash; default: HEAD; null = orphan root commit
     author: { name, email },           // default: git config
     message: 'janedoe: POST /api/users',
     trailers: { Action: 'user.create', 'Subject-Slug': 'janedoe' },
@@ -92,11 +94,14 @@ const result = await repo.transact(
   async (tx) => {
     await tx.sheet('users').upsert({ slug: 'janedoe', email: 'jane@x.org' });
     await tx.sheet('audits').upsert({ action: 'user.create', subject: 'janedoe' });
+    tx.writeFile('.gitsheets/audits.toml', updatedConfigToml); // non-record files ride in the same commit
     return { ok: true };
   },
 );
 // result: { value, commitHash, treeHash, ref, parentCommitHash }
 ```
+
+`tx.writeFile(path, content)` / `tx.deleteFile(path)` stage raw files (a sheet config, a vendored contract, a fixture) beside record changes, unvalidated and unnormalized. `parent: null` opens an **orphan** root commit — empty starting tree, no parents — for snapshots and scrubbed exports; `branch` may name a branch that does not exist yet and it is created.
 
 **Mutations outside a transaction** (permissive mode, the default) implicitly open and commit a single-mutation transaction with an auto-generated message. The transaction model is the same either way; only the explicit-vs-implicit framing differs.
 
@@ -263,10 +268,14 @@ A binary blob colocated with a record. Stored at `<recordPath>/<attachmentName>`
 await sheet.setAttachment(record, 'avatar.jpg', blob);
 const avatarBlob = await sheet.getAttachment(record, 'avatar.jpg');
 
+// Every handle carries the blob's metadata (v2.8+):
+avatarBlob.hash;   // for an ETag
+avatarBlob.size;   // bytes, from the object header — for Content-Length
+avatarBlob.stream().pipe(res);  // Readable: one in-core chunk up to 1 MiB, piped from git above that
+
 // Iterator surface (v1.1):
 for await (const { name, mimeType, blob } of sheet.attachments(record)) {
   const buf = await blob.read();   // Buffer
-  // or pipe blob.stream() — Readable backed by `git cat-file blob <hash>`
 }
 
 // Explicit removal (v1.1):
@@ -274,7 +283,11 @@ await sheet.deleteAttachment(record, 'avatar.jpg');  // throws NotFoundError if 
 await sheet.deleteAttachments(record);               // idempotent — removes the whole dir
 ```
 
-Attachments are first-class: included in tree commits, deleted with their record (cascade-on-record-delete), accessible per-record via `sheet.getAttachments(record)` (raw blob map) or the `sheet.attachments(record)` iterator (`{name, mimeType, blob}` with `.read()` / `.stream()`). The iterator's `mimeType` is inferred from the filename extension, defaulting to `application/octet-stream`.
+Attachments are first-class: included in tree commits, deleted with their record (cascade-on-record-delete), **moved with their record when an upsert renames it** (load the record, change its key field, upsert the same object — a `delete` followed by an `upsert` is not a rename and loses them), accessible per-record via `sheet.getAttachments(record)` (blob map) or the `sheet.attachments(record)` iterator (`{name, mimeType, blob}` with `.read()` / `.stream()`). The iterator's `mimeType` is inferred from the filename extension, defaulting to `application/octet-stream`. By key path without loading the record: `repo.readBlob(ref, 'users/jane/avatar.jpg')`.
+
+## Merging branches of a data repo
+
+A plain `git merge` of record files merges lines, so each side's serialization survives and a merged repo can carry a mix no single gitsheets version would write. `repo.merge({ theirs })` (and `git sheet merge <branch>`) merges **records**: every record file changed on both sides since the merge base is field-merged from the parsed records and written in canonical form; delete/modify and field conflicts follow `prefer: 'ours' | 'theirs'` or are reported with nothing written. A git merge driver (`git sheet merge-driver`) gives a plain `git merge` the same record-level behavior. See [`specs/behaviors/merge.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/merge.md).
 
 ## Commits as audit log
 
