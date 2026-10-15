@@ -668,6 +668,13 @@ export declare class CoreTransaction {
    * lazy-body switch. Read-only.
    */
   readRecord(name: string, recordPath: string, withBody: boolean): JsValue | null
+  /**
+   * A raw file at `path` (repo-root-relative) in this transaction's
+   * private tree — staged writes included — as `{ hash, content }`, or
+   * `null` when nothing (or a subtree) is there. Backs tx-bound config
+   * loading (specs/api/transaction.md "Read isolation").
+   */
+  readFile(path: string): JsBlobEntry | null
   /** The parent commit hash captured at open (null on a fresh repo). */
   parentCommitHash(): string | null
   /**

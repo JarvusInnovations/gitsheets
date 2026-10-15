@@ -2155,6 +2155,23 @@ impl CoreTransaction {
         }
     }
 
+    /// A raw file at `path` (repo-root-relative) in this transaction's
+    /// private tree — staged writes included — as `{ hash, content }`, or
+    /// `null` when nothing (or a subtree) is there. Backs tx-bound config
+    /// loading (specs/api/transaction.md "Read isolation").
+    #[napi]
+    pub fn read_file(&mut self, env: Env, path: String) -> Result<Option<JsBlobEntry>> {
+        let Self { inner, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (ctx, tree) = tx.split();
+        match record::read_blob_entry(&ctx, tree, &path) {
+            Ok(entry) => Ok(entry.map(|(hash, bytes)| JsBlobEntry { hash, content: Buffer::from(bytes) })),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
     /// The parent commit hash captured at open (null on a fresh repo).
     #[napi]
     pub fn parent_commit_hash(&self) -> Option<String> {

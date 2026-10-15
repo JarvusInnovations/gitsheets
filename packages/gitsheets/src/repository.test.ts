@@ -438,3 +438,31 @@ describe('orphan commits and branch creation', () => {
     expect(mainAfter).toBe(mainBefore);
   });
 });
+
+// specs/api/transaction.md "Read isolation" — config from the tx tree (#329).
+describe('tx-bound sheets read config from the transaction tree', () => {
+  it('an orphan transaction can stage a config and upsert records in the same commit', async () => {
+    const fixture = await makeRepo({ withInitialCommit: true });
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    // HEAD has no `events` sheet at all.
+    const result = await repo.transact({ message: 'snapshot', parent: null, branch: 'snapshot' }, async (tx) => {
+      tx.writeFile('.gitsheets/events.toml', "[gitsheet]\nroot = 'events'\npath = '${{ slug }}'\n\n[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n");
+      await tx.sheet('events').upsert({ slug: 'launch', title: 'Launch' });
+    });
+    const { stdout } = await fixture.git('ls-tree', '-r', '--name-only', result.commitHash!);
+    expect(stdout.trim().split('\n').sort()).toEqual(['.gitsheets/events.toml', 'events/launch.toml']);
+  });
+
+  it('a config changed earlier in a transaction governs that sheet\'s writes', async () => {
+    const fixture = await makeRepo({ withInitialCommit: true });
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    const strict = `${USERS_CONFIG}\n[gitsheet.schema]\ntype = 'object'\nrequired = ['slug', 'email']\n`;
+    await expect(
+      repo.transact({ message: 'tighten + write' }, async (tx) => {
+        tx.writeFile('.gitsheets/users.toml', strict);
+        await tx.sheet('users').upsert({ slug: 'jane' }); // no email → the staged schema rejects it
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+});

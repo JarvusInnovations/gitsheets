@@ -372,6 +372,25 @@ async function loadConfig(
   if (entry === null) {
     throw new ConfigError('config_missing', `sheet config not found at ${configPath}`);
   }
+  return parseConfigEntry(entry, configPath, () =>
+    // The core's open-time validation on top of the host parse: contract
+    // load/compile and template coherence (every static template field must
+    // be schema-required, no exemptions — specs/behaviors/path-templates.md
+    // "Template fields must be schema-required").
+    sheetConfigCheck(gitDir, treeRef, sheetNameFromConfigPath(configPath), configPath, openRootFromConfigPath(configPath)),
+  );
+}
+
+/**
+ * Parse a config blob into a SheetConfig, memoized by blob hash. `coreCheck`
+ * runs the core's open-time validation once per distinct blob before caching
+ * (a tx-bound caller has already run it by opening the core sheet).
+ */
+function parseConfigEntry(
+  entry: { hash: string; content: Buffer },
+  configPath: string,
+  coreCheck: () => void,
+): SheetConfig {
   const cached = CONFIG_CACHE.get(entry.hash);
   if (cached) return cached;
   const hash = entry.hash;
@@ -458,12 +477,7 @@ async function loadConfig(
     );
   }
 
-  // The core's open-time validation on top of the host parse above: contract
-  // load/compile and template coherence (every static template field must be
-  // schema-required, no exemptions — specs/behaviors/path-templates.md
-  // "Template fields must be schema-required"). Once per distinct config
-  // blob, via the cache below.
-  sheetConfigCheck(gitDir, treeRef, sheetNameFromConfigPath(configPath), configPath, openRootFromConfigPath(configPath));
+  coreCheck();
 
   const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };
   CONFIG_CACHE.set(hash, config);
@@ -1099,9 +1113,29 @@ export class Sheet<T extends RecordLike = RecordLike> {
     // rebindReadTree, which resets this memo), so config is memoized to avoid
     // a `git rev-parse` per call on hot write/query loops.
     if (this.#configPromise === undefined) {
-      this.#configPromise = loadConfig(this.#gitDir, this.#configTreeRef(), this.#configPath);
+      this.#configPromise =
+        this.#transaction !== undefined
+          ? this.#loadTxConfig()
+          : loadConfig(this.#gitDir, this.#configTreeRef(), this.#configPath);
     }
     return this.#configPromise;
+  }
+
+  /**
+   * A tx-bound sheet's config comes from the transaction's private tree —
+   * configs staged earlier in the same transaction included (an orphan
+   * transaction has nothing else). Opening the core sheet first runs the
+   * core's open-time validation on that tree and throws the typed errors
+   * (config_missing, contract and template-coherence failures).
+   * See specs/api/transaction.md "Read isolation".
+   */
+  async #loadTxConfig(): Promise<SheetConfig> {
+    this.#ensureCoreSheetOpened();
+    const entry = callCore(() => this.#transaction!.coreTx.readFile(this.#configPath));
+    if (entry == null) {
+      throw new ConfigError('config_missing', `sheet config not found at ${this.#configPath}`);
+    }
+    return parseConfigEntry(entry, this.#configPath, () => {});
   }
 
   /** Same as readConfig — config is cached by config-blob hash anyway. */

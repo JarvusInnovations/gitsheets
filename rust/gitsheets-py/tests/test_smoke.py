@@ -707,3 +707,14 @@ def test_merge_sheets_field_merges_and_writes_canonically(seeded_repo):
     assert rev("main") == r["commit"]
     one = gitsheets.merge_record_texts(git_dir, "HEAD", "people", ".gitsheets/people.toml", ".", 'a = 1\nslug = "x"\n', 'a = 2\nslug = "x"\n', 'a = 3\nslug = "x"\n')
     assert one["text"] is None and one["conflicts"] == ["a"]
+
+
+def test_orphan_transaction_sees_a_config_staged_in_itself(seeded_repo):
+    d, git_dir = seeded_repo
+    cfg = "[gitsheet]\nroot = 'events'\npath = '${{ slug }}'\n\n[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n"
+    with gitsheets.transact(git_dir, "snapshot", 1_700_000_000, author=("Seed", "seed@x.org"), branch="snapshot2", orphan=True) as tx:
+        tx.write_file(".gitsheets/events.toml", cfg)
+        tx.open_sheet("events", ".gitsheets/events.toml")
+        tx.upsert("events", {"slug": "launch"})
+    tree = subprocess.run(["git", "--git-dir", git_dir, "ls-tree", "-r", "--name-only", tx.result["commit_hash"]], check=True, capture_output=True).stdout.decode().split()
+    assert sorted(tree) == [".gitsheets/events.toml", "events/launch.toml"]
