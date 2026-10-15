@@ -167,3 +167,18 @@ test('mergeSheets field-merges a record changed on both sides and writes it cano
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('readFile sees a file staged earlier in the transaction', () => {
+  const { dir, gitDir } = setupRepo();
+  try {
+    const tx = CoreTransaction.begin(gitDir, opts('stage', { orphan: true }));
+    assert.equal(tx.readFile('.gitsheets/people.toml') ?? null, null); // orphan: empty start
+    tx.writeFile('.gitsheets/x.toml', 'a = 1\n');
+    const entry = tx.readFile('.gitsheets/x.toml');
+    assert.equal(entry.content.toString(), 'a = 1\n');
+    assert.match(entry.hash, /^[0-9a-f]{40}$/);
+    tx.discard();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
