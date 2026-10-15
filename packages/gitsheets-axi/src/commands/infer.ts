@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { AxiError } from 'axi-sdk-js';
-import { parseToml, stringifyRecord } from 'gitsheets';
+import { Template, parseToml, stringifyRecord } from 'gitsheets';
 import type { RecordLike } from 'gitsheets';
 
 import type { GitsheetsContext } from '../context.js';
@@ -174,11 +174,6 @@ export async function inferCommand(
     properties[field] = prop;
   }
 
-  const required = [...presence.entries()]
-    .filter(([, count]) => count === recordCount)
-    .map(([n]) => n)
-    .sort();
-
   // Read existing config, merge schema into it.
   const existingText = await readConfigText(repo.gitDir, configPath);
   if (existingText === null) {
@@ -189,6 +184,14 @@ export async function inferCommand(
   }
   const parsed = parseToml(existingText) as RecordLike;
   const gitsheet = (parsed['gitsheet'] ?? {}) as RecordLike;
+  // Fields present on every record, plus the template's static fields (always
+  // required — see migrate-config and specs/behaviors/path-templates.md).
+  const required = [
+    ...new Set([
+      ...[...presence.entries()].filter(([, count]) => count === recordCount).map(([n]) => n),
+      ...Template.fromString(String(gitsheet['path'] ?? '')).getStaticFieldNames(),
+    ]),
+  ].sort();
   const newSchema: RecordLike = { type: 'object', properties };
   if (required.length > 0) newSchema['required'] = required;
   gitsheet['schema'] = newSchema;

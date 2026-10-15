@@ -354,3 +354,87 @@ describe('Sheet.delete', () => {
     expect(all[0]?.['slug']).toBe('bob');
   });
 });
+
+// specs/api/transaction.md "Raw files" + "Parent ref handling" (#305).
+describe('tx.writeFile / tx.deleteFile', () => {
+  it('stages text and bytes beside record changes in one commit; deleteFile reports existence', async () => {
+    const fixture = await makeRepo({ withInitialCommit: true });
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+
+    const result = await repo.transact({ message: 'files + record' }, async (tx) => {
+      const text = tx.writeFile('fixtures/readme.md', 'hello\n');
+      const bytes = tx.writeFile('fixtures/blob.bin', Buffer.from([0, 1, 2]));
+      expect(text.hash).toMatch(/^[0-9a-f]{40}$/);
+      expect((await bytes.read())).toEqual(Buffer.from([0, 1, 2]));
+      expect(tx.deleteFile('fixtures/not-there.txt')).toBe(false);
+      await tx.sheet('users').upsert({ slug: 'jane', email: 'jane@x.org' });
+    });
+    const { stdout } = await fixture.git('ls-tree', '-r', '--name-only', result.commitHash!);
+    expect(stdout.split('\n')).toEqual(expect.arrayContaining(['fixtures/readme.md', 'fixtures/blob.bin', 'users/jane.toml']));
+    const { stdout: readme } = await fixture.git('show', `${result.commitHash}:fixtures/readme.md`);
+    expect(readme).toBe('hello\n');
+
+    const rm = await repo.transact({ message: 'rm' }, async (tx) => {
+      expect(tx.deleteFile('fixtures/blob.bin')).toBe(true);
+    });
+    const { stdout: after } = await fixture.git('ls-tree', '-r', '--name-only', rm.commitHash!);
+    expect(after).not.toContain('fixtures/blob.bin');
+
+    // A miss alone is a no-op transaction.
+    const noop = await repo.transact({ message: 'noop' }, async (tx) => {
+      tx.deleteFile('fixtures/gone.txt');
+    });
+    expect(noop.commitHash).toBeNull();
+  });
+});
+
+describe('orphan commits and branch creation', () => {
+  async function parentsOf(fixture: TestRepoHandle, commit: string): Promise<string[]> {
+    const { stdout } = await fixture.git('rev-list', '--parents', '-n', '1', commit);
+    return stdout.trim().split(/\s+/).slice(1);
+  }
+
+  it('parent: null starts from the empty tree, commits with no parents, and creates the branch', async () => {
+    const fixture = await makeRepo({ withInitialCommit: true });
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+
+    const result = await repo.transact({ message: 'snapshot', parent: null, branch: 'snapshot' }, async (tx) => {
+      expect(tx.parentCommitHash).toBeNull();
+      tx.writeFile('README.md', 'scrubbed\n');
+    });
+    expect(result.parentCommitHash).toBeNull();
+    expect(result.ref).toBe('refs/heads/snapshot');
+    expect(await parentsOf(fixture, result.commitHash!)).toEqual([]);
+    const { stdout } = await fixture.git('ls-tree', '-r', '--name-only', result.commitHash!);
+    expect(stdout.trim().split('\n')).toEqual(['README.md']); // nothing inherited from main
+    const { stdout: tip } = await fixture.git('rev-parse', 'refs/heads/snapshot');
+    expect(tip.trim()).toBe(result.commitHash);
+
+    // An orphan only creates: landing on an existing branch is refused at open.
+    await expect(
+      repo.transact({ message: 'again', parent: null, branch: 'snapshot' }, async () => 0),
+    ).rejects.toMatchObject({ code: 'commit_failed' });
+
+    // Without a branch: a detached root that always commits, even empty.
+    const detached = await repo.transact({ message: 'empty root', parent: null }, async () => 0);
+    expect(detached.commitHash).not.toBeNull();
+    expect(detached.ref).toBeNull();
+  });
+
+  it('branch names a branch that does not exist yet → created from the parent, parent untouched', async () => {
+    const fixture = await makeRepo({ withInitialCommit: true });
+    await seedConfig(fixture, 'users', USERS_CONFIG);
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    const { stdout: mainBefore } = await fixture.git('rev-parse', 'refs/heads/main');
+
+    const result = await repo.transact({ message: 'fork', parent: 'main', branch: 'review/batch-7' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'fx', email: 'fx@x.org' });
+    });
+    expect(result.ref).toBe('refs/heads/review/batch-7');
+    expect(await parentsOf(fixture, result.commitHash!)).toEqual([mainBefore.trim()]);
+    const { stdout: mainAfter } = await fixture.git('rev-parse', 'refs/heads/main');
+    expect(mainAfter).toBe(mainBefore);
+  });
+});

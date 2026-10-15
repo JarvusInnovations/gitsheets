@@ -245,7 +245,7 @@ test('willChange reports idempotency without mutating', () => {
 test('JSON-Schema shape validation rejects in phase 1', () => {
   const config =
     "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n" +
-    "[gitsheet.schema]\ntype = 'object'\nrequired = ['email']\n" +
+    "[gitsheet.schema]\ntype = 'object'\nrequired = ['slug', 'email']\n" +
     "[gitsheet.schema.properties.email]\ntype = 'string'\nformat = 'email'\n";
   const { dir, gitDir } = setupRepo(config);
   try {

@@ -5,7 +5,7 @@
 // discovery, author config). See specs/api/repository.md.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 
@@ -25,6 +25,7 @@ import {
   resolveAuthor,
   toTrailerArray,
   transactionContext,
+  type Author,
   type TransactionHandler,
   type TransactionOptions,
   type TransactionResult,
@@ -60,6 +61,14 @@ export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
    * sub-tree partitioning of a sheet's records. See specs/api/cli.md and #148.
    */
   readonly prefix?: string;
+  /**
+   * Pin reads to the tree `ref` resolves to now (a branch, tag, commit, or
+   * tree hash): a read-only sheet excluded from auto-refresh and
+   * `repo.refresh()`; only `sheet.refresh()` re-resolves the ref. Writes throw
+   * `TransactionError(transaction_required)`. See specs/api/repository.md
+   * `opts.ref` and specs/behaviors/freshness.md "Ref-pinned sheets".
+   */
+  readonly ref?: string;
   /** Standard Schema validator; runs after the persisted JSON Schema. */
   readonly validator?: StandardSchemaV1<unknown, T>;
   /**
@@ -78,6 +87,78 @@ export interface OpenSheetsOptions {
   readonly root?: string;
   /** Optional sub-prefix applied to every sheet opened. See {@link OpenSheetOptions}. */
   readonly prefix?: string;
+  /** Discover and pin every sheet at this ref (read-only). See {@link OpenSheetOptions.ref}. */
+  readonly ref?: string;
+}
+
+/** Options for {@link Repository.sync}. See specs/behaviors/push-sync.md "Sync". */
+export interface SyncOptions {
+  /** Remote name; default `origin`. */
+  readonly remote?: string;
+  /** Branch to sync; default: the branch HEAD points at (RefError when detached). */
+  readonly branch?: string;
+  /** Run `git fetch` first; default true. `false` when the caller already fetched. */
+  readonly fetch?: boolean;
+  /** On a replay conflict: leave everything (`fail`, default) or preserve the local tip on a side branch and adopt the remote. */
+  readonly onConflict?: 'fail' | 'preserve-branch';
+  /** Prefix for the preserved branch; default `conflicts/`. */
+  readonly conflictBranchPrefix?: string;
+  /** Push the preserved branch to the remote (best-effort); default true. */
+  readonly pushConflictBranch?: boolean;
+  /** Committer for replayed commits; default: the repository's identity. */
+  readonly committer?: Author;
+}
+
+/** The outcome of {@link Repository.sync}. */
+export interface SyncResult {
+  readonly outcome: 'in-sync' | 'fast-forwarded' | 'ahead' | 'rebased' | 'conflict' | 'conflict-escaped' | 'fetch-failed';
+  readonly oldCommit: string;
+  readonly newCommit: string;
+  readonly ahead: number;
+  readonly behind: number;
+  readonly conflictCommit?: string;
+  readonly conflictBranch?: string;
+  readonly conflictBranchPushed?: boolean;
+  readonly fetchError?: string;
+}
+
+/** Options for {@link Repository.merge}. See specs/behaviors/merge.md. */
+export interface MergeOptions {
+  /** Branch, tag, or commit to merge in. */
+  readonly theirs: string;
+  /** Branch (or commit) to merge into; default: HEAD's branch. */
+  readonly ours?: string;
+  /** How to resolve conflicts the field merge cannot decide; default `fail` (report, write nothing). */
+  readonly prefer?: 'fail' | 'ours' | 'theirs';
+  /** Default true; false writes the merged tree and moves nothing (`dry-run`). */
+  readonly commit?: boolean;
+  /** Default `Merge <theirs> into <ours>`. */
+  readonly message?: string;
+  readonly author?: Author;
+  readonly committer?: Author;
+  /** `openSheet({ root })` scoping for sheet discovery; default `.`. */
+  readonly root?: string;
+}
+
+/** One unresolved conflict from {@link Repository.merge}. */
+export interface MergeConflict {
+  readonly path: string;
+  readonly kind: 'field' | 'delete-modify' | 'blob' | 'tree';
+  readonly field?: string;
+  readonly ours?: string;
+  readonly theirs?: string;
+}
+
+/** The outcome of {@link Repository.merge}. */
+export interface MergeResult {
+  readonly outcome: 'up-to-date' | 'fast-forward' | 'merged' | 'conflict' | 'dry-run';
+  readonly oursCommit: string;
+  readonly theirsCommit: string;
+  readonly base: string | null;
+  readonly tree: string | null;
+  readonly commit: string | null;
+  readonly mergedRecords: readonly string[];
+  readonly conflicts: readonly MergeConflict[];
 }
 
 /** Resolve the absolute `.git` directory for `gitDir` (or discovered from `cwd`). */
@@ -157,6 +238,25 @@ export class Repository {
   }
 
   /**
+   * @internal — the tree hash `ref` (a branch, tag, commit, or tree hash)
+   * resolves to right now; `RefError(ref_not_found)` when it doesn't. The
+   * snapshot a ref-pinned Sheet reads through, and what `Sheet.refresh`
+   * re-resolves for one.
+   */
+  async resolveTreeForRef(ref: string): Promise<string> {
+    try {
+      const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', `${ref}^{tree}`], {
+        cwd: this.#gitDir,
+      });
+      const hash = stdout.trim();
+      if (hash) return hash;
+    } catch {
+      // fall through
+    }
+    throw new RefError('ref_not_found', `ref does not resolve to a tree: ${ref}`);
+  }
+
+  /**
    * Rebind every live Sheet this Repository has issued to the current HEAD
    * tree. The consumer's tool after out-of-band ref movement; not needed
    * after this repository's own transact (a successful commit auto-refreshes).
@@ -179,41 +279,29 @@ export class Repository {
   }
 
   /**
-   * Stream a blob's bytes by `<ref>:<path>`, resolved at call time —
-   * independent of any Sheet's read snapshot. Returns a Node Readable piped
-   * from `git cat-file blob`; the blob is never fully buffered by gitsheets.
-   *
-   * Throws RefError(ref_not_found) when `ref` doesn't resolve to a tree-ish,
-   * NotFoundError(record_not_found) when `path` is absent under the ref's
-   * tree or names a non-blob. See specs/api/repository.md and
-   * specs/behaviors/attachments.md#streaming-reads-by-keypath.
+   * The blob at `<ref>:<path>`, resolved at call time — independent of any
+   * Sheet's read snapshot — as a BlobHandle: `hash`, `size` (from the object
+   * header, no inflate), `read()`, `stream()`. One native call for the
+   * metadata, no subprocess. Throws RefError (`ref_not_found`) when `ref`
+   * doesn't resolve and NotFoundError (`record_not_found`) when nothing — or
+   * a subtree — lives at `path`. See specs/api/repository.md#reporeadblobref-path.
+   */
+  async readBlob(ref: string, path: string): Promise<BlobHandle> {
+    const hash = callCore(() => addon.treeEntryHash(this.#gitDir, ref, path));
+    if (hash === null || hash === undefined) {
+      throw new NotFoundError('record_not_found', `readBlob: no blob at ${ref}:${path}`);
+    }
+    return makeBlobHandle(this.#gitDir, hash, '100644');
+  }
+
+  /**
+   * `(await repo.readBlob(ref, path)).stream()` — a Readable over the blob's
+   * bytes with bounded buffering (in-core up to STREAM_INLINE_LIMIT, piped
+   * from `git cat-file blob` above that). Same errors as readBlob.
+   * See specs/behaviors/attachments.md#streaming-reads-by-keypath.
    */
   async readBlobStream(ref: string, path: string): Promise<Readable> {
-    const spec = `${ref}:${path}`;
-    let type: string | null = null;
-    try {
-      const { stdout } = await exec('git', ['cat-file', '-t', spec], { cwd: this.#gitDir });
-      type = stdout.trim() || null;
-    } catch {
-      type = null;
-    }
-    if (type === null) {
-      // Distinguish a bad ref from a missing path for typed errors.
-      const refResolves = await revParseVerify(this.#gitDir, `${ref}^{tree}`);
-      if (!refResolves) {
-        throw new RefError('ref_not_found', `readBlobStream: ref does not resolve: ${ref}`);
-      }
-      throw new NotFoundError('record_not_found', `readBlobStream: no object at ${spec}`);
-    }
-    if (type !== 'blob') {
-      throw new NotFoundError(
-        'record_not_found',
-        `readBlobStream: object at ${spec} is a ${type}, not a blob`,
-      );
-    }
-    const child = spawn('git', ['cat-file', 'blob', spec], { cwd: this.#gitDir });
-    child.stdin.end();
-    return child.stdout;
+    return (await this.readBlob(ref, path)).stream();
   }
 
   /**
@@ -275,7 +363,7 @@ export class Repository {
     opts: OpenSheetOptions<T> = {},
   ): Promise<Sheet<T>> {
     const root = opts.root ?? '.';
-    const readRef = await this.#resolveReadTree();
+    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
     const configPath = joinTreePath(root, '.gitsheets', `${name}.toml`);
     const sheetOpts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
@@ -289,6 +377,9 @@ export class Repository {
     }
     if (opts.prefix !== undefined) {
       Object.assign(sheetOpts, { prefix: opts.prefix });
+    }
+    if (opts.ref !== undefined) {
+      Object.assign(sheetOpts, { pinnedRef: opts.ref });
     }
     const sheet = new Sheet<T>(sheetOpts);
     // Eagerly validate config exists by reading once.
@@ -305,7 +396,7 @@ export class Repository {
   /** Discover every sheet declared in `<root>/.gitsheets/*.toml`. */
   async openSheets(opts: OpenSheetsOptions = {}): Promise<Record<string, Sheet>> {
     const root = opts.root ?? '.';
-    const readRef = await this.#resolveReadTree();
+    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
     let names: string[];
     try {
       names = callCore(() => addon.coreDiscoverSheets(this.#gitDir, readRef, root));
@@ -324,6 +415,9 @@ export class Repository {
       };
       if (opts.prefix !== undefined) {
         Object.assign(sheetOpts, { prefix: opts.prefix });
+      }
+      if (opts.ref !== undefined) {
+        Object.assign(sheetOpts, { pinnedRef: opts.ref });
       }
       out[sheetName] = new Sheet(sheetOpts);
     }
@@ -371,6 +465,7 @@ export class Repository {
         offsetMinutes: -new Date().getTimezoneOffset(),
       };
       if (normalized.parent !== undefined) coreOpts.parent = normalized.parent;
+      if (normalized.orphan) coreOpts.orphan = true;
       if (normalized.branch !== undefined) coreOpts.branch = normalized.branch;
 
       const coreTx = callCore(() => CoreTransaction.begin(this.#gitDir, coreOpts));
@@ -411,6 +506,147 @@ export class Repository {
     } finally {
       release();
     }
+  }
+
+  /**
+   * Bring `opts.branch` (default: HEAD's branch) up to date with `opts.remote`
+   * (default `origin`): fetch outside the write lock, then fast-forward /
+   * replay / preserve-on-conflict under it (in the core), then refresh live
+   * sheets if HEAD's branch moved and hand an ahead/replayed tip to a running
+   * push daemon. The single-writer model's one sanctioned reverse path.
+   * See specs/behaviors/push-sync.md "Sync (opt-in, explicit)".
+   */
+  async sync(opts: SyncOptions = {}): Promise<SyncResult> {
+    const remote = opts.remote ?? 'origin';
+    let branch = opts.branch;
+    if (branch === undefined) {
+      const headRef = await this.#headBranchRef();
+      if (!headRef) {
+        throw new RefError('ref_not_found', 'repo.sync: HEAD is detached or the repo is fresh — pass opts.branch');
+      }
+      branch = headRef.replace(/^refs\/heads\//, '');
+    }
+    const bare = branch.replace(/^refs\/heads\//, '');
+    const remoteRef = `refs/remotes/${remote}/${bare}`;
+
+    if (opts.fetch !== false) {
+      try {
+        await exec('git', ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`], { cwd: this.#gitDir });
+      } catch (err) {
+        const current = (await resolveCommit(this.#gitDir, `refs/heads/${bare}`)) ?? '';
+        return {
+          outcome: 'fetch-failed',
+          oldCommit: current,
+          newCommit: current,
+          ahead: 0,
+          behind: 0,
+          fetchError: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+
+    const coreOpts: import('@gitsheets/core-napi').JsSyncOptions = {
+      branch: `refs/heads/${bare}`,
+      remoteRef,
+      onConflict: opts.onConflict ?? 'fail',
+      conflictBranchPrefix: opts.conflictBranchPrefix ?? 'conflicts/',
+      timeSeconds: Math.floor(Date.now() / 1000),
+      offsetMinutes: -new Date().getTimezoneOffset(),
+    };
+    if (opts.committer !== undefined) coreOpts.committer = opts.committer;
+
+    const raw = await this.withLock(() => callCore(() => addon.syncBranch(this.#gitDir, coreOpts)));
+    const result: SyncResult = {
+      outcome: raw.outcome as SyncResult['outcome'],
+      oldCommit: raw.oldCommit,
+      newCommit: raw.newCommit,
+      ahead: raw.ahead,
+      behind: raw.behind,
+    };
+    if (raw.conflictCommit != null) Object.assign(result, { conflictCommit: raw.conflictCommit });
+    if (raw.conflictBranch != null) Object.assign(result, { conflictBranch: raw.conflictBranch });
+
+    // The library moved the ref itself: rebind live sheets like a commit would
+    // (specs/behaviors/freshness.md), when it was HEAD's branch.
+    if (result.newCommit !== result.oldCommit) {
+      const headRef = await this.#headBranchRef();
+      if (headRef === `refs/heads/${bare}`) this.#rebindLiveSheets(await this.#resolveReadTree());
+    }
+    if ((result.outcome === 'ahead' || result.outcome === 'rebased') && this.#pushDaemon) {
+      this.#pushDaemon.notifyCommit(result.newCommit);
+    }
+    if (result.outcome === 'conflict-escaped' && result.conflictBranch !== undefined && opts.pushConflictBranch !== false) {
+      try {
+        await exec('git', ['push', remote, `${result.conflictBranch}:${result.conflictBranch}`], { cwd: this.#gitDir });
+        Object.assign(result, { conflictBranchPushed: true });
+      } catch {
+        Object.assign(result, { conflictBranchPushed: false });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Sheet-aware merge of `opts.theirs` into `opts.ours` (default: HEAD's
+   * branch): record files changed on both sides are field-merged and written
+   * canonically; conflicts follow `opts.prefer` or are reported (never
+   * thrown). Runs under the write lock; rebinds live sheets when HEAD's
+   * branch moved. See specs/behaviors/merge.md.
+   */
+  async merge(opts: MergeOptions): Promise<MergeResult> {
+    let ours = opts.ours;
+    if (ours === undefined) {
+      const headRef = await this.#headBranchRef();
+      if (!headRef) {
+        throw new RefError('ref_not_found', 'repo.merge: HEAD is detached or the repo is fresh — pass opts.ours');
+      }
+      ours = headRef.replace(/^refs\/heads\//, '');
+    }
+    const coreOpts: import('@gitsheets/core-napi').JsMergeOptions = {
+      ours,
+      theirs: opts.theirs,
+      openRoot: opts.root ?? '.',
+      prefer: opts.prefer ?? 'fail',
+      commit: opts.commit ?? true,
+      timeSeconds: Math.floor(Date.now() / 1000),
+      offsetMinutes: -new Date().getTimezoneOffset(),
+    };
+    if (opts.message !== undefined) coreOpts.message = opts.message;
+    if (opts.author !== undefined) coreOpts.author = opts.author;
+    if (opts.committer !== undefined) coreOpts.committer = opts.committer;
+    const oursArg = ours;
+    const raw = await this.withLock(() => callCore(() => addon.mergeSheets(this.#gitDir, coreOpts)));
+    const result: MergeResult = {
+      outcome: raw.outcome as MergeResult['outcome'],
+      oursCommit: raw.oursCommit,
+      theirsCommit: raw.theirsCommit,
+      base: raw.base ?? null,
+      tree: raw.tree ?? null,
+      commit: raw.commit ?? null,
+      mergedRecords: raw.mergedRecords,
+      conflicts: raw.conflicts.map((c) => {
+        const out: MergeConflict = { path: c.path, kind: c.kind as MergeConflict['kind'] };
+        if (c.field != null) Object.assign(out, { field: c.field });
+        if (c.ours != null) Object.assign(out, { ours: c.ours });
+        if (c.theirs != null) Object.assign(out, { theirs: c.theirs });
+        return out;
+      }),
+    };
+    if ((result.outcome === 'merged' || result.outcome === 'fast-forward') && result.commit !== result.oursCommit) {
+      const headRef = await this.#headBranchRef();
+      if (headRef === `refs/heads/${oursArg.replace(/^refs\/heads\//, '')}`) {
+        this.#rebindLiveSheets(await this.#resolveReadTree());
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Whether commit `a` is reachable from commit `b` (or equal). RefError
+   * (`ref_not_found`) when either does not resolve to a commit.
+   */
+  async isAncestor(a: string, b: string): Promise<boolean> {
+    return callCore(() => addon.isAncestor(this.#gitDir, a, b));
   }
 
   /**
@@ -509,18 +745,6 @@ export class Repository {
 /** Convenience factory: `openRepo({ gitDir? })`. */
 export async function openRepo(opts: OpenRepoOptions = {}): Promise<Repository> {
   return Repository.open(opts);
-}
-
-/** True when `git rev-parse --verify --quiet <rev>` resolves. */
-async function revParseVerify(gitDir: string, rev: string): Promise<boolean> {
-  try {
-    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', rev], {
-      cwd: gitDir,
-    });
-    return stdout.trim().length > 0;
-  } catch {
-    return false;
-  }
 }
 
 /** Resolve a ref/commit-ish to its full commit hash via git rev-parse; null on failure. */

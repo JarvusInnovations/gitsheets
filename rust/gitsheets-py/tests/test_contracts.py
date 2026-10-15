@@ -35,8 +35,11 @@ def _canonical_toml(doc: dict) -> str:
     return gitsheets.serialize_records([doc])[0]
 
 
+# `slug` is the template key; the fixture contracts require only `email`, so
+# declare it writer-injected (specs/behaviors/path-templates.md "Template
+# fields must be schema-required").
 SHEET_WITH_IMPLEMENTS = (
-    "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n"
+    "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\ninjectedFields = ['slug']\n"
     f"implements = ['{CONTRACT_NAME}']\n"
 )
 
@@ -226,7 +229,7 @@ def test_verify_rung1_passes_with_zero_record_reads():
 def test_verify_rung1_miss_on_newer_producer_version_falls_through_to_rung2_pass():
     name_v1_1 = "example.com/people/v1.1"
     sheet_config = (
-        "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\n"
+        "[gitsheet]\npath = '${{ slug }}'\nroot = 'people'\ninjectedFields = ['slug']\n"
         f"implements = ['{name_v1_1}']\n"
     )
     contract_v1_1 = _canonical_toml(_consumer_doc(name_v1_1, ["email"]))

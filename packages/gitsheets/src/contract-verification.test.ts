@@ -63,7 +63,8 @@ async function stageMealsConfig(
       : '';
   await writeFile(
     join(fixture.path, '.gitsheets/meals.toml'),
-    `[gitsheet]\nroot = 'meals'\npath = '\${{ slug }}'\n${implementsLine}`,
+    // `slug` is writer-injected: the fixture contracts require only `name`.
+    `[gitsheet]\nroot = 'meals'\npath = '\${{ slug }}'\ninjectedFields = ['slug']\n${implementsLine}`,
   );
   await fixture.git('add', '.gitsheets/meals.toml');
 }

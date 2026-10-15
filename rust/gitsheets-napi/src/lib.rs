@@ -1140,6 +1140,26 @@ pub fn blob_read(env: Env, git_dir: String, hash: String) -> Result<Option<Buffe
     }
 }
 
+/// An object header: `kind` (`blob` / `tree` / `commit` / `tag`) and `size` in
+/// bytes, read without inflating the object.
+#[napi(object)]
+pub struct JsBlobHeader {
+    pub kind: String,
+    pub size: f64,
+}
+
+/// The object header for `hash`, or `null` when no object has that id. The
+/// metadata behind a host `BlobHandle`'s `size` (specs/behaviors/attachments.md
+/// "Blob metadata and bounded buffering").
+#[napi]
+pub fn blob_header(env: Env, git_dir: String, hash: String) -> Result<Option<JsBlobHeader>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    match record::blob_header(&repo, &hash) {
+        Ok(h) => Ok(h.map(|(kind, size)| JsBlobHeader { kind, size: size as f64 })),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
 /// A blob read by `treeRef:path`: its object id and bytes.
 #[napi(object)]
 pub struct JsBlobEntry {
@@ -1557,6 +1577,10 @@ pub struct JsTrailer {
 #[napi(object)]
 pub struct JsTransactionOptions {
     pub parent: Option<String>,
+    /// `transact({ parent: null })`: an orphan root commit — empty starting
+    /// tree, no parents, always commits; `branch` is created (and must not
+    /// already exist). `parent` is ignored when set.
+    pub orphan: Option<bool>,
     pub branch: Option<String>,
     pub author: Option<JsAuthor>,
     pub committer: Option<JsAuthor>,
@@ -1611,6 +1635,7 @@ impl CoreTransaction {
     pub fn begin(env: Env, git_dir: String, opts: JsTransactionOptions) -> Result<Self> {
         let core_opts = TransactionOptions {
             parent: opts.parent,
+            orphan: opts.orphan.unwrap_or(false),
             branch: opts.branch,
             author: opts.author.map(|a| CoreAuthor {
                 name: a.name,
@@ -1874,19 +1899,24 @@ impl CoreTransaction {
         self.set_attachments(env, name, record_path, map)
     }
 
-    /// Stage a raw text file at `path` in this transaction's private tree
-    /// *(mutating)* — the generic file write the CLI uses to commit sheet-config
-    /// edits (`init` / `infer` / `migrate-config`) atomically alongside nothing
-    /// else. `path` is repo-root-relative. Returns the written blob hash.
+    /// Stage a raw file at `path` in this transaction's private tree
+    /// *(mutating)* — the public `tx.writeFile` (specs/api/transaction.md
+    /// "Raw files"): a sheet config, a contract, a fixture, committed with the
+    /// record changes it belongs with. `path` is repo-root-relative; `content`
+    /// is UTF-8 text or raw bytes. Returns the written blob hash.
     #[napi]
-    pub fn write_file(&mut self, env: Env, path: String, content: String) -> Result<String> {
+    pub fn write_file(&mut self, env: Env, path: String, content: Either<String, Buffer>) -> Result<String> {
         let Self { inner, .. } = self;
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
+        let bytes: Vec<u8> = match content {
+            Either::A(text) => text.into_bytes(),
+            Either::B(buf) => buf.to_vec(),
+        };
         let hash = {
             let (ctx, tree) = tx.split();
-            match tree.write_child_bytes(&ctx, &path, content.as_bytes()) {
+            match tree.write_child_bytes(&ctx, &path, &bytes) {
                 Ok(h) => h.to_string(),
                 Err(e) => {
                     let core_err = gitsheets_core::Error::CommitFailed {
@@ -2158,6 +2188,207 @@ impl CoreTransaction {
     }
 }
 
+// ── repo.sync() — the object-database half (specs/behaviors/push-sync.md) ──────
+
+/// Options for [`sync_branch`].
+#[napi(object)]
+pub struct JsSyncOptions {
+    /// Local branch (bare name or qualified ref).
+    pub branch: String,
+    /// Remote-tracking ref (or any commit-ish), e.g. `refs/remotes/origin/main`.
+    pub remote_ref: String,
+    /// `'fail'` (default) or `'preserve-branch'`.
+    pub on_conflict: Option<String>,
+    /// Prefix for the preserved branch; default `conflicts/`.
+    pub conflict_branch_prefix: Option<String>,
+    /// Committer for replayed commits; default: the repository's identity.
+    pub committer: Option<JsAuthor>,
+    pub time_seconds: i64,
+    pub offset_minutes: i32,
+}
+
+/// The result of [`sync_branch`].
+#[napi(object)]
+pub struct JsSyncResult {
+    pub outcome: String,
+    pub old_commit: String,
+    pub new_commit: String,
+    pub ahead: u32,
+    pub behind: u32,
+    pub conflict_commit: Option<String>,
+    pub conflict_branch: Option<String>,
+}
+
+/// Classify the local branch against the remote-tracking tip and move it
+/// (fast-forward, replay, or preserve-on-conflict). The host fetches first
+/// and holds the write lock. See specs/behaviors/push-sync.md "Sync".
+#[napi]
+pub fn sync_branch(env: Env, git_dir: String, opts: JsSyncOptions) -> Result<JsSyncResult> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let on_conflict = match opts.on_conflict.as_deref() {
+        None | Some("fail") => gitsheets_core::ConflictPolicy::Fail,
+        Some("preserve-branch") => gitsheets_core::ConflictPolicy::PreserveBranch {
+            prefix: opts.conflict_branch_prefix.unwrap_or_else(|| "conflicts/".to_string()),
+        },
+        Some(other) => {
+            return Err(napi::Error::new(
+                Status::InvalidArg,
+                format!("syncBranch: unknown onConflict {other:?} — expected 'fail' or 'preserve-branch'"),
+            ))
+        }
+    };
+    let core_opts = gitsheets_core::SyncOptions {
+        branch: opts.branch,
+        remote_ref: opts.remote_ref,
+        on_conflict,
+        committer: opts.committer.map(|a| CoreAuthor {
+            name: a.name,
+            email: a.email,
+        }),
+        time_seconds: opts.time_seconds,
+        offset_minutes: opts.offset_minutes,
+    };
+    match gitsheets_core::sync_branch(&repo, &core_opts) {
+        Ok(r) => Ok(JsSyncResult {
+            outcome: r.outcome.as_str().to_string(),
+            old_commit: r.old_commit,
+            new_commit: r.new_commit,
+            ahead: r.ahead,
+            behind: r.behind,
+            conflict_commit: r.conflict_commit,
+            conflict_branch: r.conflict_branch,
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Whether commit `a` is reachable from commit `b` (or equal).
+#[napi]
+pub fn is_ancestor(env: Env, git_dir: String, a: String, b: String) -> Result<bool> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    gitsheets_core::is_ancestor(&repo, &a, &b).map_err(|err| raise_core_error(&env, &err))
+}
+
+// ── sheet-aware merge (specs/behaviors/merge.md) ───────────────────────────────
+
+#[napi(object)]
+pub struct JsMergeOptions {
+    pub ours: String,
+    pub theirs: String,
+    pub open_root: Option<String>,
+    /// `fail` (default) | `ours` | `theirs`.
+    pub prefer: Option<String>,
+    /// Default true; false writes the tree and moves nothing.
+    pub commit: Option<bool>,
+    pub message: Option<String>,
+    pub author: Option<JsAuthor>,
+    pub committer: Option<JsAuthor>,
+    pub time_seconds: i64,
+    pub offset_minutes: i32,
+}
+
+#[napi(object)]
+pub struct JsMergeConflict {
+    pub path: String,
+    pub kind: String,
+    pub field: Option<String>,
+    pub ours: Option<String>,
+    pub theirs: Option<String>,
+}
+
+#[napi(object)]
+pub struct JsMergeResult {
+    pub outcome: String,
+    pub ours_commit: String,
+    pub theirs_commit: String,
+    pub base: Option<String>,
+    pub tree: Option<String>,
+    pub commit: Option<String>,
+    pub merged_records: Vec<String>,
+    pub conflicts: Vec<JsMergeConflict>,
+}
+
+fn parse_prefer(s: Option<&str>) -> Result<gitsheets_core::Prefer> {
+    gitsheets_core::Prefer::parse(s.unwrap_or("fail")).ok_or_else(|| {
+        napi::Error::new(
+            Status::InvalidArg,
+            format!("unknown prefer {:?} — expected 'fail', 'ours', or 'theirs'", s.unwrap_or("")),
+        )
+    })
+}
+
+/// Sheet-aware merge of `theirs` into `ours` — record files changed on both
+/// sides are field-merged and written canonically; conflicts follow `prefer`
+/// or are reported. The host holds the write lock.
+#[napi]
+pub fn merge_sheets(env: Env, git_dir: String, opts: JsMergeOptions) -> Result<JsMergeResult> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let core_opts = gitsheets_core::MergeOptions {
+        ours: opts.ours,
+        theirs: opts.theirs,
+        open_root: opts.open_root.unwrap_or_else(|| ".".to_string()),
+        prefer: parse_prefer(opts.prefer.as_deref())?,
+        commit: opts.commit.unwrap_or(true),
+        message: opts.message,
+        author: opts.author.map(|a| CoreAuthor { name: a.name, email: a.email }),
+        committer: opts.committer.map(|a| CoreAuthor { name: a.name, email: a.email }),
+        time_seconds: opts.time_seconds,
+        offset_minutes: opts.offset_minutes,
+    };
+    match gitsheets_core::merge_sheets(&repo, &core_opts) {
+        Ok(r) => Ok(JsMergeResult {
+            outcome: r.outcome.as_str().to_string(),
+            ours_commit: r.ours_commit,
+            theirs_commit: r.theirs_commit,
+            base: r.base,
+            tree: r.tree,
+            commit: r.commit,
+            merged_records: r.merged_records,
+            conflicts: r
+                .conflicts
+                .into_iter()
+                .map(|c| JsMergeConflict { path: c.path, kind: c.kind, field: c.field, ours: c.ours, theirs: c.theirs })
+                .collect(),
+        }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+#[napi(object)]
+pub struct JsRecordMergeOutcome {
+    pub text: Option<String>,
+    pub conflicts: Vec<String>,
+}
+
+/// Field-merge one record's base / ours / theirs texts through the sheet at
+/// `treeRef` (the merge-driver primitive): canonical text, or the conflicting
+/// field paths.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn merge_record_texts(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+    base: Option<String>,
+    ours: String,
+    theirs: String,
+    prefer: Option<String>,
+) -> Result<JsRecordMergeOutcome> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut sheet = CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, "")
+        .map_err(|err| raise_core_error(&env, &err))?;
+    let prefer = parse_prefer(prefer.as_deref())?;
+    match gitsheets_core::merge_record_texts(&mut sheet, base.as_deref(), &ours, &theirs, prefer) {
+        Ok(r) => Ok(JsRecordMergeOutcome { text: r.text, conflicts: r.conflicts }),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
 /// Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
 /// `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
 #[napi]
@@ -2172,6 +2403,30 @@ pub fn core_discover_sheets(
     let mut tree =
         record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
     store::discover_sheets(&ctx, &mut tree, &open_root).map_err(|err| raise_core_error(&env, &err))
+}
+
+/// Open the sheet whose config blob lives at `configPath` in the tree `treeRef`
+/// and discard it — the full open-time validation the core performs
+/// (config parse, contract load/compile, template coherence per
+/// specs/behaviors/path-templates.md "Template fields must be
+/// schema-required") surfaced to the host as typed errors. The host calls it
+/// once per distinct config blob from `repo.openSheet`.
+#[napi]
+pub fn sheet_config_check(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+) -> Result<()> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree =
+        record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, "")
+        .map(|_| ())
+        .map_err(|err| raise_core_error(&env, &err))
 }
 
 /// The `openStore` `config_missing` check: every validator must name a declared

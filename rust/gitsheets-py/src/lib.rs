@@ -761,6 +761,169 @@ fn blob_read<'py>(py: Python<'py>, git_dir: String, hash: String) -> PyResult<Op
     }
 }
 
+/// The object header for `hash` as `{"kind", "size"}`, or `None` when no object
+/// has that id — read without inflating the object.
+#[pyfunction]
+fn blob_header<'py>(py: Python<'py>, git_dir: String, hash: String) -> PyResult<Option<Bound<'py, PyDict>>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    match record::blob_header(&repo, &hash) {
+        Ok(Some((kind, size))) => {
+            let d = PyDict::new(py);
+            d.set_item("kind", kind)?;
+            d.set_item("size", size)?;
+            Ok(Some(d))
+        }
+        Ok(None) => Ok(None),
+        Err(err) => Err(raise_core_error(py, &err)),
+    }
+}
+
+/// The object-database half of `repo.sync()` (specs/behaviors/push-sync.md
+/// "Sync"): classify `branch` against `remote_ref` and move it. Returns a dict
+/// `{outcome, old_commit, new_commit, ahead, behind, conflict_commit, conflict_branch}`.
+#[pyfunction]
+#[pyo3(signature = (git_dir, branch, remote_ref, time_seconds, offset_minutes=0, on_conflict="fail", conflict_branch_prefix=None, committer=None))]
+#[allow(clippy::too_many_arguments)]
+fn sync_branch<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    branch: String,
+    remote_ref: String,
+    time_seconds: i64,
+    offset_minutes: i32,
+    on_conflict: &str,
+    conflict_branch_prefix: Option<String>,
+    committer: Option<(String, String)>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let policy = match on_conflict {
+        "fail" => gitsheets_core::ConflictPolicy::Fail,
+        "preserve-branch" => gitsheets_core::ConflictPolicy::PreserveBranch {
+            prefix: conflict_branch_prefix.unwrap_or_else(|| "conflicts/".to_string()),
+        },
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "sync_branch: unknown on_conflict {other:?} — expected 'fail' or 'preserve-branch'"
+            )))
+        }
+    };
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let opts = gitsheets_core::SyncOptions {
+        branch,
+        remote_ref,
+        on_conflict: policy,
+        committer: committer.map(|(name, email)| CoreAuthor { name, email }),
+        time_seconds,
+        offset_minutes,
+    };
+    let r = gitsheets_core::sync_branch(&repo, &opts).map_err(|e| raise_core_error(py, &e))?;
+    let d = PyDict::new(py);
+    d.set_item("outcome", r.outcome.as_str())?;
+    d.set_item("old_commit", r.old_commit)?;
+    d.set_item("new_commit", r.new_commit)?;
+    d.set_item("ahead", r.ahead)?;
+    d.set_item("behind", r.behind)?;
+    d.set_item("conflict_commit", r.conflict_commit)?;
+    d.set_item("conflict_branch", r.conflict_branch)?;
+    Ok(d)
+}
+
+/// Sheet-aware merge of `theirs` into `ours` (specs/behaviors/merge.md). Returns
+/// `{outcome, ours_commit, theirs_commit, base, tree, commit, merged_records, conflicts}`.
+#[pyfunction]
+#[pyo3(signature = (git_dir, ours, theirs, time_seconds, offset_minutes=0, open_root=".", prefer="fail", commit=true, message=None, author=None, committer=None))]
+#[allow(clippy::too_many_arguments)]
+fn merge_sheets<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    ours: String,
+    theirs: String,
+    time_seconds: i64,
+    offset_minutes: i32,
+    open_root: &str,
+    prefer: &str,
+    commit: bool,
+    message: Option<String>,
+    author: Option<(String, String)>,
+    committer: Option<(String, String)>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let prefer = gitsheets_core::Prefer::parse(prefer)
+        .ok_or_else(|| PyValueError::new_err(format!("merge_sheets: unknown prefer {prefer:?} — expected 'fail', 'ours', or 'theirs'")))?;
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let opts = gitsheets_core::MergeOptions {
+        ours,
+        theirs,
+        open_root: open_root.to_string(),
+        prefer,
+        commit,
+        message,
+        author: author.map(|(name, email)| CoreAuthor { name, email }),
+        committer: committer.map(|(name, email)| CoreAuthor { name, email }),
+        time_seconds,
+        offset_minutes,
+    };
+    let r = gitsheets_core::merge_sheets(&repo, &opts).map_err(|e| raise_core_error(py, &e))?;
+    let d = PyDict::new(py);
+    d.set_item("outcome", r.outcome.as_str())?;
+    d.set_item("ours_commit", r.ours_commit)?;
+    d.set_item("theirs_commit", r.theirs_commit)?;
+    d.set_item("base", r.base)?;
+    d.set_item("tree", r.tree)?;
+    d.set_item("commit", r.commit)?;
+    d.set_item("merged_records", r.merged_records)?;
+    let conflicts = PyList::empty(py);
+    for c in r.conflicts {
+        let cd = PyDict::new(py);
+        cd.set_item("path", c.path)?;
+        cd.set_item("kind", c.kind)?;
+        cd.set_item("field", c.field)?;
+        cd.set_item("ours", c.ours)?;
+        cd.set_item("theirs", c.theirs)?;
+        conflicts.append(cd)?;
+    }
+    d.set_item("conflicts", conflicts)?;
+    Ok(d)
+}
+
+/// Field-merge one record's base / ours / theirs texts through the sheet at
+/// `tree_ref` (the merge-driver primitive). Returns `{"text", "conflicts"}`.
+#[pyfunction]
+#[pyo3(signature = (git_dir, tree_ref, sheet_name, config_path, open_root, base, ours, theirs, prefer="fail"))]
+#[allow(clippy::too_many_arguments)]
+fn merge_record_texts<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    tree_ref: String,
+    sheet_name: String,
+    config_path: String,
+    open_root: String,
+    base: Option<String>,
+    ours: String,
+    theirs: String,
+    prefer: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    let prefer = gitsheets_core::Prefer::parse(prefer)
+        .ok_or_else(|| PyValueError::new_err(format!("merge_record_texts: unknown prefer {prefer:?}")))?;
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    let mut sheet = CoreSheet::open(&ctx, &mut tree, &sheet_name, &config_path, &open_root, "")
+        .map_err(|e| raise_core_error(py, &e))?;
+    let r = gitsheets_core::merge_record_texts(&mut sheet, base.as_deref(), &ours, &theirs, prefer)
+        .map_err(|e| raise_core_error(py, &e))?;
+    let d = PyDict::new(py);
+    d.set_item("text", r.text)?;
+    d.set_item("conflicts", r.conflicts)?;
+    Ok(d)
+}
+
+/// Whether commit `a` is reachable from commit `b` (or equal).
+#[pyfunction]
+fn is_ancestor(py: Python<'_>, git_dir: String, a: String, b: String) -> PyResult<bool> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    gitsheets_core::is_ancestor(&repo, &a, &b).map_err(|e| raise_core_error(py, &e))
+}
+
 /// Write a batch of records (canonical TOML) under `base` starting from the tree
 /// `base_ref`. Returns `{ "tree_hash", "blob_hashes" }`. The bytes come from the
 /// core's bytes-authority, so two bindings writing the same record agree
@@ -1212,7 +1375,7 @@ impl CoreTransaction {
     /// `(name, email)` tuples; `trailers` a list of `(key, value)` tuples. A
     /// concurrent open on the same repo raises `TransactionError`.
     #[staticmethod]
-    #[pyo3(signature = (git_dir, message, time_seconds, offset_minutes=0, parent=None, branch=None, author=None, committer=None, trailers=None))]
+    #[pyo3(signature = (git_dir, message, time_seconds, offset_minutes=0, parent=None, branch=None, author=None, committer=None, trailers=None, orphan=false))]
     #[allow(clippy::too_many_arguments)]
     fn begin(
         py: Python<'_>,
@@ -1225,9 +1388,11 @@ impl CoreTransaction {
         author: Option<(String, String)>,
         committer: Option<(String, String)>,
         trailers: Option<Vec<(String, String)>>,
+        orphan: bool,
     ) -> PyResult<Self> {
         let core_opts = TransactionOptions {
             parent,
+            orphan,
             branch,
             author: author.map(|(name, email)| CoreAuthor { name, email }),
             committer: committer.map(|(name, email)| CoreAuthor { name, email }),
@@ -1524,6 +1689,62 @@ impl CoreTransaction {
         Ok(())
     }
 
+    /// Stage a raw file at `path` (repo-root-relative) in this transaction's
+    /// private tree — the public `tx.write_file` (specs/api/transaction.md
+    /// "Raw files"). `content` is `str` (UTF-8) or `bytes`. Returns the blob
+    /// hash and marks the transaction mutated.
+    fn write_file(&mut self, py: Python<'_>, path: String, content: Bound<'_, PyAny>) -> PyResult<String> {
+        let bytes: Vec<u8> = if let Ok(b) = content.cast::<PyBytes>() {
+            b.as_bytes().to_vec()
+        } else if content.cast::<PyString>().is_ok() {
+            content.extract::<String>()?.into_bytes()
+        } else {
+            return Err(PyTypeError::new_err("write_file: content must be str or bytes"));
+        };
+        let Self { inner, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let hash = {
+            let (ctx, tree) = tx.split();
+            tree.write_child_bytes(&ctx, &path, &bytes).map_err(|e| {
+                raise_core_error(
+                    py,
+                    &gitsheets_core::Error::CommitFailed {
+                        message: format!("write_file {path:?} failed: {e}"),
+                    },
+                )
+            })?
+        };
+        tx.mark_mutated();
+        Ok(hash.to_string())
+    }
+
+    /// Delete a raw file at `path` (repo-root-relative) — `write_file`'s
+    /// inverse. Returns whether a blob existed there; a miss does not mark
+    /// the transaction mutated.
+    fn delete_file(&mut self, py: Python<'_>, path: String) -> PyResult<bool> {
+        let Self { inner, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let existed = {
+            let (ctx, tree) = tx.split();
+            tree.delete_child_deep(&ctx, &path).map_err(|e| {
+                raise_core_error(
+                    py,
+                    &gitsheets_core::Error::CommitFailed {
+                        message: format!("delete_file {path:?} failed: {e}"),
+                    },
+                )
+            })?
+        };
+        if existed {
+            tx.mark_mutated();
+        }
+        Ok(existed)
+    }
+
     /// Remove all attachments for a record *(mutating)*. A no-op when the record
     /// has no attachment directory — in that case the transaction is NOT marked
     /// mutated. Returns whether anything was removed.
@@ -1645,6 +1866,11 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Functions.
     m.add_function(wrap_pyfunction!(roundtrip, m)?)?;
+    m.add_function(wrap_pyfunction!(blob_header, m)?)?;
+    m.add_function(wrap_pyfunction!(sync_branch, m)?)?;
+    m.add_function(wrap_pyfunction!(is_ancestor, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_sheets, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_record_texts, m)?)?;
     m.add_function(wrap_pyfunction!(parse_records, m)?)?;
     m.add_function(wrap_pyfunction!(serialize_records, m)?)?;
     m.add_function(wrap_pyfunction!(render_paths_batch, m)?)?;

@@ -152,6 +152,7 @@ module.exports = {
   treeReadBlob: wrap(addon.treeReadBlob),
   treeEntryHash: wrap(addon.treeEntryHash),
   blobRead: wrap(addon.blobRead),
+  blobHeader: wrap(addon.blobHeader),
   templateFieldNames: wrap(addon.templateFieldNames),
   // Secondary indexing (lazy, in-memory). A unique conflict surfaces as a typed
   // IndexError(index_unique_conflict).
@@ -169,7 +170,12 @@ module.exports = {
   // `mapCoreError` where a typed instance is wanted.
   CoreTransaction: addon.CoreTransaction,
   coreDiscoverSheets: wrap(addon.coreDiscoverSheets),
+  syncBranch: wrap(addon.syncBranch),
+  isAncestor: wrap(addon.isAncestor),
+  mergeSheets: wrap(addon.mergeSheets),
+  mergeRecordTexts: wrap(addon.mergeRecordTexts),
   coreCheckValidators: wrap(addon.coreCheckValidators),
+  sheetConfigCheck: wrap(addon.sheetConfigCheck),
   // Consumer-side contract verification — the two-rung ladder behind
   // `openSheet(name, { contract })` (specs/behaviors/contracts.md "Consumer
   // verification"). A verification failure raises a typed

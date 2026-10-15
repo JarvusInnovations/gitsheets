@@ -26,11 +26,13 @@ pub mod diff;
 pub mod engine;
 pub mod error;
 pub mod index;
+pub mod merge;
 pub mod path_template;
 pub mod query;
 pub mod record;
 pub mod sheet;
 pub mod store;
+pub mod sync;
 pub mod transaction;
 pub mod validation;
 pub mod value;
@@ -45,12 +47,14 @@ pub use contract::{
 pub use diff::{apply_merge_patch, create_patch, MergePatch, PatchOp, PatchOpKind, PatchValue};
 pub use error::{Error, ErrorClass, IssueSource, Result, ValidationIssue};
 pub use index::{MultiIndex, UniqueIndex};
+pub use merge::{merge_record_texts, merge_sheets, merge_values, MergeConflict, MergeOptions, MergeOutcome, MergeResult, Prefer, RecordMergeOutcome};
 pub use query::{matches as query_matches, query_candidate_paths, query_records, Filter, FilterPred};
 pub use record::{
     write_blob, write_blob_at_dir, DeleteOutcome, RecordChange, RecordDiff, RecordStatus,
     WriteOutcome, EMPTY_TREE_HASH, TOML_EXTENSION,
 };
 pub use sheet::{Sheet, StageOutcome, UpsertCandidate, WillChange};
+pub use sync::{is_ancestor, sync_branch, ConflictPolicy, SyncOptions, SyncOutcome, SyncResult};
 pub use transaction::{Author, Transaction, TransactionOptions, TransactionResult};
 pub use value::{null_array_element_msg, null_value_msg, Datetime, DatetimeKind, Value};
 

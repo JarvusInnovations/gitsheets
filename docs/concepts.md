@@ -165,7 +165,7 @@ daemon.on('retry', ({ commit, attempt, nextDelayMs, reason }) => log.info({ atte
 await daemon.stop({ timeoutMs: 30_000 });
 ```
 
-A consumer process that writes to gitsheets is the **single writer**. Pulling from the remote at runtime would risk overwriting in-memory state; that's why the daemon is push-only. If a consumer needs to incorporate changes from elsewhere, the canonical path is: stop the consumer, pull, restart.
+A consumer process that writes to gitsheets is the **single writer**. A daemon that pulled on its own schedule would move the branch under open transactions; that's why the daemon is push-only. Incorporating changes from elsewhere is the explicit, consumer-invoked **`repo.sync()`**: fetch, then fast-forward / replay local commits onto the remote tip / preserve local history on a `conflicts/<timestamp>` branch — all under the write lock, with live sheets rebound afterwards. Call it at boot, from a webhook, or on a timer.
 
 **Non-fast-forward rejections are terminal.** When the remote has work the local doesn't (someone else pushed a divergent commit), the daemon emits one `error` event with `reason: 'non-fast-forward'` and stops retrying that batch — `daemon.status().lastError.reason` carries the same value. A force-push would resolve the symptom but is never the right move; consumer intervention is required (stop, reconcile, restart). Subsequent commits still trigger fresh push attempts and produce their own classified errors.
 

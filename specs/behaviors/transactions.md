@@ -136,12 +136,13 @@ Resolution:
 
 ## Parent ref handling
 
-- `opts.parent`: ref name, short hash, or full commit hash. Default: current `HEAD`.
+- `opts.parent`: ref name, short hash, full commit hash, or **`null`** for an orphan root commit (empty starting tree, no parents, always commits). Default: current `HEAD`.
 - `opts.branch`: ref to update on commit. Default:
   - If `opts.parent` is a branch (e.g., `main`): that same branch
-  - If `opts.parent` is a commit hash: `null` (no ref updated — the commit is "detached")
+  - If `opts.parent` is a commit hash or `null`: `null` (no ref updated — the commit is "detached")
+  - A `branch` that does not exist yet is **created** at commit. An orphan refuses an existing `branch` (`commit_failed` at open).
 
-To "commit onto a feature branch": `opts.parent: 'feature-x'`. To "commit onto a specific commit but not advance any branch": `opts.parent: '01ab2c...'`.
+To "commit onto a feature branch": `opts.parent: 'feature-x'`. To "commit onto a specific commit but not advance any branch": `opts.parent: '01ab2c...'`. To "fork a new branch from main in one commit": `opts.parent: 'main', opts.branch: 'new-branch'`. To "start a fresh history": `opts.parent: null, opts.branch: 'snapshot'`. See [api/transaction.md](../api/transaction.md#parent-ref-handling).
 
 ## Optimistic concurrency
 

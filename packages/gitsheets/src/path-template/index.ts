@@ -613,6 +613,27 @@ export class Template {
   }
 
   /**
+   * The template's *static* field names — plain / recursive field references
+   * and date-bucket base fields, in source order, de-duplicated. Expression
+   * parts are skipped: which fields an expression needs is not statically
+   * decidable. This is the set the open-time template-coherence check requires
+   * the schema to list (specs/behaviors/path-templates.md "Template fields
+   * must be schema-required"); `infer` / `migrate-config` always put these in
+   * the written schema's `required`. Mirrors the core's
+   * `Template::static_field_names`.
+   */
+  getStaticFieldNames(): readonly string[] {
+    const seen = new Set<string>();
+    for (const c of this.#components) {
+      for (const p of c.parts) {
+        if (p.kind === 'field') seen.add(p.name);
+        else if (p.kind === 'bucket') seen.add(p.field[0]!);
+      }
+    }
+    return [...seen];
+  }
+
+  /**
    * Render the template against a full record.
    *
    * @throws PathTemplateError(`path_render_failed`) when any component is unrenderable.

@@ -265,6 +265,20 @@ export declare function treeEntryHash(gitDir: string, treeRef: string, path: str
  * attachment content reads and diff-side record reads.
  */
 export declare function blobRead(gitDir: string, hash: string): Buffer | null
+/**
+ * An object header: `kind` (`blob` / `tree` / `commit` / `tag`) and `size` in
+ * bytes, read without inflating the object.
+ */
+export interface JsBlobHeader {
+  kind: string
+  size: number
+}
+/**
+ * The object header for `hash`, or `null` when no object has that id. The
+ * metadata behind a host `BlobHandle`'s `size` (specs/behaviors/attachments.md
+ * "Blob metadata and bounded buffering").
+ */
+export declare function blobHeader(gitDir: string, hash: string): JsBlobHeader | null
 /** A blob read by `treeRef:path`: its object id and bytes. */
 export interface JsBlobEntry {
   hash: string
@@ -345,6 +359,12 @@ export interface JsTrailer {
  */
 export interface JsTransactionOptions {
   parent?: string
+  /**
+   * `transact({ parent: null })`: an orphan root commit — empty starting
+   * tree, no parents, always commits; `branch` is created (and must not
+   * already exist). `parent` is ignored when set.
+   */
+  orphan?: boolean
   branch?: string
   author?: JsAuthor
   committer?: JsAuthor
@@ -376,11 +396,100 @@ export interface JsAttachmentEntry {
   name: string
   hash: string
 }
+/** Options for [`sync_branch`]. */
+export interface JsSyncOptions {
+  /** Local branch (bare name or qualified ref). */
+  branch: string
+  /** Remote-tracking ref (or any commit-ish), e.g. `refs/remotes/origin/main`. */
+  remoteRef: string
+  /** `'fail'` (default) or `'preserve-branch'`. */
+  onConflict?: string
+  /** Prefix for the preserved branch; default `conflicts/`. */
+  conflictBranchPrefix?: string
+  /** Committer for replayed commits; default: the repository's identity. */
+  committer?: JsAuthor
+  timeSeconds: number
+  offsetMinutes: number
+}
+/** The result of [`sync_branch`]. */
+export interface JsSyncResult {
+  outcome: string
+  oldCommit: string
+  newCommit: string
+  ahead: number
+  behind: number
+  conflictCommit?: string
+  conflictBranch?: string
+}
+/**
+ * Classify the local branch against the remote-tracking tip and move it
+ * (fast-forward, replay, or preserve-on-conflict). The host fetches first
+ * and holds the write lock. See specs/behaviors/push-sync.md "Sync".
+ */
+export declare function syncBranch(gitDir: string, opts: JsSyncOptions): JsSyncResult
+/** Whether commit `a` is reachable from commit `b` (or equal). */
+export declare function isAncestor(gitDir: string, a: string, b: string): boolean
+export interface JsMergeOptions {
+  ours: string
+  theirs: string
+  openRoot?: string
+  /** `fail` (default) | `ours` | `theirs`. */
+  prefer?: string
+  /** Default true; false writes the tree and moves nothing. */
+  commit?: boolean
+  message?: string
+  author?: JsAuthor
+  committer?: JsAuthor
+  timeSeconds: number
+  offsetMinutes: number
+}
+export interface JsMergeConflict {
+  path: string
+  kind: string
+  field?: string
+  ours?: string
+  theirs?: string
+}
+export interface JsMergeResult {
+  outcome: string
+  oursCommit: string
+  theirsCommit: string
+  base?: string
+  tree?: string
+  commit?: string
+  mergedRecords: Array<string>
+  conflicts: Array<JsMergeConflict>
+}
+/**
+ * Sheet-aware merge of `theirs` into `ours` — record files changed on both
+ * sides are field-merged and written canonically; conflicts follow `prefer`
+ * or are reported. The host holds the write lock.
+ */
+export declare function mergeSheets(gitDir: string, opts: JsMergeOptions): JsMergeResult
+export interface JsRecordMergeOutcome {
+  text?: string
+  conflicts: Array<string>
+}
+/**
+ * Field-merge one record's base / ours / theirs texts through the sheet at
+ * `treeRef` (the merge-driver primitive): canonical text, or the conflicting
+ * field paths.
+ */
+export declare function mergeRecordTexts(gitDir: string, treeRef: string, sheetName: string, configPath: string, openRoot: string, base: string | undefined | null, ours: string, theirs: string, prefer?: string | undefined | null): JsRecordMergeOutcome
 /**
  * Discover every sheet declared in `<openRoot>/.gitsheets/*.toml` in the tree
  * `treeRef`. Sorted bare names. The `Store` discovery half (`openStore`).
  */
 export declare function coreDiscoverSheets(gitDir: string, treeRef: string, openRoot: string): Array<string>
+/**
+ * Open the sheet whose config blob lives at `configPath` in the tree `treeRef`
+ * and discard it — the full open-time validation the core performs
+ * (config parse, contract load/compile, template coherence per
+ * specs/behaviors/path-templates.md "Template fields must be
+ * schema-required") surfaced to the host as typed errors. The host calls it
+ * once per distinct config blob from `repo.openSheet`.
+ */
+export declare function sheetConfigCheck(gitDir: string, treeRef: string, sheetName: string, configPath: string, openRoot: string): void
 /**
  * The `openStore` `config_missing` check: every validator must name a declared
  * sheet. Throws `ConfigError(config_missing)` otherwise.
@@ -502,12 +611,13 @@ export declare class CoreTransaction {
   /** Stage a single attachment *(mutating)* — sugar over [`Self::set_attachments`]. */
   setAttachment(name: string, recordPath: string, attachmentName: string, blobHash: string): void
   /**
-   * Stage a raw text file at `path` in this transaction's private tree
-   * *(mutating)* — the generic file write the CLI uses to commit sheet-config
-   * edits (`init` / `infer` / `migrate-config`) atomically alongside nothing
-   * else. `path` is repo-root-relative. Returns the written blob hash.
+   * Stage a raw file at `path` in this transaction's private tree
+   * *(mutating)* — the public `tx.writeFile` (specs/api/transaction.md
+   * "Raw files"): a sheet config, a contract, a fixture, committed with the
+   * record changes it belongs with. `path` is repo-root-relative; `content`
+   * is UTF-8 text or raw bytes. Returns the written blob hash.
    */
-  writeFile(path: string, content: string): string
+  writeFile(path: string, content: string | Buffer): string
   /**
    * Delete a raw file at `path` (repo-root-relative) in this transaction's
    * private tree *(mutating)* — `write_file`'s inverse. Returns whether a

@@ -212,6 +212,31 @@ Migration table (matches [`specs/behaviors/validation.md`](https://github.com/Ja
 | `sort: ...` | `[gitsheet.fields.<name>.sort]` (unchanged) |
 | `trueValues: [...]`, `falseValues: [...]` | Warning to stderr — move to CSV-ingest helper |
 
+### `gitsheets merge <theirs>`
+
+Sheet-aware merge ([spec](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/merge.md)): record files changed on both sides since the merge base are merged **field by field** and written in canonical form, so a merged repo never carries a mix of serializations. Non-record files merge the way git merges them.
+
+```bash
+gitsheets merge import                      # into HEAD's branch
+gitsheets merge import --into published     # into another branch
+gitsheets merge import --dry-run            # report the merged tree, move nothing
+gitsheets merge import --prefer theirs      # resolve field / delete-modify / blob conflicts for one side
+```
+
+Without `--prefer`, any conflict is listed on stderr (`merge conflict: <path> (field <name> | delete-modify | blob)`) and the command exits 1 with nothing written. Up-to-date and fast-forward cases are reported as such.
+
+### `gitsheets merge-driver <base> <ours> <theirs> <path>`
+
+A git merge driver so a plain `git merge` / `rebase` / `cherry-pick` gets the same record-level behaviour for files changed on both sides:
+
+```bash
+git config merge.gitsheets.name   "gitsheets record merge"
+git config merge.gitsheets.driver "git sheet merge-driver %O %A %B %P"
+printf 'users/**/*.toml merge=gitsheets\n' >> .gitattributes
+```
+
+The driver resolves the sheet owning `<path>` from HEAD's configs, field-merges the three files, and writes the canonical result over `<ours>` (exit 0). On a field conflict — or a path no sheet owns — it falls back to `git merge-file`, leaving git's usual markers, and exits 1.
+
 ### `gitsheets contracts <subcommand>`
 
 Manage [schema contracts](contracts.md) — vendored, immutable JSON Schema documents that sheets declare via `implements` and that compose into write-time validation. All writes land under `.gitsheets/contracts/`; sheet configs are never rewritten by tooling.

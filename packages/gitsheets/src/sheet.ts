@@ -16,6 +16,7 @@ import {
   readTreeBlob,
   readTreeBlobText,
   treeEntryHash,
+  sheetConfigCheck,
 } from './core.js';
 import type { ConformanceReport, OpenSheetContractOptions } from './contracts.js';
 import {
@@ -457,9 +458,30 @@ async function loadConfig(
     );
   }
 
+  // The core's open-time validation on top of the host parse above: contract
+  // load/compile and template coherence (every static template field must be
+  // schema-required or declared in `injectedFields` —
+  // specs/behaviors/path-templates.md "Template fields must be
+  // schema-required"). Once per distinct config blob, via the cache below.
+  sheetConfigCheck(gitDir, treeRef, sheetNameFromConfigPath(configPath), configPath, openRootFromConfigPath(configPath));
+
   const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };
   CONFIG_CACHE.set(hash, config);
   return config;
+}
+
+/** `<openRoot>/.gitsheets/<name>.toml` → `<name>`. */
+function sheetNameFromConfigPath(configPath: string): string {
+  const file = configPath.slice(configPath.lastIndexOf('/') + 1);
+  return file.endsWith('.toml') ? file.slice(0, -'.toml'.length) : file;
+}
+
+/** `<openRoot>/.gitsheets/<name>.toml` → `<openRoot>` (`.` at the repo root). */
+function openRootFromConfigPath(configPath: string): string {
+  const marker = '.gitsheets/';
+  const idx = configPath.lastIndexOf(marker);
+  if (idx <= 0) return '.';
+  return configPath.slice(0, idx).replace(/\/+$/, '') || '.';
 }
 
 function validateSortRule(sort: unknown, configPath: string, field: string): void {
@@ -552,15 +574,11 @@ export interface QueryOptions {
 // --- Attachments iterator (#140) ---
 
 /**
- * Handle on an attachment's bytes, returned by `Sheet.attachments()`. Wraps
- * the raw blob hash with consumer-friendly `read()` (Buffer) and `stream()`
- * (Readable) accessors. Spawns `git cat-file blob <hash>` under the hood.
+ * The blob handle yielded by `sheet.attachments()` — the same `BlobHandle`
+ * `getAttachment` returns (`hash`, `size`, `read()`, `stream()`). Kept as a
+ * named alias for consumers that imported it.
  */
-export interface AttachmentBlobHandle {
-  readonly hash: string;
-  read(): Promise<Buffer>;
-  stream(): Readable;
-}
+export type AttachmentBlobHandle = BlobHandle;
 
 export interface AttachmentEntry {
   readonly name: string;
@@ -629,30 +647,6 @@ function inferMimeType(filename: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
-/**
- * A handle over an attachment blob, read through the core by object id (no
- * `git cat-file` subprocess). `stream()` yields the buffered bytes as a
- * single-chunk `Readable` — the content is held in memory once, which fits
- * the human-scale premise; it is not a streaming read of a huge object.
- */
-function makeAttachmentBlobHandle(gitDir: string, hash: string): AttachmentBlobHandle {
-  const load = (): Buffer => {
-    const bytes = readBlobBytes(gitDir, hash);
-    if (bytes === null) {
-      throw new NotFoundError('record_not_found', `no blob object ${hash}`);
-    }
-    return bytes;
-  };
-  return {
-    hash,
-    async read(): Promise<Buffer> {
-      return load();
-    },
-    stream(): Readable {
-      return Readable.from([load()]);
-    },
-  };
-}
 
 // --- diffFrom (specs/api/sheet.md) ---
 
@@ -845,6 +839,13 @@ export interface SheetConstructorOptions<T extends RecordLike = RecordLike> {
    * specs/api/cli.md and #148.
    */
   readonly prefix?: string;
+  /**
+   * Non-transactional: the ref this sheet is pinned to (`openSheet({ ref })`).
+   * A pinned sheet is read-only, is not registered for the repository's
+   * auto-refresh / `repo.refresh()`, and re-resolves this ref only on an
+   * explicit `refresh()`. See specs/behaviors/freshness.md "Ref-pinned sheets".
+   */
+  readonly pinnedRef?: string;
 }
 
 export class Sheet<T extends RecordLike = RecordLike> {
@@ -861,6 +862,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #dataBase: string;
   readonly #validator: StandardSchemaV1<unknown, T> | undefined;
   readonly #prefix: string;
+  readonly #pinnedRef: string | undefined;
   readonly #indexes = new Map<string, IndexState<T>>();
   #configPromise: Promise<SheetConfig> | undefined;
   /** Set by {@link verifyContract} on a successful `openSheet({ contract })`. */
@@ -884,11 +886,19 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#dataBase = (opts.dataBase ?? '').replace(/^\/+|\/+$/g, '');
     this.#validator = opts.validator;
     this.#prefix = (opts.prefix ?? '').replace(/^\/+|\/+$/g, '');
-    if (this.#transaction === undefined) {
+    this.#pinnedRef = opts.pinnedRef;
+    if (this.#transaction === undefined && this.#pinnedRef === undefined) {
       // Participate in the freshness model: the Repository rebinds every live
       // non-tx sheet after each of its own commits, and on repo.refresh().
+      // A ref-pinned sheet stays out: its snapshot moves only on its own
+      // refresh() (specs/behaviors/freshness.md "Ref-pinned sheets").
       this.#repo.registerSheet(this as unknown as Sheet);
     }
+  }
+
+  /** The ref this sheet is pinned to (`openSheet({ ref })`), or `undefined` for a live sheet. */
+  get pinnedRef(): string | undefined {
+    return this.#pinnedRef;
   }
 
   /** The git dir this sheet reads/writes through. */
@@ -1055,7 +1065,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
         'Sheet.refresh() is not available on a transaction-bound Sheet — it reads the transaction’s private tree',
       );
     }
-    this.rebindReadTree(await this.#repo.currentReadTree());
+    // A pinned sheet re-resolves its own ref (a branch catches up with its
+    // tip; a commit/tree hash resolves to the same tree), never HEAD.
+    const tree =
+      this.#pinnedRef !== undefined
+        ? await this.#repo.resolveTreeForRef(this.#pinnedRef)
+        : await this.#repo.currentReadTree();
+    this.rebindReadTree(tree);
   }
 
   /**
@@ -1500,6 +1516,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     if (this.#dataBase) Object.assign(opts, { dataBase: this.#dataBase });
     if (this.#validator !== undefined) Object.assign(opts, { validator: this.#validator });
     if (this.#prefix) Object.assign(opts, { prefix: this.#prefix });
+    if (this.#pinnedRef !== undefined) Object.assign(opts, { pinnedRef: this.#pinnedRef });
     return new Sheet<T>(opts);
   }
 
@@ -1754,7 +1771,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async getAttachmentStream(record: T | string, name: string): Promise<Readable | null> {
     const blob = await this.getAttachment(record, name);
     if (blob === null) return null;
-    return makeAttachmentBlobHandle(this.#gitDir, blob.hash).stream();
+    return blob.stream();
   }
 
   /**
@@ -1770,15 +1787,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
   async *attachments(record: T | string): AsyncGenerator<AttachmentEntry> {
     const blobMap = await this.getAttachments(record);
     if (!blobMap) return;
-    const gitDir = this.#repo.gitDir;
     for (const name in blobMap) {
       const blob = blobMap[name];
       if (!blob) continue;
-      yield {
-        name,
-        mimeType: inferMimeType(name),
-        blob: makeAttachmentBlobHandle(gitDir, blob.hash),
-      };
+      yield { name, mimeType: inferMimeType(name), blob };
     }
   }
 
@@ -1889,6 +1901,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
   // --- Private helpers ---
 
   #checkStrictMode(): void {
+    if (this.#pinnedRef !== undefined) {
+      throw new TransactionError(
+        'transaction_required',
+        `Sheet.${this.#name} is pinned to ${this.#pinnedRef} and read-only — write through repo.transact({ parent: ${JSON.stringify(this.#pinnedRef)} }, …)`,
+      );
+    }
     if (this.#repo.isStrictMode()) {
       throw new TransactionError(
         'transaction_required',
@@ -1937,6 +1955,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
         `Sheet.upsert: record is missing the body field ${JSON.stringify(bodyField)}. Pass { allowMissingBody: true } to opt in, or use Sheet.patch for body-preserving frontmatter updates.`,
       );
     }
+    // An explicit `null` body states "no body" (specs/behaviors/content-types.md
+    // "Upsert with a body-less record"): it needs no opt-in. The marshal drops
+    // null-valued keys, so the core would see it as absent — pass the opt-in
+    // through on the consumer's behalf.
+    const allowMissing =
+      (opts.allowMissingBody ?? false) ||
+      (bodyField !== undefined && (record as Record<string, unknown>)[bodyField] === null);
 
     // Standard Schema validator (host-side; may transform). JSON Schema +
     // normalization + path rendering happen in the core's prepareUpsert (which
@@ -1956,7 +1981,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
     // Phase 1 (non-mutating): JSON Schema + normalize + render, in the core.
     const candidate = callCore(() =>
-      tx.coreTx.prepareUpsert(this.#name, input, prevArg, opts.allowMissingBody ?? false),
+      tx.coreTx.prepareUpsert(this.#name, input, prevArg, allowMissing),
     ) as unknown as { path: string; nextText: string; record: RecordLike };
 
     // Pre-write unique-index check — throws before staging any bytes.
@@ -2014,6 +2039,13 @@ export class Sheet<T extends RecordLike = RecordLike> {
         `Sheet.upsert: record is missing the body field ${JSON.stringify(bodyField)}. Pass { allowMissingBody: true } to opt in, or use Sheet.patch for body-preserving frontmatter updates.`,
       );
     }
+    // An explicit `null` body states "no body" (specs/behaviors/content-types.md
+    // "Upsert with a body-less record"): it needs no opt-in. The marshal drops
+    // null-valued keys, so the core would see it as absent — pass the opt-in
+    // through on the consumer's behalf.
+    const allowMissing =
+      (opts.allowMissingBody ?? false) ||
+      (bodyField !== undefined && (record as Record<string, unknown>)[bodyField] === null);
     let input: RecordLike = stripSymbols(record as RecordLike);
     if (this.#validator !== undefined) {
       input = await validateRecord({
@@ -2025,7 +2057,6 @@ export class Sheet<T extends RecordLike = RecordLike> {
     }
     const previous = (record as Record<symbol, unknown>)[RECORD_PATH_KEY];
     const prevArg = typeof previous === 'string' ? previous : undefined;
-    const allowMissing = opts.allowMissingBody ?? false;
 
     const { candidate, wc } = await this.#withCoreTx((coreTx) => {
       // prepareUpsert (non-mutating) yields the normalized candidate for the

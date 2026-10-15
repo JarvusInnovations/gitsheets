@@ -579,3 +579,127 @@ def test_blob_primitives_read_the_object_database(markdown_repo):
     assert gitsheets.blob_read(git_dir, "0" * 40) is None
     with pytest.raises(gitsheets.RefError):
         gitsheets.tree_read_blob(git_dir, "no-such-ref", "x")
+
+
+# ── template coherence (specs/behaviors/path-templates.md) ─────────────────────
+# A static template field the persisted schema does not require fails sheet
+# open with ConfigError; `injectedFields` is the escape hatch. Same core check
+# as the Node binding (rust/gitsheets-napi/test/sheet-config-check.mjs).
+
+_ROLES_BAD = (
+    "[gitsheet]\npath = '${{ projectSlug }}/${{ slug }}'\nroot = 'roles'\n\n"
+    "[gitsheet.schema]\ntype = 'object'\nrequired = ['slug']\n"
+)
+
+
+def _commit_roles_config(d, config):
+    with open(os.path.join(d, ".gitsheets", "roles.toml"), "w") as fh:
+        fh.write(config)
+    _git(["add", ".gitsheets/roles.toml"], cwd=d)
+    _git(["commit", "-q", "-m", "roles"], cwd=d)
+
+
+def test_template_field_not_required_by_schema_fails_sheet_open(seeded_repo):
+    d, git_dir = seeded_repo
+    _commit_roles_config(d, _ROLES_BAD)
+    with pytest.raises(gitsheets.ConfigError) as info:
+        with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+            tx.open_sheet("roles", ".gitsheets/roles.toml")
+    assert '"projectSlug"' in str(info.value)
+    assert "injectedFields" in str(info.value)
+
+
+def test_injected_fields_unblocks_a_writer_supplied_template_field(seeded_repo):
+    d, git_dir = seeded_repo
+    _commit_roles_config(d, _ROLES_BAD.replace("root = 'roles'\n", "root = 'roles'\ninjectedFields = ['projectSlug']\n"))
+    with gitsheets.transact(git_dir, "x", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+        tx.open_sheet("roles", ".gitsheets/roles.toml")
+
+
+# ── raw files + orphan commits (specs/api/transaction.md) ──────────────────────
+
+
+def _parents(git_dir, commit):
+    out = subprocess.run(
+        ["git", "--git-dir", git_dir, "rev-list", "--parents", "-n", "1", commit],
+        check=True,
+        capture_output=True,
+    ).stdout.decode().split()
+    return out[1:]
+
+
+def test_write_file_and_delete_file_stage_raw_blobs(seeded_repo):
+    d, git_dir = seeded_repo
+    with gitsheets.transact(git_dir, "files", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+        h1 = tx.write_file("fixtures/readme.md", "hello\n")
+        h2 = tx.write_file("fixtures/blob.bin", b"\x00\x01\x02")
+        assert len(h1) == 40 and len(h2) == 40
+        assert tx.delete_file("fixtures/missing.txt") is False
+    commit = tx.result["commit_hash"]
+    show = lambda p: subprocess.run(["git", "--git-dir", git_dir, "show", f"{commit}:{p}"], check=True, capture_output=True).stdout
+    assert show("fixtures/readme.md") == b"hello\n"
+    assert show("fixtures/blob.bin") == b"\x00\x01\x02"
+
+    with gitsheets.transact(git_dir, "rm", 1_700_000_001, author=("Seed", "seed@x.org")) as tx:
+        assert tx.delete_file("fixtures/blob.bin") is True
+    tree = subprocess.run(["git", "--git-dir", git_dir, "ls-tree", "-r", "--name-only", tx.result["commit_hash"]], check=True, capture_output=True).stdout.decode()
+    assert "fixtures/blob.bin" not in tree and "fixtures/readme.md" in tree
+
+
+def test_orphan_transaction_starts_empty_and_creates_its_branch(seeded_repo):
+    d, git_dir = seeded_repo
+    with gitsheets.transact(git_dir, "snapshot", 1_700_000_000, author=("Seed", "seed@x.org"), branch="snapshot", orphan=True) as tx:
+        assert tx.parent_commit_hash is None
+        tx.write_file("README.md", "scrubbed\n")
+    commit = tx.result["commit_hash"]
+    assert _parents(git_dir, commit) == []
+    assert tx.result["ref_name"] == "refs/heads/snapshot"
+    tree = subprocess.run(["git", "--git-dir", git_dir, "ls-tree", "-r", "--name-only", commit], check=True, capture_output=True).stdout.decode().split()
+    assert tree == ["README.md"]  # nothing inherited from main
+
+    with pytest.raises(gitsheets.TransactionError):
+        with gitsheets.transact(git_dir, "again", 1_700_000_001, author=("Seed", "seed@x.org"), branch="snapshot", orphan=True) as tx:
+            pass
+
+
+def test_blob_header_reports_kind_and_size(fresh_repo):
+    d, git_dir = fresh_repo
+    h = gitsheets.write_blob(git_dir, b"hello")
+    assert gitsheets.blob_header(git_dir, h) == {"kind": "blob", "size": 5}
+    assert gitsheets.blob_header(git_dir, "0" * 40) is None
+
+
+def test_sync_branch_fast_forwards_and_is_ancestor(seeded_repo):
+    d, git_dir = seeded_repo
+    rev = lambda r: subprocess.run(["git", "-C", d, "rev-parse", r], check=True, capture_output=True).stdout.decode().strip()
+    base = rev("main")
+    # Simulate a fetched remote tip one commit ahead.
+    with gitsheets.transact(git_dir, "remote work", 1_700_000_000, author=("Seed", "seed@x.org"), parent="main", branch="refs/remotes/origin/main") as tx:
+        tx.write_file("remote.txt", "r")
+    remote_tip = tx.result["commit_hash"]
+    r = gitsheets.sync_branch(git_dir, "main", "refs/remotes/origin/main", 1_700_000_000)
+    assert r["outcome"] == "fast-forwarded"
+    assert (r["old_commit"], r["new_commit"], r["ahead"], r["behind"]) == (base, remote_tip, 0, 1)
+    assert rev("main") == remote_tip
+    assert gitsheets.is_ancestor(git_dir, base, remote_tip) is True
+    assert gitsheets.is_ancestor(git_dir, remote_tip, base) is False
+
+
+def test_merge_sheets_field_merges_and_writes_canonically(seeded_repo):
+    d, git_dir = seeded_repo
+    rev = lambda r: subprocess.run(["git", "-C", d, "rev-parse", r], check=True, capture_output=True).stdout.decode().strip()
+    with gitsheets.transact(git_dir, "jane", 1_700_000_000, author=("Seed", "seed@x.org")) as tx:
+        tx.write_file("people/jane.toml", 'email = "jane@x.org"\nname = "Jane"\nslug = "jane"\n')
+    base = tx.result["commit_hash"]
+    with gitsheets.transact(git_dir, "ours", 1_700_000_001, author=("Seed", "seed@x.org"), parent="main") as tx:
+        tx.write_file("people/jane.toml", 'email = "jane@new.org"\nname = "Jane"\nslug = "jane"\n')
+    with gitsheets.transact(git_dir, "theirs", 1_700_000_002, author=("Seed", "seed@x.org"), parent=base, branch="import") as tx:
+        tx.write_file("people/jane.toml", 'slug = "jane"\nname = "Jane"\nemail = "jane@x.org"\ngithubUserId = 458_494\n')
+    r = gitsheets.merge_sheets(git_dir, "main", "import", 1_700_000_003, author=("M", "m@x.org"))
+    assert r["outcome"] == "merged"
+    assert r["merged_records"] == ["people/jane.toml"]
+    show = subprocess.run(["git", "-C", d, "show", f"{r['commit']}:people/jane.toml"], check=True, capture_output=True).stdout.decode()
+    assert show == 'email = "jane@new.org"\ngithubUserId = 458494\nname = "Jane"\nslug = "jane"\n'
+    assert rev("main") == r["commit"]
+    one = gitsheets.merge_record_texts(git_dir, "HEAD", "people", ".gitsheets/people.toml", ".", 'a = 1\nslug = "x"\n', 'a = 2\nslug = "x"\n', 'a = 3\nslug = "x"\n')
+    assert one["text"] is None and one["conflicts"] == ["a"]

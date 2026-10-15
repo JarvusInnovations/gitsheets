@@ -73,12 +73,17 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 
 | Method | Purpose |
 | --- | --- |
-| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix` |
-| `repo.openSheets(opts?)` | `Record<string, Sheet>` of every sheet declared under `.gitsheets/` |
+| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix`, `opts.ref` (v2.8+: pin reads to a branch/tag/commit — read-only, never auto-refreshed; `sheet.refresh()` re-resolves the ref; writes throw `TransactionError(transaction_required)` — write via `repo.transact({ parent: ref })`) |
+| `repo.openSheets(opts?)` | `Record<string, Sheet>` of every sheet declared under `.gitsheets/`; `opts.ref` pins them all |
 | `repo.transact(opts, handler)` | Single-commit transaction; see below |
 | `repo.requireExplicitTransactions()` | One-way strict-mode switch — standalone Sheet writes throw |
 | `repo.startPushDaemon(opts)` | Start async push to a remote (returns `PushDaemon`) |
 | `repo.resolveRef(ref)` | `Promise<string \| null>` — resolve a ref or commit hash |
+| `repo.readBlob(ref, path)` | `Promise<BlobHandle>` (v2.8+) — the blob at `<ref>:<path>` resolved now: `hash`, `size`, `read()`, `stream()`; `RefError` / `NotFoundError` |
+| `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()` |
+| `repo.sync(opts?)` | `Promise<SyncResult>` (v2.8+) — fetch + fast-forward / replay / preserve-on-conflict under the write lock; see PushDaemon section |
+| `repo.isAncestor(a, b)` | `Promise<boolean>` (v2.8+) — is commit `a` reachable from `b` |
+| `repo.merge({ theirs, ours?, prefer?, commit?, message? })` | `Promise<MergeResult>` (v2.8+) — sheet-aware merge: records changed on both sides are field-merged and written canonically; `prefer: 'fail'` (default) reports conflicts in `result.conflicts` with nothing written, `'ours'` / `'theirs'` resolves field, delete/modify and blob conflicts; `commit: false` = dry run. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
 
 ### `repo.transact`
 
@@ -165,7 +170,7 @@ const cloned = await sheet.clone();                // staging copy
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for markdown sheets. |
+| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for markdown sheets — only for an absent/`undefined` body; an explicit `null` body is accepted as-is and written empty (v2.8+). |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachment directory |
 | `sheet.patch(query, partial)` | RFC 7396 merge: `null` deletes a field, arrays replace, objects merge |
 | `sheet.clear()` | Wipe the sheet's tree |
@@ -185,7 +190,7 @@ await sheet.setAttachment(record, 'avatar.jpg', blob);
 await sheet.setAttachments(record, { 'avatar.jpg': blob, 'cover.png': otherBlob });
 
 const blob = await sheet.getAttachment(record, 'avatar.jpg');
-const map = await sheet.getAttachments(record);          // Map of name → BlobHandle
+const map = await sheet.getAttachments(record);          // Map of name → BlobHandle { hash, size, read(), stream() } (size + stream() v2.8+)
 
 await sheet.deleteAttachment(record, 'avatar.jpg');      // throws if missing
 await sheet.deleteAttachments(record);                   // no-op if no attachment dir
@@ -253,12 +258,18 @@ The handler argument of `repo.transact`. Don't construct directly.
 
 ```typescript
 tx.sheet<T>(name, opts?)        // sheet bound to the tx's tree (opts: validator, prefix)
-tx.parentCommitHash             // may be null on fresh repos
+tx.parentCommitHash             // may be null on fresh repos and orphan commits
 tx.parentRef                    // ref the tx is reading from
 tx.branchRef                    // ref the tx will advance on commit
+tx.writeFile(path, content)     // raw file (string → UTF-8, or Buffer/Uint8Array) at a repo-root-relative path → BlobHandle (v2.8+)
+tx.deleteFile(path)             // → boolean: did a blob exist there (v2.8+)
 ```
 
 Writes inside the handler are atomic; throws from the handler discard the staged tree. Nested `repo.transact` throws `TransactionError(transaction_in_progress)`.
+
+`writeFile` / `deleteFile` are for non-record files that belong in the same commit — a `.gitsheets/<sheet>.toml`, a vendored contract, a fixture, a README. Nothing is validated or normalized; use `tx.sheet(name)` for records.
+
+**Orphan commits and new branches (v2.8+).** `repo.transact({ parent: null, branch: 'snapshot' }, …)` starts from the empty tree and commits with no parents (always, even if the handler stages nothing); the branch is created and must not already exist (`TransactionError(commit_failed)` at open). Without `branch` the result is a detached root (`ref: null`). Separately, `branch` may name a branch that does not exist yet: `transact({ parent: 'main', branch: 'review/x' }, …)` forks it from `main` in one call.
 
 ## openStore + Store
 
@@ -273,6 +284,7 @@ const ProjectSchema = z.object({ id: z.string(), name: z.string() });
 
 const store = await openStore(repo, {
   validators: { users: UserSchema, projects: ProjectSchema },
+  // ref: 'published',  // v2.8+: read-only store pinned at a ref; store.refresh() re-resolves it
 });
 
 // Each named sheet is Sheet<InferRecord<schema>>:
@@ -332,7 +344,15 @@ await daemon.stop({ timeoutMs: 30_000 });    // graceful drain
 
 On `startPushDaemon` the daemon runs a startup-backlog check (fetch + `rev-list --count <remote>/<branch>..<branch>`) and queues any commits ahead of the remote — useful for catching up after a restart.
 
-**Push-only.** Never pulls. The consumer process is the single writer.
+**Push-only.** Never pulls. The consumer process is the single writer — the reverse direction is `repo.sync()`:
+
+```typescript
+const r = await repo.sync({ remote: 'origin', branch: 'main', onConflict: 'preserve-branch' }); // v2.8+
+// r.outcome: 'in-sync' | 'fast-forwarded' | 'ahead' | 'rebased' | 'conflict' | 'conflict-escaped' | 'fetch-failed'
+// r.oldCommit, r.newCommit, r.ahead, r.behind, r.conflictBranch?, r.conflictCommit?, r.fetchError?
+```
+
+Fetch happens outside the write lock; classification and ref movement happen under it (no transaction can interleave); live sheets are rebound when HEAD's branch moved; `ahead` / `rebased` tips are handed to a running push daemon. `onConflict: 'fail'` (default) leaves everything in place and names the commit that would not replay; `'preserve-branch'` keeps the local history on `conflicts/<UTC>` (pushed best-effort) and adopts the remote. `repo.isAncestor(a, b)` is the "do I already have this commit?" short-circuit.
 
 ## Errors
 
@@ -400,4 +420,6 @@ const sheetName = (jane as Record<symbol, unknown>)[RECORD_SHEET_KEY];  // 'user
 const recordPath = (jane as Record<symbol, unknown>)[RECORD_PATH_KEY]; // 'jane'
 ```
 
-These annotations let `Sheet.upsert` detect renames (if the rendered path differs from `RECORD_PATH_KEY`, the old file is deleted). Symbols are stripped before writing to disk.
+These annotations let `Sheet.upsert` detect renames: if the rendered path differs from `RECORD_PATH_KEY`, the old file is deleted **and the record's attachment directory moves to the new path** (v2.8+). Symbols are stripped before writing to disk.
+
+So the rename idiom is "load, change the key, upsert the same object" — `await sheet.upsert({ ...person, slug: 'new' })` (spread keeps symbol keys). Do **not** `delete` then `upsert`: `delete` cascades to the attachment directory first, so the attachments are lost. A validator that drops symbol keys (Zod `.parse`) needs the annotation re-applied — `parsed[RECORD_PATH_KEY] = person[RECORD_PATH_KEY]` — or pass the validator via `openSheet({ validator })` so the sheet carries it across itself.

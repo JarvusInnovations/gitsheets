@@ -70,6 +70,7 @@ Typed wrapper over `Repository.openSheets()` that binds per-sheet Standard Schem
 ```typescript
 const store = await openStore(repo, {
   validators: { users: UserSchema, projects: ProjectSchema },
+  // ref: 'published',   // optional: a read-only store pinned at a ref; store.refresh() re-resolves it
 });
 ```
 
@@ -79,15 +80,19 @@ const store = await openStore(repo, {
 
 | Method | Purpose |
 | --- | --- |
-| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix`, `opts.contract` (verify against a [contract](contracts.md) before returning — result on `sheet.contractVerification`) |
-| `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix` |
+| `repo.openSheet<T>(name, opts?)` | Sheet handle; `opts.validator` (Standard Schema), `opts.root`, `opts.prefix`, `opts.ref` (pin reads to a branch/tag/commit — read-only, excluded from auto-refresh; `sheet.refresh()` re-resolves the ref), `opts.contract` (verify against a [contract](contracts.md) before returning — result on `sheet.contractVerification`) |
+| `repo.openSheets(opts?)` | All sheets keyed by name; `opts.root`, `opts.prefix`, `opts.ref` |
 | `repo.transact(opts, handler)` | Run a handler in a single-commit transaction |
 | `repo.withLock(fn)` | Run `fn` holding the write lock transact uses — coordinate non-transact git ops. Not reentrant (`lock_held`) |
 | `repo.requireExplicitTransactions()` | Switch to strict mode (one-way) |
 | `repo.startPushDaemon(opts)` | Start async push to a configured remote |
 | `repo.resolveRef(ref)` | Resolve a ref or commit hash; returns `string \| null` |
-| `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` auto-refreshes) |
-| `repo.readBlobStream(ref, path)` | `Promise<Readable>` — stream a blob's bytes at `<ref>:<path>`, resolved at call time. Throws `RefError` / `NotFoundError` |
+| `repo.sync(opts?)` | Bring a branch up to date with a remote other writers push to: fetch, then fast-forward / replay local commits / preserve-on-conflict under the write lock; rebinds live sheets; hands new tips to the push daemon. Outcomes `in-sync` · `fast-forwarded` · `ahead` · `rebased` · `conflict` · `conflict-escaped` · `fetch-failed` |
+| `repo.isAncestor(a, b)` | `Promise<boolean>` — is commit `a` reachable from `b` |
+| `repo.merge({ theirs, ours?, prefer?, commit? })` | Sheet-aware merge: record files changed on both sides are field-merged and written canonically; conflicts follow `prefer` (`fail` · `ours` · `theirs`) or are reported in the result, never thrown. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
+| `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |
+| `repo.readBlob(ref, path)` | `Promise<BlobHandle>` — the blob at `<ref>:<path>`, resolved at call time: `hash`, `size` (from the object header), `read()`, `stream()`. Throws `RefError` / `NotFoundError` |
+| `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()`: in-core up to 1 MiB, piped from `git cat-file blob` above that |
 
 `opts.prefix` scopes records to a sub-tree under each sheet's configured root — useful for multi-tenant deployments where one git repo holds many tenants under `<root>/<tenant>/...`. Mirrors the CLI `--prefix` flag (env `GITSHEETS_PREFIX`). The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped.
 
@@ -114,7 +119,7 @@ const store = await openStore(repo, {
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. `opts.allowMissingBody` for content-typed sheets |
+| `sheet.upsert(record, opts?)` | Insert or replace; returns `{ blob, path }`. A record loaded from the sheet whose rendered path changes is **renamed**: the old file is deleted and its attachment directory moves with it. `opts.allowMissingBody` for content-typed sheets (an explicit `null` body needs no opt-in; absent/`undefined` throws) |
 | `sheet.delete(recordOrPath)` | Remove a record + cascade attachments |
 | `sheet.patch(query, partial)` | RFC 7396 merge patch over an existing record. For content-typed sheets with `[gitsheet.format].title` configured (v1.3): a title-only patch rewrites the body's H1; a body-only patch re-derives the title |
 | `sheet.willChange(record, opts?)` | Pre-flight idempotency check — returns `{ changed, path, currentBlobHash?, nextText }` without mutating the tree (v1.3) |
@@ -129,8 +134,8 @@ All write methods route through a transaction — permissive mode auto-opens one
 
 | Method | Purpose |
 | --- | --- |
-| `sheet.getAttachment(record, name)` | One attachment's `AttachmentBlobHandle` or null |
-| `sheet.getAttachments(record)` | Map of name → `AttachmentBlobHandle` |
+| `sheet.getAttachment(record, name)` | One attachment's `BlobHandle` (`hash`, `size`, `read()`, `stream()`) or null |
+| `sheet.getAttachments(record)` | Map of name → `BlobHandle` |
 | `sheet.getAttachmentStream(recordOrPath, name)` | `Promise<Readable \| null>` — stream an attachment's bytes without materializing the record |
 | `sheet.setAttachment(record, name, content)` | Add or replace — `content` may be raw bytes (`Buffer`/`Uint8Array`), a UTF-8 `string`, or a `BlobHandle` |
 | `sheet.setAttachments(record, map)` | Bulk variant; values accept the same types, mixed freely |
@@ -161,6 +166,10 @@ All write methods route through a transaction — permissive mode auto-opens one
 | `tx.sheet<T>(name, opts?)` | Sheet bound to the tx's tree; `opts.validator`, `opts.prefix` |
 | `tx.parentCommitHash` | Commit hash the tx parents on (may be `null` for fresh repos) |
 | `tx.parentRef` / `tx.branchRef` | Refs being read from / advanced |
+| `tx.writeFile(path, content)` | Stage a raw file (repo-root-relative; `string` as UTF-8 or `Buffer`/`Uint8Array`) in the same commit as record changes — sheet configs, contracts, fixtures. Returns a `BlobHandle`. Not validated or normalized |
+| `tx.deleteFile(path)` | Remove a raw file; returns whether it existed (a miss leaves the tx unmutated) |
+
+`repo.transact` options: `parent` (ref or hash; default HEAD; **`null` for an orphan root commit** — empty start, no parents, always commits, `branch` created and must not exist), `branch` (ref to advance; **created if absent**), `author`, `committer`, `message`, `trailers`.
 
 Consumers don't construct `Transaction` directly — it comes from `repo.transact`'s handler. `tx.sheet(name)` may be called any number of times; writes are atomic within the handler.
 
@@ -248,7 +257,7 @@ Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 
 ## Path Template
 
-`Template.fromString(s)` — parse + cache. Most consumers don't construct `Template` directly; it's exposed for advanced use cases (path template diagnostics, custom queryTree integrations).
+`Template.fromString(s)` — parse + cache. Most consumers don't construct `Template` directly; it's exposed for advanced use cases (path template diagnostics, custom queryTree integrations). `getFieldNames()` lists every field the template may read (expression identifiers included, best-effort); `getStaticFieldNames()` lists only the plain / recursive references and date-bucket base fields — the set the open-time [template check](path-templates.md#template-fields-must-be-schema-required) requires the schema to list.
 
 → [path templates doc](path-templates.md) · [`specs/behaviors/path-templates.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md)
 

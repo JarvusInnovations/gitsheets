@@ -114,6 +114,12 @@ pub struct SheetConfig {
     /// the sheet declares no contracts (the default, and the only case for a
     /// sheet written before contracts existed).
     pub implements: Vec<String>,
+    /// Template fields the writer supplies before upsert that the persisted
+    /// schema does not require (`gitsheet.injectedFields`) — the escape hatch
+    /// for the template-coherence check in `Sheet::open`
+    /// (`specs/behaviors/path-templates.md` "Template fields must be
+    /// schema-required"). Empty by default.
+    pub injected_fields: Vec<String>,
 }
 
 fn as_table(v: &Value) -> Option<&IndexMap<String, Value>> {
@@ -226,6 +232,24 @@ pub fn parse_config(raw: &Value, source: &str) -> Result<SheetConfig> {
         }
     }
 
+    // injectedFields (array of strings; the template-coherence allow-list)
+    let mut injected_fields: Vec<String> = Vec::new();
+    if let Some(inj) = gitsheet.get("injectedFields") {
+        let Value::Array(items) = inj else {
+            return Err(Error::ConfigInvalid {
+                message: format!("{source}: gitsheet.injectedFields must be an array of strings"),
+            });
+        };
+        for item in items {
+            let Value::String(name) = item else {
+                return Err(Error::ConfigInvalid {
+                    message: format!("{source}: gitsheet.injectedFields entries must be strings"),
+                });
+            };
+            injected_fields.push(name.clone());
+        }
+    }
+
     // Body-field presence rules. (The body↔template *collision* check needs the
     // compiled template's field names, so it lives in `Sheet::open`.)
     if format.body.is_some() {
@@ -251,6 +275,7 @@ pub fn parse_config(raw: &Value, source: &str) -> Result<SheetConfig> {
         schema,
         format,
         implements,
+        injected_fields,
     })
 }
 
@@ -355,6 +380,23 @@ mod tests {
         assert_eq!(c.root, "people");
         assert_eq!(c.format.kind, FormatKind::Toml);
         assert_eq!(c.format.extension(), ".toml");
+    }
+
+    #[test]
+    fn parses_injected_fields() {
+        let c = cfg("[gitsheet]\npath = '${{ org }}/${{ slug }}'\ninjectedFields = ['org']\n").unwrap();
+        assert_eq!(c.injected_fields, vec!["org".to_string()]);
+        let c = cfg("[gitsheet]\npath = '${{ slug }}'\n").unwrap();
+        assert!(c.injected_fields.is_empty());
+    }
+
+    #[test]
+    fn injected_fields_must_be_a_string_array() {
+        let err = cfg("[gitsheet]\npath = '${{ slug }}'\ninjectedFields = 'org'\n").err().unwrap();
+        assert_eq!(err.code(), "config_invalid");
+        assert!(err.message().contains("injectedFields must be an array"));
+        let err = cfg("[gitsheet]\npath = '${{ slug }}'\ninjectedFields = [1]\n").err().unwrap();
+        assert_eq!(err.code(), "config_invalid");
     }
 
     #[test]

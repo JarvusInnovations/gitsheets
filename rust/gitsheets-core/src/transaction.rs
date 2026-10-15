@@ -50,6 +50,11 @@ pub struct Author {
 #[derive(Clone, Debug)]
 pub struct TransactionOptions {
     pub parent: Option<String>,
+    /// Orphan root commit: ignore `parent`, start from the empty tree, commit
+    /// with no parents (always — there is no parent tree to compare against).
+    /// `branch`, when set, is created and must not already exist
+    /// (specs/api/transaction.md "Parent ref handling").
+    pub orphan: bool,
     pub branch: Option<String>,
     pub author: Option<Author>,
     pub committer: Option<Author>,
@@ -96,6 +101,12 @@ pub struct Transaction {
     parent_commit_hash: Option<ObjectId>,
     parent_ref: Option<String>,
     branch_ref: Option<String>,
+    /// The tip of `branch_ref` at open when it is a ref other than the parent
+    /// ref (`None` = absent → created at commit). The CAS expectation for the
+    /// ref update; for the parent ref itself the expectation is
+    /// `parent_commit_hash`.
+    branch_old: Option<ObjectId>,
+    orphan: bool,
     author: Author,
     committer: Author,
     message: String,
@@ -129,8 +140,30 @@ impl Transaction {
 
         // From here on, any early return must release the slot.
         let result = (|| {
-            let (parent_ref, parent_commit_hash, branch_ref) =
-                resolve_parent(&repo, opts.parent.as_deref(), opts.branch.as_deref())?;
+            let (parent_ref, parent_commit_hash, branch_ref) = if opts.orphan {
+                (None, None, opts.branch.as_deref().map(qualify_ref))
+            } else {
+                resolve_parent(&repo, opts.parent.as_deref(), opts.branch.as_deref())?
+            };
+
+            // A branch other than the parent ref: capture its tip (the CAS
+            // expectation at commit); absent means "create". An orphan only
+            // ever creates — refuse to re-point an existing branch at a
+            // parentless root.
+            let branch_old = match &branch_ref {
+                Some(b) if parent_ref.as_deref() != Some(b.as_str()) => {
+                    let current = holo_repo::resolve_ref(&repo, b).map_err(record::map_ht)?;
+                    if opts.orphan && current.is_some() {
+                        return Err(Error::CommitFailed {
+                            message: format!(
+                                "branch {b} already exists — an orphan commit (parent: null) only creates a new branch; delete the ref or pick another name"
+                            ),
+                        });
+                    }
+                    current
+                }
+                _ => None,
+            };
 
             let author = resolve_author(&repo, opts.author);
             let committer = opts.committer.unwrap_or_else(|| author.clone());
@@ -149,6 +182,8 @@ impl Transaction {
                 parent_commit_hash,
                 parent_ref,
                 branch_ref,
+                branch_old,
+                orphan: opts.orphan,
                 author,
                 committer,
                 message: opts.message,
@@ -210,7 +245,7 @@ impl Transaction {
             parent_commit_hash: parent_str.clone(),
         };
 
-        if !self.any_mutation {
+        if !self.any_mutation && !self.orphan {
             self.release();
             return Ok(no_change);
         }
@@ -297,9 +332,14 @@ impl Transaction {
         };
 
         if let Some(branch) = &self.branch_ref {
-            if let Err(e) =
-                holo_repo::update_ref(&self.repo, branch, commit_id, self.parent_commit_hash)
-            {
+            // The parent ref advances from the parent commit; any other branch
+            // from the tip captured at open (`None` → created).
+            let expected = if self.parent_ref.as_deref() == Some(branch.as_str()) {
+                self.parent_commit_hash
+            } else {
+                self.branch_old
+            };
+            if let Err(e) = holo_repo::update_ref(&self.repo, branch, commit_id, expected) {
                 self.release();
                 return Err(Error::CommitFailed {
                     message: format!("holo-tree update_ref {branch} failed: {e}"),
@@ -397,7 +437,7 @@ fn head_branch_ref(repo: &gix::Repository) -> Option<String> {
     head.referent_name().map(|n| n.as_bstr().to_string())
 }
 
-fn is_likely_branch(p: &str) -> bool {
+pub(crate) fn is_likely_branch(p: &str) -> bool {
     let ref_like = !p.is_empty()
         && p.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'));
@@ -405,7 +445,7 @@ fn is_likely_branch(p: &str) -> bool {
     ref_like && !hash_like
 }
 
-fn qualify_ref(name: &str) -> String {
+pub(crate) fn qualify_ref(name: &str) -> String {
     if name.starts_with("refs/") {
         name.to_string()
     } else {
@@ -413,7 +453,7 @@ fn qualify_ref(name: &str) -> String {
     }
 }
 
-fn resolve_author(repo: &gix::Repository, explicit: Option<Author>) -> Author {
+pub(crate) fn resolve_author(repo: &gix::Repository, explicit: Option<Author>) -> Author {
     if let Some(a) = explicit {
         return a;
     }
@@ -483,7 +523,7 @@ pub fn format_commit_message(message: &str, trailers: &[(String, String)]) -> St
     format!("{body}\n\n{}\n", lines.join("\n"))
 }
 
-fn build_signature(
+pub(crate) fn build_signature(
     author: &Author,
     seconds: i64,
     offset_minutes: i32,
@@ -620,6 +660,7 @@ mod tests {
 
     fn default_opts(message: &str) -> TransactionOptions {
         TransactionOptions {
+            orphan: false,
             parent: None,
             branch: None,
             author: Some(Author {
@@ -896,6 +937,106 @@ mod tests {
         let result = upsert_one(&git_dir, opts, record_value(&[("slug", "d")]));
         assert!(result.commit_hash.is_some());
         assert_eq!(result.ref_name, None);
+    }
+
+    // ── orphan commits + branch creation (specs/api/transaction.md) ─────────
+
+    fn parents_of(git_dir: &str, commit: &str) -> Vec<String> {
+        let repo = record::open_repo(git_dir).unwrap();
+        let id = gix::ObjectId::from_hex(commit.as_bytes()).unwrap();
+        let obj = repo.find_object(id).unwrap();
+        let c = obj.try_into_commit().unwrap();
+        c.parent_ids().map(|p| p.to_string()).collect()
+    }
+
+    #[test]
+    fn orphan_commit_starts_empty_has_no_parents_and_creates_its_branch() {
+        let (_dir, git_dir, parent) = setup(config_value("${{ slug }}", "people"));
+        let mut opts = default_opts("snapshot");
+        opts.orphan = true;
+        opts.parent = Some("main".into()); // ignored for an orphan
+        opts.branch = Some("snapshot".into());
+        let mut tx = Transaction::begin(&git_dir, opts).unwrap();
+        assert_eq!(tx.parent_commit_hash(), None);
+        // The private tree is empty even though main has history.
+        {
+            let (ctx, tree) = tx.split();
+            assert!(tree.get_child(&ctx, ".gitsheets/people.toml").unwrap().is_none());
+            tree.write_child(&ctx, "README.md", "scrubbed\n").unwrap();
+        }
+        tx.mark_mutated();
+        let result = tx.finalize().unwrap();
+        let commit = result.commit_hash.clone().unwrap();
+        assert!(parents_of(&git_dir, &commit).is_empty());
+        assert_eq!(result.ref_name.as_deref(), Some("refs/heads/snapshot"));
+        assert_eq!(result.parent_commit_hash, None);
+        let repo = record::open_repo(&git_dir).unwrap();
+        let tip = holo_repo::resolve_ref(&repo, "refs/heads/snapshot").unwrap().unwrap();
+        assert_eq!(tip.to_string(), commit);
+        // main is untouched.
+        assert_eq!(holo_repo::resolve_ref(&repo, "refs/heads/main").unwrap().unwrap(), parent);
+    }
+
+    #[test]
+    fn orphan_without_branch_is_detached_and_always_commits() {
+        let (_dir, git_dir, _parent) = setup(config_value("${{ slug }}", "people"));
+        let mut opts = default_opts("empty root");
+        opts.orphan = true;
+        let tx = Transaction::begin(&git_dir, opts).unwrap();
+        // No mutation at all: an orphan still commits (nothing to compare to).
+        let result = tx.finalize().unwrap();
+        let commit = result.commit_hash.unwrap();
+        assert!(parents_of(&git_dir, &commit).is_empty());
+        assert_eq!(result.ref_name, None);
+        assert_eq!(result.tree_hash.as_deref(), Some(crate::record::EMPTY_TREE_HASH));
+    }
+
+    #[test]
+    fn orphan_refuses_an_existing_branch_at_open() {
+        let (_dir, git_dir, _parent) = setup(config_value("${{ slug }}", "people"));
+        let mut opts = default_opts("x");
+        opts.orphan = true;
+        opts.branch = Some("main".into());
+        let err = begin_err(&git_dir, opts);
+        assert_eq!(err.code(), "commit_failed");
+        assert!(err.message().contains("already exists"));
+    }
+
+    #[test]
+    fn branch_option_creates_a_missing_branch_from_the_parent() {
+        let (_dir, git_dir, parent) = setup(config_value("${{ slug }}", "people"));
+        let mut opts = default_opts("fork");
+        opts.parent = Some("main".into());
+        opts.branch = Some("review/batch-7".into());
+        let result = upsert_one(&git_dir, opts, record_value(&[("slug", "fx")]));
+        assert_eq!(result.ref_name.as_deref(), Some("refs/heads/review/batch-7"));
+        let repo = record::open_repo(&git_dir).unwrap();
+        let tip = holo_repo::resolve_ref(&repo, "refs/heads/review/batch-7").unwrap().unwrap();
+        assert_eq!(tip.to_string(), result.commit_hash.unwrap());
+        assert_eq!(parents_of(&git_dir, &tip.to_string()), vec![parent.to_string()]);
+        // main stays put.
+        assert_eq!(holo_repo::resolve_ref(&repo, "refs/heads/main").unwrap().unwrap(), parent);
+    }
+
+    #[test]
+    fn branch_option_cas_fails_when_that_branch_moved_mid_transaction() {
+        let (_dir, git_dir, parent) = setup(config_value("${{ slug }}", "people"));
+        let repo = record::open_repo(&git_dir).unwrap();
+        holo_repo::update_ref(&repo, "refs/heads/other", parent, None).unwrap();
+        let mut opts = default_opts("onto other");
+        opts.parent = Some("main".into());
+        opts.branch = Some("other".into());
+        let mut tx = Transaction::begin(&git_dir, opts).unwrap();
+        {
+            let (ctx, tree) = tx.split();
+            tree.write_child(&ctx, "x.txt", "x").unwrap();
+        }
+        tx.mark_mutated();
+        // Someone else moves `other` while the transaction is open.
+        let moved = holo_repo::commit_tree(&repo, holo_tree::tree::empty_tree_id(), &[parent], "elsewhere\n", None, None).unwrap();
+        holo_repo::update_ref(&repo, "refs/heads/other", moved, Some(parent)).unwrap();
+        let err = tx.finalize().err().unwrap();
+        assert_eq!(err.code(), "commit_failed");
     }
 
     #[test]

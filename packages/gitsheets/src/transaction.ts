@@ -18,6 +18,7 @@ import { RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
+import { makeBlobHandle, type BlobHandle } from './working-tree.js';
 
 const exec = promisify(execFile);
 
@@ -27,9 +28,17 @@ export interface Author {
 }
 
 export interface TransactionOptions {
-  /** Ref name or commit hash to parent the commit on; defaults to current HEAD. */
-  readonly parent?: string;
-  /** Ref name to update on commit; default: parent if it's a branch, null if a hash. */
+  /**
+   * Ref name or commit hash to parent the commit on; defaults to current HEAD.
+   * `null` opens an **orphan** root commit: the tree starts empty, the commit
+   * has no parents and always lands, and `branch` (if set) is created — it
+   * must not already exist. See specs/api/transaction.md "Parent ref handling".
+   */
+  readonly parent?: string | null;
+  /**
+   * Ref name to update on commit; default: parent if it's a branch, null if a
+   * hash. A branch that does not exist yet is created.
+   */
   readonly branch?: string;
   /** Commit author; defaults to git config user.name/email. */
   readonly author?: Author;
@@ -189,25 +198,32 @@ export class Transaction {
   }
 
   /**
-   * @internal — Stage a raw text file at `path` (repo-root-relative) in this
-   * transaction's tree. The generic file write the CLI uses to commit sheet
-   * config edits atomically. Marks the transaction mutated.
+   * Stage a raw file at `path` (repo-root-relative, no leading slash, no
+   * `..`) in this transaction's tree, so a sheet config, a vendored contract,
+   * a fixture, or any non-record file lands in the same commit as the record
+   * changes it belongs with. `content` is a `string` (written as UTF-8) or raw
+   * bytes (`Buffer` / `Uint8Array`). Nothing is validated, normalized, or
+   * rendered — use `tx.sheet(name)` for records. Returns a `BlobHandle` for
+   * the written blob and marks the transaction mutated.
+   * See specs/api/transaction.md "Raw files".
    */
-  writeFile(path: string, content: string): void {
+  writeFile(path: string, content: string | Uint8Array): BlobHandle {
     if (this.#closed) {
       throw new TransactionError(
         'transaction_closed',
         'transaction is already closed — obtain a fresh Transaction via repo.transact',
       );
     }
-    callCore(() => this.#coreTx.writeFile(path, content));
+    const payload = typeof content === 'string' ? content : Buffer.from(content);
+    const hash = callCore(() => this.#coreTx.writeFile(path, payload));
+    return makeBlobHandle(this.#gitDir, hash, '100644');
   }
 
   /**
-   * @internal — Delete a raw file at `path` (repo-root-relative) in this
-   * transaction's tree — `writeFile`'s inverse. Returns whether a blob existed
-   * at `path` before the delete. Used by `contracts prune`. Marks the
-   * transaction mutated only when something was actually removed.
+   * Delete a raw file at `path` (repo-root-relative) in this transaction's
+   * tree — `writeFile`'s inverse. Returns whether a blob existed at `path`;
+   * a miss is a no-op that does not mark the transaction mutated.
+   * See specs/api/transaction.md "Raw files".
    */
   deleteFile(path: string): boolean {
     if (this.#closed) {
@@ -245,6 +261,7 @@ export class Transaction {
 
   static normalizeOptions(opts: TransactionOptions): {
     parent: string | undefined;
+    orphan: boolean;
     branch: string | undefined;
     author: Author | undefined;
     committer: Author | undefined;
@@ -253,7 +270,8 @@ export class Transaction {
   } {
     validateTrailers(opts.trailers);
     return {
-      parent: opts.parent,
+      parent: opts.parent ?? undefined,
+      orphan: opts.parent === null,
       branch: opts.branch,
       author: opts.author,
       committer: opts.committer ?? opts.author,

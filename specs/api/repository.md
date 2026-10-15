@@ -31,6 +31,7 @@ Returns a `Sheet` handle bound to this repository's current state.
 const users = await repo.openSheet('users', {
   root?: string,              // default: '.'
   prefix?: string,            // optional sub-prefix under the sheet's configured root
+  ref?: string,               // pin reads to a ref / commit / tree (read-only sheet) — see "Ref-pinned sheets"
   validator?: StandardSchema, // optional Standard Schema validator
   contract?: {                // consumer-side contract verification — behaviors/contracts.md
     schema: object | string,  // the contract document the consumer holds (parsed data, or JSON/TOML text)
@@ -44,6 +45,12 @@ const users = await repo.openSheet('users', {
 `opts.prefix` scopes record reads/writes to `<configRoot>/<prefix>/<rendered-path>.<ext>`. Useful for multi-tenant sub-tree partitioning. The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the record data tree is scoped. Mirrors the CLI `--prefix` global flag (env `GITSHEETS_PREFIX`). See [api/cli.md](cli.md#global-flags) for the CLI surface.
 
 Throws `ConfigError` if `.gitsheets/<name>.toml` doesn't exist under the resolved root.
+
+**`opts.ref`** opens a **ref-pinned, read-only** sheet: every read (records, config, attachments, indexes, contract verification) resolves against the tree `ref` pointed at when the sheet was opened — a branch, a tag, a commit hash, or a tree hash, anything `git rev-parse <ref>^{tree}` accepts. `RefError` (`ref_not_found`) if it does not resolve. Operator tooling reads another branch's records this way (a reviewer sampling a staging branch, an importer reading the previous snapshot to keep ids stable) without moving `HEAD`, opening a throwaway transaction, or hand-parsing `cat-file` output.
+
+- **Pinned means pinned.** The sheet is excluded from the owning repository's auto-refresh and from `repo.refresh()` ([behaviors/freshness.md](../behaviors/freshness.md#ref-pinned-sheets)). Only an explicit `sheet.refresh()` re-resolves `ref` — so a branch-pinned sheet can be told to catch up with its branch; a commit-pinned sheet is immutable.
+- **Read-only.** The permissive-mode write methods (`upsert`, `delete`, `patch`, `clear`, `setAttachment(s)`, `deleteAttachment(s)`) throw `TransactionError` (`transaction_required`) naming the ref. To write onto that history, open a transaction with `parent: ref`.
+- `sheet.clone()` of a pinned sheet is pinned to the same ref. `tx.sheet(name)` inside a transaction is unaffected (it reads the transaction's tree as always).
 
 **`opts.contract`** verifies the sheet against a contract document the consumer holds, per the two-rung ladder in [behaviors/contracts.md](../behaviors/contracts.md#consumer-verification). The document is canonicalized and hashed by the core regardless of input form. Modes:
 
@@ -61,6 +68,7 @@ Returns `{ [sheetName]: Sheet }` covering every sheet declared in `.gitsheets/`.
 const sheets = await repo.openSheets({
   root?: string,
   prefix?: string,            // applied to every discovered sheet
+  ref?: string,               // discover and pin every sheet at this ref (read-only) — see openSheet
 });
 ```
 
@@ -75,12 +83,12 @@ Run a handler inside a transaction. Returns `Promise<TransactionResult<T>>` wher
 ```typescript
 const result = await repo.transact(
   {
-    parent?: string,                 // ref or commit hash; default: current HEAD
+    parent?: string | null,          // ref or commit hash; default: current HEAD; null = orphan root commit
     author?: { name: string, email: string }, // default: git config
     committer?: { name: string, email: string }, // default: author
     message: string,                 // commit subject + body
     trailers?: Record<string, string>, // appended per `git interpret-trailers` rules
-    branch?: string,                  // ref to update on success; default: the parent ref if it was a branch
+    branch?: string,                  // ref to update on success (created if absent); default: the parent ref if it was a branch
   },
   async (tx: Transaction) => {
     // mutations via tx.sheet(name).upsert / delete / patch
@@ -105,9 +113,19 @@ await repo.refresh();
 
 Cheap: one ref resolution, then a lazy rebind per sheet — records, attachments, config, and indexes re-derive on their next read. Consumers do **not** need to call this after their own `repo.transact` — a successful commit auto-refreshes (see below). See [behaviors/freshness.md](../behaviors/freshness.md).
 
+### `repo.readBlob(ref, path)`
+
+The blob at `<ref>:<path>`, resolved **at call time** — independent of any sheet's read snapshot — as a `BlobHandle`: `hash`, `size` (bytes, from the object header, no inflate), `read()` (`Promise<Buffer>`), `stream()` (`Readable`). One native call for the metadata, no subprocess.
+
+```typescript
+const blob = await repo.readBlob('HEAD', 'people/janedoe/avatar.jpg');
+reply.header('ETag', `"${blob.hash}"`).header('Content-Length', blob.size);
+blob.stream().pipe(reply.raw);
+```
+
 ### `repo.readBlobStream(ref, path)`
 
-Stream a blob's bytes by `<ref>:<path>`, resolved **at call time** — independent of any sheet's read snapshot. Returns `Promise<Readable>` (a Node stream); bytes are piped from the object store without materializing the whole blob in memory.
+`(await repo.readBlob(ref, path)).stream()`: a `Promise<Readable>` over the blob's bytes with bounded buffering — up to 1 MiB is served from one in-core read; larger blobs are piped from `git cat-file blob` without being materialized by gitsheets ([behaviors/attachments.md](../behaviors/attachments.md#blob-metadata-and-bounded-buffering)).
 
 ```typescript
 const stream = await repo.readBlobStream('HEAD', 'people/janedoe/avatar.jpg');
@@ -138,6 +156,67 @@ const result = await repo.withLock(async () => {
 - **Queueing**: contends FIFO with `repo.transact` calls (and permissive-mode auto-transactions) from other async contexts — whoever holds the lock runs alone; the lock is released when `fn` settles (resolve or throw). A throw from `fn` propagates after release.
 - **Not reentrant — deliberately.** The lock has no hold-count. Calling `repo.withLock` inside a `withLock` callback, calling `repo.withLock` inside a `repo.transact` handler (the transaction already holds the lock), or calling `repo.transact` (or any permissive-mode mutation, which auto-opens a transaction) inside a `withLock` callback would self-deadlock — each is detected via async-context tracking and throws `TransactionError` (`lock_held`) instead of hanging.
 - The lock is **in-process, per-`Repository`-instance** — the same scope as the transaction mutex ([behaviors/transactions.md](../behaviors/transactions.md#single-writer-model)). It does not coordinate across processes or across two `Repository` instances opened on the same git dir.
+
+### `repo.sync(opts?)`
+
+Bring `opts.branch` (default: the branch `HEAD` points at) up to date with `opts.remote` (default `origin`): fetch outside the write lock, then fast-forward / replay / escape under it, then refresh live sheets if the branch moved. Returns `Promise<SyncResult>`; the full state machine, option set, and outcome table are in [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
+
+```typescript
+interface SyncOptions {
+  remote?: string;                            // default 'origin'
+  branch?: string;                            // default: HEAD's branch; RefError if HEAD is detached
+  fetch?: boolean;                            // default true; false = the caller already fetched
+  onConflict?: 'fail' | 'preserve-branch';    // default 'fail'
+  conflictBranchPrefix?: string;              // default 'conflicts/'
+  pushConflictBranch?: boolean;               // default true (best-effort)
+  committer?: { name: string; email: string } // for replayed commits; default: the repo's identity
+}
+interface SyncResult {
+  outcome: 'in-sync' | 'fast-forwarded' | 'ahead' | 'rebased' | 'conflict' | 'conflict-escaped' | 'fetch-failed';
+  oldCommit: string;      // the branch tip before
+  newCommit: string;      // the branch tip after (== oldCommit when nothing moved)
+  ahead: number;          // local commits the remote lacked
+  behind: number;         // remote commits the local lacked
+  conflictCommit?: string;        // 'conflict' / 'conflict-escaped': the local commit that would not replay
+  conflictBranch?: string;        // 'conflict-escaped': where the local history was preserved
+  conflictBranchPushed?: boolean; // 'conflict-escaped': whether that branch reached the remote
+  fetchError?: string;            // 'fetch-failed'
+}
+```
+
+- Throws `TransactionError` (`lock_held`) inside a transaction handler or a `withLock` callback; `RefError` (`ref_not_found`) when the branch or its remote-tracking ref does not exist after the fetch; `RefError` (`not_an_ancestor`) when the two histories are unrelated.
+- A running push daemon is handed the new tip after `ahead` / `rebased` (it pushes; `sync` itself never pushes the branch).
+
+### `repo.isAncestor(a, b)`
+
+`Promise<boolean>` — whether commit `a` is reachable from commit `b` (or equal). `RefError` (`ref_not_found`) when either does not resolve to a commit.
+### `repo.merge(opts)`
+
+Sheet-aware merge of `opts.theirs` into `opts.ours` (default: the branch `HEAD` points at) per [behaviors/merge.md](../behaviors/merge.md): record files changed on both sides are field-merged and written canonically; conflicts follow `opts.prefer` or are reported. Returns `Promise<MergeResult>`; never throws on a conflict.
+
+```typescript
+interface MergeOptions {
+  theirs: string;                         // branch, tag, or commit to merge in
+  ours?: string;                          // branch to merge into; default HEAD's branch
+  prefer?: 'fail' | 'ours' | 'theirs';    // default 'fail'
+  commit?: boolean;                       // default true; false = write the tree, move nothing (dry-run)
+  message?: string;                       // default `Merge <theirs> into <ours>`
+  author?: { name: string; email: string };
+  committer?: { name: string; email: string };
+  root?: string;                          // openSheet({ root }) scoping; default '.'
+}
+interface MergeResult {
+  outcome: 'up-to-date' | 'fast-forward' | 'merged' | 'conflict' | 'dry-run';
+  oursCommit: string; theirsCommit: string; base: string | null;
+  tree: string | null;        // the merged tree (merged / dry-run)
+  commit: string | null;      // the merge commit (merged) or the tip adopted (fast-forward / up-to-date)
+  mergedRecords: string[];    // record paths re-done at the record level
+  conflicts: Array<{ path: string; kind: 'field' | 'delete-modify' | 'blob' | 'tree'; field?: string; ours?: string; theirs?: string }>;
+}
+```
+
+- `ours` may be a commit hash, in which case no ref moves and `commit` is the detached merge commit.
+- Throws `RefError` (`ref_not_found`) when a side does not resolve, `RefError` (`not_an_ancestor`) when the histories are unrelated, `TransactionError` (`lock_held`) inside a transaction or `withLock`. Runs under the write lock; a moved `HEAD` branch rebinds live sheets.
 
 ### `repo.requireExplicitTransactions()`
 
@@ -192,10 +271,12 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 
 | Class | Code | When |
 | --- | --- | --- |
-| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlobStream` ref doesn't resolve |
-| `NotFoundError` | `record_not_found` | `readBlobStream` path absent under the ref, or not a blob |
+| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlob` / `readBlobStream` ref doesn't resolve; `openSheet` / `openSheets` / `openStore` `opts.ref` doesn't resolve to a tree |
+| `TransactionError` | `transaction_required` | A permissive-mode write on a ref-pinned (read-only) sheet |
+| `NotFoundError` | `record_not_found` | `readBlob` / `readBlobStream` path absent under the ref, or not a blob |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
-| `TransactionError` | `lock_held` | `withLock` / `transact` attempted while the caller's own async context already holds the write lock (not reentrant) |
+| `TransactionError` | `lock_held` | `withLock` / `transact` / `sync` attempted while the caller's own async context already holds the write lock (not reentrant) |
+| `RefError` | `not_an_ancestor` | `sync`: the local branch and the remote-tracking branch share no history |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit |
 | `ConfigError` | `config_missing` | `.gitsheets/<name>.toml` not found in `openSheet` |
