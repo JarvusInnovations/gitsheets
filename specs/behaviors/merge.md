@@ -58,6 +58,8 @@ git config merge.gitsheets.name   "gitsheets record merge"
 git config merge.gitsheets.driver "git sheet merge-driver %O %A %B %P"
 ```
 
+`git sheet merge --install-driver` does both: it sets the two `merge.gitsheets.*` keys in the repository's git config (per clone — git config is not versioned) and adds one `<root>/**/*<ext> merge=gitsheets` line per sheet discovered at `HEAD` to the working tree's `.gitattributes`, skipping lines already present, so it is idempotent. It never commits: the attributes file is working-tree content the user reviews and commits like any other. In a bare repository it sets the config and prints the lines to add instead. Each run reports what it set and what it added.
+
 `git sheet merge-driver <base> <ours> <theirs> <path>` resolves the sheet by `<path>` from `HEAD`'s configs, field-merges the three files, writes the canonical result to `<ours>` and exits 0; on a conflict it falls back to git's own text merge (`git merge-file`) so the familiar markers appear, and exits 1. Git invokes the driver for every file changed on both sides, which is exactly the set the record pass covers — so a plain `git merge` with the driver installed produces the same record bytes as `repo.merge`.
 
 ### Why

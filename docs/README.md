@@ -22,7 +22,7 @@ Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and 
 - **[`gitsheets-axi`](axi.md)** — the agent-facing companion CLI (TOON output, idempotent mutations, session hooks).
 - **[Path templates](path-templates.md)** — syntax, recursive fields, query pruning, invalid-char handling.
 - **[Validation](validation.md)** — JSON Schema in `.gitsheets/<sheet>.toml`, optional Standard Schema layering.
-- **Sync and merge** — [`repo.sync()`](recipes/production-push-daemon.md#taking-in-other-writers-commits-reposync) takes in other writers' commits under the write lock; [`repo.merge()` / `git sheet merge`](cli.md#gitsheets-merge-theirs) merges two branches record-by-record with canonical output.
+- **Sync and merge** — [`repo.sync()`](recipes/production-push-daemon.md#taking-in-other-writers-commits-reposync) takes in other writers' commits under the write lock; [`repo.merge()` / `git sheet merge`](cli.md#gitsheets-merge-theirs) merges two branches record-by-record with canonical output, and `git sheet merge --install-driver` makes plain `git merge` do the same.
 
 ## Recipes
 

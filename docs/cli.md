@@ -227,7 +227,17 @@ Without `--prefer`, any conflict is listed on stderr (`merge conflict: <path> (f
 
 ### `gitsheets merge-driver <base> <ours> <theirs> <path>`
 
-A git merge driver so a plain `git merge` / `rebase` / `cherry-pick` gets the same record-level behaviour for files changed on both sides:
+A git merge driver so a plain `git merge` / `rebase` / `cherry-pick` gets the same record-level behaviour for files changed on both sides. Register it once per clone:
+
+```bash
+gitsheets merge --install-driver
+# set: merge.gitsheets.name = "gitsheets record merge"
+# set: merge.gitsheets.driver = "git sheet merge-driver %O %A %B %P"
+# added: users/**/*.toml merge=gitsheets
+# wrote /path/to/repo/.gitattributes — review and commit it
+```
+
+That sets the two `merge.gitsheets.*` git-config keys (per clone — git config isn't versioned) and adds one `.gitattributes` line per sheet at `HEAD`, keeping whatever is already there; re-running adds nothing. Commit `.gitattributes` like any other file. By hand, it is the same three lines:
 
 ```bash
 git config merge.gitsheets.name   "gitsheets record merge"

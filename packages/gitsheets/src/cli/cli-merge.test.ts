@@ -128,3 +128,53 @@ describe('git sheet merge-driver', () => {
     expect(await readFile(ours, 'utf8')).toContain('<<<<<<<');
   });
 });
+
+describe('git sheet merge --install-driver', () => {
+  it('sets the git config keys and writes one .gitattributes line per sheet, idempotently', async () => {
+    const fixture = await seed();
+    await writeFile(join(fixture.path, '.gitsheets', 'posts.toml'), `[gitsheet]\nroot = 'posts'\npath = '\${{ slug }}'\n\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\n`);
+    await writeFile(join(fixture.path, '.gitattributes'), '*.png binary\n');
+    await fixture.git('add', '.gitsheets', '.gitattributes');
+    await fixture.git('commit', '-q', '-m', 'posts sheet + attributes');
+
+    let cap = capture();
+    let code = await main(['--git-dir', fixture.gitDir, 'merge', '--install-driver']);
+    let io = cap.restore();
+    expect(code).toBe(0);
+    expect(io.stdout).toContain('added: posts/**/*.md merge=gitsheets');
+    expect(io.stdout).toContain('added: users/**/*.toml merge=gitsheets');
+    const { stdout: driver } = await fixture.git('config', 'merge.gitsheets.driver');
+    expect(driver.trim()).toBe('git sheet merge-driver %O %A %B %P');
+    const { stdout: name } = await fixture.git('config', 'merge.gitsheets.name');
+    expect(name.trim()).toBe('gitsheets record merge');
+    expect(await readFile(join(fixture.path, '.gitattributes'), 'utf8')).toBe(
+      '*.png binary\nposts/**/*.md merge=gitsheets\nusers/**/*.toml merge=gitsheets\n',
+    );
+
+    cap = capture();
+    code = await main(['--git-dir', fixture.gitDir, 'merge', '--install-driver']);
+    io = cap.restore();
+    expect(code).toBe(0);
+    expect(io.stdout).toContain('kept: users/**/*.toml merge=gitsheets');
+    expect(io.stdout).toContain('already up to date');
+    expect(await readFile(join(fixture.path, '.gitattributes'), 'utf8')).toBe(
+      '*.png binary\nposts/**/*.md merge=gitsheets\nusers/**/*.toml merge=gitsheets\n',
+    );
+  });
+
+  it('refuses <theirs> together with --install-driver, and requires one of them', async () => {
+    const fixture = await seed();
+    // yargs' usage failure calls process.exit(2); under vitest that exit is
+    // intercepted and surfaces as a non-zero code, so assert the message.
+    let cap = capture();
+    let code = await main(['--git-dir', fixture.gitDir, 'merge', 'import', '--install-driver']);
+    let io = cap.restore();
+    expect(code).not.toBe(0);
+    expect(io.stderr).toContain('takes no <theirs>');
+    cap = capture();
+    code = await main(['--git-dir', fixture.gitDir, 'merge']);
+    io = cap.restore();
+    expect(code).not.toBe(0);
+    expect(io.stderr).toContain('<theirs> is required');
+  });
+});
