@@ -917,6 +917,40 @@ fn merge_record_texts<'py>(
     Ok(d)
 }
 
+/// The direct entries of the tree at `tree_ref:path` as
+/// `[{"name", "type", "mode", "hash"}]`, or `None` when nothing (or a blob)
+/// is at `path`.
+#[pyfunction]
+#[pyo3(signature = (git_dir, tree_ref, path="."))]
+fn tree_list<'py>(py: Python<'py>, git_dir: String, tree_ref: String, path: &str) -> PyResult<Option<Bound<'py, PyList>>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let cache = TreeCache::new();
+    let ctx = Context::new(&repo, &cache);
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    let Some(entries) = record::list_tree(&ctx, &mut tree, path).map_err(|e| raise_core_error(py, &e))? else {
+        return Ok(None);
+    };
+    let out = PyList::empty(py);
+    for e in entries {
+        let d = PyDict::new(py);
+        d.set_item("name", e.name)?;
+        d.set_item("type", e.kind)?;
+        d.set_item("mode", e.mode)?;
+        d.set_item("hash", e.hash)?;
+        out.append(d)?;
+    }
+    Ok(Some(out))
+}
+
+/// Point the lightweight tag `refs/tags/<name>` at `target` (default `HEAD`);
+/// refuses an existing tag unless `force`. Returns the tagged object id.
+#[pyfunction]
+#[pyo3(signature = (git_dir, name, target="HEAD", force=false))]
+fn tag_set(py: Python<'_>, git_dir: String, name: String, target: &str, force: bool) -> PyResult<String> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    record::set_tag(&repo, &name, target, force).map_err(|e| raise_core_error(py, &e))
+}
+
 /// Whether commit `a` is reachable from commit `b` (or equal).
 #[pyfunction]
 fn is_ancestor(py: Python<'_>, git_dir: String, a: String, b: String) -> PyResult<bool> {
@@ -1869,6 +1903,8 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(blob_header, m)?)?;
     m.add_function(wrap_pyfunction!(sync_branch, m)?)?;
     m.add_function(wrap_pyfunction!(is_ancestor, m)?)?;
+    m.add_function(wrap_pyfunction!(tree_list, m)?)?;
+    m.add_function(wrap_pyfunction!(tag_set, m)?)?;
     m.add_function(wrap_pyfunction!(merge_sheets, m)?)?;
     m.add_function(wrap_pyfunction!(merge_record_texts, m)?)?;
     m.add_function(wrap_pyfunction!(parse_records, m)?)?;

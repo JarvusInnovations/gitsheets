@@ -13,6 +13,9 @@ export type {
   MergeOptions,
   MergeConflict,
   MergeResult,
+  FetchOptions,
+  FetchResult,
+  TreeEntry,
 } from './repository.js';
 
 export { Sheet, RECORD_PATH_KEY, RECORD_SHEET_KEY } from './sheet.js';

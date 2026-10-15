@@ -50,6 +50,7 @@ pub use index::{MultiIndex, UniqueIndex};
 pub use merge::{merge_record_texts, merge_sheets, merge_values, MergeConflict, MergeOptions, MergeOutcome, MergeResult, Prefer, RecordMergeOutcome};
 pub use query::{matches as query_matches, query_candidate_paths, query_records, Filter, FilterPred};
 pub use record::{
+    list_tree, set_tag, TreeListEntry,
     write_blob, write_blob_at_dir, DeleteOutcome, RecordChange, RecordDiff, RecordStatus,
     WriteOutcome, EMPTY_TREE_HASH, TOML_EXTENSION,
 };

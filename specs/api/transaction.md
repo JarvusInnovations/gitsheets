@@ -61,6 +61,8 @@ Both are synchronous: they stage into the private tree and return. The Python bi
 
 Reads through `tx.sheet(name)` see the transaction's in-flight mutations. Reads outside the transaction (e.g., a concurrent `repo.openSheet(name).queryFirst(...)`) see the *committed* state — the pre-transaction tree — until the transaction commits.
 
+That includes the sheet's **config**: `tx.sheet(name)` loads `.gitsheets/<name>.toml` (and any vendored contracts it declares) from the transaction's private tree, so a config staged earlier in the same transaction with `tx.writeFile` governs that sheet's writes — in an orphan `transact({ parent: null })`, which starts from the empty tree, that is the only place a config can come from. Config is read once, when the transaction first uses the sheet; staging a different config for a sheet the transaction has already used does not reload it.
+
 A transaction-bound query is **pruned by the path template exactly like a committed-ref query** ([behaviors/path-templates.md § Query traversal](../behaviors/path-templates.md#query-traversal)): a filter that supplies path fields reads only the matching subtrees of the private tree, and `withBody: false` skips bodies. It never degrades to listing the whole sheet — a bulk loop of `tx.sheet(name).patch(query, …)` costs one pruned lookup per row, not one full-sheet read per row.
 
 ## Commit message + trailers

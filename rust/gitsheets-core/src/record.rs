@@ -239,6 +239,62 @@ pub fn blob_header(repo: &gix::Repository, hash: &str) -> Result<Option<(String,
     }
 }
 
+/// One direct entry of a tree (`specs/api/repository.md` `repo.listTree`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeListEntry {
+    pub name: String,
+    /// `blob` / `tree` / `commit`.
+    pub kind: &'static str,
+    /// Git's octal mode string (`100644`, `040000`, …).
+    pub mode: String,
+    pub hash: String,
+}
+
+/// The direct entries of the subtree at `path` (`.` or empty = the root),
+/// sorted by name; `None` when nothing — or a blob — is at `path`.
+pub fn list_tree(ctx: &Context<'_>, tree: &mut MutableTree, path: &str) -> Result<Option<Vec<TreeListEntry>>> {
+    let arg = if path.is_empty() { "." } else { path.trim_end_matches('/') };
+    let Some(sub) = tree.get_subtree(ctx, arg).map_err(map_ht)? else {
+        return Ok(None);
+    };
+    sub.ensure_children(ctx).map_err(map_ht)?;
+    let mut out = Vec::new();
+    if let Some(children) = sub.children.as_ref() {
+        for (name, child) in children {
+            let (kind, mode, hash) = match child {
+                holo_tree::Child::Tree(t) => ("tree", "040000".to_string(), t.hash),
+                holo_tree::Child::Blob { mode, hash } => ("blob", format!("{mode:o}"), *hash),
+                holo_tree::Child::Commit { hash } => ("commit", "160000".to_string(), *hash),
+            };
+            out.push(TreeListEntry { name: name.clone(), kind, mode, hash: hash.to_string() });
+        }
+    }
+    Ok(Some(out))
+}
+
+/// Point the lightweight tag `refs/tags/<name>` at `target` (any rev-spec).
+/// An existing tag is refused unless `force` (then moved — `git tag -f`).
+/// Returns the tagged object id.
+pub fn set_tag(repo: &gix::Repository, name: &str, target: &str, force: bool) -> Result<String> {
+    let id = repo
+        .rev_parse_single(target)
+        .map_err(|e| Error::RefNotFound {
+            message: format!("could not resolve '{target}': {e}"),
+        })?
+        .detach();
+    let refname = format!("refs/tags/{name}");
+    let existing = holo_tree::repo::resolve_ref(repo, &refname).map_err(map_ht)?;
+    if existing.is_some() && !force {
+        return Err(Error::CommitFailed {
+            message: format!("tag {name} already exists — pass force to move it"),
+        });
+    }
+    holo_tree::repo::update_ref(repo, &refname, id, existing).map_err(|e| Error::CommitFailed {
+        message: format!("setting tag {name} failed: {e}"),
+    })?;
+    Ok(id.to_string())
+}
+
 /// The blob at `path` (deep, relative to the tree root) as `(hash, bytes)`, or
 /// `None` when nothing — or a subtree — lives there. The by-`ref:path` read
 /// primitive behind sheet-config loading and lazy-body hydration.
@@ -1165,5 +1221,40 @@ mod header_tests {
         let hash = write_blob(&repo, b"hello").unwrap();
         assert_eq!(blob_header(&repo, &hash).unwrap(), Some(("blob".to_string(), 5)));
         assert_eq!(blob_header(&repo, &"0".repeat(40)).unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod ref_utility_tests {
+    use super::*;
+
+    #[test]
+    fn list_tree_and_set_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = gix::init(dir.path()).unwrap();
+        let cache = TreeCache::new();
+        let ctx = Context::new(&repo, &cache);
+        let mut tree = MutableTree::empty();
+        tree.write_child(&ctx, ".gitsheets/people.toml", "x").unwrap();
+        tree.write_child(&ctx, ".gitsheets/contracts/a/v1.toml", "y").unwrap();
+        tree.write_child(&ctx, "README.md", "r").unwrap();
+        let tree_id = tree.write(&ctx).unwrap();
+        let commit = holo_tree::repo::commit_tree(&repo, tree_id, &[], "c\n", None, None).unwrap();
+
+        let mut at = holo_tree::repo::create_tree_from_ref(&repo, &commit.to_string()).unwrap();
+        let entries = list_tree(&ctx, &mut at, ".gitsheets").unwrap().unwrap();
+        let names: Vec<(&str, &str, &str)> = entries.iter().map(|e| (e.name.as_str(), e.kind, e.mode.as_str())).collect();
+        assert_eq!(names, vec![("contracts", "tree", "040000"), ("people.toml", "blob", "100644")]);
+        assert_eq!(list_tree(&ctx, &mut at, "").unwrap().unwrap().len(), 2);
+        assert_eq!(list_tree(&ctx, &mut at, "nope").unwrap(), None);
+        assert_eq!(list_tree(&ctx, &mut at, "README.md").unwrap(), None);
+
+        let c = commit.to_string();
+        assert_eq!(set_tag(&repo, "snap", &c, false).unwrap(), c);
+        assert_eq!(set_tag(&repo, "snap", &c, false).err().unwrap().code(), "commit_failed");
+        let commit2 = holo_tree::repo::commit_tree(&repo, tree_id, &[commit], "c2\n", None, None).unwrap();
+        assert_eq!(set_tag(&repo, "snap", &commit2.to_string(), true).unwrap(), commit2.to_string());
+        assert_eq!(holo_tree::repo::resolve_ref(&repo, "refs/tags/snap").unwrap(), Some(commit2));
+        assert_eq!(set_tag(&repo, "x", "nope", false).err().unwrap().code(), "ref_not_found");
     }
 }

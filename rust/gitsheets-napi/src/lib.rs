@@ -1160,6 +1160,42 @@ pub fn blob_header(env: Env, git_dir: String, hash: String) -> Result<Option<JsB
     }
 }
 
+/// One direct entry of a tree (`repo.listTree`).
+#[napi(object)]
+pub struct JsTreeEntry {
+    pub name: String,
+    /// `blob` / `tree` / `commit`.
+    #[napi(js_name = "type")]
+    pub kind: String,
+    pub mode: String,
+    pub hash: String,
+}
+
+/// The direct entries of the tree at `treeRef:path`, sorted by name; `null`
+/// when nothing (or a blob) is at `path`.
+#[napi]
+pub fn tree_list(env: Env, git_dir: String, tree_ref: String, path: String) -> Result<Option<Vec<JsTreeEntry>>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    match record::list_tree(&ctx, &mut tree, &path) {
+        Ok(entries) => Ok(entries.map(|es| {
+            es.into_iter()
+                .map(|e| JsTreeEntry { name: e.name, kind: e.kind.to_string(), mode: e.mode, hash: e.hash })
+                .collect()
+        })),
+        Err(err) => Err(raise_core_error(&env, &err)),
+    }
+}
+
+/// Point the lightweight tag `refs/tags/<name>` at `target`; refuses an
+/// existing tag unless `force`. Returns the tagged object id.
+#[napi]
+pub fn tag_set(env: Env, git_dir: String, name: String, target: String, force: bool) -> Result<String> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    record::set_tag(&repo, &name, &target, force).map_err(|err| raise_core_error(&env, &err))
+}
+
 /// A blob read by `treeRef:path`: its object id and bytes.
 #[napi(object)]
 pub struct JsBlobEntry {
@@ -2151,6 +2187,23 @@ impl CoreTransaction {
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         match sheet.read_one(&ctx, tree, &record_path, with_body) {
             Ok(record) => Ok(record.map(JsValue)),
+            Err(err) => Err(raise_core_error(&env, &err)),
+        }
+    }
+
+    /// A raw file at `path` (repo-root-relative) in this transaction's
+    /// private tree — staged writes included — as `{ hash, content }`, or
+    /// `null` when nothing (or a subtree) is there. Backs tx-bound config
+    /// loading (specs/api/transaction.md "Read isolation").
+    #[napi]
+    pub fn read_file(&mut self, env: Env, path: String) -> Result<Option<JsBlobEntry>> {
+        let Self { inner, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (ctx, tree) = tx.split();
+        match record::read_blob_entry(&ctx, tree, &path) {
+            Ok(entry) => Ok(entry.map(|(hash, bytes)| JsBlobEntry { hash, content: Buffer::from(bytes) })),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
     }

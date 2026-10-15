@@ -91,6 +91,15 @@ export interface OpenSheetsOptions {
   readonly ref?: string;
 }
 
+/** One direct entry of a tree, from {@link Repository.listTree}. */
+export interface TreeEntry {
+  readonly name: string;
+  readonly type: 'blob' | 'tree' | 'commit';
+  /** Git's octal mode string (`100644`, `100755`, `120000`, `040000`, `160000`). */
+  readonly mode: string;
+  readonly hash: string;
+}
+
 /** Options for {@link Repository.sync}. See specs/behaviors/push-sync.md "Sync". */
 export interface SyncOptions {
   /** Remote name; default `origin`. */
@@ -107,7 +116,27 @@ export interface SyncOptions {
   readonly pushConflictBranch?: boolean;
   /** Committer for replayed commits; default: the repository's identity. */
   readonly committer?: Author;
+  /**
+   * Awaited under the write lock after the branch moved and live sheets were
+   * rebound — the caller's critical section (e.g. a hot reload's rebuild):
+   * no transaction can commit between the move and its return. `transact` /
+   * `withLock` inside it are `lock_held`. Not called when nothing moved.
+   */
+  readonly afterMove?: (result: SyncResult) => void | Promise<void>;
 }
+
+/** Options for {@link Repository.fetch}. */
+export interface FetchOptions {
+  /** Remote name; default `origin`. */
+  readonly remote?: string;
+  /** Branch to fetch; default: the branch HEAD points at (RefError when detached). */
+  readonly branch?: string;
+}
+
+/** The outcome of {@link Repository.fetch}: a failure is a value, not a throw. */
+export type FetchResult =
+  | { readonly ok: true; readonly remoteRef: string; readonly remoteCommit: string }
+  | { readonly ok: false; readonly remoteRef: string; readonly error: string };
 
 /** The outcome of {@link Repository.sync}. */
 export interface SyncResult {
@@ -516,32 +545,57 @@ export class Repository {
    * push daemon. The single-writer model's one sanctioned reverse path.
    * See specs/behaviors/push-sync.md "Sync (opt-in, explicit)".
    */
+  /**
+   * `git fetch --prune <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>`
+   * on its own — sync's first step, run without the lock. A network or auth
+   * failure is returned as `{ ok: false, error }`, never thrown.
+   * See specs/api/repository.md#repofetchopts.
+   */
+  async fetch(opts: FetchOptions = {}): Promise<FetchResult> {
+    const remote = opts.remote ?? 'origin';
+    const bare = (await this.#syncBranch(opts.branch, 'repo.fetch')).replace(/^refs\/heads\//, '');
+    const remoteRef = `refs/remotes/${remote}/${bare}`;
+    try {
+      await exec('git', ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`], { cwd: this.#gitDir });
+    } catch (err) {
+      return { ok: false, remoteRef, error: err instanceof Error ? err.message : String(err) };
+    }
+    const remoteCommit = await resolveCommit(this.#gitDir, remoteRef);
+    if (remoteCommit === null) {
+      return { ok: false, remoteRef, error: `fetch succeeded but ${remoteRef} does not resolve` };
+    }
+    return { ok: true, remoteRef, remoteCommit };
+  }
+
+  /** The branch a sync/fetch acts on: `explicit`, else HEAD's branch. */
+  async #syncBranch(explicit: string | undefined, caller: string): Promise<string> {
+    if (explicit !== undefined) return explicit;
+    const headRef = await this.#headBranchRef();
+    if (!headRef) {
+      throw new RefError('ref_not_found', `${caller}: HEAD is detached or the repo is fresh — pass opts.branch`);
+    }
+    return headRef;
+  }
+
+  /**
+   * Bring `opts.branch` (default: HEAD's branch) up to date with `opts.remote`
+   * (default `origin`): fetch outside the write lock, then — under it —
+   * fast-forward / replay / preserve-on-conflict (in the core), rebind live
+   * sheets if HEAD's branch moved, and await `opts.afterMove`; then hand an
+   * ahead/replayed tip to a running push daemon. The single-writer model's
+   * one sanctioned reverse path.
+   * See specs/behaviors/push-sync.md "Sync (opt-in, explicit)".
+   */
   async sync(opts: SyncOptions = {}): Promise<SyncResult> {
     const remote = opts.remote ?? 'origin';
-    let branch = opts.branch;
-    if (branch === undefined) {
-      const headRef = await this.#headBranchRef();
-      if (!headRef) {
-        throw new RefError('ref_not_found', 'repo.sync: HEAD is detached or the repo is fresh — pass opts.branch');
-      }
-      branch = headRef.replace(/^refs\/heads\//, '');
-    }
-    const bare = branch.replace(/^refs\/heads\//, '');
+    const bare = (await this.#syncBranch(opts.branch, 'repo.sync')).replace(/^refs\/heads\//, '');
     const remoteRef = `refs/remotes/${remote}/${bare}`;
 
     if (opts.fetch !== false) {
-      try {
-        await exec('git', ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`], { cwd: this.#gitDir });
-      } catch (err) {
+      const fetched = await this.fetch({ remote, branch: bare });
+      if (!fetched.ok) {
         const current = (await resolveCommit(this.#gitDir, `refs/heads/${bare}`)) ?? '';
-        return {
-          outcome: 'fetch-failed',
-          oldCommit: current,
-          newCommit: current,
-          ahead: 0,
-          behind: 0,
-          fetchError: err instanceof Error ? err.message : String(err),
-        };
+        return { outcome: 'fetch-failed', oldCommit: current, newCommit: current, ahead: 0, behind: 0, fetchError: fetched.error };
       }
     }
 
@@ -555,23 +609,28 @@ export class Repository {
     };
     if (opts.committer !== undefined) coreOpts.committer = opts.committer;
 
-    const raw = await this.withLock(() => callCore(() => addon.syncBranch(this.#gitDir, coreOpts)));
-    const result: SyncResult = {
-      outcome: raw.outcome as SyncResult['outcome'],
-      oldCommit: raw.oldCommit,
-      newCommit: raw.newCommit,
-      ahead: raw.ahead,
-      behind: raw.behind,
-    };
-    if (raw.conflictCommit != null) Object.assign(result, { conflictCommit: raw.conflictCommit });
-    if (raw.conflictBranch != null) Object.assign(result, { conflictBranch: raw.conflictBranch });
+    const result = await this.withLock(async () => {
+      const raw = callCore(() => addon.syncBranch(this.#gitDir, coreOpts));
+      const r: SyncResult = {
+        outcome: raw.outcome as SyncResult['outcome'],
+        oldCommit: raw.oldCommit,
+        newCommit: raw.newCommit,
+        ahead: raw.ahead,
+        behind: raw.behind,
+      };
+      if (raw.conflictCommit != null) Object.assign(r, { conflictCommit: raw.conflictCommit });
+      if (raw.conflictBranch != null) Object.assign(r, { conflictBranch: raw.conflictBranch });
+      if (r.newCommit !== r.oldCommit) {
+        // The library moved the ref itself: rebind live sheets like a commit
+        // would (specs/behaviors/freshness.md), when it was HEAD's branch —
+        // then give the caller its critical section, still under the lock.
+        const headRef = await this.#headBranchRef();
+        if (headRef === `refs/heads/${bare}`) this.#rebindLiveSheets(await this.#resolveReadTree());
+        if (opts.afterMove !== undefined) await opts.afterMove(r);
+      }
+      return r;
+    });
 
-    // The library moved the ref itself: rebind live sheets like a commit would
-    // (specs/behaviors/freshness.md), when it was HEAD's branch.
-    if (result.newCommit !== result.oldCommit) {
-      const headRef = await this.#headBranchRef();
-      if (headRef === `refs/heads/${bare}`) this.#rebindLiveSheets(await this.#resolveReadTree());
-    }
     if ((result.outcome === 'ahead' || result.outcome === 'rebased') && this.#pushDaemon) {
       this.#pushDaemon.notifyCommit(result.newCommit);
     }
@@ -639,6 +698,26 @@ export class Repository {
       }
     }
     return result;
+  }
+
+  /**
+   * Point the lightweight tag `refs/tags/<name>` at `target` (default HEAD),
+   * in the core. Refuses an existing tag with TransactionError(commit_failed)
+   * unless `opts.force` (then moves it — `git tag -f`). Returns the tagged
+   * object id. See specs/api/repository.md#repotagname-target-opts.
+   */
+  async tag(name: string, target = 'HEAD', opts: { readonly force?: boolean } = {}): Promise<string> {
+    return callCore(() => addon.tagSet(this.#gitDir, name, target, opts.force ?? false));
+  }
+
+  /**
+   * The direct entries of the tree at `<ref>:<path>` (default the root),
+   * sorted by name, or `null` when nothing (or a blob) is at `path`.
+   * See specs/api/repository.md#repolisttreeref-path.
+   */
+  async listTree(ref: string, path = '.'): Promise<TreeEntry[] | null> {
+    const entries = callCore(() => addon.treeList(this.#gitDir, ref, path));
+    return entries == null ? null : entries.map((e) => ({ name: e.name, type: e.type as TreeEntry['type'], mode: e.mode, hash: e.hash }));
   }
 
   /**
