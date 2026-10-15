@@ -1637,7 +1637,14 @@ gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class=
 </code></pre></div>
 <p>Without <code>--prefer</code>, any conflict is listed on stderr (<code>merge conflict: &lt;path&gt; (field &lt;name&gt; | delete-modify | blob)</code>) and the command exits 1 with nothing written. Up-to-date and fast-forward cases are reported as such.</p>
 <h3 id="gitsheets-merge-driver-base-ours-theirs-path"><code>gitsheets merge-driver &lt;base&gt; &lt;ours&gt; &lt;theirs&gt; &lt;path&gt;</code><a class="headerlink" href="#gitsheets-merge-driver-base-ours-theirs-path" title="Permanent link"> ¶</a></h3>
-<p>A git merge driver so a plain <code>git merge</code> / <code>rebase</code> / <code>cherry-pick</code> gets the same record-level behaviour for files changed on both sides:</p>
+<p>A git merge driver so a plain <code>git merge</code> / <code>rebase</code> / <code>cherry-pick</code> gets the same record-level behaviour for files changed on both sides. Register it once per clone:</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>merge<span class="w"> </span>--install-driver
+<span class="c1"># set: merge.gitsheets.name = "gitsheets record merge"</span>
+<span class="c1"># set: merge.gitsheets.driver = "git sheet merge-driver %O %A %B %P"</span>
+<span class="c1"># added: users/**/*.toml merge=gitsheets</span>
+<span class="c1"># wrote /path/to/repo/.gitattributes — review and commit it</span>
+</code></pre></div>
+<p>That sets the two <code>merge.gitsheets.*</code> git-config keys (per clone — git config isn&rsquo;t versioned) and adds one <code>.gitattributes</code> line per sheet at <code>HEAD</code>, keeping whatever is already there; re-running adds nothing. Commit <code>.gitattributes</code> like any other file. By hand, it is the same three lines:</p>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>config<span class="w"> </span>merge.gitsheets.name<span class="w">   </span><span class="s2">"gitsheets record merge"</span>
 git<span class="w"> </span>config<span class="w"> </span>merge.gitsheets.driver<span class="w"> </span><span class="s2">"git sheet merge-driver %O %A %B %P"</span>
 <span class="nb">printf</span><span class="w"> </span><span class="s1">'users/**/*.toml merge=gitsheets\n'</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>.gitattributes

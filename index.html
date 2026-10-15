@@ -1192,7 +1192,7 @@
 <li><strong><a href="axi/"><code>gitsheets-axi</code></a></strong> — the agent-facing companion CLI (TOON output, idempotent mutations, session hooks).</li>
 <li><strong><a href="path-templates/">Path templates</a></strong> — syntax, recursive fields, query pruning, invalid-char handling.</li>
 <li><strong><a href="validation/">Validation</a></strong> — JSON Schema in <code>.gitsheets/&lt;sheet&gt;.toml</code>, optional Standard Schema layering.</li>
-<li><strong>Sync and merge</strong> — <a href="recipes/production-push-daemon/#taking-in-other-writers-commits-reposync"><code>repo.sync()</code></a> takes in other writers&rsquo; commits under the write lock; <a href="cli/#gitsheets-merge-theirs"><code>repo.merge()</code> / <code>git sheet merge</code></a> merges two branches record-by-record with canonical output.</li>
+<li><strong>Sync and merge</strong> — <a href="recipes/production-push-daemon/#taking-in-other-writers-commits-reposync"><code>repo.sync()</code></a> takes in other writers&rsquo; commits under the write lock; <a href="cli/#gitsheets-merge-theirs"><code>repo.merge()</code> / <code>git sheet merge</code></a> merges two branches record-by-record with canonical output, and <code>git sheet merge --install-driver</code> makes plain <code>git merge</code> do the same.</li>
 </ul>
 <h2 id="recipes">Recipes<a class="headerlink" href="#recipes" title="Permanent link"> ¶</a></h2>
 <ul>
