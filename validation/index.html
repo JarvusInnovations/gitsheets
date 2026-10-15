@@ -1289,8 +1289,8 @@
 </ol>
 <p>A failure at either layer throws <code>ValidationError</code> with all issues from the failing layer. Validation runs synchronously inside <code>Sheet.upsert</code> / <code>Sheet.patch</code>, before any tree mutation.</p>
 <p>The persisted schema also gates the path template: at sheet open, every static
-template field must be schema-required (locally or by a declared contract) or
-listed in <code>[gitsheet].injectedFields</code>. See
+template field must be schema-required (locally or by a declared contract),
+with no exemption list. See
 <a href="../path-templates/#template-fields-must-be-schema-required">path templates</a>.</p>
 <h2 id="why-two-layers">Why two layers<a class="headerlink" href="#why-two-layers" title="Permanent link"> ¶</a></h2>
 <p>What gets persisted with the data vs. what lives in consumer code:</p>

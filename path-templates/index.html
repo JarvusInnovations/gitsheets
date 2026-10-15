@@ -1349,14 +1349,14 @@ base field of a date bucket — must be in a top-level <code>required</code> lis
 local schema or of a declared contract. Otherwise the open throws
 <code>ConfigError(config_invalid)</code> naming the field. Expression components
 (<code>${{ slug || legacyId }}</code>) are exempt.</p>
-<p>If your writer supplies a path field before upsert that the record schema
-never declares (a tenant or parent key injected by the service), list it in
-<code>injectedFields</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="k">[gitsheet]</span>
-<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'roles'</span>
-<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ projectSlug }}/${{ slug }}'</span>
-<span class="n">injectedFields</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s1">'projectSlug'</span><span class="p">]</span>
-</code></pre></div>
+<p>There is no exemption list, by principle: <strong>a record contains every field
+needed to render its path</strong>
+(<a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/principles.md#records-carry-their-own-path">spec</a>).
+A field your service used to splice in before the upsert (a tenant key, a
+parent&rsquo;s slug) belongs on the record and in its schema as <code>required</code> — that
+handle <em>is</em> how the record references its parent. The 2.8.0
+<code>[gitsheet].injectedFields</code> key was removed; a config still carrying it fails
+to open with an error naming the key.</p>
 <p>Sheets with no schema and no contracts are not checked.</p>
 <h2 id="invalid-characters">Invalid characters<a class="headerlink" href="#invalid-characters" title="Permanent link"> ¶</a></h2>
 <p>The rendered path is rejected if it contains Windows-disallowed characters
