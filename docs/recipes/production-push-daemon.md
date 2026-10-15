@@ -219,7 +219,18 @@ switch (result.outcome) {
 - When the synced branch is the one `HEAD` points at, every live sheet is rebound before `sync` resolves — the same auto-refresh a commit does.
 - `ahead` / `rebased` tips are handed to a running daemon via its normal path; `sync` never pushes the branch itself and never force-pushes anything.
 - Call it at boot before the daemon starts (so a `non-fast-forward` at startup is reconciled rather than alerted on), from a hot-reload webhook, or on a timer. `repo.isAncestor(remoteTip, localTip)` is the cheap "do I already have this?" check before a webhook-triggered sync.
-- `sync` inside a `transact` handler or a `withLock` callback throws `TransactionError('lock_held')`.
+- `sync` inside a `transact` handler or a `withLock` callback throws `TransactionError('lock_held')`. For a hot reload that must rebuild in-memory state with no transaction in between, pass `afterMove` — it runs under the lock after the move and the rebind:
+
+  ```typescript
+  await repo.sync({
+    onConflict: 'preserve-branch',
+    afterMove: async (result) => {
+      await rebuildInMemoryState(); // no transaction can commit until this returns
+    },
+  });
+  ```
+
+- `repo.fetch()` runs just the fetch step (outside any lock, failure as a value); follow it with `repo.sync({ fetch: false })`.
 
 For a full record-level merge of two branches (an import branch into the served branch, with canonical output and a conflict policy), see `repo.merge` in the [API reference](../api.md#repository) and `git sheet merge` in the [CLI reference](../cli.md#gitsheets-merge-theirs); `gitsheets merge --install-driver` makes plain `git merge` do the same.
 

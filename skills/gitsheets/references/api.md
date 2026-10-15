@@ -82,6 +82,7 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 | `repo.readBlob(ref, path)` | `Promise<BlobHandle>` (v2.8+) — the blob at `<ref>:<path>` resolved now: `hash`, `size`, `read()`, `stream()`; `RefError` / `NotFoundError` |
 | `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()` |
 | `repo.sync(opts?)` | `Promise<SyncResult>` (v2.8+) — fetch + fast-forward / replay / preserve-on-conflict under the write lock; see PushDaemon section |
+| `repo.fetch(opts?)` | (v2.11+) sync's fetch step alone, outside any lock → `{ ok: true, remoteRef, remoteCommit }` or `{ ok: false, remoteRef, error }`; pair with `sync({ fetch: false })` |
 | `repo.isAncestor(a, b)` | `Promise<boolean>` (v2.8+) — is commit `a` reachable from `b` |
 | `repo.merge({ theirs, ours?, prefer?, commit?, message? })` | `Promise<MergeResult>` (v2.8+) — sheet-aware merge: records changed on both sides are field-merged and written canonically; `prefer: 'fail'` (default) reports conflicts in `result.conflicts` with nothing written, `'ours'` / `'theirs'` resolves field, delete/modify and blob conflicts; `commit: false` = dry run. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
 
@@ -352,7 +353,7 @@ const r = await repo.sync({ remote: 'origin', branch: 'main', onConflict: 'prese
 // r.oldCommit, r.newCommit, r.ahead, r.behind, r.conflictBranch?, r.conflictCommit?, r.fetchError?
 ```
 
-Fetch happens outside the write lock; classification and ref movement happen under it (no transaction can interleave); live sheets are rebound when HEAD's branch moved; `ahead` / `rebased` tips are handed to a running push daemon. `onConflict: 'fail'` (default) leaves everything in place and names the commit that would not replay; `'preserve-branch'` keeps the local history on `conflicts/<UTC>` (pushed best-effort) and adopts the remote. `repo.isAncestor(a, b)` is the "do I already have this commit?" short-circuit.
+Fetch happens outside the write lock; classification and ref movement happen under it (no transaction can interleave); live sheets are rebound when HEAD's branch moved; `ahead` / `rebased` tips are handed to a running push daemon. `onConflict: 'fail'` (default) leaves everything in place and names the commit that would not replay; `'preserve-branch'` keeps the local history on `conflicts/<UTC>` (pushed best-effort) and adopts the remote. `repo.isAncestor(a, b)` is the "do I already have this commit?" short-circuit. **Hot reload:** pass `afterMove: async (r) => { await store.refresh(); rebuildCaches(); }` (v2.11+) — it runs under the write lock after the move and rebind, so no transaction can land between the ref move and your rebuild (inside it, `transact` is `lock_held`). Don't hold `withLock` and call `sync()` on a second `Repository` handle.
 
 ## Errors
 
