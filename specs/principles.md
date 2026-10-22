@@ -27,3 +27,23 @@ Why: a path field that only the writer knows makes the stored data
 incomplete — the record cannot be re-rendered, re-imported, or merged without
 the writer's context — and it is exactly how two production sheets ended up
 templated on fields their records never carried.
+
+## Behave like a first-party git extension
+
+**Every gitsheets knob layers the way git's own do: command-line argument
+over environment variable over git config, and git config is the bottom
+layer that both the CLI and the library read.** A binding chosen with
+`git config gitsheets.branch data` applies to `git sheet query` *and* to
+`openRepo()` in the application, in that clone, the way `remote.pushDefault`
+or `push.recurseSubmodules` apply to every tool that touches the clone.
+Explicit options always win; the library never reads config for a knob the
+caller set. When a new setting is added, it gets a `gitsheets.<key>` config
+name, a `GITSHEETS_<KEY>` environment variable, and a flag, in that
+precedence — never a bespoke dotfile, a `package.json` field, or a
+library-only option with no CLI twin.
+
+Why: the user experience gitsheets is going for is `git sheet` feeling like
+a built-in git subcommand, and that means git's configuration model, not a
+parallel one. The alternative — the library ignoring config the CLI honors —
+puts two tools in the same clone on two different branches, a trap nobody
+finds until the data has diverged.
