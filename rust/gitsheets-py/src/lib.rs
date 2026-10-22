@@ -84,6 +84,7 @@ create_exception!(_gitsheets, RefError, GitsheetsError);
 create_exception!(_gitsheets, PathTemplateError, GitsheetsError);
 create_exception!(_gitsheets, NotFoundError, GitsheetsError);
 create_exception!(_gitsheets, ContractError, GitsheetsError);
+create_exception!(_gitsheets, AggregationError, GitsheetsError);
 
 /// Map a structured core error onto its typed Python exception, attaching the
 /// `code`/`status`/`gitsheets_class` discriminants and any `issues` /
@@ -101,6 +102,7 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
         "PathTemplateError" => PathTemplateError::new_err(message),
         "NotFoundError" => NotFoundError::new_err(message),
         "ContractError" => ContractError::new_err(message),
+        "AggregationError" => AggregationError::new_err(message),
         _ => GitsheetsError::new_err(message),
     };
     let value = pyerr.value(py);
@@ -130,6 +132,11 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
     }
     if let Some(contract) = err.contract() {
         let _ = value.setattr("contract", contract);
+    }
+    if let Some((sheet, aggregate, partition)) = err.aggregation() {
+        let _ = value.setattr("sheet", sheet);
+        let _ = value.setattr("aggregate", aggregate);
+        let _ = value.setattr("partition", partition);
     }
     pyerr
 }
@@ -1298,6 +1305,74 @@ fn record_query<'py>(
     }
 }
 
+/// Ad-hoc aggregation (spec: `behaviors/aggregation.md`): the records under
+/// `base` matching `filter` (pruned by `template`, read body-less, the filter
+/// applied in the core — the forms `record_query` takes) folded in canonical
+/// path order by `aggregates`, a dict in the shared grammar (`{"n": {"count":
+/// True}, "total": {"sum": "amountCents", "groupBy": "status"}, ...}`,
+/// including `reduce` / `initial` / `finalize`, which run in the core's
+/// embedded engine). Returns the result dict. `sheet` names the sheet in an
+/// `AggregationError`. A malformed spec (or a body-field reference on a
+/// content-typed sheet) raises `TypeError`; a data-dependent failure raises
+/// `AggregationError` (code `aggregation_failed`, with `sheet` /
+/// `aggregate` / `partition`). `paths`, when given, restricts the contributing
+/// set to those record paths.
+#[pyfunction]
+#[pyo3(signature = (git_dir, tree_ref, sheet, base, template, filter, aggregates, extension=None, body_field=None, title_field=None, paths=None))]
+#[allow(clippy::too_many_arguments)]
+fn record_aggregate<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    tree_ref: String,
+    sheet: String,
+    base: String,
+    template: String,
+    filter: &Bound<'py, PyDict>,
+    aggregates: &Bound<'py, PyAny>,
+    extension: Option<String>,
+    body_field: Option<String>,
+    title_field: Option<String>,
+    paths: Option<Vec<String>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let ext = extension_of(extension);
+    let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
+    let parsed = parse_filter(filter, &mut engine)?;
+    let spec = py_to_value(aggregates)
+        .map_err(|e| PyTypeError::new_err(format!("aggregate spec: {e}")))?;
+    let prepared = gitsheets_core::aggregate::prepare(&spec, body_field.as_deref(), Some(&parsed), &mut engine)
+        .map_err(|e| PyTypeError::new_err(e.message().to_string()))?;
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    let compiled = Template::compile(&template, &mut engine).map_err(|e| raise_core_error(py, &e))?;
+    let format = gitsheets_core::config::FormatConfig {
+        kind: match (&body_field, ext.as_str()) {
+            (None, _) => gitsheets_core::config::FormatKind::Toml,
+            (Some(_), ".mdx") => gitsheets_core::config::FormatKind::Mdx,
+            (Some(_), _) => gitsheets_core::config::FormatKind::Markdown,
+        },
+        body: body_field,
+        title: title_field,
+        normalize: true,
+    };
+    let only: Option<std::collections::HashSet<String>> = paths.map(|p| p.into_iter().collect());
+    let result = gitsheets_core::aggregate::aggregate_records(
+        &ctx,
+        &mut tree,
+        &base,
+        &compiled,
+        &parsed,
+        &mut engine,
+        &ext,
+        &format,
+        &sheet,
+        &prepared,
+        only.as_ref(),
+    )
+    .map_err(|e| raise_core_error(py, &e))?;
+    value_to_py(py, result)
+}
+
 /// The pruning candidate set alone (no content filter) — the `Template.queryTree`
 /// parity target. `query` is a partial record of the path-template input fields.
 #[pyfunction]
@@ -1893,6 +1968,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PathTemplateError", py.get_type::<PathTemplateError>())?;
     m.add("NotFoundError", py.get_type::<NotFoundError>())?;
     m.add("ContractError", py.get_type::<ContractError>())?;
+    m.add("AggregationError", py.get_type::<AggregationError>())?;
 
     // Stateful classes.
     m.add_class::<CompiledDefinition>()?;
@@ -1926,6 +2002,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff_records, m)?)?;
     m.add_function(wrap_pyfunction!(record_query, m)?)?;
     m.add_function(wrap_pyfunction!(record_query_candidates, m)?)?;
+    m.add_function(wrap_pyfunction!(record_aggregate, m)?)?;
     m.add_function(wrap_pyfunction!(tree_read_blob, m)?)?;
     m.add_function(wrap_pyfunction!(tree_entry_hash, m)?)?;
     m.add_function(wrap_pyfunction!(blob_read, m)?)?;

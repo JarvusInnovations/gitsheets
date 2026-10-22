@@ -11,6 +11,8 @@
 //     Verifies the 'people' sheet (config at .gitsheets/people.toml, root '.',
 //     no prefix) at HEAD — the same shared fixture the Python side builds via
 //     test_cross_binding.py, so the two bindings' reports can be diffed.
+//   aggregate <gitDir> <treeHash>   → { toml } — recordAggregate over the
+//     'ledger' fixture test_aggregate.py wrote, result serialized canonically.
 //
 // The binding.cjs path comes from $GITSHEETS_NAPI_BINDING. Fixtures are authored
 // here as native JS values (the whole point: the same logical data, expressed in
@@ -46,6 +48,27 @@ const FIXTURES = {
     bio: undefined,
     contact: { email: 'jane@x.org', phone: null },
     roles: [{ title: 'chair', until: null }],
+  },
+};
+
+// The aggregate spec shared with test_aggregate.py (AGGREGATE_SPEC there).
+const AGGREGATE_SPEC = {
+  n: { count: true },
+  total: { sum: 'amountCents' },
+  rate: { sum: 'rate' },
+  meanRate: { avg: 'rate' },
+  lo: { min: 'amountCents' },
+  latest: { max: 'postedAt' },
+  firstId: { min: 'id' },
+  statuses: { distinct: 'status' },
+  byStatus: { count: true, groupBy: 'status' },
+  rateByStatus: { sum: 'rate', groupBy: 'status' },
+  posted: { sum: 'amountCents', where: { status: 'posted' } },
+  order: { reduce: 'return acc + record.id;', initial: '' },
+  stats: {
+    reduce: 'acc.n += 1; acc.cents += record.amountCents; acc.ids.push(record.id); return acc;',
+    initial: { n: 0, cents: 0, ids: [] },
+    finalize: 'return { mean: acc.cents / acc.n, ids: acc.ids, third: 1 / 3 };',
   },
 };
 
@@ -141,6 +164,25 @@ if (op === 'record-write') {
   } catch (err) {
     out({ ok: false, code: err.code, contract: err.contract, issues: err.issues ?? [] });
   }
+} else if (op === 'aggregate') {
+  // Ad-hoc aggregation over the ledger fixture the Python side wrote into
+  // <gitDir> at <treeHash> (test_aggregate.py). The spec is mirrored there
+  // (AGGREGATE_SPEC) — keep the two in lockstep. Emits the result serialized
+  // canonically by the core, so the comparison is byte-level.
+  const [gitDir, treeHash] = args;
+  const result = binding.recordAggregate(
+    gitDir,
+    treeHash,
+    'ledger',
+    'ledger',
+    '${{ postedAt: YYYY/MM }}/${{ id }}',
+    { postedAt: { $gte: '2026-01-01' } },
+    AGGREGATE_SPEC,
+    '.toml',
+    null,
+    null,
+  );
+  out({ toml: binding.serializeRecords([result])[0] });
 } else {
   process.stderr.write(`unknown op: ${op}\n`);
   process.exit(2);
