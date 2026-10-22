@@ -1,5 +1,5 @@
-# Behavior: Default Branch (headless data)The `--branch <name>` global flag (env `GITSHEETS_BRANCH`) selects the
-binding. It resolves exactly as `openRepo` does
+# Behavior: Default Branch (headless data)
+
 ## Rule
 
 Every `Repository` is bound to one **default branch**: the branch its live
@@ -16,8 +16,7 @@ with the number of records.
 The binding is activated from the CLI by a global flag or an environment
 variable. gitsheets never reads or writes record files in any working tree;
 the only working-tree touches are the file-oriented commands — `check` (a
-file the user names), `init` without `--commit` (a scaffold), and
-`merge --install-driver` (`.gitattributes`).
+file the user names) and `merge --install-driver` (`.gitattributes`).
 
 ## Applies To
 
@@ -106,16 +105,26 @@ branch**, so a project that exports `GITSHEETS_BRANCH=data` (or sets
 `gitsheets-axi` reading and writing the data branch with no flags.
 `--commit-to` derives from the resolved `--ref` as today.
 
+`gitsheets-axi` takes `--branch <name>` as a global flag **before** the
+command name (`gitsheets-axi --branch data query users`), because `push`
+already has a per-command `--branch` (the branch to push). Its config
+commands (`init`, `infer`, `migrate-config`) read the existing config from
+the default branch, and `push` without `--branch` pushes the default branch.
+
 ### Bootstrapping
 
-`git sheet init <sheet>` gains `--commit`: instead of
-scaffolding `.gitsheets/<sheet>.toml` in the working tree, it commits the
-config to the default branch through a transaction (`tx.writeFile`), creating
-the branch with a root commit when it does not exist. `--commit` is implied —
-the working-tree scaffold is impossible or pointless — when the target ref is
-not the checked-out branch, or the repository is bare. Editing a committed
-config on a branch that is never checked out goes through the same door:
-`git sheet migrate-config` and `gitsheets-axi` config commands already commit.
+`git sheet init <sheet>` commits the config to the target ref (`--ref` /
+`--commit-to`, default the default branch) through a transaction
+(`tx.writeFile`) — it has always committed rather than scaffolding a file in
+the working tree — and, when that branch does not exist yet, creates it with
+a root commit holding only the config. `--commit` names that behavior
+explicitly; it is accepted so bootstrap scripts read as what they do
+(`git sheet init users --commit --branch data`) and changes nothing about
+what `init` writes. The checked-out branch and its working tree are never
+touched, so `git status` stays clean after bootstrapping a data branch.
+Editing a committed config on a branch that is never checked out goes
+through the same door: `git sheet migrate-config` / `infer` and the
+`gitsheets-axi` config commands already commit.
 
 The documented recipe (`docs/recipes/headless-data.md`, a plan deliverable,
 not a spec) covers the layouts and their trade-offs; the spec-level

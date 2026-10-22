@@ -22,7 +22,7 @@ Backed by hologit's repo discovery. If `gitDir` is omitted, the library probes `
 
 A fresh-but-initialized repository (no commits yet) is supported — see [#19](https://github.com/JarvusInnovations/gitsheets/issues/19).
 
-**`opts.branch`** binds the repository to a **default branch** other than the one `HEAD` points at — the branch every live sheet reads, every transaction commits to by default, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. The resolution order (option → `GITSHEETS_BRANCH` → `gitsheets.branch` git config → `HEAD`), the full list of what the binding governs, and the bootstrap path for a branch that does not exist yet are in .[behaviors/default-branch.md](../behaviors/default-branch.md).. `repo.branch` reports the resolved short name (`null` on a detached `HEAD`).
+**`opts.branch`** binds the repository to a **default branch** other than the one `HEAD` points at — the branch every live sheet reads, every transaction commits to by default, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. The resolution order (option → `GITSHEETS_BRANCH` → `gitsheets.branch` git config → `HEAD`), the full list of what the binding governs, and the bootstrap path for a branch that does not exist yet are in [behaviors/default-branch.md](../behaviors/default-branch.md). `repo.branch` reports the resolved short name (`null` on a detached `HEAD`).
 
 ## Methods
 

@@ -19,7 +19,7 @@ These apply to every command unless noted otherwise:
 | `--ref <ref>` | the resolved default branch | `GITSHEETS_REF` env var |
 | `--commit-to <ref>` | derived from `--ref` (if ref is a branch) | none |
 
-`--ref` selects which commit/branch to read from or transact against. `--branch` selects the repository's default branch; `--ref`'s default is that branch, so a project that exports `GITSHEETS_BRANCH=data` needs no flags ([behaviors/default-branch.md](../behaviors/default-branch.md)), so a clone bound to a data branch needs no flag. `--commit-to` overrides which branch a write-transaction advances.
+`--ref` selects which commit/branch to read from or transact against. `--branch` selects the repository's default branch (flag → `GITSHEETS_BRANCH` → `gitsheets.branch` git config → `HEAD`'s branch); `--ref`'s default is that branch, so a project that exports `GITSHEETS_BRANCH=data`, or a clone with `gitsheets.branch` set, needs no flags ([behaviors/default-branch.md](../behaviors/default-branch.md)). `--commit-to` overrides which branch a write-transaction advances.
 
 A `--working` flag — read/write the working tree state instead of a committed tree — is documented but not yet implemented; it's tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165) and listed in [`deferred.md`](../deferred.md).
 
@@ -151,12 +151,12 @@ See [#130](https://github.com/JarvusInnovations/gitsheets/issues/130).
 
 ### `git sheet init <sheet>`
 
-Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '${{ id }}'`. Flags:
+Commit a starter `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '${{ id }}'` to the target ref (`--ref` / `--commit-to`, default the default branch) through a transaction. The working tree is not written. Flags:
 
 - `--path <tpl>` — override the path template.
 - `--schema <file>` — embed a JSON Schema file at `[gitsheet.schema]`.
 - `--force` — overwrite an existing config.
-- `--commit` — commit the config to the target ref (`--ref` / `--commit-to`) through a transaction instead of writing it to the working tree; creates the branch with a root commit when it does not exist. Implied when the target ref is not the checked-out branch or the repository is bare ([behaviors/default-branch.md](../behaviors/default-branch.md)#bootstrapping).
+- `--commit` — the explicit spelling of what `init` does: commit the config to the target ref. When that branch does not exist yet, it is created with a root commit holding only the config ([behaviors/default-branch.md](../behaviors/default-branch.md#bootstrapping)).
 
 ```bash
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
@@ -164,7 +164,7 @@ git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
 
 ### `git sheet merge <theirs> [--into <ours>] [--prefer ours|theirs] [--message <m>] [--dry-run]`
 
-Sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)): record files changed on both sides are field-merged and written canonically. `--into` defaults to `HEAD`'s branch. Without `--prefer`, any conflict lists every conflicting path (and field) on stderr and exits **1** with nothing written; `--prefer ours|theirs` resolves them. `--dry-run` reports the merged tree hash and moves nothing. Prints the outcome and the merge commit on success.
+Sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)): record files changed on both sides are field-merged and written canonically. `--into` defaults to the default branch ([behaviors/default-branch.md](../behaviors/default-branch.md)). Without `--prefer`, any conflict lists every conflicting path (and field) on stderr and exits **1** with nothing written; `--prefer ours|theirs` resolves them. `--dry-run` reports the merged tree hash and moves nothing. Prints the outcome and the merge commit on success.
 
 ### `git sheet merge --install-driver`
 
