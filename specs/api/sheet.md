@@ -57,6 +57,10 @@ Returns `Promise<T[]>`. All matches collected into an array. Convenience over `f
 
 Returns `Promise<number>`, the number of matching records. With no filter (outside a transaction) it counts candidate paths from the tree walk without parsing any record, so it stays cheap on large sheets. A non-empty filter (value or function predicate) or a tx-bound sheet falls back to a body-less scan that honors the filter. Throws `TypeError` if passed a function.
 
+### `sheet.aggregate(filter?, aggregates, opts?)`
+
+Returns `Promise<Record<string, unknown>>`: one value per named aggregate, computed over the records matching `filter` (pruned like `query`). `aggregates` maps names to specs in the grammar of [behaviors/aggregation.md § Aggregate forms](../behaviors/aggregation.md#aggregate-forms) — `{ count: true }`, `{ sum: 'f' }`, `{ min: 'f' }`, `{ max: 'f' }`, `{ avg: 'f' }`, `{ distinct: 'f' }`, `{ reduce, initial, finalize }`, each with optional `where` (a filter) and `groupBy` (a field; the value becomes a table keyed by group). Evaluation follows [§ Canonical computation](../behaviors/aggregation.md#canonical-computation): canonical path order, body-less, empty results omitted except `count` (`0`) and `sum` (`0`). Honors `opts.signal`. Throws `TypeError` for a malformed spec, `AggregationError` (`aggregation_failed`) for a data-dependent failure.
+
 ### `sheet.get(path, opts?)`
 
 Returns `Promise<T | undefined>`: the one record stored at `path` — the rendered path-template result (no extension), the same string `query` annotates on each record and the CLI `read` command takes — or `undefined` when nothing lives there. One blob read, no tree walk: the by-path primitive behind "read a single record" surfaces.
@@ -287,3 +291,4 @@ See [api/errors.md](errors.md). Common: `ValidationError`, `NotFoundError`, `Pat
 - [behaviors/indexing.md](../behaviors/indexing.md)
 - [behaviors/patch-semantics.md](../behaviors/patch-semantics.md)
 - [behaviors/attachments.md](../behaviors/attachments.md)
+- [behaviors/aggregation.md](../behaviors/aggregation.md)
