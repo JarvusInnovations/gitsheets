@@ -179,6 +179,15 @@ Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '$
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
 ```
 
+### `git sheet rollup <sheet>`
+
+Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert`. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`).
+
+```bash
+git sheet rollup transactions-monthly
+git sheet rollup transactions-monthly --check    # list stale/missing/orphaned, write nothing, exit 1 if any
+```
+
 ### `git sheet merge <theirs> [--into <ours>] [--prefer ours|theirs] [--message <m>] [--dry-run]`
 
 Sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)): record files changed on both sides are field-merged and written canonically. `--into` defaults to `HEAD`'s branch. Without `--prefer`, any conflict lists every conflicting path (and field) on stderr and exits **1** with nothing written; `--prefer ours|theirs` resolves them. `--dry-run` reports the merged tree hash and moves nothing. Prints the outcome and the merge commit on success.
