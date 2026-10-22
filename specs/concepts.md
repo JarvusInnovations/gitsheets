@@ -8,6 +8,8 @@ A git repository that contains gitsheets-managed data. Created from disk via `op
 
 A repository can also contain ordinary code, docs, anything — gitsheets only cares about paths under `.gitsheets/` (sheet configs) and the data paths each sheet declares.
 
+Every repository is bound to a **default branch** — the branch its sheets read, its transactions commit to, and its sync/push target. By default that is `HEAD`'s branch; `openRepo({ branch })` (or the `gitsheets.branch` git config key) binds it to a branch that is never checked out, so records never need a working tree. See [behaviors/default-branch.md](behaviors/default-branch.md).
+
 ## Sheet
 
 A typed collection of records, declared by a TOML file at `.gitsheets/<name>.toml`. Each sheet has:

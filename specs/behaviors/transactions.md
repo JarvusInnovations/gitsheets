@@ -136,7 +136,7 @@ Resolution:
 
 ## Parent ref handling
 
-- `opts.parent`: ref name, short hash, full commit hash, or **`null`** for an orphan root commit (empty starting tree, no parents, always commits). Default: current `HEAD`.
+- `opts.parent`: ref name, short hash, full commit hash, or **`null`** for an orphan root commit (empty starting tree, no parents, always commits). Default: the repository's default branch ([default-branch.md](default-branch.md); `HEAD`'s branch unless bound otherwise).
 - `opts.branch`: ref to update on commit. Default:
   - If `opts.parent` is a branch (e.g., `main`): that same branch
   - If `opts.parent` is a commit hash or `null`: `null` (no ref updated — the commit is "detached")
