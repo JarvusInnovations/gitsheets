@@ -51,7 +51,7 @@ fn tree_cache() -> &'static TreeCache {
     TREE_CACHE.with(|c| *c)
 }
 use napi::bindgen_prelude::*;
-use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, ValueType};
+use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, Property, PropertyAttributes, ValueType};
 use napi_derive::napi;
 use toml::value::{Date as TomlDate, Datetime as TomlDatetime, Offset, Time as TomlTime};
 
@@ -218,7 +218,20 @@ impl ToNapiValue for JsValue {
                 for (k, v) in map {
                     let child_raw = JsValue::to_napi_value(env, JsValue(v))?;
                     let child = JsUnknown::from_napi_value(env, child_raw)?;
-                    obj.set_named_property(&k, child)?;
+                    if k == "__proto__" {
+                        // `[[Set]]` of `__proto__` would hit Object.prototype's
+                        // accessor (repointing the prototype, or silently
+                        // dropping a primitive) — define an own data property.
+                        obj.define_properties(&[Property::new(&k)?
+                            .with_value(&child)
+                            .with_property_attributes(
+                                PropertyAttributes::Writable
+                                    | PropertyAttributes::Enumerable
+                                    | PropertyAttributes::Configurable,
+                            )])?;
+                    } else {
+                        obj.set_named_property(&k, child)?;
+                    }
                 }
                 JsObject::to_napi_value(env, obj)
             }
@@ -1118,12 +1131,78 @@ fn prepare_aggregates(
     aggregates: JsUnknown,
     body_field: Option<&str>,
     filter: &Filter,
-    engine: &mut Engine,
 ) -> Result<aggregate::Prepared> {
+    precheck_aggregates(env, &aggregates)?;
     let spec = unsafe { JsValue::from_napi_value(env.raw(), aggregates.raw()) }
         .map_err(|e| throw_type_error(env, &format!("aggregate spec: {}", e.reason)))?;
-    aggregate::prepare(&spec.0, body_field, Some(filter), engine)
-        .map_err(|e| throw_type_error(env, e.message()))
+    aggregate::prepare(&spec.0, body_field, Some(filter)).map_err(|e| throw_type_error(env, e.message()))
+}
+
+/// Host-shape checks the value marshal would otherwise blur: an explicit
+/// `initial: null` (the marshal drops null keys, so the core would report it
+/// missing) and a function inside `where` (the marshal's generic "cannot
+/// marshal" error names no key).
+fn precheck_aggregates(env: &Env, aggregates: &JsUnknown) -> Result<()> {
+    if aggregates.get_type()? != ValueType::Object || aggregates.is_array()? {
+        return Ok(()); // the core reports the shape
+    }
+    let table = unsafe { JsObject::from_napi_value(env.raw(), aggregates.raw())? };
+    let names = table.get_property_names()?;
+    for i in 0..names.get_array_length()? {
+        let name: JsString = names.get_element(i)?;
+        let name = name.into_utf8()?.as_str()?.to_owned();
+        let spec: JsUnknown = table.get_named_property(&name)?;
+        if spec.get_type()? != ValueType::Object || spec.is_array()? {
+            continue;
+        }
+        let spec = unsafe { JsObject::from_napi_value(env.raw(), spec.raw())? };
+        if spec.has_own_property("initial")? {
+            let initial: JsUnknown = spec.get_named_property("initial")?;
+            if matches!(initial.get_type()?, ValueType::Null | ValueType::Undefined) {
+                return Err(throw_type_error(
+                    env,
+                    &format!("aggregate spec: {name:?}: `initial` must be a TOML value, got null"),
+                ));
+            }
+        }
+        if spec.has_own_property("where")? {
+            let w: JsUnknown = spec.get_named_property("where")?;
+            if w.get_type()? == ValueType::Object && !w.is_array()? && !w.is_date()? {
+                let w = unsafe { JsObject::from_napi_value(env.raw(), w.raw())? };
+                if let Some(key) = function_key(env, &w, "")? {
+                    return Err(throw_type_error(
+                        env,
+                        &format!(
+                            "aggregate spec: {name:?}: `where` key {key:?} is a function — `where` takes values and ranges only"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The (dotted) key of the first function-valued entry in a filter object.
+fn function_key(env: &Env, obj: &JsObject, prefix: &str) -> Result<Option<String>> {
+    let names = obj.get_property_names()?;
+    for i in 0..names.get_array_length()? {
+        let key: JsString = names.get_element(i)?;
+        let key = key.into_utf8()?.as_str()?.to_owned();
+        let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
+        let v: JsUnknown = obj.get_named_property(&key)?;
+        match v.get_type()? {
+            ValueType::Function => return Ok(Some(path)),
+            ValueType::Object if !v.is_array()? && !v.is_date()? => {
+                let sub = unsafe { JsObject::from_napi_value(env.raw(), v.raw())? };
+                if let Some(found) = function_key(env, &sub, &path)? {
+                    return Ok(Some(found));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
 }
 
 fn admitted_paths(paths: Option<Vec<String>>) -> Option<HashSet<String>> {
@@ -1159,7 +1238,7 @@ pub fn record_aggregate(
     let ext = extension_of(extension);
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let parsed = parse_filter(&env, &filter, &mut engine)?;
-    let prepared = prepare_aggregates(&env, aggregates, body_field.as_deref(), &parsed, &mut engine)?;
+    let prepared = prepare_aggregates(&env, aggregates, body_field.as_deref(), &parsed)?;
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
     let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
@@ -2288,17 +2367,18 @@ impl CoreTransaction {
         let sheet = sheets
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        // The fold gets its own engine: reduce snippets are per-call and must
-        // not accumulate in the sheet's long-lived one.
+        // The fold gets its own engine for `where` matching; reduce snippets
+        // run in per-group realms the core creates.
         let mut fold_engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
         let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
         let body = sheet.config().format.body.clone();
-        let prepared = prepare_aggregates(&env, aggregates, body.as_deref(), &parsed, &mut fold_engine)?;
+        let extension = sheet.config().format.extension();
+        let prepared = prepare_aggregates(&env, aggregates, body.as_deref(), &parsed)?;
         let rows = sheet
             .query(&ctx, tree, &parsed, false)
             .map_err(|err| raise_core_error(&env, &err))?;
         let only = admitted_paths(paths);
-        aggregate::fold_rows(&name, &rows, only.as_ref(), &prepared, &mut fold_engine)
+        aggregate::fold_rows(&name, &rows, extension, only.as_ref(), &prepared, &mut fold_engine)
             .map(JsValue)
             .map_err(|err| raise_core_error(&env, &err))
     }

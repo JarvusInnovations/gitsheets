@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { recordWrite, recordAggregate, CoreTransaction, AggregationError } = require('../binding.cjs');
+const { recordWrite, recordRead, recordAggregate, CoreTransaction, AggregationError } = require('../binding.cjs');
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const TEMPLATE = '${{ postedAt: YYYY/MM }}/${{ id }}';
@@ -177,6 +177,74 @@ test('data-dependent failures are AggregationError with sheet + aggregate', () =
       assert.equal(caught.aggregate, 'bad');
       assert.equal(caught.partition, undefined);
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a __proto__ group key is an own property and the prototype is intact', () => {
+  const { dir, gitDir, treeHash } = freshRepo();
+  try {
+    const { treeHash: t2 } = recordWrite(gitDir, treeHash, 'tx', ['2026/01/a', '2026/01/b'], [
+      { ...LEDGER[0], tag: '__proto__' },
+      { ...LEDGER[1], tag: 'x' },
+    ]);
+    const r = agg(gitDir, t2, {}, {
+      byTag: { count: true, groupBy: 'tag' },
+      idsByTag: { reduce: 'acc.push(record.id); return acc;', initial: [], groupBy: 'tag' },
+    });
+    for (const key of ['byTag', 'idsByTag']) {
+      assert.equal(Object.getPrototypeOf(r[key]), Object.prototype, key);
+      assert.ok(Object.hasOwn(r[key], '__proto__'), key);
+    }
+    assert.equal(r.byTag.__proto__, 1);
+    assert.equal(r.byTag.x, 1);
+    assert.deepEqual(r.idsByTag.__proto__, ['a']);
+    assert.ok(Array.isArray(r.idsByTag.__proto__));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('records carrying a __proto__ key read back as an own property', () => {
+  const { dir, gitDir, treeHash } = freshRepo();
+  try {
+    const rec = JSON.parse('{"id":"p","postedAt":"x","__proto__":{"polluted":true}}');
+    rec.postedAt = new Date('2026-03-01T00:00:00Z');
+    const { treeHash: t2 } = recordWrite(gitDir, treeHash, 'tx', ['2026/03/p'], [rec]);
+    const [back] = recordRead(gitDir, t2, 'tx', ['2026/03/p']);
+    assert.equal(Object.getPrototypeOf(back), Object.prototype);
+    assert.ok(Object.hasOwn(back, '__proto__'));
+    assert.deepEqual(back.__proto__, { polluted: true });
+    assert.equal(back.polluted, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('host-shape mistakes name the offending key', () => {
+  const { dir, gitDir, treeHash } = freshRepo();
+  try {
+    assert.throws(() => agg(gitDir, treeHash, {}, { x: { reduce: 'return acc;', initial: null } }), {
+      name: 'TypeError',
+      message: /`initial` must be a TOML value, got null/,
+    });
+    assert.throws(() => agg(gitDir, treeHash, {}, { x: { count: true, where: { status: () => true } } }), {
+      name: 'TypeError',
+      message: /`where` key "status" is a function/,
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a reduce Date outside TOML years is AggregationError', () => {
+  const { dir, gitDir, treeHash } = freshRepo();
+  try {
+    assert.throws(
+      () => agg(gitDir, treeHash, {}, { d: { reduce: 'return new Date(Date.UTC(70000, 0, 1));', initial: 0 } }),
+      (err) => err instanceof AggregationError && /0–9999/.test(err.message),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
