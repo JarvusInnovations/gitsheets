@@ -47,6 +47,35 @@ Modifiers, allowed on every form:
   not contribute), each value the aggregate over that group. Empty groups do
   not appear.
 
+Edge rules the table above leaves implicit:
+
+- **Fields** (`'f'`, `'g'`) name a top-level record field.
+- **`sum`** of integers is exact; an integer total outside the signed 64-bit
+  range is `AggregationError`. Once any contributing value is a float, the
+  result is the float fold `acc + v` from `0.0` over every contributing value
+  (integers converted), in canonical path order. **`avg`** is that `sum`, as a
+  float, divided by the contributing count.
+- **`min` / `max`** keep the first of several equal extremes in canonical path
+  order. Integers and floats are one kind (numbers). Two datetimes the ordering
+  cannot compare (a local time against a date or datetime) count as mixed
+  kinds.
+- **`distinct`** treats values that compare equal as one value (`1` and `1.0`;
+  one instant written at two offsets) and keeps the first in canonical path
+  order. Booleans are a kind of their own and sort `false` before `true`.
+- **A grouped aggregate** is always a table, `{}` when no group has a
+  contributing record. A group appears only when at least one of its records
+  contributes to the form, so a grouped `sum` leaves out a group whose records
+  carry no number in `f`.
+- **A `reduce` result** crosses back from the engine the way a host value
+  crosses the binding boundary: a JS number that is an exact integer within
+  ±(2^53 − 1) is a TOML integer, any other number a float; a `Date` is an
+  offset datetime at UTC; arrays and plain objects become arrays and tables,
+  with `null`/`undefined`-valued keys dropped. `null`/`undefined` itself, a
+  `null`/`undefined` array element, a function, a symbol, or any other object
+  is not TOML-representable. Between calls `acc` stays a live engine value, so
+  a body may mutate and return it; each group starts from its own copy of
+  `initial`.
+
 `reduce` is the body of `(acc, record) => { … }`, called once per
 contributing record in canonical path order with `acc` starting at `initial`
 (required; any TOML value). `finalize`, optional, is the body of
@@ -66,9 +95,10 @@ same `Value` table.
 
 An aggregate result is a pure function of the contributing record set:
 
-1. The records are read body-less (an aggregate may not reference a
-   content-typed sheet's body field — `TypeError` at the call site,
-   `ConfigError` in a config), **in canonical path order** — the byte order
+1. The records are read body-less (an aggregate — its field, `groupBy`, or a
+   `where` key — and an ad-hoc call's filter may not reference a content-typed
+   sheet's body field — `TypeError` at the call site, `ConfigError` in a
+   config), **in canonical path order** — the byte order
    of the full record path, i.e. the order a tree walk yields. Attachments
    and non-record files are not records.
 2. Each aggregate folds over those records in that order. The order is part
@@ -101,7 +131,13 @@ const r = await sheet.aggregate(
   / `finalize`.
 - The contributing set is the records matching `filter`, pruned by the path
   template exactly as `query` is; evaluation follows "Canonical computation".
-- Nothing is persisted. `opts.signal` cancels as on `query`.
+  On the Node binding the filter may carry function predicates as on `query`:
+  they run host-side to decide which records match, and the core folds over
+  exactly those records (re-read in the core, so the fold sees the core's
+  values, not the host's projection of them).
+- Nothing is persisted. `opts.signal` cancels as on `query`: it is checked
+  before the call starts and before the result is returned (the fold itself
+  is one synchronous core call).
 - The CLI form is `git sheet aggregate <sheet> [--filter …] --agg <name>=<form>[:<field>] … [--group-by <field>]`
   ([api/cli.md](../api/cli.md#git-sheet-aggregate-sheet)); `gitsheets-axi`
   mirrors it and gains `query --group-by`.
