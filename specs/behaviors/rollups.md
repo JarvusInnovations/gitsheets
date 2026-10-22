@@ -268,6 +268,41 @@ CI gate for data branches other tools write to.
   its new parent, so a local March commit replayed over a remote March commit
   carries a rollup over both sets of records.
 
+### Why the stamp lives in the record
+
+The stamp is provenance of a derived artifact — the identity of the input the
+value was computed from — not a copy of something git already tracks about the
+rollup file. Git has no slot for "which tree was this blob derived from"; the
+alternatives were weighed and rejected:
+
+- **Infer from history** (the rollup is fresh if no commit since the one
+  that last wrote it touched the partition). Needs a *commit* context, and
+  gitsheets routinely holds only a *tree*: a transaction's private tree
+  before commit, a tree-hash-pinned sheet, a `merge({ commit: false })`
+  dry-run tree, a `sync` replay in progress. It is a revision walk per
+  partition, unbounded on long histories, where the stamp is one tree
+  lookup. And it is wrong after exactly the events the check exists for: a
+  merge commit "touches" both sides, a rebase rewrites which commit wrote
+  what, and a plain `git merge` that took a stale rollup file looks like a
+  fresh write. The stamp compares against the partition's *current* tree id
+  regardless of how the tree got there.
+- **Git notes on the rollup blob** (`refs/notes/gitsheets`: blob id → source
+  tree id). Git-native and out of the content, but notes do not clone, fetch,
+  or push by default, so a second clone or a CI runner sees every rollup as
+  stale (reads still self-heal, the cache is just cold); the notes ref is a
+  second ref to update per commit (non-atomically) and to merge between
+  writers; and a human reading the file on GitHub cannot tell what the
+  number was computed over.
+- **A commit trailer** per partition. Per commit, not per partition — finding
+  the stamp for one rollup is the history walk again — and lost from any
+  commit git itself produces.
+
+The record stamp travels with the data, is atomic with it (same tree, same
+commit), is verifiable by anyone with `git rev-parse <commit>:<source>/<partition>`,
+and makes a rollup *self-describing*: the file says what it is a function of.
+That is the same reason a lockfile records integrity hashes rather than
+trusting the registry's history.
+
 ### Not in this spec
 
 - **Ad-hoc aggregation at query time** (`sheet.aggregate(filter, aggregates)`,
