@@ -74,7 +74,7 @@ try {
 | `ContractError` | `contract_missing` | 500 | `implements` names a contract with no vendored document at its derived path |
 | `ContractError` | `contract_invalid` | 500 | Contract document violates [document requirements](../behaviors/contracts.md#contract-document-requirements) (compile, `$id`/path, canonical form, openness, self-containment, TOML data model) |
 | `ContractError` | `contract_unsatisfied` | 422 | Consumer verification failed both rungs (carries the conformance report in `issues`) |
-| `AggregationError` | `aggregation_failed` | 422 | An aggregate could not be computed (mixed value kinds under `min`/`max`/`distinct`, a `reduce` that threw or returned a non-TOML value); carries sheet and aggregate name ([behaviors/aggregation.md](../behaviors/aggregation.md)) |
+| `AggregationError` | `aggregation_failed` | 422 | An aggregate could not be computed (mixed value kinds under `min`/`max`/`distinct`, an integer `sum`/`avg` total outside the signed 64-bit range, a `reduce`/`finalize` that threw, exceeded the engine's runtime limits, or returned a non-TOML value); carries sheet and aggregate name ([behaviors/aggregation.md](../behaviors/aggregation.md)) |
 
 The `code` strings are stable. New scenarios get new codes; existing codes never change meaning.
 

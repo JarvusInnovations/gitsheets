@@ -45,7 +45,9 @@ Modifiers, allowed on every form:
 - **`groupBy = 'g'`** — the result is a table keyed by the string form of each
   record's `g` (string, integer, or boolean; records lacking a scalar `g` do
   not contribute), each value the aggregate over that group. Empty groups do
-  not appear.
+  not appear. Because the key is the string form, values of different kinds
+  with the same string form share one group: `1` and `'1'`, `true` and
+  `'true'`.
 
 Edge rules the table above leaves implicit:
 
@@ -54,33 +56,54 @@ Edge rules the table above leaves implicit:
   range is `AggregationError`. Once any contributing value is a float, the
   result is the float fold `acc + v` from `0.0` over every contributing value
   (integers converted), in canonical path order. **`avg`** is that `sum`, as a
-  float, divided by the contributing count.
+  float, divided by the contributing count — so an all-integer `avg` whose
+  total leaves the signed 64-bit range is `AggregationError` too.
 - **`min` / `max`** keep the first of several equal extremes in canonical path
   order. Integers and floats are one kind (numbers). Two datetimes the ordering
   cannot compare (a local time against a date or datetime) count as mixed
   kinds.
-- **`distinct`** treats values that compare equal as one value (`1` and `1.0`;
-  one instant written at two offsets) and keeps the first in canonical path
-  order. Booleans are a kind of their own and sort `false` before `true`.
+- **`distinct`** treats values that compare equal under the kind's ordering
+  as one value — `1` and `1.0`; two offset datetimes naming the same instant
+  at different offsets; a local date or local datetime and an offset datetime
+  the ordering rules place at the same moment (an offset-less value is read
+  at face value in UTC) — and keeps the first in canonical path order. An
+  integer and a float compare exactly: an integer that no float represents
+  exactly never equals a float. Booleans are a kind of their own and sort `false` before `true`.
 - **A grouped aggregate** is always a table, `{}` when no group has a
   contributing record. A group appears only when at least one of its records
   contributes to the form, so a grouped `sum` leaves out a group whose records
   carry no number in `f`.
-- **A `reduce` result** crosses back from the engine the way a host value
-  crosses the binding boundary: a JS number that is an exact integer within
-  ±(2^53 − 1) is a TOML integer, any other number a float; a `Date` is an
-  offset datetime at UTC; arrays and plain objects become arrays and tables,
+- **A `reduce` result** is converted back from the engine by one engine
+  rule, the same for every binding: a JS number that is an exact integer
+  within ±(2^53 − 1) is a TOML integer, any other number a float; a `BigInt`
+  within the signed 64-bit range an integer; a `Date` an offset datetime at
+  UTC, and a `Date` whose UTC year falls outside 0–9999 (TOML's range) is
+  not TOML-representable; arrays and plain objects become arrays and tables,
   with `null`/`undefined`-valued keys dropped. `null`/`undefined` itself, a
-  `null`/`undefined` array element, a function, a symbol, or any other object
-  is not TOML-representable. Between calls `acc` stays a live engine value, so
-  a body may mutate and return it; each group starts from its own copy of
-  `initial`.
+  `null`/`undefined` array element, a function, a symbol, any other object,
+  or a structure too deep or too large to convert is not
+  TOML-representable. JS has one number type, so the integer/float
+  distinction does not survive the engine: a Python caller whose `reduce`
+  returns `initial = 1.0` unchanged gets the integer `1` back. Between calls
+  `acc` stays a live engine value, so a body may mutate and return it; each
+  group starts from its own copy of `initial`.
 
 `reduce` is the body of `(acc, record) => { … }`, called once per
 contributing record in canonical path order with `acc` starting at `initial`
 (required; any TOML value). `finalize`, optional, is the body of
 `(acc) => { … }` run once at the end. The snippet must be pure: no clock, no
-randomness, no I/O. It runs in the core's embedded engine, so a Python caller
+randomness, no I/O. Purity is **required but not enforced** today:
+`Math.random()` and `Date.now()` are reachable and make the result
+nondeterministic, which is the consumer's problem, not a contract the core
+keeps. What the core does enforce: each `reduce` aggregate evaluates each
+group (or its single ungrouped fold) in a fresh engine realm, so
+`globalThis` state cannot leak between calls, aggregates, or groups, and
+that engine runs under runtime limits on loop
+iterations, recursion depth, and stack size — a snippet that exceeds them
+(an infinite loop) is `AggregationError`, not a hang. Hardening the engine
+before rollups persist `reduce` results (frozen `Math.random` / `Date.now`,
+a deterministic realm) is tracked in
+[#354](https://github.com/JarvusInnovations/gitsheets/issues/354). It runs in the core's embedded engine, so a Python caller
 and a Node caller get identical results — required because aggregate results
 can be committed (as persisted rollups) and must be byte-identical across
 bindings, which is why this escape hatch cannot run in the host runtime the
@@ -98,8 +121,10 @@ An aggregate result is a pure function of the contributing record set:
 1. The records are read body-less (an aggregate — its field, `groupBy`, or a
    `where` key — and an ad-hoc call's filter may not reference a content-typed
    sheet's body field — `TypeError` at the call site, `ConfigError` in a
-   config), **in canonical path order** — the byte order
-   of the full record path, i.e. the order a tree walk yields. Attachments
+   config), **in canonical path order** — the byte order of the full record
+   path *including its file extension* (`k-1.toml` before `k.toml`), i.e. the
+   order a recursive git tree walk yields. This is not necessarily the order
+   `query` returns records in (that order is unspecified). Attachments
    and non-record files are not records.
 2. Each aggregate folds over those records in that order. The order is part
    of the contract because floating-point folds are order-dependent.
