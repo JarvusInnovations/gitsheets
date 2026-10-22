@@ -15,10 +15,12 @@ These apply to every command unless noted otherwise:
 | `--git-dir <path>` | discovered | `GIT_DIR` env var |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` env var |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` env var |
-| `--ref <ref>` | `HEAD` | `GITSHEETS_REF` env var |
+| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` env var |
+| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` env var |
+| `--ref <ref>` | the resolved default branch | `GITSHEETS_REF` env var |
 | `--commit-to <ref>` | derived from `--ref` (if ref is a branch) | none |
 
-`--ref` selects which commit/branch to read from or transact against. `--commit-to` overrides which branch a write-transaction advances.
+`--ref` selects which commit/branch to read from or transact against. `--branch` and `--submodule` select the repository's binding (branch mode / submodule mode); `--ref`'s default is the resolved default branch, so a project that exports `GITSHEETS_SUBMODULE=data` needs no flags ([behaviors/default-branch.md](../behaviors/default-branch.md)), so a clone bound to a data branch needs no flag. `--commit-to` overrides which branch a write-transaction advances.
 
 A `--working` flag — read/write the working tree state instead of a committed tree — is documented but not yet implemented; it's tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165) and listed in [`deferred.md`](../deferred.md).
 
@@ -155,9 +157,19 @@ Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '$
 - `--path <tpl>` — override the path template.
 - `--schema <file>` — embed a JSON Schema file at `[gitsheet.schema]`.
 - `--force` — overwrite an existing config.
+- `--commit` — commit the config to the target ref (`--ref` / `--commit-to`) through a transaction instead of writing it to the working tree; creates the branch with a root commit when it does not exist. Implied when the target ref is not the checked-out branch or the repository is bare ([behaviors/default-branch.md](../behaviors/default-branch.md)#bootstrapping).
 
 ```bash
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
+```
+
+### `git sheet submodule init <path> [--url <url>] [--branch <b>]`
+
+Set up a data submodule with no record checkout ([behaviors/default-branch.md](../behaviors/default-branch.md)#bootstrapping): with `--url`, adds the `.gitmodules` entry, clones into the superproject's `modules/<path>` without a checkout, writes the gitdir pointer, puts the submodule `HEAD` on the branch, sets `submodule.<name>.ignore = dirty`, and stages `.gitmodules` plus the gitlink; without `--url`, initializes an existing entry the same way (fetch, `HEAD` on the `.gitmodules` branch at the gitlinked commit, `ignore`). Idempotent; never commits in the superproject.
+
+```bash
+git sheet submodule init data --url git@github.com:org/app-data.git --branch main
+git sheet submodule init data        # fresh clone of the superproject
 ```
 
 ### `git sheet merge <theirs> [--into <ours>] [--prefer ours|theirs] [--message <m>] [--dry-run]`

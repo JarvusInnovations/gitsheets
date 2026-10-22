@@ -2,9 +2,10 @@
 
 ## Rule
 
-A non-transaction `Sheet` reads through a **read snapshot** — the repository's
-`HEAD` tree hash, captured when the sheet was opened. The snapshot is **rebound
-to the current `HEAD` tree**:
+A non-transaction `Sheet` reads through a **read snapshot** — the tree hash of
+the repository's **default branch** (`HEAD`'s branch unless the repository is
+bound elsewhere — [default-branch.md](default-branch.md)), captured when the sheet was opened. The
+snapshot is **rebound to the default branch's current tree**:
 
 1. **Automatically**, after every transaction on the owning `Repository`
    instance that produces a commit (explicit `repo.transact` / `store.transact`
@@ -56,9 +57,9 @@ downstream of it:
 
 ### Rebind semantics
 
-- The snapshot always comes from **`HEAD` at rebind time** — not from the
-  transaction's result tree. A transaction that commits onto a non-`HEAD`
-  branch (`opts.parent: 'feature-x'`) leaves `HEAD`'s tree unchanged, so
+- The snapshot always comes from **the default branch at rebind time** — not
+  from the transaction's result tree. A transaction that commits onto another
+  branch (`opts.parent: 'feature-x'`) leaves the default branch's tree unchanged, so
   standing sheets do **not** shift onto the other branch's state.
 - A rebind to a tree hash identical to the current snapshot is a no-op
   (memoized config and index builds are kept).
@@ -134,4 +135,5 @@ Pinned sheets are read-only: permissive-mode writes throw `TransactionError`
 - [behaviors/transactions.md](transactions.md)
 - [behaviors/indexing.md](indexing.md)
 - [behaviors/push-sync.md](push-sync.md)
+- [default-branch.md](default-branch.md)
 - [GitHub #184](https://github.com/JarvusInnovations/gitsheets/issues/184) — motivating issue
