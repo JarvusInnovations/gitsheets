@@ -10,6 +10,7 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
 import {
+  AggregationError,
   ConfigError,
   ContractError,
   GitsheetsError,
@@ -22,7 +23,7 @@ import {
 import { readTreeBlobText, mergeRecordTexts,
 } from '../core.js';
 import { openRepo } from '../repository.js';
-import type { Sheet, UpsertResult } from '../sheet.js';
+import type { AggregateSpec, Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
 import { parseToml, stringifyRecord } from '../toml.js';
 import {
@@ -58,6 +59,14 @@ interface QueryArgs extends GlobalArgs {
   format?: string;
   headers?: boolean;
   body?: boolean;
+}
+
+interface AggregateArgs extends GlobalArgs {
+  sheet: string;
+  filter?: Record<string, string>;
+  agg: Array<[string, AggregateSpec]>;
+  groupBy?: string;
+  format?: string;
 }
 
 interface ReadArgs extends GlobalArgs {
@@ -143,6 +152,9 @@ function reportError(err: unknown): void {
           `  issue:  ${i.path.join('.') || '<root>'}: ${i.message}${i.contract ? ` [${i.contract}]` : ''}\n`,
         );
       }
+    }
+    if (err instanceof AggregationError) {
+      out.write(`  sheet:  ${err.sheet}\n  aggregate: ${err.aggregate}\n`);
     }
     if (err.cause !== undefined) {
       out.write(`  cause:  ${err.cause instanceof Error ? err.cause.message : String(err.cause)}\n`);
@@ -452,6 +464,51 @@ async function runQuery(argv: QueryArgs): Promise<void> {
       process.stdout.write(stringifyRecord_text(r, 'toml', fields));
     }
   }
+}
+
+/**
+ * Parse one `--agg <name>=<form>[:<field>]` clause: `count`, or `sum` / `min`
+ * / `max` / `avg` / `distinct` with a field. `reduce` is library-only.
+ *
+ * @see specs/api/cli.md § `git sheet aggregate`
+ */
+export function parseAggClause(item: string): [string, AggregateSpec] {
+  const eq = item.indexOf('=');
+  const name = eq > 0 ? item.slice(0, eq) : '';
+  const rhs = eq > 0 ? item.slice(eq + 1) : '';
+  const colon = rhs.indexOf(':');
+  const form = colon === -1 ? rhs : rhs.slice(0, colon);
+  const field = colon === -1 ? undefined : rhs.slice(colon + 1);
+  if (!name) {
+    throw new Error(`--agg expects <name>=<form>[:<field>], got ${item}`);
+  }
+  if (form === 'count') {
+    if (field !== undefined) throw new Error(`--agg ${name}: count takes no field, got ${item}`);
+    return [name, { count: true }];
+  }
+  if (form === 'sum' || form === 'min' || form === 'max' || form === 'avg' || form === 'distinct') {
+    if (!field) throw new Error(`--agg ${name}: ${form} needs a field (${name}=${form}:<field>)`);
+    return [name, { [form]: field } as unknown as AggregateSpec];
+  }
+  throw new Error(
+    `--agg ${name}: unknown form ${JSON.stringify(form)} — use count, sum, min, max, avg, or distinct (reduce is library-only)`,
+  );
+}
+
+async function runAggregate(argv: AggregateArgs): Promise<void> {
+  const { sheet } = await loadRepoAndSheet(argv);
+  const format = argv.format ?? 'json';
+  if (format !== 'json' && format !== 'toml') {
+    throw new Error(`--format must be one of: json, toml (got "${format}")`);
+  }
+  const aggregates: Record<string, AggregateSpec> = {};
+  for (const [name, spec] of argv.agg) {
+    if (name in aggregates) throw new Error(`--agg ${name} given twice`);
+    aggregates[name] = argv.groupBy !== undefined ? { ...spec, groupBy: argv.groupBy } : spec;
+  }
+  const filter = (argv.filter as RecordLike | undefined) ?? {};
+  const result = await sheet.aggregate(filter, aggregates);
+  process.stdout.write(stringifyRecord_text(result, format));
 }
 
 async function runRead(argv: ReadArgs): Promise<void> {
@@ -1172,6 +1229,39 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
               'For content-typed (markdown) sheets, include the body field. Pass --no-body for header-only reads. No effect on TOML sheets.',
           }),
       runQuery,
+    )
+    .command<AggregateArgs>(
+      'aggregate <sheet>',
+      'Compute ad-hoc aggregates over the records matching --filter (output: one JSON or TOML object)',
+      (y) =>
+        y
+          .positional('sheet', { type: 'string', demandOption: true })
+          .option('filter', {
+            type: 'string',
+            array: true,
+            describe:
+              'Filter clause (repeatable), as on query: field=value equality, or field>=value / field<=value / field>value / field<value range bounds',
+            coerce: parseCliFilters,
+          })
+          .option('agg', {
+            type: 'string',
+            array: true,
+            demandOption: true,
+            describe:
+              'Aggregate (repeatable): <name>=count, or <name>=sum|min|max|avg|distinct:<field>',
+            coerce: (raw: string[] | string): Array<[string, AggregateSpec]> =>
+              (Array.isArray(raw) ? raw : [raw]).map(parseAggClause),
+          })
+          .option('group-by', {
+            type: 'string',
+            describe: 'Apply groupBy to every aggregate: each result becomes a table keyed by this field',
+          })
+          .option('format', {
+            type: 'string',
+            choices: ['json', 'toml'] as const,
+            describe: 'Output format (default: json)',
+          }),
+      runAggregate,
     )
     .command<ReadArgs>(
       'read <sheet> <path>',
