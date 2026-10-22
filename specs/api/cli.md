@@ -15,10 +15,11 @@ These apply to every command unless noted otherwise:
 | `--git-dir <path>` | discovered | `GIT_DIR` env var |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` env var |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` env var |
-| `--ref <ref>` | `HEAD` | `GITSHEETS_REF` env var |
+| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` env var |
+| `--ref <ref>` | the resolved default branch | `GITSHEETS_REF` env var |
 | `--commit-to <ref>` | derived from `--ref` (if ref is a branch) | none |
 
-`--ref` selects which commit/branch to read from or transact against. `--commit-to` overrides which branch a write-transaction advances.
+`--ref` selects which commit/branch to read from or transact against. `--branch` selects the repository's default branch; `--ref`'s default is that branch, so a project that exports `GITSHEETS_BRANCH=data` needs no flags ([behaviors/default-branch.md](../behaviors/default-branch.md)), so a clone bound to a data branch needs no flag. `--commit-to` overrides which branch a write-transaction advances.
 
 A `--working` flag — read/write the working tree state instead of a committed tree — is documented but not yet implemented; it's tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165) and listed in [`deferred.md`](../deferred.md).
 
@@ -155,6 +156,7 @@ Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '$
 - `--path <tpl>` — override the path template.
 - `--schema <file>` — embed a JSON Schema file at `[gitsheet.schema]`.
 - `--force` — overwrite an existing config.
+- `--commit` — commit the config to the target ref (`--ref` / `--commit-to`) through a transaction instead of writing it to the working tree; creates the branch with a root commit when it does not exist. Implied when the target ref is not the checked-out branch or the repository is bare ([behaviors/default-branch.md](../behaviors/default-branch.md)#bootstrapping).
 
 ```bash
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json

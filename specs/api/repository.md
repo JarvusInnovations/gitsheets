@@ -14,12 +14,15 @@ import { openRepo } from 'gitsheets';
 const repo = await openRepo({
   gitDir?: string,           // path to a .git directory; default: discovered from cwd
   workTree?: string | null,  // optional working-tree path; default: null (bare-style operation)
+  branch?: string,           // branch mode: the default branch — reads, commits, refresh, sync all target it; default: GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch
 });
 ```
 
 Backed by hologit's repo discovery. If `gitDir` is omitted, the library probes `cwd` upward for a `.git`.
 
 A fresh-but-initialized repository (no commits yet) is supported — see [#19](https://github.com/JarvusInnovations/gitsheets/issues/19).
+
+**`opts.branch`** binds the repository to a **default branch** other than the one `HEAD` points at — the branch every live sheet reads, every transaction commits to by default, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. The resolution order (option → `GITSHEETS_BRANCH` → `gitsheets.branch` git config → `HEAD`), the full list of what the binding governs, and the bootstrap path for a branch that does not exist yet are in .[behaviors/default-branch.md](../behaviors/default-branch.md).. `repo.branch` reports the resolved short name (`null` on a detached `HEAD`).
 
 ## Methods
 
@@ -83,12 +86,12 @@ Run a handler inside a transaction. Returns `Promise<TransactionResult<T>>` wher
 ```typescript
 const result = await repo.transact(
   {
-    parent?: string | null,          // ref or commit hash; default: current HEAD; null = orphan root commit
+    parent?: string | null,          // ref or commit hash; default: the default branch (behaviors/default-branch.md); null = orphan root commit
     author?: { name: string, email: string }, // default: git config
     committer?: { name: string, email: string }, // default: author
     message: string,                 // commit subject + body
     trailers?: Record<string, string>, // appended per `git interpret-trailers` rules
-    branch?: string,                  // ref to update on success (created if absent); default: the parent ref if it was a branch
+    branch?: string,                  // ref to update on success (created if absent); default: the parent ref if it was a branch (so, the default branch when `parent` is omitted)
   },
   async (tx: Transaction) => {
     // mutations via tx.sheet(name).upsert / delete / patch
@@ -100,7 +103,7 @@ const result = await repo.transact(
 
 See [behaviors/transactions.md](../behaviors/transactions.md) for semantics (mutex, commit-on-success, trailer formatting).
 
-**Auto-refresh on commit.** When the transaction produces a commit, `repo.transact` rebinds every live `Sheet` this repository has issued to the current `HEAD` tree before resolving — reads through standing sheets (including `store.<sheet>`) immediately reflect the committed state. A no-op or discarded transaction rebinds nothing. See [behaviors/freshness.md](../behaviors/freshness.md).
+**Auto-refresh on commit.** When the transaction produces a commit, `repo.transact` rebinds every live `Sheet` this repository has issued to the default branch's current tree before resolving (only when the commit advanced the default branch — [behaviors/default-branch.md](../behaviors/default-branch.md)) — reads through standing sheets (including `store.<sheet>`) immediately reflect the committed state. A no-op or discarded transaction rebinds nothing. See [behaviors/freshness.md](../behaviors/freshness.md).
 
 ### `repo.refresh()`
 
@@ -159,12 +162,12 @@ const result = await repo.withLock(async () => {
 
 ### `repo.sync(opts?)`
 
-Bring `opts.branch` (default: the branch `HEAD` points at) up to date with `opts.remote` (default `origin`): fetch outside the write lock, then fast-forward / replay / escape under it, then refresh live sheets if the branch moved. Returns `Promise<SyncResult>`; the full state machine, option set, and outcome table are in [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
+Bring `opts.branch` (default: the repository's default branch — [behaviors/default-branch.md](../behaviors/default-branch.md)) up to date with `opts.remote` (default `origin`): fetch outside the write lock, then fast-forward / replay / escape under it, then refresh live sheets if the branch moved. Returns `Promise<SyncResult>`; the full state machine, option set, and outcome table are in [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
 
 ```typescript
 interface SyncOptions {
   remote?: string;                            // default 'origin'
-  branch?: string;                            // default: HEAD's branch; RefError if HEAD is detached
+  branch?: string;                            // default: the default branch; RefError when that is a detached HEAD
   fetch?: boolean;                            // default true; false = the caller already fetched
   onConflict?: 'fail' | 'preserve-branch';    // default 'fail'
   conflictBranchPrefix?: string;              // default 'conflicts/'
@@ -191,7 +194,7 @@ interface SyncResult {
 
 ### `repo.fetch(opts?)`
 
-`git fetch --prune <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>` on its own — `sync`'s first step, without the lock. `opts.remote` defaults to `origin`, `opts.branch` to `HEAD`'s branch (`RefError` when detached). Returns `Promise<{ ok: true, remoteRef, remoteCommit } | { ok: false, remoteRef, error }>`; a network or auth failure is a value, not a throw. Pair with `sync({ fetch: false })`. See [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
+`git fetch --prune <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>` on its own — `sync`'s first step, without the lock. `opts.remote` defaults to `origin`, `opts.branch` to the default branch (`RefError` when that is a detached `HEAD`). Returns `Promise<{ ok: true, remoteRef, remoteCommit } | { ok: false, remoteRef, error }>`; a network or auth failure is a value, not a throw. Pair with `sync({ fetch: false })`. See [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
 
 ### `repo.tag(name, target?, opts?)`
 
@@ -206,12 +209,12 @@ The direct entries of the tree at `<ref>:<path>` (`path` defaults to the root), 
 `Promise<boolean>` — whether commit `a` is reachable from commit `b` (or equal). `RefError` (`ref_not_found`) when either does not resolve to a commit.
 ### `repo.merge(opts)`
 
-Sheet-aware merge of `opts.theirs` into `opts.ours` (default: the branch `HEAD` points at) per [behaviors/merge.md](../behaviors/merge.md): record files changed on both sides are field-merged and written canonically; conflicts follow `opts.prefer` or are reported. Returns `Promise<MergeResult>`; never throws on a conflict.
+Sheet-aware merge of `opts.theirs` into `opts.ours` (default: the repository's default branch) per [behaviors/merge.md](../behaviors/merge.md): record files changed on both sides are field-merged and written canonically; conflicts follow `opts.prefer` or are reported. Returns `Promise<MergeResult>`; never throws on a conflict.
 
 ```typescript
 interface MergeOptions {
   theirs: string;                         // branch, tag, or commit to merge in
-  ours?: string;                          // branch to merge into; default HEAD's branch
+  ours?: string;                          // branch to merge into; default: the default branch
   prefer?: 'fail' | 'ours' | 'theirs';    // default 'fail'
   commit?: boolean;                       // default true; false = write the tree, move nothing (dry-run)
   message?: string;                       // default `Merge <theirs> into <ours>`
@@ -230,7 +233,7 @@ interface MergeResult {
 ```
 
 - `ours` may be a commit hash, in which case no ref moves and `commit` is the detached merge commit.
-- Throws `RefError` (`ref_not_found`) when a side does not resolve, `RefError` (`not_an_ancestor`) when the histories are unrelated, `TransactionError` (`lock_held`) inside a transaction or `withLock`. Runs under the write lock; a moved `HEAD` branch rebinds live sheets.
+- Throws `RefError` (`ref_not_found`) when a side does not resolve, `RefError` (`not_an_ancestor`) when the histories are unrelated, `TransactionError` (`lock_held`) inside a transaction or `withLock`. Runs under the write lock; a moved default branch rebinds live sheets.
 
 ### `repo.requireExplicitTransactions()`
 
@@ -245,7 +248,7 @@ Returns a `PushDaemon` handle. Configures async background push-to-remote with r
 ```typescript
 const daemon = await repo.startPushDaemon({
   remote: 'origin',
-  branch?: string,           // default: HEAD's branch
+  branch?: string,           // default: the default branch
   backoff?: 'exponential' | { base: number, cap: number, multiplier: number },
   maxRetries?: number,       // default: Infinity
 });
@@ -331,3 +334,4 @@ await daemon.stop();
 - [behaviors/transactions.md](../behaviors/transactions.md)
 - [behaviors/freshness.md](../behaviors/freshness.md)
 - [behaviors/push-sync.md](../behaviors/push-sync.md)
+- [behaviors/default-branch.md](../behaviors/default-branch.md)
