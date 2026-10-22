@@ -72,6 +72,25 @@ Flags:
 - `--headers` (CSV/TSV only; default: true)
 - `--no-body` — for content-typed (markdown/mdx) sheets, suppress the body field in the output. No effect on TOML sheets. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
 
+### `git sheet aggregate <sheet>`
+
+Compute ad-hoc aggregates over the records matching `--filter` ([behaviors/rollups.md § Ad-hoc aggregation](../behaviors/rollups.md#ad-hoc-aggregation-query-time)).
+
+```bash
+git sheet aggregate transactions --agg count=count --agg total=sum:amountCents
+git sheet aggregate transactions --filter 'postedAt>=2026-01-01' --agg total=sum:amountCents --group-by status
+git sheet aggregate repos --agg teams=distinct:targetTeam
+```
+
+Flags:
+
+- `--filter` — as on `query`.
+- `--agg <name>=<form>[:<field>]` (repeatable, at least one) — `count`, or `sum` / `min` / `max` / `avg` / `distinct` with a field.
+- `--group-by <field>` — applies `groupBy` to every aggregate.
+- `--format <json|toml>` (default `json`) — one object with a key per `--agg` name.
+
+`reduce` snippets are library-only.
+
 ### `git sheet read <sheet> <path>`
 
 Read a single record by exact path — one blob read via [`sheet.get(path)`](sheet.md#sheetgetpath-opts), never a sheet scan.

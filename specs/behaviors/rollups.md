@@ -268,6 +268,41 @@ CI gate for data branches other tools write to.
   its new parent, so a local March commit replayed over a remote March commit
   carries a rollup over both sets of records.
 
+### Ad-hoc aggregation (query time)
+
+The same aggregate grammar is available **without a rollup declaration**, for
+the one-off question — a count by status, the distinct values of a field, a
+total over a filtered range ([#223](https://github.com/JarvusInnovations/gitsheets/issues/223)):
+
+```typescript
+const r = await sheet.aggregate(
+  { postedAt: { $gte: '2026-01-01' } },          // the query filter; pruned like `query`
+  {
+    count: { count: true },
+    total: { sum: 'amountCents' },
+    byStatus: { count: true, groupBy: 'status' },
+  },
+);
+// → { count: 1402, total: 98231100, byStatus: { posted: 1390, pending: 12 } }
+```
+
+- Every form and modifier of the table above is accepted, spelled in the
+  binding's idiom (`{ sum: 'f', where: { … }, groupBy: 'g' }`), including
+  `reduce` / `initial` / `finalize`.
+- Evaluation is **identical to a rollup's**: the matching records (the
+  `filter`, pruned by the path template exactly as `query` is) are folded in
+  canonical path order, body-less, with the same contributing-value rules
+  and the same omission rules for empty results. The result is the aggregate
+  table a rollup record would carry, minus the key fields and `sourceTree`.
+  It is computed in the core (the `reduce` snippet runs in the embedded
+  engine) so Node and Python agree to the bit.
+- Nothing is persisted and no rollup is consulted; a consumer who wants the
+  precomputed answer queries the rollup sheet. `opts.signal` cancels as on
+  `query`.
+- The CLI form is `git sheet aggregate <sheet> [--filter …] --agg <name>=<form>[:<field>] … [--group-by <field>]`
+  ([api/cli.md](../api/cli.md#git-sheet-aggregate-sheet)); `gitsheets-axi`
+  mirrors it and gains `query --group-by`.
+
 ### Why the stamp lives in the record
 
 The stamp is provenance of a derived artifact — the identity of the input the
@@ -305,10 +340,6 @@ trusting the registry's history.
 
 ### Not in this spec
 
-- **Ad-hoc aggregation at query time** (`sheet.aggregate(filter, aggregates)`,
-  `gitsheets-axi query --group-by`; [#223](https://github.com/JarvusInnovations/gitsheets/issues/223)).
-  The aggregate grammar above is designed to be reused there verbatim, with
-  no persistence; it is a separate surface and a separate plan.
 - **Multi-level composition guarantees** (year == Σ months for floats). See
   "Canonical computation".
 - **Rollups over rollups.** Chains are refused.
