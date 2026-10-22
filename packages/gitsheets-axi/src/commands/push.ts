@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 
 import { AxiError } from 'axi-sdk-js';
 
+import type { Repository } from 'gitsheets';
+
 import type { GitsheetsContext } from '../context.js';
 import { renderObject } from '../output/render.js';
 
@@ -11,7 +13,9 @@ const exec = promisify(execFile);
 export const PUSH_HELP = `usage: gitsheets-axi push [--remote r] [--branch b]
 flags[2]:
   --remote <r>         Git remote to push to (default: origin)
-  --branch <b>         Branch to push (default: the repo's current HEAD branch)
+  --branch <b>         Branch to push — the global --branch (default: the
+                       repo's default branch: GITSHEETS_BRANCH,
+                       gitsheets.branch, else HEAD's branch)
 examples:
   gitsheets-axi push
   gitsheets-axi push --remote upstream --branch main
@@ -31,11 +35,10 @@ errors:
 
 interface PushFlags {
   remote: string;
-  branch: string | undefined;
 }
 
 function parsePushFlags(args: string[]): PushFlags {
-  const flags: PushFlags = { remote: 'origin', branch: undefined };
+  const flags: PushFlags = { remote: 'origin' };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) continue;
@@ -43,12 +46,6 @@ function parsePushFlags(args: string[]): PushFlags {
     if (arg === '--remote') {
       if (!next) throw new AxiError('--remote expects a name', 'VALIDATION_ERROR');
       flags.remote = next;
-      i++;
-      continue;
-    }
-    if (arg === '--branch') {
-      if (!next) throw new AxiError('--branch expects a name', 'VALIDATION_ERROR');
-      flags.branch = next;
       i++;
       continue;
     }
@@ -60,13 +57,9 @@ function parsePushFlags(args: string[]): PushFlags {
   return flags;
 }
 
-async function resolveBranch(gitDir: string): Promise<string> {
-  const { stdout } = await exec(
-    'git',
-    ['symbolic-ref', '--short', 'HEAD'],
-    { cwd: gitDir },
-  );
-  const branch = stdout.trim();
+/** The repository's default branch (specs/behaviors/default-branch.md); REF_ERROR on a detached HEAD. */
+function resolveBranch(repo: Repository): string {
+  const branch = repo.branch;
   if (!branch) {
     throw new AxiError(
       "Couldn't determine current branch (detached HEAD?)",
@@ -93,7 +86,8 @@ export async function pushCommand(
   const flags = parsePushFlags(args);
   const repo = await ctx.repo();
   const gitDir = repo.gitDir;
-  const branch = flags.branch ?? (await resolveBranch(gitDir));
+  // `--branch` is the global flag: it binds the repo, so push the default branch.
+  const branch = resolveBranch(repo);
 
   let stderr = '';
   try {
