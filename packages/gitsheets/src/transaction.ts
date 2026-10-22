@@ -29,14 +29,16 @@ export interface Author {
 
 export interface TransactionOptions {
   /**
-   * Ref name or commit hash to parent the commit on; defaults to current HEAD.
+   * Ref name or commit hash to parent the commit on; defaults to the
+   * repository's default branch (specs/behaviors/default-branch.md).
    * `null` opens an **orphan** root commit: the tree starts empty, the commit
    * has no parents and always lands, and `branch` (if set) is created — it
    * must not already exist. See specs/api/transaction.md "Parent ref handling".
    */
   readonly parent?: string | null;
   /**
-   * Ref name to update on commit; default: parent if it's a branch, null if a
+   * Ref name to update on commit; default: parent if it's a branch (so the
+   * default branch when `parent` is omitted), null if a
    * hash. A branch that does not exist yet is created.
    */
   readonly branch?: string;
