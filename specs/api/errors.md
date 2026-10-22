@@ -26,6 +26,11 @@ export class ContractError extends GitsheetsError {
   readonly contract?: string;          // contract name, when one is in scope
   readonly issues?: ValidationIssue[]; // conformance report on contract_unsatisfied
 }
+export class RollupError extends GitsheetsError {
+  readonly sheet: string;              // the rollup sheet
+  readonly partition: string;          // the partition path that failed
+  readonly aggregate: string;          // the aggregate name
+}
 ```
 
 Every gitsheets exception extends `GitsheetsError`. Consumer catch blocks can typically use:
@@ -63,6 +68,8 @@ try {
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
 | `RefError` | `not_an_ancestor` | 409 | Merge-like operation where src is not an ancestor of dst |
+| `TransactionError` | `sheet_derived` | 409 | A write to a rollup sheet — rollup records are regenerated from the source, never written by consumers ([behaviors/rollups.md](../behaviors/rollups.md)) |
+| `RollupError` | `rollup_failed` | 422 | An aggregate could not be computed for a partition (mixed value kinds under `min`/`max`/`distinct`, a `reduce` that threw or returned a non-TOML value); carries sheet, partition, and aggregate name. Aborts the commit or the read that recomputed |
 | `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
 | `NotFoundError` | `record_not_found` | 404 | `delete` / `patch` / etc. against a path that doesn't exist |

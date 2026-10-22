@@ -53,6 +53,10 @@ This differs from the [pre-v1.0 PR #38 prototype](https://github.com/JarvusInnov
 
 **Two short-circuit paths, same return shape.** The library tracks an `anyMutation` flag as a cheap heuristic (set by `upsert`/`delete`/`clear`/etc.), but that flag is an over-approximation. The authoritative no-op signal is tree-hash equality with the parent: after `workspace.root.write()` produces the resulting tree hash, it's compared to `parentCommitHash^{tree}`. A match means semantically nothing changed, and the same `{ commitHash: null, ... }` return path fires. See [api/transaction.md#no-op-detection](../api/transaction.md#no-op-detection) for examples (re-upsert of byte-identical record; `clear()` + re-upsert of unchanged snapshot data; etc.). On a fresh repo (no parent), no tree-hash comparison is possible — an initial commit IS produced even when the tree is empty.
 
+### Rollup pass
+
+Before a transaction's tree is committed, gitsheets regenerates the rollup records ([rollups.md](rollups.md)) of every partition the transaction changed in any rollup's source sheet, staging them into the same tree. The records and their aggregates land in one commit; a `RollupError` aborts it like a `ValidationError` would. A transaction that touches no rollup source stages nothing extra.
+
 ## Commit message format
 
 ```text
