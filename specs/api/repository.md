@@ -15,6 +15,9 @@ const repo = await openRepo({
   gitDir?: string,           // path to a .git directory; default: discovered from cwd
   workTree?: string | null,  // optional working-tree path; default: null (bare-style operation)
   branch?: string,           // branch mode: the default branch — reads, commits, refresh, sync all target it; default: GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch
+  submodule?: string,        // submodule mode: open this submodule of the project; writes advance its HEAD (the superproject's pointer)
+  at?: string,               // submodule mode: read-only, pinned to the snapshot the superproject's commit-ish gitlinks
+  stagePointer?: boolean,    // submodule mode: also update the superproject's index gitlink after each commit; default false
 });
 ```
 
@@ -22,7 +25,7 @@ Backed by hologit's repo discovery. If `gitDir` is omitted, the library probes `
 
 A fresh-but-initialized repository (no commits yet) is supported — see [#19](https://github.com/JarvusInnovations/gitsheets/issues/19).
 
-**`opts.branch`** binds the repository to a **default branch** other than the one `HEAD` points at — the branch every live sheet reads, every transaction commits to by default, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. The resolution order (option → `GITSHEETS_BRANCH` → `gitsheets.branch` git config → `HEAD`), the full list of what the binding governs, and the bootstrap path for a branch that does not exist yet are in .[behaviors/default-branch.md](../behaviors/default-branch.md).. `repo.branch` reports the resolved short name (`null` on a detached `HEAD`).
+**`opts.branch`** binds the repository to a **default branch** other than the one `HEAD` points at — the branch every live sheet reads, every transaction commits to by default, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. **`opts.submodule`** opens a submodule's repository instead, with the submodule's `HEAD` as the default branch so each commit advances the superproject's pointer; `at` pins it read-only to the snapshot a superproject commit gitlinks; `stagePointer` also stages the moved gitlink. The resolution order (option → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` → `gitsheets.branch` / `gitsheets.submodule` git config → `HEAD`), the full list of what the binding governs, submodule-mode pointer semantics, and the bootstrap paths are in .[behaviors/default-branch.md](../behaviors/default-branch.md).. `repo.branch` reports the resolved short name (`null` on a detached `HEAD`); `repo.submodule` the submodule path (`null` in branch mode).
 
 ## Methods
 
@@ -288,7 +291,7 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 
 | Class | Code | When |
 | --- | --- | --- |
-| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `readBlob` / `readBlobStream` ref doesn't resolve; `openSheet` / `openSheets` / `openStore` `opts.ref` doesn't resolve to a tree |
+| `RefError` | `ref_not_found` | `parent` ref doesn't exist; `openRepo({ submodule, at })` superproject ref has no gitlink; `readBlob` / `readBlobStream` ref doesn't resolve; `openSheet` / `openSheets` / `openStore` `opts.ref` doesn't resolve to a tree |
 | `TransactionError` | `transaction_required` | A permissive-mode write on a ref-pinned (read-only) sheet |
 | `NotFoundError` | `record_not_found` | `readBlob` / `readBlobStream` path absent under the ref, or not a blob |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
