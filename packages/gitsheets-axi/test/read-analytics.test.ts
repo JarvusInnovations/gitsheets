@@ -113,6 +113,71 @@ describe('query --group-by', () => {
   });
 });
 
+describe('query --group-by is aggregate sugar (#223)', () => {
+  it('answers the faceted-count ask in one call, leaving out records without the field', async () => {
+    const fixture = await seeded();
+    const { stdout, exitCode } = await runCli(['query', 'repos', '--group-by', 'target_team'], fixture.path);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('groups[2]');
+    expect(stdout).toContain('slate,2');
+    expect(stdout).toContain('sencha,1');
+    expect(stdout).toMatch(/matched: 5\b/);
+  });
+});
+
+describe('aggregate', () => {
+  it('computes named aggregates as TOON', async () => {
+    const fixture = await seeded();
+    const { stdout, exitCode } = await runCli(
+      ['aggregate', 'repos', '--agg', 'n=count', '--agg', 'teams=distinct:target_team', '--agg', 'last=max:pushed_at'],
+      fixture.path,
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout).toMatch(/n: 5\b/);
+    expect(stdout).toMatch(/teams\[2\]: sencha,slate/);
+    expect(stdout).toContain('last: 2024-01-01');
+  });
+
+  it('applies --group-by to every aggregate and honors the --filter DSL', async () => {
+    const fixture = await seeded();
+    const { stdout, exitCode } = await runCli(
+      [
+        'aggregate', 'repos', '--agg', 'n=count', '--agg', 'latest=max:pushed_at',
+        '--group-by', 'visibility', '--filter', 'archived=false', '--filter', 'name~^[ab]',
+      ],
+      fixture.path,
+    );
+    expect(exitCode).toBe(0);
+    // a (public, 2023-05-01) and b (private, 2021-01-01).
+    expect(stdout).toMatch(/n:\n\s+private: 1\n\s+public: 1/);
+    expect(stdout).toContain('private: 2021-01-01');
+    expect(stdout).toContain('public: 2023-05-01');
+  });
+
+  it('rejects a malformed --agg or a missing --agg', async () => {
+    const fixture = await seeded();
+    for (const args of [
+      ['aggregate', 'repos', '--agg', 'n=median:x'],
+      ['aggregate', 'repos', '--agg', 'n=sum'],
+      ['aggregate', 'repos'],
+      ['aggregate', 'repos', '--filter', 'status=classified'],
+    ]) {
+      const { exitCode, stdout } = await runCli(args, fixture.path);
+      expect(exitCode, args.join(' ')).not.toBe(0);
+      expect(stdout).toMatch(/VALIDATION_ERROR/);
+    }
+  });
+
+  it('surfaces a data-dependent failure as AGGREGATION_FAILED', async () => {
+    const fixture = await seeded();
+    // `visibility` is a string everywhere else; f carries a number.
+    await runCli(['upsert', 'repos', '--data', JSON.stringify([{ name: 'f', visibility: 7 }])], fixture.path);
+    const { exitCode, stdout } = await runCli(['aggregate', 'repos', '--agg', 'v=distinct:visibility'], fixture.path);
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toMatch(/AGGREGATION_FAILED/);
+  });
+});
+
 describe('query --sort', () => {
   it('sorts ascending / descending, exported verbatim', async () => {
     const fixture = await seeded();
