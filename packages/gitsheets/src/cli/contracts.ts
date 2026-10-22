@@ -31,7 +31,7 @@ import { openRepo } from '../repository.js';
 import type { RecordLike } from '../path-template/index.js';
 import { parseToml, stringifyRecord } from '../toml.js';
 import type { JSONSchema } from '../validation.js';
-import { buildTxOpts, type GlobalArgs } from './shared.js';
+import { buildTxOpts, readRef, repoOptions, type GlobalArgs } from './shared.js';
 
 const exec = promisify(execFile);
 
@@ -266,8 +266,8 @@ function printImplementsHint(name: string): void {
 // --- adopt ----------------------------------------------------------------------
 
 async function runContractsAdopt(argv: AdoptArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
-  const ref = argv.ref ?? 'HEAD';
+  const repo = await openRepo(repoOptions(argv));
+  const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
   // yargs-parser mangles a bare `-` positional into `''` (the same quirk
@@ -370,8 +370,8 @@ async function runContractsAdopt(argv: AdoptArgs): Promise<void> {
 // --- verify -----------------------------------------------------------------
 
 async function runContractsVerify(argv: VerifyArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
-  const ref = argv.ref ?? 'HEAD';
+  const repo = await openRepo(repoOptions(argv));
+  const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
   let sheetNames: string[];
@@ -444,8 +444,8 @@ async function runContractsVerify(argv: VerifyArgs): Promise<void> {
 // --- test -----------------------------------------------------------------------
 
 async function runContractsTest(argv: TestArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
-  const ref = argv.ref ?? 'HEAD';
+  const repo = await openRepo(repoOptions(argv));
+  const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
   const sheet = await repo.openSheet(argv.sheet, sheetOpenOpts(root));
@@ -486,8 +486,8 @@ async function runContractsTest(argv: TestArgs): Promise<void> {
 // --- sync -----------------------------------------------------------------------
 
 async function runContractsSync(argv: SyncArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
-  const ref = argv.ref ?? 'HEAD';
+  const repo = await openRepo(repoOptions(argv));
+  const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
   const sourcesPath = scopedPath(root, '.gitsheets/contracts/sources.toml');
@@ -535,8 +535,8 @@ async function runContractsSync(argv: SyncArgs): Promise<void> {
 // --- export ---------------------------------------------------------------------
 
 async function runContractsExport(argv: ExportArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
-  const ref = argv.ref ?? 'HEAD';
+  const repo = await openRepo(repoOptions(argv));
+  const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
   const schema = loadVendoredContract(repo.gitDir, ref, root, argv.name);
@@ -578,8 +578,8 @@ async function promptYesNo(question: string): Promise<boolean> {
 }
 
 async function runContractsPrune(argv: PruneArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
-  const ref = argv.ref ?? 'HEAD';
+  const repo = await openRepo(repoOptions(argv));
+  const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
   const allSheets = await repo.openSheets(sheetOpenOpts(root));

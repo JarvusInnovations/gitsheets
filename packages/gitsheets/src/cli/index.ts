@@ -36,7 +36,7 @@ import {
   type OutputFormat,
 } from './formats.js';
 import { registerContractsCommands } from './contracts.js';
-import { buildTxOpts, type GlobalArgs } from './shared.js';
+import { buildTxOpts, readRef, repoOptions, type GlobalArgs } from './shared.js';
 
 export type { GlobalArgs } from './shared.js';
 
@@ -88,6 +88,8 @@ interface InitArgs extends GlobalArgs {
   path?: string;
   schema?: string;
   force?: boolean;
+  /** Explicit spelling of what init does — commit the config (specs/behaviors/default-branch.md#bootstrapping). */
+  commit?: boolean;
 }
 
 interface MergeArgs extends GlobalArgs {
@@ -193,7 +195,7 @@ function resolveEncoding(raw: string | undefined): BufferEncoding {
 async function loadRepoAndSheet(
   argv: GlobalArgs & { sheet: string },
 ): Promise<{ repo: Awaited<ReturnType<typeof openRepo>>; sheet: Sheet }> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openRepo(repoOptions(argv));
   const sheetOpts: { root?: string; prefix?: string } = {};
   if (argv.root) sheetOpts.root = argv.root;
   if (argv.prefix) sheetOpts.prefix = argv.prefix;
@@ -580,7 +582,7 @@ async function runInfer(argv: InferArgs): Promise<void> {
   ].sort();
 
   // Read existing config and merge schema into it (preserving root / path / fields).
-  const ref = argv.ref ?? 'HEAD';
+  const ref = readRef(argv, repo);
   const configText = await readSheetConfigText(repo.gitDir, ref, configPath);
   const parsed = parseToml(configText) as RecordLike;
   const gitsheet = (parsed['gitsheet'] ?? {}) as RecordLike;
@@ -600,11 +602,11 @@ async function runInfer(argv: InferArgs): Promise<void> {
 }
 
 async function runInit(argv: InitArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openRepo(repoOptions(argv));
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
 
   // Refuse to overwrite an existing config (unless --force).
-  const ref = argv.ref ?? 'HEAD';
+  const ref = readRef(argv, repo);
   if (!argv.force) {
     try {
       await readSheetConfigText(repo.gitDir, ref, configPath);
@@ -651,18 +653,38 @@ async function runInit(argv: InitArgs): Promise<void> {
     );
   }
 
-  const txOpts = buildTxOpts(argv, `${argv.sheet} init sheet config`);
+  const txOpts: import('../transaction.js').TransactionOptions = await bootstrapTxOpts(
+    repo,
+    buildTxOpts(argv, `${argv.sheet} init sheet config`),
+  );
   await repo.transact(txOpts, async (tx) => {
     tx.writeFile(configPath, newText);
   });
   process.stdout.write(`created .gitsheets/${argv.sheet}.toml\n`);
 }
 
+/**
+ * `init` onto a `--ref` branch that does not exist yet: start it with a root
+ * commit (an orphan transaction creating that branch) rather than failing to
+ * resolve the parent. The default-branch case needs nothing here —
+ * `repo.transact` bootstraps an unborn default branch itself.
+ * See specs/behaviors/default-branch.md#bootstrapping.
+ */
+async function bootstrapTxOpts(
+  repo: Awaited<ReturnType<typeof openRepo>>,
+  txOpts: ReturnType<typeof buildTxOpts>,
+): Promise<import('../transaction.js').TransactionOptions> {
+  const parent = txOpts.parent;
+  if (parent === undefined || (await repo.resolveRef(parent)) !== null) return txOpts;
+  if (!/^[A-Za-z0-9._/-]+$/.test(parent) || /^[0-9a-f]{4,40}$/i.test(parent)) return txOpts;
+  return { ...txOpts, parent: null, branch: txOpts.branch ?? parent };
+}
+
 async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openRepo(repoOptions(argv));
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
 
-  const ref = argv.ref ?? 'HEAD';
+  const ref = readRef(argv, repo);
   const configText = await readSheetConfigText(repo.gitDir, ref, configPath);
   const parsed = parseToml(configText) as RecordLike;
   const gitsheet = (parsed['gitsheet'] ?? {}) as RecordLike;
@@ -735,7 +757,7 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
  * idempotent and never committed.
  */
 async function runInstallDriver(argv: MergeArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openRepo(repoOptions(argv));
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const exec = promisify(execFile);
@@ -748,7 +770,7 @@ async function runInstallDriver(argv: MergeArgs): Promise<void> {
   process.stdout.write('set: merge.gitsheets.driver = "git sheet merge-driver %O %A %B %P"\n');
 
   const root = argv.root && argv.root !== '/' ? argv.root : '.';
-  const sheets = await repo.openSheets(root === '.' ? {} : { root });
+  const sheets = await sheetsAtHead(repo, root);
   const wanted: string[] = [];
   for (const name of Object.keys(sheets).sort()) {
     const config = await sheets[name]!.readConfig();
@@ -792,7 +814,7 @@ async function runInstallDriver(argv: MergeArgs): Promise<void> {
 
 async function runMerge(argv: MergeArgs): Promise<void> {
   if (argv.installDriver) return runInstallDriver(argv);
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openRepo(repoOptions(argv));
   const opts: import('../repository.js').MergeOptions = {
     theirs: argv.theirs!,
     commit: !argv.dryRun,
@@ -825,6 +847,22 @@ async function runMerge(argv: MergeArgs): Promise<void> {
   }
 }
 
+/**
+ * Sheets declared at git's `HEAD` — the merge driver works on the checked-out
+ * branch's merge, whatever the repository's default branch is (an explicit
+ * ref, specs/behaviors/default-branch.md). Empty when HEAD is unborn.
+ */
+async function sheetsAtHead(
+  repo: Awaited<ReturnType<typeof openRepo>>,
+  root: string,
+): Promise<Record<string, Sheet>> {
+  try {
+    return await repo.openSheets(root === '.' ? { ref: 'HEAD' } : { root, ref: 'HEAD' });
+  } catch {
+    return {};
+  }
+}
+
 /** Extension for a sheet's format type. */
 function extensionFor(type: string): string {
   return type === 'markdown' ? '.md' : type === 'mdx' ? '.mdx' : '.toml';
@@ -838,14 +876,14 @@ function extensionFor(type: string): string {
  * `git merge-file`, leaving git's markers, and exits 1.
  */
 async function runMergeDriver(argv: MergeDriverArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openRepo(repoOptions(argv));
   const root = argv.root && argv.root !== '/' ? argv.root : '.';
   const [baseText, oursText, theirsText] = await Promise.all([
     readFile(argv.base, 'utf8').catch(() => ''),
     readFile(argv.ours, 'utf8'),
     readFile(argv.theirs, 'utf8'),
   ]);
-  const sheets = await repo.openSheets(root === '.' ? {} : { root });
+  const sheets = await sheetsAtHead(repo, root);
   let owner: { name: string; configPath: string } | undefined;
   for (const [name, sheet] of Object.entries(sheets)) {
     const config = await sheet.readConfig();
@@ -1068,7 +1106,12 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       describe:
         'Sub-prefix under each sheet\'s config root — scopes records to a sub-tree (multi-tenant)',
     })
-    .option('ref', { type: 'string', describe: "Parent ref/commit; default HEAD's branch" })
+    .option('branch', {
+      type: 'string',
+      describe:
+        "The repository's default branch (reads, commits, sync); default: $GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch",
+    })
+    .option('ref', { type: 'string', describe: 'Ref/commit to read from or transact against; default: the default branch' })
     .option('commit-to', { type: 'string', describe: 'Branch to update on commit' })
     .option('message', { type: 'string', describe: 'Commit message (mutating commands)' })
     .option('author-name', { type: 'string', describe: 'Commit author name' })
@@ -1219,7 +1262,7 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
     )
     .command<InitArgs>(
       'init <sheet>',
-      "Scaffold .gitsheets/<sheet>.toml with sensible defaults",
+      'Commit a starter .gitsheets/<sheet>.toml with sensible defaults',
       (y) =>
         y
           .positional('sheet', { type: 'string', demandOption: true })
@@ -1235,6 +1278,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             type: 'boolean',
             default: false,
             describe: 'Overwrite an existing .gitsheets/<sheet>.toml',
+          })
+          .option('commit', {
+            type: 'boolean',
+            describe:
+              'Commit the config to the target ref (what init always does); an absent branch is created with a root commit',
           }),
       runInit,
     )
