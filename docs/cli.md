@@ -13,7 +13,8 @@ operation on a `Repository` (or `Sheet`/`Transaction`).
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
-| `--ref <ref>` | `HEAD` | `GITSHEETS_REF` |
+| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
+| `--ref <ref>` | the default branch | `GITSHEETS_REF` |
 | `--commit-to <ref>` | derived from `--ref` | — |
 | `--message <msg>` | auto-generated | — |
 | `--author-name <name>`, `--author-email <email>` | git config | — |
@@ -25,6 +26,21 @@ under `<root>/<tenant>/...`. With `--prefix tenant-a`, a sheet whose config
 declares `root = 'users'` reads/writes records at `users/tenant-a/<path>.toml`.
 The sheet's `.gitsheets/<name>.toml` config file is unaffected — only the
 record data tree is scoped.
+
+`--branch` selects the repository's **default branch** — the branch commands
+read from and commit to. It resolves flag → `GITSHEETS_BRANCH` →
+`gitsheets.branch` git config → the branch `HEAD` points at, the same order
+the library's `openRepo` uses, so one `git config gitsheets.branch data` per
+clone binds both the CLI and the application. `--ref` defaults to that
+branch. Records on a branch that is never checked out need no working tree
+and leave `git status` clean — see [Headless data](recipes/headless-data.md).
+
+```bash
+git config gitsheets.branch data     # once per clone
+gitsheets query users                # reads the data branch
+GITSHEETS_BRANCH=data gitsheets upsert users '{"slug":"jane"}'
+gitsheets --branch data read users jane
+```
 
 ## Commands
 
@@ -165,7 +181,11 @@ gitsheets normalize users
 
 ### `gitsheets init <sheet>`
 
-Scaffold `.gitsheets/<sheet>.toml` with sensible defaults. Useful as a first-step before bulk-importing records.
+Commit a starter `.gitsheets/<sheet>.toml` with sensible defaults to the target ref (`--ref` / `--commit-to`, default the default branch). Useful as a first-step before bulk-importing records. The working tree is not written. When the target branch does not exist yet, it is created with a root commit holding only the config — the way to start a data branch:
+
+```bash
+gitsheets init users --commit --branch data
+```
 
 ```bash
 gitsheets init users
@@ -183,6 +203,7 @@ Flags:
 - `--path <tpl>` — override the path template.
 - `--schema <file>` — embed a JSON Schema file under `[gitsheet.schema]`. The schema is validated through the same loader the runtime uses; an invalid schema aborts before the transaction commits.
 - `--force` — overwrite an existing `.gitsheets/<sheet>.toml`. Without `--force`, init refuses to clobber.
+- `--commit` — the explicit spelling of what init does (commit the config); reads well in bootstrap scripts.
 
 ### `gitsheets infer <sheet>`
 
@@ -217,7 +238,7 @@ Migration table (matches [`specs/behaviors/validation.md`](https://github.com/Ja
 Sheet-aware merge ([spec](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/merge.md)): record files changed on both sides since the merge base are merged **field by field** and written in canonical form, so a merged repo never carries a mix of serializations. Non-record files merge the way git merges them.
 
 ```bash
-gitsheets merge import                      # into HEAD's branch
+gitsheets merge import                      # into the default branch
 gitsheets merge import --into published     # into another branch
 gitsheets merge import --dry-run            # report the merged tree, move nothing
 gitsheets merge import --prefer theirs      # resolve field / delete-modify / blob conflicts for one side

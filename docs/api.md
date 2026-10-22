@@ -59,7 +59,10 @@ Open a `Repository` against a git directory. Discovers from cwd upward when `git
 ```typescript
 const repo = await openRepo();                         // discovered
 const repo = await openRepo({ gitDir: '/.git' });      // explicit
+const repo = await openRepo({ branch: 'data' });       // branch mode: records live on `data`
 ```
+
+**Default branch.** Every repository is bound to one *default branch*: the branch live sheets read, transactions commit to when given no `parent`, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. It resolves once, at open, from the first of `opts.branch` → `GITSHEETS_BRANCH` → the `gitsheets.branch` git config of the opened repository → the branch `HEAD` points at. `repo.branch` reports it (`'data'`), or `null` when the repository is bound to a detached `HEAD` (every default then follows `HEAD`, as before). A tag, commit, or malformed name throws `ConfigError` (`config_invalid`). The branch may not exist yet: it reads as empty and the first committing transaction creates it with a root commit. Explicit refs — `readBlob('HEAD', …)`, `openSheet(name, { ref: 'HEAD' })`, `transact({ parent: 'main' })` — keep meaning exactly what they name. See [Headless data](recipes/headless-data.md).
 
 → [`specs/api/repository.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md)
 
@@ -93,7 +96,8 @@ const store = await openStore(repo, {
 | `repo.tag(name, target?, { force? })` | Lightweight tag (default target `HEAD`); refuses an existing tag unless `force` — `git tag -f` without the spawn |
 | `repo.listTree(ref, path?)` | Direct entries `{ name, type, mode, hash }` of the tree at `<ref>:<path>`, or `null` — `git ls-tree` without the spawn |
 | `repo.merge({ theirs, ours?, prefer?, commit? })` | Sheet-aware merge: record files changed on both sides are field-merged and written canonically; conflicts follow `prefer` (`fail` · `ours` · `theirs`) or are reported in the result, never thrown. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
-| `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |
+| `repo.refresh()` | Rebind every live Sheet to the default branch's current tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |
+| `repo.branch` | The default branch's short name, or `null` when bound to a detached `HEAD` |
 | `repo.readBlob(ref, path)` | `Promise<BlobHandle>` — the blob at `<ref>:<path>`, resolved at call time: `hash`, `size` (from the object header), `read()`, `stream()`. Throws `RefError` / `NotFoundError` |
 | `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()`: in-core up to 1 MiB, piped from `git cat-file blob` above that |
 
@@ -114,7 +118,7 @@ const store = await openStore(repo, {
 | `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` — honors `opts.signal`, `opts.withBody` |
 | `sheet.get(path, opts?)` | `Promise<T \| undefined>` — one record by its rendered path (one blob read, no scan); `opts.withBody`; on a tx-bound sheet reads the private tree |
 | `sheet.loadBody(record)` | `Promise<T>` — hydrate a body-less record (content-typed sheets) |
-| `sheet.refresh()` | Rebind this sheet's read snapshot to the current HEAD tree (out-of-band movement; own commits auto-refresh) |
+| `sheet.refresh()` | Rebind this sheet's read snapshot to the default branch's current tree (out-of-band movement; own commits auto-refresh) |
 | `sheet.pathForRecord(record)` | `Promise<string>` — rendered path, no write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` — canonical form, no write |
 
@@ -201,7 +205,7 @@ type Store<V extends ValidatorMap> = {
 };
 ```
 
-`store.<sheet>` for each sheet declared in `validators`. `store.transact(opts, async tx => ...)` mirrors `repo.transact` with `tx.<sheet>` aliases that thread validators through. `store.refresh()` rebinds every sheet to the current HEAD tree (delegates to `repo.refresh()`).
+`store.<sheet>` for each sheet declared in `validators`. `store.transact(opts, async tx => ...)` mirrors `repo.transact` with `tx.<sheet>` aliases that thread validators through. `store.refresh()` rebinds every sheet to the default branch's current tree (delegates to `repo.refresh()`).
 
 Reads through `store.<sheet>` follow the freshness model: a successful `store.transact` / `repo.transact` auto-refreshes, so post-commit reads reflect the committed state — see [`specs/behaviors/freshness.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/freshness.md).
 

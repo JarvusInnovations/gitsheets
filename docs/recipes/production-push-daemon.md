@@ -16,7 +16,7 @@ import { openRepo } from 'gitsheets';
 const repo = await openRepo();
 const daemon = await repo.startPushDaemon({
   remote: 'origin',
-  branch: 'main',                  // default: HEAD's branch
+  branch: 'main',                  // default: the repo's default branch
   backoff: 'exponential',          // default: 1s base, ×2 each retry, cap 1h
   maxRetries: Infinity,            // default: never give up unless stopped
 });

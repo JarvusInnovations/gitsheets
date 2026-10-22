@@ -104,7 +104,7 @@ gitsheets-axi delete <sheet> <path>      # remove a record (idempotent)
 gitsheets-axi check <sheet> <file>       # verify + optionally --fix
 gitsheets-axi diff <sheet> [<src-ref>]   # TOON change summary
 gitsheets-axi normalize <sheet>          # bulk re-canonicalize
-gitsheets-axi init <sheet>               # scaffold a starter config
+gitsheets-axi init <sheet>               # commit a starter config
 gitsheets-axi infer <sheet>              # observe records → schema
 gitsheets-axi migrate-config <sheet>     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
@@ -113,6 +113,16 @@ gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 ```
 
 Every command supports `--help` with its specific flags and 2-3 examples.
+
+### Default branch
+
+Every command reads and writes the repository's **default branch**: the
+global `--branch <name>` flag (accepted on any command, e.g.
+`gitsheets-axi query users --branch data`), else `GITSHEETS_BRANCH`, else
+the clone's `gitsheets.branch` git config, else the branch `HEAD` points at.
+`push` pushes that branch. A tag or malformed name is `CONFIG_INVALID`. See
+[Headless data](recipes/headless-data.md) for keeping records on a branch
+you never check out.
 
 `query`, `count`, and `distinct` share a `--filter` mini-DSL (`k=v`, `k!=v`,
 `k<v`, `k>v`, `k<=v`, `k>=v`, `k~regex`, `k in (a,b)`, `k:present`,
