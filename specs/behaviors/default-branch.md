@@ -105,11 +105,13 @@ branch**, so a project that exports `GITSHEETS_BRANCH=data` (or sets
 `gitsheets-axi` reading and writing the data branch with no flags.
 `--commit-to` derives from the resolved `--ref` as today.
 
-`gitsheets-axi` takes `--branch <name>` as a global flag **before** the
-command name (`gitsheets-axi --branch data query users`), because `push`
-already has a per-command `--branch` (the branch to push). Its config
-commands (`init`, `infer`, `migrate-config`) read the existing config from
-the default branch, and `push` without `--branch` pushes the default branch.
+`gitsheets-axi` accepts `--branch <name>` on every command, after the
+command name per AXI convention (`gitsheets-axi query users --branch data`)
+or before it. `push --branch` is that same global flag: binding the
+repository to a branch and pushing its default branch are one operation, so
+`push` with no `--branch` pushes the default branch. The config commands
+(`init`, `infer`, `migrate-config`) read the existing config from the
+default branch.
 
 ### Bootstrapping
 
