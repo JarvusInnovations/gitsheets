@@ -8,6 +8,7 @@ import type { RecordLike } from 'gitsheets';
 import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
+import { defaultRef } from '../util/default-ref.js';
 
 const exec = promisify(execFile);
 
@@ -175,7 +176,7 @@ export async function inferCommand(
   }
 
   // Read existing config, merge schema into it.
-  const existingText = await readConfigText(repo.gitDir, configPath);
+  const existingText = await readConfigText(repo.gitDir, defaultRef(repo), configPath);
   if (existingText === null) {
     throw new AxiError(
       `infer: ${configPath} doesn't exist — run \`gitsheets-axi init ${flags.sheet}\` first`,
@@ -236,9 +237,9 @@ export async function inferCommand(
   });
 }
 
-async function readConfigText(gitDir: string, path: string): Promise<string | null> {
+async function readConfigText(gitDir: string, ref: string, path: string): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['show', `HEAD:${path}`], {
+    const { stdout } = await exec('git', ['show', `${ref}:${path}`], {
       cwd: gitDir,
       maxBuffer: 100 * 1024 * 1024,
     });
