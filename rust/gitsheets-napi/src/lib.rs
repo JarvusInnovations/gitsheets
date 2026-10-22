@@ -29,6 +29,8 @@
 
 use chrono::{Datelike, Timelike};
 use gitsheets_core::diff::{MergePatch, PatchOp, PatchValue};
+use gitsheets_core::aggregate;
+use std::collections::HashSet;
 use gitsheets_core::engine::Engine;
 use gitsheets_core::index::{MultiIndex, UniqueIndex};
 use gitsheets_core::path_template::Template;
@@ -1097,6 +1099,98 @@ fn content_format(extension: &str, body_field: String, title_field: Option<Strin
     }
 }
 
+// ── ad-hoc aggregation (spec: behaviors/aggregation.md) ──────────────────────
+
+/// Throw a JS `TypeError` (a malformed aggregate spec at the call site) and
+/// return the sentinel that tells napi the exception is already pending.
+fn throw_type_error(env: &Env, message: &str) -> Error {
+    match env.throw_type_error(message, None) {
+        Ok(()) => Error::new(Status::PendingException, message.to_string()),
+        Err(e) => e,
+    }
+}
+
+/// Marshal the aggregates object and prepare it against `engine`: parse,
+/// reject body-field references (the filter's too), compile `reduce` /
+/// `finalize`. Every failure is a call-site `TypeError`.
+fn prepare_aggregates(
+    env: &Env,
+    aggregates: JsUnknown,
+    body_field: Option<&str>,
+    filter: &Filter,
+    engine: &mut Engine,
+) -> Result<aggregate::Prepared> {
+    let spec = unsafe { JsValue::from_napi_value(env.raw(), aggregates.raw()) }
+        .map_err(|e| throw_type_error(env, &format!("aggregate spec: {}", e.reason)))?;
+    aggregate::prepare(&spec.0, body_field, Some(filter), engine)
+        .map_err(|e| throw_type_error(env, e.message()))
+}
+
+fn admitted_paths(paths: Option<Vec<String>>) -> Option<HashSet<String>> {
+    paths.map(|p| p.into_iter().collect())
+}
+
+/// Ad-hoc aggregation over the sheet under `base` in `treeRef`: the records
+/// matching `filter` (pruned by `template`, read body-less, the filter
+/// applied in the core — the same forms `recordQuery` takes) folded in
+/// canonical path order by the `aggregates` table (count / sum / avg / min /
+/// max / distinct / reduce, each with optional `where` / `groupBy`). Returns
+/// one value per aggregate name. `paths`, when given, restricts the
+/// contributing set to those record paths (the binding admits records with
+/// host-side predicates first). A malformed spec throws `TypeError`; a
+/// data-dependent failure throws `AggregationError` (`aggregation_failed`)
+/// carrying `sheet` and `aggregate`. Batch-first: one FFI crossing.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn record_aggregate(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet: String,
+    base: String,
+    template: String,
+    filter: JsObject,
+    aggregates: JsUnknown,
+    extension: Option<String>,
+    body_field: Option<String>,
+    title_field: Option<String>,
+    paths: Option<Vec<String>>,
+) -> Result<JsValue> {
+    let ext = extension_of(extension);
+    let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let parsed = parse_filter(&env, &filter, &mut engine)?;
+    let prepared = prepare_aggregates(&env, aggregates, body_field.as_deref(), &parsed, &mut engine)?;
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
+    let format = match body_field {
+        Some(body) => content_format(&ext, body, title_field),
+        None => FormatConfig {
+            kind: FormatKind::Toml,
+            body: None,
+            title: None,
+            normalize: true,
+        },
+    };
+    let only = admitted_paths(paths);
+    aggregate::aggregate_records(
+        &ctx,
+        &mut tree,
+        &base,
+        &compiled,
+        &parsed,
+        &mut engine,
+        &ext,
+        &format,
+        &sheet,
+        &prepared,
+        only.as_ref(),
+    )
+    .map(JsValue)
+    .map_err(|err| raise_core_error(&env, &err))
+}
+
 /// A blob read by `treeRef:path` — the bytes plus the blob's object id, or
 /// `null` when nothing (or a subtree) lives at `path`. Backs sheet-config
 /// loading and lazy-body hydration without a `git cat-file` subprocess
@@ -1570,6 +1664,14 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
 
     if let Some(contract) = err.contract() {
         obj.set_named_property("contract", env.create_string(contract)?)?;
+    }
+
+    if let Some((sheet, aggregate, partition)) = err.aggregation() {
+        obj.set_named_property("sheet", env.create_string(sheet)?)?;
+        obj.set_named_property("aggregate", env.create_string(aggregate)?)?;
+        if let Some(p) = partition {
+            obj.set_named_property("partition", env.create_string(p)?)?;
+        }
     }
 
     env.throw(obj)?;
@@ -2163,6 +2265,42 @@ impl CoreTransaction {
                 .collect()),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
+    }
+
+    /// Ad-hoc aggregation over the sheet's records in the transaction's
+    /// private tree — the tx-bound `Sheet.aggregate` (spec:
+    /// `behaviors/aggregation.md`). Same filter / aggregates / `paths` forms
+    /// and errors as `recordAggregate`; reads body-less. Read-only.
+    #[napi]
+    pub fn aggregate(
+        &mut self,
+        env: Env,
+        name: String,
+        filter: JsObject,
+        aggregates: JsUnknown,
+        paths: Option<Vec<String>>,
+    ) -> Result<JsValue> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (ctx, tree) = tx.split();
+        let sheet = sheets
+            .get_mut(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        // The fold gets its own engine: reduce snippets are per-call and must
+        // not accumulate in the sheet's long-lived one.
+        let mut fold_engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+        let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
+        let body = sheet.config().format.body.clone();
+        let prepared = prepare_aggregates(&env, aggregates, body.as_deref(), &parsed, &mut fold_engine)?;
+        let rows = sheet
+            .query(&ctx, tree, &parsed, false)
+            .map_err(|err| raise_core_error(&env, &err))?;
+        let only = admitted_paths(paths);
+        aggregate::fold_rows(&name, &rows, only.as_ref(), &prepared, &mut fold_engine)
+            .map(JsValue)
+            .map_err(|err| raise_core_error(&env, &err))
     }
 
     /// Read the one record at `recordPath` (relative to the sheet's base, no
