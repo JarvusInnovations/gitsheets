@@ -238,6 +238,12 @@ committing them.
 
 ## Principles
 
+**Inherited** — project principles that especially bite on this spec:
+
+- [Behave like a first-party git extension](../principles.md#behave-like-a-first-party-git-extension) —
+  the binding resolves flag → env → `gitsheets.*` git config → `HEAD`, and the
+  library reads the same config the CLI does, so one clone has one binding.
+
 **Local:**
 
 - **The ref is the store; a checkout is a view.** gitsheets reads and writes
