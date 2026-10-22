@@ -41,6 +41,17 @@ use boa_engine::{js_string, Context, JsNativeErrorKind, JsValue as BoaValue, Sou
 use crate::error::{Error, Result};
 use crate::value::{Datetime, Value};
 
+/// Max iterations of any one loop in an aggregate snippet.
+pub const AGGREGATE_LOOP_LIMIT: u64 = 1_000_000;
+/// Max call-nesting depth in an aggregate snippet.
+pub const AGGREGATE_RECURSION_LIMIT: usize = 256;
+/// Max VM stack size (values) in an aggregate snippet.
+pub const AGGREGATE_STACK_LIMIT: usize = 10 * 1024;
+/// Max values (nodes) one engine→core conversion may produce — bounds a
+/// result built from shared references (`a = [x, x]; x = [a, a]; …`), whose
+/// tree expansion is exponential even when its depth is small.
+pub const MAX_UNMARSHAL_NODES: usize = 1_000_000;
+
 /// An opaque handle to a snippet compiled into the engine, returned by
 /// [`Engine::compile`] and reused across operations.
 pub type SnippetHandle = usize;
@@ -87,6 +98,21 @@ impl Engine {
             make_date,
             snippets: Vec::new(),
         })
+    }
+
+    /// A fresh engine under the aggregate runtime limits (spec:
+    /// `behaviors/aggregation.md` — purity is required but not enforced; the
+    /// limits are): a loop may iterate at most [`AGGREGATE_LOOP_LIMIT`] times,
+    /// calls nest at most [`AGGREGATE_RECURSION_LIMIT`] deep, and the VM
+    /// stack is capped, so a runaway snippet throws instead of hanging. Used
+    /// for `reduce` / `finalize`, one engine (realm) per fold.
+    pub fn new_limited() -> Result<Self> {
+        let mut engine = Engine::new()?;
+        let limits = engine.context.runtime_limits_mut();
+        limits.set_loop_iteration_limit(AGGREGATE_LOOP_LIMIT);
+        limits.set_recursion_limit(AGGREGATE_RECURSION_LIMIT);
+        limits.set_stack_size_limit(AGGREGATE_STACK_LIMIT);
+        Ok(engine)
     }
 
     /// Compile a JS source that must evaluate to a **callable**, returning a
@@ -317,14 +343,26 @@ impl Engine {
     /// a non-plain object, a cycle — is not TOML-representable: `Err` with a
     /// human-readable reason.
     pub fn to_core_value(&mut self, value: &BoaValue) -> std::result::Result<Value, String> {
-        self.unmarshal(value, 0)
+        let mut budget = MAX_UNMARSHAL_NODES;
+        self.unmarshal(value, 0, &mut budget)
     }
 
-    fn unmarshal(&mut self, value: &BoaValue, depth: usize) -> std::result::Result<Value, String> {
+    fn unmarshal(
+        &mut self,
+        value: &BoaValue,
+        depth: usize,
+        budget: &mut usize,
+    ) -> std::result::Result<Value, String> {
         const MAX_DEPTH: usize = 128;
         if depth > MAX_DEPTH {
             return Err(format!("value nests deeper than {MAX_DEPTH} levels (a cycle?)"));
         }
+        if *budget == 0 {
+            return Err(format!(
+                "value expands to more than {MAX_UNMARSHAL_NODES} values (shared references?)"
+            ));
+        }
+        *budget -= 1;
         if value.is_null_or_undefined() {
             return Err("null/undefined is not a TOML value".into());
         }
@@ -364,7 +402,7 @@ impl Engine {
             if !ms.is_finite() {
                 return Err("an invalid Date is not a TOML value".into());
             }
-            return Ok(Value::Datetime(unix_millis_to_datetime(ms as i64)));
+            return unix_millis_to_datetime(ms as i64).map(Value::Datetime);
         }
         if obj.is_array() {
             let arr = JsArray::from_object(obj).map_err(|e| e.to_string())?;
@@ -375,7 +413,7 @@ impl Engine {
                 if el.is_null_or_undefined() {
                     return Err(crate::value::null_array_element_msg("null/undefined", i as usize));
                 }
-                items.push(self.unmarshal(&el, depth + 1)?);
+                items.push(self.unmarshal(&el, depth + 1, budget)?);
             }
             return Ok(Value::Array(items));
         }
@@ -400,7 +438,7 @@ impl Engine {
             if child.is_null_or_undefined() {
                 continue;
             }
-            let v = self.unmarshal(&child, depth + 1)?;
+            let v = self.unmarshal(&child, depth + 1, budget)?;
             map.insert(name, v);
         }
         Ok(Value::Table(map))
@@ -498,13 +536,16 @@ fn number_to_value(n: f64) -> Value {
 
 /// The offset datetime at UTC (`Z`, millisecond precision) for JS-`Date`
 /// epoch milliseconds — the same projection the bindings apply to a host
-/// `Date`.
-fn unix_millis_to_datetime(ms: i64) -> Datetime {
+/// `Date`. A UTC year outside TOML's 0–9999 is not representable.
+fn unix_millis_to_datetime(ms: i64) -> std::result::Result<Datetime, String> {
     let days = ms.div_euclid(86_400_000);
     let rem = ms.rem_euclid(86_400_000);
     let (y, m, d) = civil_from_days(days);
+    if !(0..=9999).contains(&y) {
+        return Err(format!("a Date in year {y} is outside TOML's 0–9999 range"));
+    }
     let secs = rem / 1000;
-    Datetime(toml::value::Datetime {
+    Ok(Datetime(toml::value::Datetime {
         date: Some(toml::value::Date {
             year: y as u16,
             month: m as u8,
@@ -517,7 +558,7 @@ fn unix_millis_to_datetime(ms: i64) -> Datetime {
             nanosecond: ((rem % 1000) * 1_000_000) as u32,
         }),
         offset: Some(toml::value::Offset::Z),
-    })
+    }))
 }
 
 /// Proleptic-Gregorian civil date for days since the Unix epoch — the

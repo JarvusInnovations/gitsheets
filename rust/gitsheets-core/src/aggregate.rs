@@ -97,13 +97,13 @@ pub struct Aggregates {
     pub specs: Vec<AggregateSpec>,
 }
 
-/// An aggregates table with its snippets compiled into an engine — what
-/// [`fold`] runs. Only valid with the engine it was prepared against.
+/// A validated aggregates table whose `reduce` / `finalize` snippets are
+/// known to compile — what [`fold`] runs. The fold compiles them again into a
+/// fresh, runtime-limited engine (realm) per group, so `globalThis` state can't
+/// leak between calls, aggregates, or groups (spec: "`reduce` … purity").
 #[derive(Clone, Debug)]
 pub struct Prepared {
     specs: Vec<AggregateSpec>,
-    /// Per spec: the compiled `(reduce, finalize)` handles for a `reduce`.
-    snippets: Vec<Option<(SnippetHandle, Option<SnippetHandle>)>>,
 }
 
 impl Prepared {
@@ -269,50 +269,53 @@ impl Aggregates {
         Ok(())
     }
 
-    /// Compile every `reduce` / `finalize` snippet into `engine` (once per
-    /// call, reused for every record). A snippet that does not compile is
-    /// [`Error::ConfigInvalid`].
-    pub fn prepare(self, engine: &mut Engine) -> Result<Prepared> {
-        let mut snippets = Vec::with_capacity(self.specs.len());
+    /// Check that every `reduce` / `finalize` snippet compiles (in a scratch
+    /// engine). A snippet that does not is [`Error::ConfigInvalid`].
+    pub fn prepare(self) -> Result<Prepared> {
+        let mut scratch: Option<Engine> = None;
         for spec in &self.specs {
-            snippets.push(match &spec.form {
-                Form::Reduce { body, finalize, .. } => {
-                    let reduce = engine
-                        .compile(&format!("(acc, record) => {{ {body}\n}}"))
-                        .map_err(|e| {
-                            malformed(format!("{:?}: `reduce`: {}", spec.name, e.message()))
-                        })?;
-                    let fin = match finalize {
-                        Some(f) => Some(engine.compile(&format!("(acc) => {{ {f}\n}}")).map_err(
-                            |e| malformed(format!("{:?}: `finalize`: {}", spec.name, e.message())),
-                        )?),
-                        None => None,
-                    };
-                    Some((reduce, fin))
-                }
-                _ => None,
-            });
+            if let Form::Reduce { .. } = spec.form {
+                let engine = match &mut scratch {
+                    Some(e) => e,
+                    None => scratch.insert(Engine::new_limited()?),
+                };
+                compile_reduce(spec, engine)?;
+            }
         }
-        Ok(Prepared {
-            specs: self.specs,
-            snippets,
-        })
+        Ok(Prepared { specs: self.specs })
     }
+}
+
+/// Compile a `reduce` spec's `(reduce, finalize)` into `engine`.
+fn compile_reduce(
+    spec: &AggregateSpec,
+    engine: &mut Engine,
+) -> Result<(SnippetHandle, Option<SnippetHandle>)> {
+    let Form::Reduce { body, finalize, .. } = &spec.form else {
+        unreachable!("compile_reduce on a reduce spec");
+    };
+    let reduce = engine
+        .compile(&format!("(acc, record) => {{ {body}\n}}"))
+        .map_err(|e| malformed(format!("{:?}: `reduce`: {}", spec.name, e.message())))?;
+    let fin = match finalize {
+        Some(f) => Some(
+            engine
+                .compile(&format!("(acc) => {{ {f}\n}}"))
+                .map_err(|e| malformed(format!("{:?}: `finalize`: {}", spec.name, e.message())))?,
+        ),
+        None => None,
+    };
+    Ok((reduce, fin))
 }
 
 /// Parse, body-check, and compile in one step — the binding entry for an
 /// ad-hoc call. Every failure is [`Error::ConfigInvalid`].
-pub fn prepare(
-    value: &Value,
-    body_field: Option<&str>,
-    filter: Option<&Filter>,
-    engine: &mut Engine,
-) -> Result<Prepared> {
+pub fn prepare(value: &Value, body_field: Option<&str>, filter: Option<&Filter>) -> Result<Prepared> {
     let aggs = Aggregates::from_value(value)?;
     if let Some(body) = body_field {
         aggs.check_body_field(body, filter)?;
     }
-    aggs.prepare(engine)
+    aggs.prepare()
 }
 
 // ── the fold ──────────────────────────────────────────────────────────────────
@@ -393,7 +396,13 @@ enum Acc {
     Sum(SumAcc),
     Extreme { kind: Kind, best: Value },
     Distinct { kind: Kind, values: Vec<Value> },
-    Reduce(BoaValue),
+    /// A live engine accumulator in the group's own runtime-limited realm.
+    Reduce {
+        engine: Box<Engine>,
+        reduce: SnippetHandle,
+        finalize: Option<SnippetHandle>,
+        acc: BoaValue,
+    },
 }
 
 /// One aggregate's running state: a single accumulator, or one per group.
@@ -455,12 +464,10 @@ fn contributing<'r>(form: &Form, record: &'r IndexMap<String, Value>) -> Option<
 fn step(
     sheet: &str,
     spec: &AggregateSpec,
-    snippets: Option<(SnippetHandle, Option<SnippetHandle>)>,
     group: Option<&str>,
     acc: Option<Acc>,
     value: Option<&Value>,
     record: &Value,
-    engine: &mut Engine,
 ) -> Result<Acc> {
     Ok(match (&spec.form, acc) {
         (Form::Count, None) => Acc::Count(1),
@@ -555,12 +562,25 @@ fn step(
             Acc::Distinct { kind, values }
         }
         (Form::Reduce { initial, .. }, acc) => {
-            let (reduce, _) = snippets.expect("reduce snippets compiled");
-            let acc_js = match acc {
-                Some(Acc::Reduce(a)) => a,
-                None => engine
-                    .to_engine(initial)
-                    .map_err(|e| agg_error(sheet, spec, group, e.message()))?,
+            let (mut engine, reduce, finalize, acc_js) = match acc {
+                Some(Acc::Reduce {
+                    engine,
+                    reduce,
+                    finalize,
+                    acc,
+                }) => (engine, reduce, finalize, acc),
+                None => {
+                    // A fresh realm for this group's fold.
+                    let mut engine = Box::new(
+                        Engine::new_limited().map_err(|e| agg_error(sheet, spec, group, e.message()))?,
+                    );
+                    let (reduce, finalize) = compile_reduce(spec, &mut engine)
+                        .map_err(|e| agg_error(sheet, spec, group, e.message()))?;
+                    let acc = engine
+                        .to_engine(initial)
+                        .map_err(|e| agg_error(sheet, spec, group, e.message()))?;
+                    (engine, reduce, finalize, acc)
+                }
                 Some(_) => unreachable!("accumulator kind matches its form"),
             };
             let record_js = engine
@@ -569,7 +589,12 @@ fn step(
             let next = engine
                 .call_engine(reduce, &[acc_js, record_js])
                 .map_err(|e| agg_error(sheet, spec, group, format!("reduce threw: {}", snippet_message(e))))?;
-            Acc::Reduce(next)
+            Acc::Reduce {
+                engine,
+                reduce,
+                finalize,
+                acc: next,
+            }
         }
         (Form::Count, Some(_)) => unreachable!("accumulator kind matches its form"),
     })
@@ -579,27 +604,33 @@ fn step(
 fn finish(
     sheet: &str,
     spec: &AggregateSpec,
-    snippets: Option<(SnippetHandle, Option<SnippetHandle>)>,
     group: Option<&str>,
     acc: Acc,
-    engine: &mut Engine,
 ) -> Result<Value> {
+    let overflow = || agg_error(sheet, spec, group, "integer sum overflows the signed 64-bit range");
     Ok(match acc {
         Acc::Count(n) => Value::Integer(n),
         Acc::Sum(s) => match spec.form {
             Form::Avg(_) => {
-                let total = if s.all_int { s.int as f64 } else { s.float };
+                let total = if s.all_int {
+                    i64::try_from(s.int).map_err(|_| overflow())? as f64
+                } else {
+                    s.float
+                };
                 Value::Float(total / s.n as f64)
             }
-            _ if s.all_int => Value::Integer(i64::try_from(s.int).map_err(|_| {
-                agg_error(sheet, spec, group, "integer sum overflows the signed 64-bit range")
-            })?),
+            _ if s.all_int => Value::Integer(i64::try_from(s.int).map_err(|_| overflow())?),
             _ => Value::Float(s.float),
         },
         Acc::Extreme { best, .. } => best,
         Acc::Distinct { values, .. } => Value::Array(values),
-        Acc::Reduce(mut acc) => {
-            if let Some((_, Some(fin))) = snippets {
+        Acc::Reduce {
+            mut engine,
+            finalize,
+            mut acc,
+            ..
+        } => {
+            if let Some(fin) = finalize {
                 acc = engine.call_engine(fin, &[acc]).map_err(|e| {
                     agg_error(sheet, spec, group, format!("finalize threw: {}", snippet_message(e)))
                 })?;
@@ -651,10 +682,9 @@ where
                     None => continue,
                 },
             };
-            let snippets = prepared.snippets[i];
             match &mut slots[i] {
                 Slot::Single(acc) => {
-                    let next = step(sheet, spec, snippets, None, acc.take(), value, record, engine)?;
+                    let next = step(sheet, spec, None, acc.take(), value, record)?;
                     *acc = Some(next);
                 }
                 Slot::Grouped(groups) => {
@@ -663,7 +693,7 @@ where
                         continue;
                     };
                     let prev = groups.remove(&key);
-                    let next = step(sheet, spec, snippets, Some(&key), prev, value, record, engine)?;
+                    let next = step(sheet, spec, Some(&key), prev, value, record)?;
                     groups.insert(key, next);
                 }
             }
@@ -671,10 +701,10 @@ where
     }
 
     let mut out = IndexMap::new();
-    for ((spec, slot), snippets) in prepared.specs.iter().zip(slots).zip(&prepared.snippets) {
+    for (spec, slot) in prepared.specs.iter().zip(slots) {
         match slot {
             Slot::Single(Some(acc)) => {
-                out.insert(spec.name.clone(), finish(sheet, spec, *snippets, None, acc, engine)?);
+                out.insert(spec.name.clone(), finish(sheet, spec, None, acc)?);
             }
             Slot::Single(None) => match spec.form {
                 Form::Count | Form::Sum(_) => {
@@ -685,7 +715,7 @@ where
             Slot::Grouped(groups) => {
                 let mut table = IndexMap::new();
                 for (key, acc) in groups {
-                    let v = finish(sheet, spec, *snippets, Some(&key), acc, engine)?;
+                    let v = finish(sheet, spec, Some(&key), acc)?;
                     table.insert(key, v);
                 }
                 out.insert(spec.name.clone(), Value::Table(table));
@@ -702,8 +732,7 @@ where
 /// given, further restricts the contributing set to those record paths: a
 /// binding whose filter carries host-side predicates admits records with them
 /// first, and the core still folds over its own reads of exactly those
-/// records. `engine` must be the one `template` and `prepared` were compiled
-/// into.
+/// records. `engine` must be the one `template` was compiled into.
 #[allow(clippy::too_many_arguments)]
 pub fn aggregate_records(
     ctx: &Context<'_>,
@@ -719,23 +748,30 @@ pub fn aggregate_records(
     only: Option<&HashSet<String>>,
 ) -> Result<Value> {
     let rows = query::query_records_format(ctx, tree, base, template, filter, engine, extension, format, false)?;
-    fold_rows(sheet, &rows, only, prepared, engine)
+    fold_rows(sheet, &rows, extension, only, prepared, engine)
 }
 
-/// Fold `(path, record)` rows (already in canonical path order, as every
-/// core query returns them), optionally restricted to the `only` paths.
+/// Fold `(path, record)` rows — record paths relative to the sheet base, no
+/// extension, in any order — optionally restricted to the `only` paths. The
+/// rows are folded in **canonical path order**: the byte order of the full
+/// path *with* `extension`, which is the order a recursive git tree walk
+/// yields (`k-1.toml` before `k.toml`, though `k` sorts before `k-1`). That is
+/// deliberately not the extensionless order `query` happens to return.
 pub fn fold_rows(
     sheet: &str,
     rows: &[(String, Value)],
+    extension: &str,
     only: Option<&HashSet<String>>,
     prepared: &Prepared,
     engine: &mut Engine,
 ) -> Result<Value> {
-    let records = rows
+    let mut ordered: Vec<(String, &Value)> = rows
         .iter()
         .filter(|(path, _)| only.is_none_or(|set| set.contains(path)))
-        .map(|(_, record)| record);
-    fold(sheet, records, prepared, engine)
+        .map(|(path, record)| (format!("{path}{extension}"), record))
+        .collect();
+    ordered.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    fold(sheet, ordered.into_iter().map(|(_, record)| record), prepared, engine)
 }
 
 #[cfg(test)]
@@ -773,7 +809,7 @@ mod tests {
     /// Prepare + fold `aggs` over `records` with a fresh engine.
     fn run(records: &[Value], aggs: Value) -> Result<Value> {
         let mut eng = Engine::new().unwrap();
-        let prepared = prepare(&aggs, None, None, &mut eng)?;
+        let prepared = prepare(&aggs, None, None)?;
         fold("tx", records.iter(), &prepared, &mut eng)
     }
 
@@ -1082,20 +1118,115 @@ mod tests {
 
     #[test]
     fn body_field_references_are_rejected() {
-        let mut eng = Engine::new().unwrap();
         for aggs in [
             t(&[("x", t(&[("distinct", s("body"))]))]),
             t(&[("x", t(&[("count", Value::Boolean(true)), ("groupBy", s("body"))]))]),
             t(&[("x", t(&[("count", Value::Boolean(true)), ("where", t(&[("body", s("hi"))]))]))]),
         ] {
-            let err = prepare(&aggs, Some("body"), None, &mut eng).unwrap_err();
+            let err = prepare(&aggs, Some("body"), None).unwrap_err();
             assert_eq!(err.code(), "config_invalid");
         }
         let ok = t(&[("x", t(&[("count", Value::Boolean(true))]))]);
         let mut filter = Filter::new();
         filter.push("body", crate::query::FilterPred::Equals(s("x")));
-        assert!(prepare(&ok, Some("body"), Some(&filter), &mut eng).is_err());
-        assert!(prepare(&ok, Some("body"), None, &mut eng).is_ok());
+        assert!(prepare(&ok, Some("body"), Some(&filter)).is_err());
+        assert!(prepare(&ok, Some("body"), None).is_ok());
+    }
+
+    #[test]
+    fn avg_integer_overflow_is_an_aggregation_error() {
+        let recs = vec![t(&[("x", i(i64::MAX))]), t(&[("x", i(1))])];
+        let err = run(&recs, t(&[("m", t(&[("avg", s("x"))]))])).unwrap_err();
+        assert_eq!(err.aggregation(), Some(("tx", "m", None)));
+    }
+
+    #[test]
+    fn group_keys_of_different_kinds_merge_by_string_form() {
+        let recs = vec![
+            t(&[("g", i(1)), ("x", i(10))]),
+            t(&[("g", s("1")), ("x", i(5))]),
+            t(&[("g", Value::Boolean(true)), ("x", i(1))]),
+            t(&[("g", s("true")), ("x", i(2))]),
+        ];
+        let r = run(&recs, t(&[("t", t(&[("sum", s("x")), ("groupBy", s("g"))]))])).unwrap();
+        assert_eq!(get(&r, "t"), Some(&t(&[("1", i(15)), ("true", i(3))])));
+    }
+
+    #[test]
+    fn distinct_keeps_a_large_integer_apart_from_a_nearby_float() {
+        let two53 = 1i64 << 53;
+        let recs = vec![t(&[("x", f(two53 as f64))]), t(&[("x", i(two53 + 1))]), t(&[("x", i(two53))])];
+        let r = run(&recs, t(&[("d", t(&[("distinct", s("x"))]))])).unwrap();
+        // 2^53 (float) and 2^53 (int) are equal; 2^53 + 1 is its own value.
+        assert_eq!(get(&r, "d"), Some(&Value::Array(vec![f(two53 as f64), i(two53 + 1)])));
+    }
+
+    #[test]
+    fn a_reduce_date_outside_toml_years_is_an_aggregation_error() {
+        let err = run(
+            &[t(&[])],
+            t(&[("d", t(&[("reduce", s("return new Date(Date.UTC(70000, 0, 1));")), ("initial", i(0))]))]),
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "aggregation_failed");
+        assert!(err.message().contains("0–9999"), "{}", err.message());
+        let err = run(
+            &[t(&[])],
+            t(&[("d", t(&[("reduce", s("return new Date(Date.UTC(-1, 0, 1));")), ("initial", i(0))]))]),
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "aggregation_failed");
+        // In range still converts.
+        let r = run(
+            &[t(&[])],
+            t(&[("d", t(&[("reduce", s("return new Date(Date.UTC(9999, 11, 31));")), ("initial", i(0))]))]),
+        )
+        .unwrap();
+        assert_eq!(get(&r, "d"), Some(&dt("9999-12-31T00:00:00Z")));
+    }
+
+    #[test]
+    fn runaway_snippets_hit_the_runtime_limits() {
+        for body in [
+            "while (true) {}",
+            "for (;;) { acc++; }",
+            "const f = (n) => f(n + 1); return f(0);",
+        ] {
+            let err = run(&[t(&[])], t(&[("x", t(&[("reduce", s(body)), ("initial", i(0))]))])).unwrap_err();
+            assert_eq!(err.code(), "aggregation_failed", "{body}");
+            assert!(err.message().contains("reduce threw"), "{body}: {}", err.message());
+        }
+        // A bounded loop under the limit is fine.
+        let r = run(
+            &[t(&[])],
+            t(&[("x", t(&[("reduce", s("let n = 0; for (let k = 0; k < 1000; k++) n += k; return n;")), ("initial", i(0))]))]),
+        )
+        .unwrap();
+        assert_eq!(get(&r, "x"), Some(&i(499_500)));
+    }
+
+    #[test]
+    fn global_state_does_not_leak_between_groups_aggregates_or_calls() {
+        let body = "globalThis.seen = (globalThis.seen || 0) + 1; return globalThis.seen;";
+        let recs = vec![t(&[("g", s("a"))]), t(&[("g", s("a"))]), t(&[("g", s("b"))])];
+        let aggs = t(&[
+            ("grouped", t(&[("reduce", s(body)), ("initial", i(0)), ("groupBy", s("g"))])),
+            ("whole", t(&[("reduce", s(body)), ("initial", i(0))])),
+        ]);
+        let r = run(&recs, aggs.clone()).unwrap();
+        assert_eq!(get(&r, "grouped"), Some(&t(&[("a", i(2)), ("b", i(1))])));
+        assert_eq!(get(&r, "whole"), Some(&i(3)));
+        // A second call starts clean too.
+        assert_eq!(run(&recs, aggs).unwrap(), r);
+    }
+
+    #[test]
+    fn shared_reference_results_are_bounded() {
+        // 40 levels of [x, x] is shallow (depth 40) but expands to 2^40 nodes.
+        let body = "let x = [1]; for (let k = 0; k < 40; k++) x = [x, x]; return x;";
+        let err = run(&[t(&[])], t(&[("x", t(&[("reduce", s(body)), ("initial", i(0))]))])).unwrap_err();
+        assert_eq!(err.code(), "aggregation_failed");
+        assert!(err.message().contains("more than"), "{}", err.message());
     }
 
     // ── end to end over a tree ───────────────────────────────────────────────
@@ -1152,7 +1283,7 @@ mod tests {
             ("order", t(&[("reduce", s("return acc + record.slug;")), ("initial", s(""))])),
             ("byStatus", t(&[("count", Value::Boolean(true)), ("groupBy", s("status"))])),
         ]);
-        let prepared = prepare(&aggs, None, Some(&filter), &mut eng).unwrap();
+        let prepared = prepare(&aggs, None, Some(&filter)).unwrap();
         let r = aggregate_records(
             &ctx, &mut tree, "tx", &template, &filter, &mut eng, TOML_EXTENSION, &format, "tx", &prepared, None,
         )
@@ -1170,6 +1301,62 @@ mod tests {
         )
         .unwrap();
         assert_eq!(get(&r, "order"), Some(&s("bc")));
+    }
+
+    #[test]
+    fn folds_in_tree_walk_order_not_extensionless_order() {
+        // ids a, a-b, a.b → files a.toml, a-b.toml, a.b.toml. Extensionless
+        // order is a < a-b < a.b; the tree walk (full path with extension) is
+        // a-b.toml < a.b.toml < a.toml.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = gix::init(dir.path()).unwrap();
+        let ctx = tctx(&repo);
+        let mut tree = MutableTree::empty();
+        let items: Vec<(String, Value)> = [("a", 0.1), ("a-b", 0.2), ("a.b", 0.3)]
+            .iter()
+            .map(|(id, x)| ((*id).to_string(), t(&[("id", s(id)), ("x", f(*x))])))
+            .collect();
+        let hash = write_records(&ctx, &mut tree, "s", &items, TOML_EXTENSION).unwrap().tree_hash;
+
+        // The order git itself walks the tree.
+        let out = std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(repo.git_dir())
+            .args(["ls-tree", "-r", "--name-only", &hash])
+            .output()
+            .unwrap();
+        let walked: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(str::to_string).collect();
+        assert_eq!(walked, vec!["s/a-b.toml", "s/a.b.toml", "s/a.toml"]);
+
+        let mut tree = resolve_tree(&repo, &hash).unwrap();
+        let mut eng = Engine::new().unwrap();
+        let template = Template::compile("${{ id }}", &mut eng).unwrap();
+        let format = FormatConfig {
+            kind: FormatKind::Toml,
+            body: None,
+            title: None,
+            normalize: true,
+        };
+        let aggs = t(&[
+            ("total", t(&[("sum", s("x"))])),
+            ("order", t(&[("reduce", s("acc.push(record.id); return acc;")), ("initial", Value::Array(vec![]))])),
+        ]);
+        let prepared = prepare(&aggs, None, None).unwrap();
+        let r = aggregate_records(
+            &ctx, &mut tree, "s", &template, &Filter::new(), &mut eng, TOML_EXTENSION, &format, "s", &prepared, None,
+        )
+        .unwrap();
+        assert_eq!(get(&r, "order"), Some(&Value::Array(vec![s("a-b"), s("a.b"), s("a")])));
+        let tree_order = 0.0 + 0.2 + 0.3 + 0.1;
+        let extless_order = 0.0 + 0.1 + 0.2 + 0.3;
+        assert_ne!(tree_order, extless_order, "the fixture must discriminate the two orders");
+        assert_eq!(get(&r, "total"), Some(&f(tree_order)));
+
+        // fold_rows sorts whatever order it is handed.
+        let mut rows = items.clone();
+        rows.reverse();
+        let r2 = fold_rows("s", &rows, TOML_EXTENSION, None, &prepared, &mut eng).unwrap();
+        assert_eq!(r2, r);
     }
 
     #[test]
@@ -1197,7 +1384,7 @@ mod tests {
             ("words", t(&[("sum", s("words"))])),
             ("hasBody", t(&[("reduce", s("return acc || record.body !== undefined;")), ("initial", Value::Boolean(false))])),
         ]);
-        let prepared = prepare(&aggs, Some("body"), None, &mut eng).unwrap();
+        let prepared = prepare(&aggs, Some("body"), None).unwrap();
         let r = aggregate_records(
             &ctx, &mut tree, "posts", &template, &Filter::new(), &mut eng, ".md", &fmt, "posts", &prepared, None,
         )
