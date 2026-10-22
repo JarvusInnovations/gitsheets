@@ -11,12 +11,19 @@ The **specops** skill carries the full methodology — invoke it (the skill trig
 
 - **Specs lead.** Before changing behavior, change the spec; bring code into conformance
   after. Spec↔code drift is a bug, not debt. If the spec doesn't cover what you're about
-  to do, update the spec first.
+  to do, update the spec first. Specs merge implemented-or-planned; a spec still being
+  designed rides a draft planning PR, not `develop`.
+- **Never a spec-only PR.** Open the branch and PR for the *feature*, start it with the
+  `docs(specs):` commits and the plan (draft PR is fine), add the implementation on the same
+  branch, and merge only when the plan is complete. The one exception is a draft planning PR
+  for a whole design arc, which merges with its plan set and is then drained promptly.
 - **`plans/` is the planning system — not your built-in plan mode.** Every chunk of work
   lands as a file in `plans/` that freezes to `done` as the durable record of what got
-  built. Don't let an ephemeral plan substitute for it, and don't skip it for "small"
-  changes. (Classic trap: an ad-hoc plan of "write spec X, then build it" that ends with
-  neither a reviewed spec nor a plan file — split those into the two real artifacts.)
+  built. One feature branch carries spec → plan → code → closeout and merges with the plan
+  complete; the issue tracker, not `plans/`, is the backlog. Don't let an ephemeral plan
+  substitute for a plan file, and don't skip it for "small" changes. (Classic trap: an
+  ad-hoc plan of "write spec X, then build it" that ends with neither a reviewed spec nor a
+  plan file — split those into the two real artifacts.)
 - **When to author a plan depends on intent:** mapping out a batch of specs → finish the
   batch first, then propose a *set* of plans; speccing one bounded feature in a mature
   project → draft the spec change and its plan in tandem; intent unclear → ask. The skill
