@@ -72,7 +72,7 @@ List records.
 | `--fields <list>` | Extra columns beyond the default schema |
 | `--sort <field>` | Sort records by a field (missing values sort last) |
 | `--desc` | Sort descending (with `--sort`) |
-| `--group-by <field>` | Emit `{value,count}` facets instead of a record list |
+| `--group-by <field>` | Emit `{value,count}` facets instead of a record list (sugar for `aggregate --agg count=count --group-by`) |
 | `--limit <n>` | Caps the **stdout preview**. Default 100, max 10000 |
 | `--prefix <p>` | Tenant sub-tree scope (matches the library's `prefix` option) |
 | `--json-out[=path]` | Also write the **full** result set to a JSON array file |
@@ -89,7 +89,7 @@ List records.
 | `"k in (a,b,c)"` | value is one of the listed strings |
 | `k:present` / `k:empty` | field exists and is non-empty / is absent, null, `""`, or `[]` |
 
-`--group-by <field>` aggregates over the **filtered** set (ignores `--limit`), biggest bucket first: `groups[K]{value,count}:`.
+`--group-by <field>` aggregates over the **filtered** set (ignores `--limit`), biggest bucket first: `groups[K]{value,count}:`, plus `matched: N`. The counts come from the core's aggregate fold, so records whose field is absent or isn't a string / integer / boolean don't land in any group.
 
 **Default schema is format-aware:**
 
@@ -116,7 +116,32 @@ Record count. With no `--filter`, counts candidate tree paths **without parsing*
 
 ### `gitsheets-axi distinct <sheet> <field> [--filter expr ...]`
 
-Unique values of `<field>` with counts, sorted alphabetically (`values[K]{value,count}:`). `query --group-by <field>` is the same facets ordered by count. Kills the `--ndjson-out | jq 'group_by'` loop for "what values does this field take?".
+Unique values of `<field>` with counts, sorted alphabetically (`values[K]{value,count}:`). `query --group-by <field>` gives the facets ordered by count instead (computed in the core; records lacking the field are left out there, while `distinct` lists them under an empty value). Kills the `--ndjson-out | jq 'group_by'` loop for "what values does this field take?".
+
+### `gitsheets-axi aggregate <sheet> --agg <name>=<form>[:<field>] ... [flags]`
+
+Named aggregates computed in the gitsheets core — the same fold as the library's `sheet.aggregate` — over the filtered records (body-less, canonical path order). One call answers "how many / how much / what range / which values".
+
+| Flag | Notes |
+| --- | --- |
+| `--agg <name>=<form>[:<field>]` | Repeatable, at least one: `n=count`, `total=sum:amountCents`, `lo=min:f`, `hi=max:f`, `mean=avg:f`, `vals=distinct:f` |
+| `--group-by <field>` | Group every aggregate: each result becomes a table keyed by the field's string form |
+| `--filter <expr>` | Same DSL as `query` (the clauses pick the records; the core folds over them) |
+| `--prefix <p>` | Tenant sub-tree scope |
+
+```
+$ gitsheets-axi aggregate tx --agg n=count --agg total=sum:amountCents --group-by status
+sheet: tx
+results:
+  n:
+    pending: 12
+    posted: 1390
+  total:
+    pending: -500
+    posted: 98231600
+```
+
+`sum` stays an integer when every value is one (store money as integer cents). An aggregate with nothing to fold is omitted, except `count` and `sum` (`0`). Mixed kinds in one field under `min`/`max`/`distinct` → `AGGREGATION_FAILED`. Custom folds (`reduce`) are library-only.
 
 ### `gitsheets-axi read <sheet> <path> [--full]`
 
