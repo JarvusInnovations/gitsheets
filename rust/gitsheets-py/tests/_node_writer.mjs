@@ -64,6 +64,9 @@ const AGGREGATE_SPEC = {
   byStatus: { count: true, groupBy: 'status' },
   rateByStatus: { sum: 'rate', groupBy: 'status' },
   posted: { sum: 'amountCents', where: { status: 'posted' } },
+  // A `__proto__` group key must survive the JS object conversion.
+  byTag: { count: true, groupBy: 'tag' },
+  idsByTag: { reduce: 'acc.push(record.id); return acc;', initial: [], groupBy: 'tag' },
   order: { reduce: 'return acc + record.id;', initial: '' },
   stats: {
     reduce: 'acc.n += 1; acc.cents += record.amountCents; acc.ids.push(record.id); return acc;',

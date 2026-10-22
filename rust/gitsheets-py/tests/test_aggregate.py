@@ -29,9 +29,9 @@ TEMPLATE = "${{ postedAt: YYYY/MM }}/${{ id }}"
 UTC = dt.timezone.utc
 
 LEDGER = [
-    {"id": "a", "postedAt": dt.datetime(2026, 1, 5, tzinfo=UTC), "status": "posted", "amountCents": 1000, "rate": 0.1},
-    {"id": "b", "postedAt": dt.datetime(2026, 1, 20, tzinfo=UTC), "status": "posted", "amountCents": 2500, "rate": 0.2},
-    {"id": "c", "postedAt": dt.datetime(2026, 2, 10, tzinfo=UTC), "status": "pending", "amountCents": -500, "rate": 0.3},
+    {"id": "a", "postedAt": dt.datetime(2026, 1, 5, tzinfo=UTC), "status": "posted", "amountCents": 1000, "rate": 0.1, "tag": "__proto__"},
+    {"id": "b", "postedAt": dt.datetime(2026, 1, 20, tzinfo=UTC), "status": "posted", "amountCents": 2500, "rate": 0.2, "tag": "x"},
+    {"id": "c", "postedAt": dt.datetime(2026, 2, 10, tzinfo=UTC), "status": "pending", "amountCents": -500, "rate": 0.3, "tag": "__proto__"},
     {"id": "d", "postedAt": dt.datetime(2026, 2, 11, tzinfo=UTC), "status": "void", "amountCents": 7},
     {"id": "z", "postedAt": dt.datetime(2025, 12, 31, tzinfo=UTC), "status": "posted", "amountCents": 99, "rate": 9.5},
 ]
@@ -49,6 +49,8 @@ AGGREGATE_SPEC = {
     "byStatus": {"count": True, "groupBy": "status"},
     "rateByStatus": {"sum": "rate", "groupBy": "status"},
     "posted": {"sum": "amountCents", "where": {"status": "posted"}},
+    "byTag": {"count": True, "groupBy": "tag"},
+    "idsByTag": {"reduce": "acc.push(record.id); return acc;", "initial": [], "groupBy": "tag"},
     "order": {"reduce": "return acc + record.id;", "initial": ""},
     "stats": {
         "reduce": "acc.n += 1; acc.cents += record.amountCents; acc.ids.push(record.id); return acc;",
@@ -102,6 +104,8 @@ def test_every_form_over_the_filtered_set(ledger):
     # `void` (d) carries no rate → not a group of the sum.
     assert r["rateByStatus"] == {"pending": 0.3, "posted": 0.0 + 0.1 + 0.2}
     assert r["posted"] == 3500
+    assert r["byTag"] == {"__proto__": 2, "x": 1}
+    assert r["idsByTag"] == {"__proto__": ["a", "c"], "x": ["b"]}
     assert r["order"] == "abcd"
     assert r["stats"] == {"mean": 3007 / 4, "ids": ["a", "b", "c", "d"], "third": 1 / 3}
 
@@ -135,6 +139,27 @@ def test_paths_restrict_the_contributing_set(ledger):
 def test_malformed_spec_raises_type_error(ledger, aggregates):
     with pytest.raises(TypeError):
         _agg(*ledger, aggregates)
+
+
+def test_initial_none_raises_type_error_naming_it(ledger):
+    with pytest.raises(TypeError, match="`initial` must be a TOML value"):
+        _agg(*ledger, {"x": {"reduce": "return acc;", "initial": None}})
+
+
+def test_reduce_date_outside_toml_years_is_aggregation_error(ledger):
+    with pytest.raises(gitsheets.AggregationError, match="0–9999"):
+        _agg(*ledger, {"d": {"reduce": "return new Date(Date.UTC(70000, 0, 1));", "initial": 0}})
+
+
+def test_runaway_reduce_is_aggregation_error(ledger):
+    with pytest.raises(gitsheets.AggregationError):
+        _agg(*ledger, {"x": {"reduce": "while (true) {}", "initial": 0}})
+
+
+def test_integral_float_initial_comes_back_as_integer(ledger):
+    # The engine has one number type (spec: the reduce-result engine rule).
+    r = _agg(*ledger, {"x": {"reduce": "return acc;", "initial": 1.0}})
+    assert r["x"] == 1 and isinstance(r["x"], int)
 
 
 def test_body_field_reference_raises_type_error(ledger):

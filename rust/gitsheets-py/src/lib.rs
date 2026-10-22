@@ -1337,9 +1337,23 @@ fn record_aggregate<'py>(
     let ext = extension_of(extension);
     let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
     let parsed = parse_filter(filter, &mut engine)?;
+    if let Ok(table) = aggregates.cast::<PyDict>() {
+        for (name, spec) in table.iter() {
+            if let Ok(spec) = spec.cast::<PyDict>() {
+                if let Some(initial) = spec.get_item("initial")? {
+                    if initial.is_none() {
+                        return Err(PyTypeError::new_err(format!(
+                            "aggregate spec: {:?}: `initial` must be a TOML value, got None",
+                            name.str()?.to_string()
+                        )));
+                    }
+                }
+            }
+        }
+    }
     let spec = py_to_value(aggregates)
         .map_err(|e| PyTypeError::new_err(format!("aggregate spec: {e}")))?;
-    let prepared = gitsheets_core::aggregate::prepare(&spec, body_field.as_deref(), Some(&parsed), &mut engine)
+    let prepared = gitsheets_core::aggregate::prepare(&spec, body_field.as_deref(), Some(&parsed))
         .map_err(|e| PyTypeError::new_err(e.message().to_string()))?;
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
     let ctx = Context::new(&repo, tree_cache());
