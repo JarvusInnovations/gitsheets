@@ -198,7 +198,7 @@ interface SyncResult {
 
 ### `repo.tag(name, target?, opts?)`
 
-Point the lightweight tag `refs/tags/<name>` at `target` (any commit-ish; default `HEAD`), in the core with no subprocess. Returns `Promise<string>`, the object id tagged. An existing tag is refused with `TransactionError` (`commit_failed`) unless `opts.force` is `true`, in which case it is moved (the `git tag -f` equivalent). `RefError` (`ref_not_found`) when `target` does not resolve. Annotated tags are out of scope.
+Point the lightweight tag `refs/tags/<name>` at `target` (any commit-ish; default: the default branch's tip, or `HEAD` when bound to a detached `HEAD` — [behaviors/default-branch.md](../behaviors/default-branch.md)), in the core with no subprocess. Returns `Promise<string>`, the object id tagged. An existing tag is refused with `TransactionError` (`commit_failed`) unless `opts.force` is `true`, in which case it is moved (the `git tag -f` equivalent). `RefError` (`ref_not_found`) when `target` does not resolve. Annotated tags are out of scope.
 
 ### `repo.listTree(ref, path?)`
 

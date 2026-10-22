@@ -23,7 +23,7 @@ Incorporating changes from elsewhere (an importer, a person pushing to the data 
 ```typescript
 const result = await repo.sync({
   remote: 'origin',               // default 'origin'
-  branch: 'published',            // default: the branch HEAD points at
+  branch: 'published',            // default: the repository's default branch (default-branch.md)
   onConflict: 'preserve-branch',  // default 'fail'
 });
 // { outcome, oldCommit, newCommit, ahead, behind, conflictBranch?, conflictCommit?, fetchError? }

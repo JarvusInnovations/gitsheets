@@ -156,7 +156,9 @@ Commit a starter `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `p
 - `--path <tpl>` — override the path template.
 - `--schema <file>` — embed a JSON Schema file at `[gitsheet.schema]`.
 - `--force` — overwrite an existing config.
-- `--commit` — the explicit spelling of what `init` does: commit the config to the target ref. When that branch does not exist yet, it is created with a root commit holding only the config ([behaviors/default-branch.md](../behaviors/default-branch.md#bootstrapping)).
+- `--commit` — the explicit spelling of what `init` does: commit the config to the target ref. When that branch does not exist yet, it is created with a root commit holding only the config ([behaviors/default-branch.md](../behaviors/default-branch.md#bootstrapping)). `--no-commit` is rejected — `init` always commits.
+
+Only a plain branch name is bootstrapped: a `--ref` that does not resolve and is `HEAD`, a `refs/*` name outside `refs/heads/`, a name failing `git check-ref-format --branch`, or a branch that exists only as a remote-tracking ref keeps the usual error (`RefError` `ref_not_found`, or `ConfigError` `config_invalid` for the remote-only case) instead of creating a ref.
 
 ```bash
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
