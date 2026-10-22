@@ -17,6 +17,7 @@
 //! `Sheet`/`Transaction`/`Store` state machine — lands in downstream plans on
 //! top of this substrate. See [`specs/rust-core.md`](../../../specs/rust-core.md).
 
+pub mod aggregate;
 pub mod canonical;
 pub mod codec;
 pub mod collator;
@@ -37,6 +38,7 @@ pub mod transaction;
 pub mod validation;
 pub mod value;
 
+pub use aggregate::{Aggregates, AggregateSpec, Form};
 pub use canonical::{normalize, parse, parse_batch, serialize, serialize_batch};
 pub use codec::{extract_first_h1, normalize_body, rewrite_leading_h1};
 pub use config::{FieldConfig, FormatConfig, FormatKind, SheetConfig, SortDir, SortRule};
@@ -126,6 +128,12 @@ pub fn example_error(code: &str) -> Option<Error> {
                 record: Some("people/jane".into()),
             }],
         },
+        "aggregation_failed" => Error::AggregationFailed {
+            message: msg,
+            sheet: "transactions".into(),
+            aggregate: "total".into(),
+            partition: None,
+        },
         _ => return None,
     })
 }
@@ -166,6 +174,7 @@ mod tests {
             "contract_missing",
             "contract_invalid",
             "contract_unsatisfied",
+            "aggregation_failed",
         ] {
             let err = example_error(code).expect("known code");
             assert_eq!(err.code(), code);

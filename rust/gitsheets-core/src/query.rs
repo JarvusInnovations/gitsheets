@@ -219,6 +219,35 @@ impl Filter {
     }
 }
 
+impl Filter {
+    /// Parse a declarative filter table — the binding-neutral `Value` form
+    /// of the query grammar without predicate snippets: a literal is an
+    /// equality clause, a `$`-keyed table a range ([`Range::from_table`]
+    /// validates the vocabulary), any other table a nested-table filter. This
+    /// is the shape an aggregate's `where` takes (spec:
+    /// `behaviors/aggregation.md` "Modifiers"), in a sheet config and at a
+    /// call site alike. A malformed range is `ConfigInvalid`.
+    pub fn from_table(map: &indexmap::IndexMap<String, Value>) -> Result<Filter> {
+        let mut filter = Filter::new();
+        for (key, value) in map {
+            let pred = match value {
+                Value::Table(sub) if sub.keys().any(|k| k.starts_with('$')) => {
+                    FilterPred::Range(Range::from_table(sub)?)
+                }
+                Value::Table(sub) => FilterPred::Nested(Filter::from_table(sub)?),
+                other => FilterPred::Equals(other.clone()),
+            };
+            filter.push(key.clone(), pred);
+        }
+        Ok(filter)
+    }
+
+    /// The top-level field names this filter constrains.
+    pub fn fields(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|(k, _)| k.as_str())
+    }
+}
+
 /// Does `record` satisfy every clause of `filter`? A behavior-preserving port
 /// of the host `queryMatches`. A predicate snippet that throws surfaces as an
 /// error (the host lets such throws propagate, too).
