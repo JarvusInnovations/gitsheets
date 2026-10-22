@@ -42,12 +42,18 @@ Binding is resolved once, at `openRepo`, from the first source that applies:
 | --- | --- |
 | `openRepo` option | `branch: 'data'` |
 | environment (CLI and library alike) | `GITSHEETS_BRANCH` |
-| git config of the opened project | `gitsheets.branch` |
+| git config, as git resolves it for the repository (local over global — the normal git layering) | `gitsheets.branch` |
 | neither | the branch `HEAD` points at |
 
 - `branch` is a branch name (`data`, `refs/heads/data`), never a tag, commit,
   or tree: writes must have somewhere to land. Anything else is `ConfigError`
   (`config_invalid`).
+- A branch that exists **only as a remote-tracking ref** (a fresh clone has
+  `refs/remotes/origin/data` but no `refs/heads/data`) is not unborn: binding
+  to it is `ConfigError` (`config_invalid`) naming the remedy
+  (`git branch data origin/data`). Treating it as unborn would let the first
+  write start an unrelated root that can never sync with the remote.
+  gitsheets never creates a local branch from a remote one implicitly.
 - Git config is the lowest tier because it is per clone and unversioned: an
   operator binds a deployed clone without changing code, the way
   `remote.pushDefault` works. Code that knows its layout passes the option.
@@ -65,7 +71,11 @@ like a fresh-but-initialized repository ([#19](https://github.com/JarvusInnovati
 `openSheets` discovers nothing, `openSheet` throws `ConfigError`
 (`config_missing`), and the first committing transaction creates the branch
 with a root commit. That is the bootstrap path for a data branch — see
-[Bootstrapping](#bootstrapping).
+[Bootstrapping](#bootstrapping). A transaction with no `parent` that names a
+*different* `branch` which already exists is refused while the default
+branch is unborn (`TransactionError` `commit_failed`): there is no tip to
+parent on, and a root commit never lands on an existing branch — pass
+`parent` explicitly.
 
 ### What the default branch governs
 
@@ -86,6 +96,7 @@ dir).
 | `sync` / `fetch` `branch` | `HEAD`'s branch | the default branch |
 | `startPushDaemon` `branch` | `HEAD`'s branch | the default branch |
 | `merge` `ours` | `HEAD`'s branch | the default branch |
+| `tag` `target` | `HEAD` | the default branch's tip (`HEAD` when bound to a detached `HEAD`) |
 | CLI `--ref` | `HEAD` | see [CLI](#cli) |
 
 A transaction that names a different `parent` / `branch` still works exactly
@@ -147,6 +158,13 @@ the checkout and this behavior does not cover it. The headless layouts are
 the recommended answer for a project that today suffers the ref/working-tree
 split; `--working` remains the answer for a human editing files before
 committing them.
+
+### Python binding
+
+The Python binding's batch surface takes an explicit `tree_ref` (reads) and
+`parent` (writes) on every call and does not consult the binding —
+`GITSHEETS_BRANCH` and `gitsheets.branch` are not read there. Callers pass
+`refs/heads/<branch>` themselves.
 
 ## Principles
 

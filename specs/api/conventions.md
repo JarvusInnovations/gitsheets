@@ -108,8 +108,8 @@ The public API is the API surface speced under `specs/api/`. Anything not speced
 
 When a ref isn't specified:
 
-- Read operations default to the repository's `HEAD`.
-- Write operations (transactions) default `parent` to `HEAD`.
+- Read operations default to the repository's **default branch** (`HEAD`'s branch unless bound elsewhere — [behaviors/default-branch.md](../behaviors/default-branch.md)).
+- Write operations (transactions) default `parent` to the default branch's tip.
 - The CLI honors `GITSHEETS_REF` for an override.
 
 ## Default paths
