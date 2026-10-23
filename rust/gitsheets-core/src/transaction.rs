@@ -228,6 +228,12 @@ impl Transaction {
         self.any_mutation = true;
     }
 
+    /// Whether a mutating method has run in this transaction (the flag
+    /// `finalize`'s no-op short-circuit reads).
+    pub fn is_mutated(&self) -> bool {
+        self.any_mutation
+    }
+
     pub fn is_closed(&self) -> bool {
         self.closed
     }
