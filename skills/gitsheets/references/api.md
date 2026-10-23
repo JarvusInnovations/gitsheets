@@ -280,7 +280,7 @@ const r = await sheet.aggregate(
 
 - `where` takes values and ranges only (no functions). `groupBy` keys by the field's string form (string / integer / boolean values only); a grouped result is always an object.
 - Nothing to fold → the aggregate is omitted, except `count` / `sum` (`0`).
-- `reduce` / `finalize` are JS **bodies** (use `return`), run in the core's embedded engine — pure only: no clock, randomness, or I/O. `acc` starts at `initial` (required).
+- `reduce` / `finalize` are JS **bodies** (use `return`), run in the core's embedded engine — keep them pure: no clock, randomness, or I/O (required but not yet enforced, see #354; runaway loops hit runtime limits → `AggregationError`). `acc` starts at `initial` (required). Integral numbers come back as integers (`1.0` → `1`).
 - Throws `TypeError` for a malformed spec or a body-field reference (markdown sheets); `AggregationError` (`aggregation_failed`, `.sheet`, `.aggregate`) for mixed kinds under `min`/`max`/`distinct`, a throwing `reduce`, or a non-TOML result.
 
 ## Transaction

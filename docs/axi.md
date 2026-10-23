@@ -136,13 +136,19 @@ discards that transaction without committing.
 `aggregate <sheet> --agg <name>=<form>[:<field>] … [--group-by f] [--filter …]`
 computes named aggregates in the gitsheets core (the same fold as the
 library's `sheet.aggregate`): `count`, or `sum` / `min` / `max` / `avg` /
-`distinct` over a field, each optionally grouped. `query --group-by <field>`
-is sugar for `aggregate --agg count=count --group-by <field>`, rendered as
-`{value,count}` facets biggest-first; records without a string, integer, or
-boolean value for the field don't land in any group. The `--filter` DSL keeps
-its exact semantics here: the clauses pick the records, then the core folds
-over them. A field with mixed kinds under `min`/`max`/`distinct` fails with
-`AGGREGATION_FAILED`.
+`distinct` over a field, each optionally grouped. Records without a string,
+integer, or boolean value for the `--group-by` field don't land in any group.
+The `--filter` DSL keeps its exact semantics: the clauses run as one host
+predicate that picks the records, and ordered clauses on a date-bucket path
+field are also pushed down so the walk prunes; then the core folds over the
+picked records. A clause on a markdown sheet's body field is a
+`VALIDATION_ERROR` (aggregates read body-less). A field with mixed kinds
+under `min`/`max`/`distinct` fails with `AGGREGATION_FAILED`.
+
+`query --group-by <field>` is a separate TOON view, not an `aggregate`
+call: `{value,count}` facets biggest-first, computed host-side over the
+matched records — any value kind (Dates as ISO strings), records missing the
+field counted under the empty value.
 
 ## Errors
 

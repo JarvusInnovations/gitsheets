@@ -191,6 +191,9 @@ Forms: `{ count: true }`, `{ sum: 'f' }`, `{ avg: 'f' }`, `{ min: 'f' }`, `{ max
 - An aggregate with nothing to fold is left out of the result, except `count` and `sum` (`0`). A grouped aggregate is always a table (`{}` when empty).
 - `filter` may carry function predicates as on `query`; they run host-side to pick the records, then the core folds over exactly those.
 - `distinct` holds every unique value in memory — fine at gitsheets' scale, but don't point it at a high-cardinality field you don't need.
+- `reduce` / `finalize` must be pure (no clock, randomness, or I/O). That is required but **not enforced** yet: `Math.random()` / `Date.now()` are reachable and make results nondeterministic — your problem, not a guarantee. Each `reduce` group runs in a fresh engine realm under loop / recursion / stack limits, so a runaway snippet is an `AggregationError`, not a hang. Hardening is tracked in [#354](https://github.com/JarvusInnovations/gitsheets/issues/354).
+- Numbers coming out of a `reduce` follow the engine's one rule: an exact integer within ±(2^53 − 1) is an integer, anything else a float. On Node, an integral float result (`4.0`, e.g. from `avg`) is indistinguishable from `4` anyway — JS has one number type (a pre-existing binding projection, not specific to aggregation).
+- Grouped results are plain objects, so JS orders integer-like keys numerically first (`"9"` before `"10"`, both before `"a"`); the core and the TOML output sort keys by byte order. A group literally named `__proto__` is an ordinary own key.
 - Throws `TypeError` for a malformed spec or a body-field reference on a content-typed sheet; `AggregationError` (`aggregation_failed`, with `sheet` and `aggregate`) when the data can't be aggregated, or a `reduce` throws or returns something TOML can't hold.
 
 → [`specs/behaviors/aggregation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/aggregation.md)
