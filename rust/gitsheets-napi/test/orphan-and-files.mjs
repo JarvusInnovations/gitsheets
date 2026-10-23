@@ -67,6 +67,22 @@ test('orphan: empty start, no parents, branch created; existing branch refused',
   }
 });
 
+test('isMutated: false until a mutation lands; a deleteFile miss does not count', () => {
+  const { dir, gitDir } = setupRepo();
+  try {
+    const tx = CoreTransaction.begin(gitDir, opts('mutated?', { orphan: true, branch: 'fresh' }));
+    assert.equal(tx.isMutated(), false);
+    assert.equal(tx.deleteFile('nope.txt'), false);
+    assert.equal(tx.isMutated(), false);
+    tx.writeFile('a.txt', 'a\n');
+    assert.equal(tx.isMutated(), true);
+    tx.discard();
+    assert.equal(tx.isMutated(), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('writeFile accepts a Buffer and deleteFile reports existence', () => {
   const { dir, gitDir } = setupRepo();
   try {

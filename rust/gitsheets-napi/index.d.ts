@@ -696,6 +696,11 @@ export declare class CoreTransaction {
   /** The parent commit hash captured at open (null on a fresh repo). */
   parentCommitHash(): string | null
   /**
+   * Whether a mutating method has run in this transaction — the flag the
+   * core's no-op short-circuit at finalize reads. False once finalized.
+   */
+  isMutated(): boolean
+  /**
    * Finalize: commit-on-success-only with no-op detection + `parent_moved`
    * re-check + CAS ref movement. Consumes the transaction.
    */
