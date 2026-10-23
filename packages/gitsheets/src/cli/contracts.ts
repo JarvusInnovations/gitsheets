@@ -31,7 +31,7 @@ import { openRepo } from '../repository.js';
 import type { RecordLike } from '../path-template/index.js';
 import { parseToml, stringifyRecord } from '../toml.js';
 import type { JSONSchema } from '../validation.js';
-import { buildTxOpts, readRef, repoOptions, type GlobalArgs } from './shared.js';
+import { buildTxOpts, openCliRepo, readRef, type GlobalArgs } from './shared.js';
 
 const exec = promisify(execFile);
 
@@ -266,7 +266,7 @@ function printImplementsHint(name: string): void {
 // --- adopt ----------------------------------------------------------------------
 
 async function runContractsAdopt(argv: AdoptArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
@@ -370,7 +370,7 @@ async function runContractsAdopt(argv: AdoptArgs): Promise<void> {
 // --- verify -----------------------------------------------------------------
 
 async function runContractsVerify(argv: VerifyArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
@@ -444,7 +444,7 @@ async function runContractsVerify(argv: VerifyArgs): Promise<void> {
 // --- test -----------------------------------------------------------------------
 
 async function runContractsTest(argv: TestArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
@@ -486,7 +486,7 @@ async function runContractsTest(argv: TestArgs): Promise<void> {
 // --- sync -----------------------------------------------------------------------
 
 async function runContractsSync(argv: SyncArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
@@ -535,7 +535,7 @@ async function runContractsSync(argv: SyncArgs): Promise<void> {
 // --- export ---------------------------------------------------------------------
 
 async function runContractsExport(argv: ExportArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 
@@ -578,7 +578,7 @@ async function promptYesNo(question: string): Promise<boolean> {
 }
 
 async function runContractsPrune(argv: PruneArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const ref = readRef(argv, repo);
   const root = argv.root ?? '.';
 

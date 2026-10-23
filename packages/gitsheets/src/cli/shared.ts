@@ -4,7 +4,8 @@
 // registration functions (e.g. `registerContractsCommands`) from the modules
 // that need these.
 
-import type { OpenRepoOptions, Repository } from '../repository.js';
+import { ConfigError } from '../errors.js';
+import { openRepo, type OpenRepoOptions, type Repository } from '../repository.js';
 
 export interface GlobalArgs {
   gitDir?: string;
@@ -58,4 +59,19 @@ export function repoOptions(argv: GlobalArgs): OpenRepoOptions {
 export function readRef(argv: GlobalArgs, repo: Repository): string {
   if (argv.ref) return argv.ref;
   return repo.branch !== null ? `refs/heads/${repo.branch}` : 'HEAD';
+}
+
+/**
+ * `openRepo(repoOptions(argv))`, with a bad `--branch` binding reported
+ * against the CLI's own spelling of the knob rather than the library option.
+ */
+export async function openCliRepo(argv: GlobalArgs): Promise<Repository> {
+  try {
+    return await openRepo(repoOptions(argv));
+  } catch (err) {
+    if (err instanceof ConfigError && err.code === 'config_invalid' && err.message.startsWith('openRepo({ branch })')) {
+      throw new ConfigError('config_invalid', `--branch / GITSHEETS_BRANCH${err.message.slice('openRepo({ branch })'.length)}`, { cause: err });
+    }
+    throw err;
+  }
 }

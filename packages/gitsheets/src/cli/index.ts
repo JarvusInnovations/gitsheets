@@ -21,7 +21,7 @@ import {
 } from '../errors.js';
 import { readTreeBlobText, mergeRecordTexts,
 } from '../core.js';
-import { openRepo } from '../repository.js';
+import { assertNotRemoteOnly, openRepo } from '../repository.js';
 import type { Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
 import { parseToml, stringifyRecord } from '../toml.js';
@@ -36,7 +36,7 @@ import {
   type OutputFormat,
 } from './formats.js';
 import { registerContractsCommands } from './contracts.js';
-import { buildTxOpts, readRef, repoOptions, type GlobalArgs } from './shared.js';
+import { buildTxOpts, openCliRepo, readRef, type GlobalArgs } from './shared.js';
 
 export type { GlobalArgs } from './shared.js';
 
@@ -195,7 +195,7 @@ function resolveEncoding(raw: string | undefined): BufferEncoding {
 async function loadRepoAndSheet(
   argv: GlobalArgs & { sheet: string },
 ): Promise<{ repo: Awaited<ReturnType<typeof openRepo>>; sheet: Sheet }> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const sheetOpts: { root?: string; prefix?: string } = {};
   if (argv.root) sheetOpts.root = argv.root;
   if (argv.prefix) sheetOpts.prefix = argv.prefix;
@@ -602,7 +602,10 @@ async function runInfer(argv: InferArgs): Promise<void> {
 }
 
 async function runInit(argv: InitArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  if (argv.commit === false) {
+    throw new Error('init --no-commit is not supported: init always commits the config (--commit is the explicit spelling)');
+  }
+  const repo = await openCliRepo(argv);
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
 
   // Refuse to overwrite an existing config (unless --force).
@@ -676,12 +679,24 @@ async function bootstrapTxOpts(
 ): Promise<import('../transaction.js').TransactionOptions> {
   const parent = txOpts.parent;
   if (parent === undefined || (await repo.resolveRef(parent)) !== null) return txOpts;
-  if (!/^[A-Za-z0-9._/-]+$/.test(parent) || /^[0-9a-f]{4,40}$/i.test(parent)) return txOpts;
-  return { ...txOpts, parent: null, branch: txOpts.branch ?? parent };
+  // Only a plain branch name is bootstrapped (specs/api/cli.md `init`):
+  // anything else keeps the transaction's own ref_not_found.
+  if (parent === 'HEAD' || (parent.startsWith('refs/') && !parent.startsWith('refs/heads/'))) return txOpts;
+  const name = parent.replace(/^refs\/heads\//, '');
+  try {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(execFile)('git', ['check-ref-format', '--branch', name], { cwd: repo.gitDir });
+  } catch {
+    return txOpts;
+  }
+  if (name.startsWith('@') || name === 'HEAD') return txOpts;
+  await assertNotRemoteOnly(repo.gitDir, name, '--ref');
+  return { ...txOpts, parent: null, branch: txOpts.branch ?? `refs/heads/${name}` };
 }
 
 async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
 
   const ref = readRef(argv, repo);
@@ -757,7 +772,7 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
  * idempotent and never committed.
  */
 async function runInstallDriver(argv: MergeArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const exec = promisify(execFile);
@@ -814,7 +829,7 @@ async function runInstallDriver(argv: MergeArgs): Promise<void> {
 
 async function runMerge(argv: MergeArgs): Promise<void> {
   if (argv.installDriver) return runInstallDriver(argv);
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const opts: import('../repository.js').MergeOptions = {
     theirs: argv.theirs!,
     commit: !argv.dryRun,
@@ -876,7 +891,7 @@ function extensionFor(type: string): string {
  * `git merge-file`, leaving git's markers, and exits 1.
  */
 async function runMergeDriver(argv: MergeDriverArgs): Promise<void> {
-  const repo = await openRepo(repoOptions(argv));
+  const repo = await openCliRepo(argv);
   const root = argv.root && argv.root !== '/' ? argv.root : '.';
   const [baseText, oursText, theirsText] = await Promise.all([
     readFile(argv.base, 'utf8').catch(() => ''),
