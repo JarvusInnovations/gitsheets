@@ -16,8 +16,7 @@ import {
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { exportRecords, type ExportFormat } from '../util/export-file.js';
 import { bucketFieldsOf, buildPredicate, needsBodies, pushdownFilter } from '../util/filter.js';
-import { sortRecords } from '../util/aggregate.js';
-import { runAggregate } from './aggregate.js';
+import { facetCounts, sortRecords } from '../util/aggregate.js';
 
 export const QUERY_HELP = `usage: gitsheets-axi query <sheet> [--filter expr ...] [--fields a,b] [--sort f [--desc]] [--limit n] [--group-by f] [--json-out[=path]] [--ndjson-out[=path]] [--csv-out[=path]]
 flags[9]:
@@ -28,7 +27,6 @@ flags[9]:
   --desc               Sort descending (with --sort)
   --limit <n>          Cap the stdout preview (default: 100, max: 10000)
   --group-by <field>   Faceted counts by a field instead of a record list
-                       (sugar for \`aggregate --agg count=count --group-by\`)
   --prefix <p>         Tenant sub-tree scope
   --json-out[=path]    Also write the FULL matched result to a JSON array file
   --ndjson-out[=path]  Also write the FULL matched result to an NDJSON file
@@ -41,9 +39,7 @@ examples:
 output:
   Default schema is format-aware (TOML: path fields + first scalars, cap 4;
   Markdown: path fields + title + body_size). --fields appends columns.
-  --group-by emits {value,count} facets (biggest first) over the filtered set,
-  computed in the core; records lacking a string/integer/boolean value for
-  the field do not appear in any group.
+  --group-by emits {value,count} facets (biggest first) over the filtered set.
 export (--json-out / --ndjson-out / --csv-out):
   stdout stays the TOON preview; the file carries EVERY matched record (ignores
   --limit). JSON/NDJSON verbatim (round-trip into upsert); CSV flat + lossy.
@@ -178,38 +174,6 @@ export async function queryCommand(
     flags.prefix !== undefined ? { prefix: flags.prefix } : {},
   );
 
-  // --group-by: faceted counts over the filtered set (not capped by --limit),
-  // computed by the core's aggregate fold — sugar for
-  // `aggregate --agg count=count --group-by <field>`.
-  if (flags.groupBy) {
-    const results = await runAggregate(sheet, flags.filters, {
-      groups: { count: true, groupBy: flags.groupBy },
-      matched: { count: true },
-    });
-    const facets = Object.entries(results.groups as Record<string, number>)
-      .map(([value, count]) => ({ value, count }))
-      .sort((a, b) => b.count - a.count || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
-    const groupBlock = renderListResponse({
-      summary: { groups: `${facets.length} distinct ${flags.groupBy}`, matched: results.matched },
-      name: 'groups',
-      items: facets as unknown as Array<Record<string, unknown>>,
-      schema: [field('value'), field('count')],
-      emptyMessage: `no records match in ${sheetName}`,
-    });
-    if (!flags.exportFormat) return groupBlock;
-    // An export carries the matched records themselves — read them host-side.
-    const config = await sheet.readConfig();
-    const pushdown = pushdownFilter(flags.filters, bucketFieldsOf(config.path));
-    let all;
-    try {
-      all = await sheet.queryAll(pushdown, { withBody: true });
-    } catch (error) {
-      throw translateError(error);
-    }
-    const matched = (all as Array<Record<string, unknown>>).filter(buildPredicate(flags.filters));
-    return maybeExport(groupBlock, matched, flags, sheetName);
-  }
-
   const config = await sheet.readConfig();
   // Body-less unless a filter / --fields / an export needs bodies — the TOON
   // preview never shows them, and body-less reads skip the heavy half of a
@@ -235,6 +199,19 @@ export async function queryCommand(
 
   const predicate = buildPredicate(flags.filters);
   const matched = (all as Array<Record<string, unknown>>).filter(predicate);
+
+  // --group-by: faceted counts over the filtered set (not capped by --limit).
+  if (flags.groupBy) {
+    const facets = facetCounts(matched, flags.groupBy);
+    const groupBlock = renderListResponse({
+      summary: { groups: `${facets.length} distinct ${flags.groupBy}`, matched: matched.length },
+      name: 'groups',
+      items: facets as unknown as Array<Record<string, unknown>>,
+      schema: [field('value'), field('count')],
+      emptyMessage: `no records match in ${sheetName}`,
+    });
+    return maybeExport(groupBlock, matched, flags, sheetName);
+  }
 
   const ordered = flags.sort ? sortRecords(matched, flags.sort, flags.desc) : matched;
   const limited = ordered.slice(0, flags.limit);

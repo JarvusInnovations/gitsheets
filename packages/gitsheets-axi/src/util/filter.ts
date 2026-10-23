@@ -230,27 +230,3 @@ export function scalarString(v: unknown): string {
   if (v instanceof Date) return v.toISOString();
   return String(v);
 }
-
-/**
- * The `--filter` clauses as a `Sheet.query` / `Sheet.aggregate` filter of
- * function predicates — one per field, AND-ing that field's clauses. The
- * predicates keep the mini-DSL's exact semantics (they are the
- * {@link buildPredicate} tests), and `Sheet.aggregate` runs them host-side to
- * admit records before the core folds over exactly those (specs/behaviors/
- * aggregation.md § "Ad-hoc aggregation").
- */
-export function predicateFilter(
-  exprs: string[],
-): Record<string, (value: unknown, record: Record<string, unknown>) => boolean> {
-  const byField = new Map<string, FilterClause[]>();
-  for (const clause of exprs.map(parseFilter)) {
-    const list = byField.get(clause.field) ?? [];
-    list.push(clause);
-    byField.set(clause.field, list);
-  }
-  const out: Record<string, (value: unknown, record: Record<string, unknown>) => boolean> = {};
-  for (const [fieldName, clauses] of byField) {
-    out[fieldName] = (value, record) => clauses.every((c) => c.test(value, record));
-  }
-  return out;
-}

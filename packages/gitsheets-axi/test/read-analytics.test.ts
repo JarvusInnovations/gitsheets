@@ -6,6 +6,9 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { openRepo } from 'gitsheets';
+
+import { buildAggregateFilter, HOST_PREDICATE_KEY } from '../src/commands/aggregate.js';
 import { testRepo, type TestRepoHandle } from './test-repo.js';
 import { runCli } from './run-cli.js';
 
@@ -113,17 +116,73 @@ describe('query --group-by', () => {
   });
 });
 
-describe('query --group-by is aggregate sugar (#223)', () => {
-  it('answers the faceted-count ask in one call, leaving out records without the field', async () => {
+describe('query --group-by keeps its host-side facet semantics', () => {
+  it('answers the #223 faceted-count ask in one call (missing values under the empty key)', async () => {
     const fixture = await seeded();
     const { stdout, exitCode } = await runCli(['query', 'repos', '--group-by', 'target_team'], fixture.path);
     expect(exitCode).toBe(0);
-    expect(stdout).toContain('groups[2]');
+    expect(stdout).toContain('groups[3]');
     expect(stdout).toContain('slate,2');
     expect(stdout).toContain('sencha,1');
     expect(stdout).toMatch(/matched: 5\b/);
   });
+
+  it('groups by a datetime field (ISO keys)', async () => {
+    const fixture = await testRepo({ withInitialCommit: true });
+    handles.push(fixture);
+    await mkdir(join(fixture.path, '.gitsheets'), { recursive: true });
+    await writeFile(join(fixture.path, '.gitsheets', 'events.toml'), "[gitsheet]\nroot = 'events'\npath = '${{ id }}'\n");
+    await fixture.git('add', '.gitsheets/');
+    await fixture.git('commit', '-m', 'add events');
+    const repo = await openRepo({ gitDir: join(fixture.path, '.git') });
+    await repo.transact({ message: 'seed' }, async (tx) => {
+      await tx.sheet('events').upsert({ id: 'a', at: new Date('2026-01-01T00:00:00Z'), w: 1.5 });
+      await tx.sheet('events').upsert({ id: 'b', at: new Date('2026-01-01T00:00:00Z'), w: 1.5 });
+      await tx.sheet('events').upsert({ id: 'c', at: new Date('2026-02-01T00:00:00Z'), w: 2.5 });
+    });
+    const byAt = await runCli(['query', 'events', '--group-by', 'at'], fixture.path);
+    expect(byAt.exitCode).toBe(0);
+    expect(byAt.stdout).toContain('groups[2]');
+    expect(byAt.stdout).toContain('2026-01-01T00:00:00.000Z",2');
+    const byFloat = await runCli(['query', 'events', '--group-by', 'w'], fixture.path);
+    expect(byFloat.stdout).toContain('"1.5",2');
+  });
+
+  it('groups over a body-field filter on a markdown sheet', async () => {
+    const fixture = await seededNotes();
+    const { stdout, exitCode } = await runCli(
+      ['query', 'notes', '--filter', 'body~hello', '--group-by', 'kind'],
+      fixture.path,
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('groups[1]');
+    expect(stdout).toContain('memo,2');
+  });
 });
+
+async function seededNotes(): Promise<TestRepoHandle> {
+  const fixture = await testRepo({ withInitialCommit: true });
+  handles.push(fixture);
+  await mkdir(join(fixture.path, '.gitsheets'), { recursive: true });
+  await writeFile(
+    join(fixture.path, '.gitsheets', 'notes.toml'),
+    "[gitsheet]\nroot = 'notes'\npath = '${{ slug }}'\n\n[gitsheet.format]\ntype = 'markdown'\nbody = 'body'\n",
+  );
+  await fixture.git('add', '.gitsheets/');
+  await fixture.git('commit', '-m', 'add notes');
+  await runCli(
+    [
+      'upsert', 'notes', '--data',
+      JSON.stringify([
+        { slug: 'a', kind: 'memo', body: 'hello there\n' },
+        { slug: 'b', kind: 'memo', body: 'hello again\n' },
+        { slug: 'c', kind: 'todo', body: 'nothing\n' },
+      ]),
+    ],
+    fixture.path,
+  );
+  return fixture;
+}
 
 describe('aggregate', () => {
   it('computes named aggregates as TOON', async () => {
@@ -166,6 +225,27 @@ describe('aggregate', () => {
       expect(exitCode, args.join(' ')).not.toBe(0);
       expect(stdout).toMatch(/VALIDATION_ERROR/);
     }
+  });
+
+  it('rejects a body-field clause on a markdown sheet, naming the clause', async () => {
+    const fixture = await seededNotes();
+    const { exitCode, stdout } = await runCli(
+      ['aggregate', 'notes', '--agg', 'n=count', '--filter', 'body~hello'],
+      fixture.path,
+    );
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toMatch(/VALIDATION_ERROR/);
+    expect(stdout).toContain('body~hello');
+  });
+
+  it('accepts aggregate names that shadow Object.prototype members', async () => {
+    const fixture = await seeded();
+    const { exitCode, stdout } = await runCli(
+      ['aggregate', 'repos', '--agg', 'toString=count', '--agg', 'constructor=count'],
+      fixture.path,
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout).toMatch(/toString: 5\b/);
   });
 
   it('surfaces a data-dependent failure as AGGREGATION_FAILED', async () => {
@@ -249,6 +329,22 @@ path = '\${{ publishedAt: YYYY/MM/DD }}/\${{ slug }}'
       fixture.path,
     );
     expect(stdout).toContain('of 2 total');
+  });
+
+  it('aggregate pushes the bucket range to the core and keeps the host predicate authoritative', async () => {
+    const filters = ['publishedAt>=2025-11-20', 'publishedAt<2026-02-03T09:00:00Z', 'kind=note'];
+    const filter = buildAggregateFilter(filters, { path: POSTS_TOML.match(/path = '(.*)'/)![1]! });
+    expect(filter['publishedAt']).toEqual({ $gte: '2025-11-20', $lt: '2026-02-03T09:00:00Z' });
+    expect(typeof filter[HOST_PREDICATE_KEY]).toBe('function');
+    expect(Object.keys(filter)).toHaveLength(2);
+
+    const fixture = await seededPosts();
+    const { stdout, exitCode } = await runCli(
+      ['aggregate', 'posts', '--agg', 'n=count', ...filters.flatMap((f) => ['--filter', f])],
+      fixture.path,
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout).toMatch(/n: 1\b/); // d only (c and e are posts)
   });
 
   it('count and distinct honor the range with the full-sheet total', async () => {

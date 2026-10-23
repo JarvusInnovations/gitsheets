@@ -1,11 +1,39 @@
 import { AxiError } from 'axi-sdk-js';
-import type { AggregateSpec, Sheet } from 'gitsheets';
+import type { AggregateSpec, Sheet, SheetConfig } from 'gitsheets';
 
 import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
-import { predicateFilter } from '../util/filter.js';
+import { bucketFieldsOf, buildPredicate, parseFilter, pushdownFilter } from '../util/filter.js';
+
+/**
+ * The filter key the combined host predicate rides under. No record carries
+ * it, so `Sheet.aggregate` hands the predicate `(undefined, record)` and the
+ * predicate tests the whole record.
+ */
+export const HOST_PREDICATE_KEY = '\u0000gitsheets-axi:filter';
+
+/**
+ * The `Sheet.aggregate` filter for a set of `--filter` clauses: the ordered
+ * clauses on date-bucket path fields that the core can prune by
+ * ({@link pushdownFilter}), plus ONE combined host predicate over every clause
+ * ({@link buildPredicate}) under {@link HOST_PREDICATE_KEY}. The pushed-down
+ * range never excludes a record the host predicate keeps, and the host
+ * predicate stays authoritative, so the DSL's semantics are unchanged while
+ * the walk prunes.
+ */
+export function buildAggregateFilter(
+  filters: string[],
+  config: Pick<SheetConfig, 'path'>,
+): Record<string, unknown> {
+  const filter: Record<string, unknown> = { ...pushdownFilter(filters, bucketFieldsOf(config.path)) };
+  if (filters.length > 0) {
+    const predicate = buildPredicate(filters);
+    filter[HOST_PREDICATE_KEY] = (_value: unknown, record: Record<string, unknown>) => predicate(record);
+  }
+  return filter;
+}
 
 export const AGGREGATE_HELP = `usage: gitsheets-axi aggregate <sheet> --agg <name>=<form>[:<field>] ... [--group-by f] [--filter expr ...] [--prefix p]
 flags[4]:
@@ -25,6 +53,24 @@ note:
   count and sum (0). Records lacking a string/integer/boolean --group-by
   value do not contribute. reduce is library-only (Sheet.aggregate).
 `;
+
+/**
+ * Aggregates read body-less, so a clause on a content-typed sheet's body field
+ * would silently match nothing — the spec'd TypeError, surfaced naming the
+ * clause.
+ */
+function assertNoBodyClause(filters: string[], bodyField: string | undefined): void {
+  if (bodyField === undefined) return;
+  for (const expr of filters) {
+    if (parseFilter(expr).field === bodyField) {
+      throw new AxiError(
+        `--filter "${expr}" references the body field "${bodyField}" — aggregate reads records body-less`,
+        'VALIDATION_ERROR',
+        ['Filter on frontmatter fields, or use `query` to read bodies'],
+      );
+    }
+  }
+}
 
 const FIELD_FORMS = new Set(['sum', 'min', 'max', 'avg', 'distinct']);
 
@@ -107,9 +153,10 @@ export async function runAggregate(
   filters: string[],
   aggregates: Record<string, AggregateSpec>,
 ): Promise<Record<string, unknown>> {
-  const filter = predicateFilter(filters);
   try {
-    return await sheet.aggregate(filter, aggregates);
+    const config = await sheet.readConfig();
+    assertNoBodyClause(filters, config.format.body);
+    return await sheet.aggregate(buildAggregateFilter(filters, config), aggregates);
   } catch (error) {
     if (error instanceof TypeError) throw new AxiError(error.message, 'VALIDATION_ERROR', []);
     throw translateError(error);
@@ -121,9 +168,10 @@ export async function aggregateCommand(args: string[], ctx: GitsheetsContext): P
     return AGGREGATE_HELP;
   }
   const flags = parseAggregateFlags(args);
-  const aggregates: Record<string, AggregateSpec> = {};
+  // Null-prototype so names like `toString` aren't mistaken for duplicates.
+  const aggregates = Object.create(null) as Record<string, AggregateSpec>;
   for (const [name, spec] of flags.aggs) {
-    if (name in aggregates) throw new AxiError(`--agg ${name} given twice`, 'VALIDATION_ERROR');
+    if (Object.hasOwn(aggregates, name)) throw new AxiError(`--agg ${name} given twice`, 'VALIDATION_ERROR');
     aggregates[name] = flags.groupBy !== undefined ? { ...spec, groupBy: flags.groupBy } : spec;
   }
   const repo = await ctx.repo();
