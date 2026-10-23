@@ -249,6 +249,19 @@ export declare function substrateReset(): void
  */
 export declare function recordQuery(gitDir: string, treeRef: string, base: string, template: string, filter: object, extension?: string | undefined | null, bodyField?: string | undefined | null, titleField?: string | undefined | null, withBody?: boolean | undefined | null): Array<JsRecordEntry>
 /**
+ * Ad-hoc aggregation over the sheet under `base` in `treeRef`: the records
+ * matching `filter` (pruned by `template`, read body-less, the filter
+ * applied in the core — the same forms `recordQuery` takes) folded in
+ * canonical path order by the `aggregates` table (count / sum / avg / min /
+ * max / distinct / reduce, each with optional `where` / `groupBy`). Returns
+ * one value per aggregate name. `paths`, when given, restricts the
+ * contributing set to those record paths (the binding admits records with
+ * host-side predicates first). A malformed spec throws `TypeError`; a
+ * data-dependent failure throws `AggregationError` (`aggregation_failed`)
+ * carrying `sheet` and `aggregate`. Batch-first: one FFI crossing.
+ */
+export declare function recordAggregate(gitDir: string, treeRef: string, sheet: string, base: string, template: string, filter: object, aggregates: unknown, extension?: string | undefined | null, bodyField?: string | undefined | null, titleField?: string | undefined | null, paths?: Array<string> | undefined | null): JsValue
+/**
  * A blob read by `treeRef:path` — the bytes plus the blob's object id, or
  * `null` when nothing (or a subtree) lives at `path`. Backs sheet-config
  * loading and lazy-body hydration without a `git cat-file` subprocess
@@ -679,6 +692,13 @@ export declare class CoreTransaction {
    * does not mark the transaction mutated.
    */
   query(name: string, filter: object, withBody: boolean): Array<JsRecordEntry>
+  /**
+   * Ad-hoc aggregation over the sheet's records in the transaction's
+   * private tree — the tx-bound `Sheet.aggregate` (spec:
+   * `behaviors/aggregation.md`). Same filter / aggregates / `paths` forms
+   * and errors as `recordAggregate`; reads body-less. Read-only.
+   */
+  aggregate(name: string, filter: object, aggregates: unknown, paths?: Array<string> | undefined | null): JsValue
   /**
    * Read the one record at `recordPath` (relative to the sheet's base, no
    * extension) in the transaction's private tree, decoded through the format

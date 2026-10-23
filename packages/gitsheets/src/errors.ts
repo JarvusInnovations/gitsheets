@@ -38,6 +38,7 @@ const STATUS_BY_CODE = {
   contract_missing: 500,
   contract_invalid: 500,
   contract_unsatisfied: 422,
+  aggregation_failed: 422,
 } as const satisfies Record<string, number>;
 
 export type GitsheetsErrorCode = keyof typeof STATUS_BY_CODE;
@@ -156,5 +157,34 @@ export class ContractError extends GitsheetsError {
     super(code, message, options?.cause === undefined ? undefined : { cause: options.cause });
     if (options?.contract !== undefined) this.contract = options.contract;
     if (options?.issues !== undefined) this.issues = options.issues;
+  }
+}
+
+export type AggregationErrorCode = 'aggregation_failed';
+
+interface AggregationErrorOptions extends GitsheetsErrorOptions {
+  /** The sheet aggregated. */
+  readonly sheet: string;
+  /** The aggregate's name in the aggregates table. */
+  readonly aggregate: string;
+  /** The partition, when the aggregate is a persisted rollup. */
+  readonly partition?: string;
+}
+
+/**
+ * An aggregate could not be computed — mixed value kinds under
+ * `min`/`max`/`distinct`, a `reduce` that threw or returned a non-TOML value,
+ * an integer `sum` overflow. See specs/behaviors/aggregation.md.
+ */
+export class AggregationError extends GitsheetsError {
+  readonly sheet: string;
+  readonly aggregate: string;
+  readonly partition?: string;
+
+  constructor(code: AggregationErrorCode, message: string, options: AggregationErrorOptions) {
+    super(code, message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.sheet = options.sheet;
+    this.aggregate = options.aggregate;
+    if (options.partition !== undefined) this.partition = options.partition;
   }
 }

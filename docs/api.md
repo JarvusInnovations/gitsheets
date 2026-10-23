@@ -17,6 +17,7 @@ import {
   // error classes
   GitsheetsError, ConfigError, ValidationError, TransactionError,
   IndexError, RefError, PathTemplateError, NotFoundError, ContractError,
+  AggregationError,
 
   // utilities
   mergePatch, validateRecord, canonicalContractHash,
@@ -37,6 +38,7 @@ import type {
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions, WillChangeResult,
   SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, RangeFilter, QueryOptions,
   DiffStatus, DiffOptions, DiffChange,
+  AggregateSpec, AggregatesSpec, AggregateModifiers, AggregateOptions,
   AttachmentBlobHandle, AttachmentEntry,
   Format, FormatConfig,
   OpenStoreOptions, Store, StoreTx, StoreTransactFn, ValidatorMap, InferRecord,
@@ -162,6 +164,40 @@ All write methods route through a transaction — permissive mode auto-opens one
 
 → [`specs/api/sheet.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/sheet.md) · [indexing recipe](recipes/secondary-indices.md)
 
+### Aggregation
+
+| Method | Returns |
+| --- | --- |
+| `sheet.aggregate(filter, aggregates, opts?)` | `Promise<Record<string, unknown>>` — one value per named aggregate over the records matching `filter` (pass `undefined` or `{}` for all). Computed in the core: pruned like `query`, read body-less, folded in canonical path order. `opts.signal` for cancellation; works on a tx-bound sheet |
+
+```typescript
+const r = await sheet.aggregate(
+  { postedAt: { $gte: '2026-01-01' } },
+  {
+    count: { count: true },
+    total: { sum: 'amountCents' },
+    byStatus: { count: true, groupBy: 'status' },
+    latest: { max: 'postedAt' },
+    ids: { reduce: 'acc.push(record.id); return acc;', initial: [] },
+  },
+);
+// → { count: 1402, total: 98231100, byStatus: { posted: 1390, pending: 12 }, latest: Date, ids: [...] }
+```
+
+Forms: `{ count: true }`, `{ sum: 'f' }`, `{ avg: 'f' }`, `{ min: 'f' }`, `{ max: 'f' }`, `{ distinct: 'f' }`, and the `{ reduce, initial, finalize? }` escape hatch, whose bodies run in the core's embedded JS engine (never in Node) so every binding gets the same answer. Each form takes `where` (an equality/range filter, no functions) and `groupBy` (a field; the result becomes a table keyed by its string form).
+
+- `sum` is an integer when every contributing value is, else the float fold in path order; `avg` is a float.
+- `min`/`max` order numbers, strings, and datetimes; `distinct` returns the sorted unique scalars. Mixing kinds in one field throws `AggregationError`.
+- An aggregate with nothing to fold is left out of the result, except `count` and `sum` (`0`). A grouped aggregate is always a table (`{}` when empty).
+- `filter` may carry function predicates as on `query`; they run host-side to pick the records, then the core folds over exactly those.
+- `distinct` holds every unique value in memory — fine at gitsheets' scale, but don't point it at a high-cardinality field you don't need.
+- `reduce` / `finalize` must be pure (no clock, randomness, or I/O). That is required but **not enforced** yet: `Math.random()` / `Date.now()` are reachable and make results nondeterministic — your problem, not a guarantee. Each `reduce` group runs in a fresh engine realm under loop / recursion / stack limits, so a runaway snippet is an `AggregationError`, not a hang. Hardening is tracked in [#354](https://github.com/JarvusInnovations/gitsheets/issues/354).
+- Numbers coming out of a `reduce` follow the engine's one rule: an exact integer within ±(2^53 − 1) is an integer, anything else a float. On Node, an integral float result (`4.0`, e.g. from `avg`) is indistinguishable from `4` anyway — JS has one number type (a pre-existing binding projection, not specific to aggregation).
+- Grouped results are plain objects, so JS orders integer-like keys numerically first (`"9"` before `"10"`, both before `"a"`); the core and the TOML output sort keys by byte order. A group literally named `__proto__` is an ordinary own key.
+- Throws `TypeError` for a malformed spec or a body-field reference on a content-typed sheet; `AggregationError` (`aggregation_failed`, with `sheet` and `aggregate`) when the data can't be aggregated, or a `reduce` throws or returns something TOML can't hold.
+
+→ [`specs/behaviors/aggregation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/aggregation.md)
+
 ## Transaction
 
 | Member | Purpose |
@@ -253,6 +289,7 @@ Subclasses:
 | `PathTemplateError` | `path_render_failed`, `path_invalid_chars` |
 | `NotFoundError` | `record_not_found` |
 | `ContractError` | `contract_missing`, `contract_invalid`, `contract_unsatisfied` (carries `contract` and, on `contract_unsatisfied`, the conformance report in `issues`) |
+| `AggregationError` | `aggregation_failed` (carries `sheet`, `aggregate`, and `partition` for a persisted rollup) |
 
 Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 

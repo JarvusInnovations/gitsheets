@@ -12,6 +12,7 @@ import { sheetsCommand, SHEETS_HELP } from '../src/commands/sheets.js';
 import { queryCommand, QUERY_HELP } from '../src/commands/query.js';
 import { countCommand, COUNT_HELP } from '../src/commands/count.js';
 import { distinctCommand, DISTINCT_HELP } from '../src/commands/distinct.js';
+import { aggregateCommand, AGGREGATE_HELP } from '../src/commands/aggregate.js';
 import { readCommand, READ_HELP } from '../src/commands/read.js';
 import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
 import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
@@ -36,6 +37,7 @@ const COMMAND_HELP: Record<string, string> = {
   query: QUERY_HELP,
   count: COUNT_HELP,
   distinct: DISTINCT_HELP,
+  aggregate: AGGREGATE_HELP,
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
@@ -58,6 +60,7 @@ const COMMANDS = {
   query: queryCommand,
   count: countCommand,
   distinct: distinctCommand,
+  aggregate: aggregateCommand,
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
