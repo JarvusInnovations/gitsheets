@@ -68,13 +68,14 @@ try {
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
 | `RefError` | `not_an_ancestor` | 409 | Merge-like operation where src is not an ancestor of dst |
+| `TransactionError` | `sheet_derived` | 409 | A write to a rollup sheet — rollup records are regenerated from the source, never written by consumers ([behaviors/rollups.md](../behaviors/rollups.md)) |
 | `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
 | `NotFoundError` | `record_not_found` | 404 | `delete` / `patch` / etc. against a path that doesn't exist |
 | `ContractError` | `contract_missing` | 500 | `implements` names a contract with no vendored document at its derived path |
 | `ContractError` | `contract_invalid` | 500 | Contract document violates [document requirements](../behaviors/contracts.md#contract-document-requirements) (compile, `$id`/path, canonical form, openness, self-containment, TOML data model) |
 | `ContractError` | `contract_unsatisfied` | 422 | Consumer verification failed both rungs (carries the conformance report in `issues`) |
-| `AggregationError` | `aggregation_failed` | 422 | An aggregate could not be computed (mixed value kinds under `min`/`max`/`distinct`, an integer `sum`/`avg` total outside the signed 64-bit range, a `reduce`/`finalize` that threw, exceeded the engine's runtime limits, or returned a non-TOML value); carries sheet and aggregate name ([behaviors/aggregation.md](../behaviors/aggregation.md)) |
+| `AggregationError` | `aggregation_failed` | 422 | An aggregate could not be computed (mixed value kinds under `min`/`max`/`distinct`, an integer `sum`/`avg` total outside the signed 64-bit range, a `reduce`/`finalize` that threw, exceeded the engine's runtime limits, or returned a non-TOML value); carries sheet and aggregate name, plus the partition for a persisted rollup ([behaviors/aggregation.md](../behaviors/aggregation.md), [behaviors/rollups.md](../behaviors/rollups.md)) |
 
 The `code` strings are stable. New scenarios get new codes; existing codes never change meaning.
 
