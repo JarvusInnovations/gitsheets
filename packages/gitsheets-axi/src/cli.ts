@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runAxiCli } from 'axi-sdk-js';
 
-import { createContext, type GitsheetsContext } from './context.js';
+import { createContext, parseGlobalFlags, type GitsheetsContext } from './context.js';
 import { homeCommand } from './commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from './commands/sheets.js';
 import { queryCommand, QUERY_HELP } from './commands/query.js';
@@ -38,8 +38,10 @@ commands[20]:
   delete, check, diff, normalize,
   init, infer, migrate-config,
   attachment, contracts, push, setup
-flags[2]:
+flags[3]:
   --help, -v/-V/--version
+  --branch <name>  Default branch every command reads/writes (any command;
+                   default: $GITSHEETS_BRANCH, gitsheets.branch, HEAD's branch)
 examples:
   gitsheets-axi
   gitsheets-axi query repos --filter status=unclassified --sort pushed_at
@@ -102,11 +104,21 @@ const COMMANDS: Record<string, CommandFn> = {
 };
 
 export async function main(): Promise<void> {
+  // Global flags, accepted on any command (specs/behaviors/default-branch.md "CLI").
+  let globals: ReturnType<typeof parseGlobalFlags>;
+  try {
+    globals = parseGlobalFlags(process.argv.slice(2));
+  } catch (error) {
+    process.stdout.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
   await runAxiCli<GitsheetsContext>({
     description: DESCRIPTION,
     version: VERSION,
+    argv: globals.rest,
     topLevelHelp: TOP_HELP,
-    resolveContext: () => createContext(),
+    resolveContext: () => createContext(globals.flags),
     home: (_args, ctx) => homeCommand(ctx as GitsheetsContext),
     commands: COMMANDS as Record<
       string,

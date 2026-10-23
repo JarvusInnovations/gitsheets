@@ -6,7 +6,7 @@
 
 import { runAxiCli } from 'axi-sdk-js';
 
-import { createContext, type GitsheetsContext } from '../src/context.js';
+import { createContext, parseGlobalFlags, type GitsheetsContext } from '../src/context.js';
 import { homeCommand } from '../src/commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from '../src/commands/sheets.js';
 import { queryCommand, QUERY_HELP } from '../src/commands/query.js';
@@ -99,13 +99,14 @@ export async function runCli(argv: string[], cwd: string): Promise<RunResult> {
     process.chdir(cwd);
     process.exitCode = 0;
 
+    const globals = parseGlobalFlags(argv);
     await runAxiCli<GitsheetsContext>({
       description: 'test-instance',
       version: '0.0.0-test',
       topLevelHelp: 'test',
       hooks: false,
-      argv,
-      resolveContext: () => createContext(),
+      argv: globals.rest,
+      resolveContext: () => createContext(globals.flags),
       home: (_args, ctx) => homeCommand(ctx as GitsheetsContext),
       commands: COMMANDS,
       getCommandHelp: (command) => COMMAND_HELP[command],

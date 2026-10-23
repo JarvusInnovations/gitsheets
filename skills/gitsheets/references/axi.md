@@ -312,7 +312,7 @@ Manage binary blobs colocated with records. Subcommands:
 
 ### `gitsheets-axi push [--remote r] [--branch b]`
 
-One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, current HEAD branch. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
+One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, the repo's default branch (`--branch` is the global flag every command accepts: `GITSHEETS_BRANCH`, `gitsheets.branch` git config, else HEAD's branch). Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
 
 Errors map to:
 

@@ -2214,6 +2214,13 @@ impl CoreTransaction {
         self.inner.as_ref().and_then(|t| t.parent_commit_hash())
     }
 
+    /// Whether a mutating method has run in this transaction — the flag the
+    /// core's no-op short-circuit at finalize reads. False once finalized.
+    #[napi]
+    pub fn is_mutated(&self) -> bool {
+        self.inner.as_ref().is_some_and(|t| t.is_mutated())
+    }
+
     /// Finalize: commit-on-success-only with no-op detection + `parent_moved`
     /// re-check + CAS ref movement. Consumes the transaction.
     #[napi]

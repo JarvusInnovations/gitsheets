@@ -103,7 +103,7 @@ The transaction's commit message, trailers, author, parent, etc. follow the same
 
 ### `store.refresh()`
 
-Rebind every sheet to the repository's current `HEAD` tree — delegates to `repo.refresh()` (a Store's sheets are Repository-issued sheets; partial-store freshness is not a meaningful state). Returns `Promise<void>`. Use after out-of-band ref movement.
+Rebind every sheet to the current tree of the repository's default branch ([behaviors/default-branch.md](../behaviors/default-branch.md)) — delegates to `repo.refresh()` (a Store's sheets are Repository-issued sheets; partial-store freshness is not a meaningful state). Returns `Promise<void>`. Use after out-of-band ref movement.
 
 ```typescript
 await store.refresh();
