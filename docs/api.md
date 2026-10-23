@@ -93,7 +93,7 @@ const store = await openStore(repo, {
 | `repo.sync(opts?)` | Bring a branch up to date with a remote other writers push to: fetch, then fast-forward / replay local commits / preserve-on-conflict under the write lock; rebinds live sheets; hands new tips to the push daemon. Outcomes `in-sync` · `fast-forwarded` · `ahead` · `rebased` · `conflict` · `conflict-escaped` · `fetch-failed` |
 | `repo.fetch(opts?)` | The fetch step of `sync` on its own, outside any lock: `{ ok, remoteRef, remoteCommit \| error }` — failure is a value |
 | `repo.isAncestor(a, b)` | `Promise<boolean>` — is commit `a` reachable from `b` |
-| `repo.tag(name, target?, { force? })` | Lightweight tag (default target `HEAD`); refuses an existing tag unless `force` — `git tag -f` without the spawn |
+| `repo.tag(name, target?, { force? })` | Lightweight tag (default target: the default branch's tip, `HEAD` when bound to a detached `HEAD`); refuses an existing tag unless `force` — `git tag -f` without the spawn |
 | `repo.listTree(ref, path?)` | Direct entries `{ name, type, mode, hash }` of the tree at `<ref>:<path>`, or `null` — `git ls-tree` without the spawn |
 | `repo.merge({ theirs, ours?, prefer?, commit? })` | Sheet-aware merge: record files changed on both sides are field-merged and written canonically; conflicts follow `prefer` (`fail` · `ours` · `theirs`) or are reported in the result, never thrown. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
 | `repo.refresh()` | Rebind every live Sheet to the default branch's current tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |

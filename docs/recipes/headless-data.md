@@ -119,12 +119,13 @@ Push and fetch the branch by name, like any other branch:
 git push origin data
 ```
 
-!!! warning "Fresh clones need a local `data` branch"
+!!! note "Fresh clones need a local `data` branch"
     `git clone` creates a local branch only for the remote's default
-    branch. On a new clone, `data` exists only as `origin/data`. gitsheets
-    would treat it as an unborn branch: reads come back empty, and the first
-    write would start a new root commit unrelated to the remote's history.
-    Create the local branch before you bind:
+    branch. On a new clone, `data` exists only as `origin/data`, and
+    gitsheets refuses to bind to it (`ConfigError` `config_invalid`, naming
+    the fix) rather than treat it as unborn and start a root commit
+    unrelated to the remote's history. It never creates the local branch
+    for you. Create it before you bind:
 
     ```bash
     git branch data origin/data
