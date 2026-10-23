@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ConfigError, RefError } from './errors.js';
+import { ConfigError, RefError, TransactionError } from './errors.js';
 import { openRepo, type Repository } from './repository.js';
 import { testRepo, type TestRepoHandle } from './test-helpers/test-repo.js';
 
@@ -300,18 +300,56 @@ describe('an unborn default branch', () => {
     expect(await git(fixture, 'rev-list', '--count', 'data')).toBe('2');
   });
 
-  it('a live sheet opened before the bootstrap sees it via auto-refresh', async () => {
+  it('live sheets opened before the bootstrap see it via auto-refresh', async () => {
+    // A Sheet needs its config to open (config_missing on an unborn branch),
+    // so the standing handle is opened after the config-only root commit and
+    // before any record lands; the record commit rebinds it.
     const fixture = await testRepo({ withInitialCommit: true });
     handles.push(fixture);
     const repo = await openRepo({ gitDir: fixture.gitDir, branch: 'data' });
+    expect(await repo.openSheets()).toEqual({});
     await repo.transact({ message: 'init' }, async (tx) => {
       tx.writeFile('.gitsheets/users.toml', USERS);
     });
     const users = await repo.openSheet('users');
+    expect(await users.count()).toBe(0);
     await repo.transact({ message: 'jane' }, async (tx) => {
       await tx.sheet('users').upsert({ slug: 'jane', email: 'jane@x.org' });
     });
     expect(await users.count()).toBe(1);
+  });
+
+  it('a live sheet whose config lands in the same bootstrap commit as records', async () => {
+    const fixture = await testRepo({ withInitialCommit: true });
+    handles.push(fixture);
+    const repo = await openRepo({ gitDir: fixture.gitDir, branch: 'data' });
+    const before = await repo.currentReadTree();
+    await repo.transact({ message: 'seed' }, async (tx) => {
+      tx.writeFile('.gitsheets/users.toml', USERS);
+      await tx.sheet('users').upsert({ slug: 'jane', email: 'jane@x.org' });
+    });
+    expect(await repo.currentReadTree()).not.toBe(before);
+    expect(await (await repo.openSheet('users')).count()).toBe(1);
+  });
+
+  it('an existing different branch with no parent is refused with a clear commit_failed', async () => {
+    const fixture = await testRepo({ withInitialCommit: true });
+    handles.push(fixture);
+    const repo = await openRepo({ gitDir: fixture.gitDir, branch: 'data' });
+    const err = await repo
+      .transact({ message: 'x', branch: 'main' }, async (tx) => {
+        tx.writeFile('a.txt', 'a');
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransactionError);
+    expect((err as TransactionError).code).toBe('commit_failed');
+    expect((err as Error).message).toMatch(/unborn.*pass opts\.parent/);
+    expect((err as Error).message).not.toMatch(/parent: null/);
+    // A different branch that does not exist yet is fine: created as a root.
+    const ok = await repo.transact({ message: 'y', branch: 'other' }, async (tx) => {
+      tx.writeFile('a.txt', 'a');
+    });
+    expect(ok.ref).toBe('refs/heads/other');
   });
 
   it('a fresh repo bound to HEAD’s own unborn branch keeps the fresh-repo path', async () => {
@@ -402,6 +440,95 @@ describe('sync / fetch / push daemon / merge default to the default branch', () 
     const r = await repo.merge({ theirs: 'import' });
     expect(r.outcome).toBe('fast-forward');
     expect(await git(fixture, 'rev-parse', 'data')).toBe(r.commit);
+    expect(await users.count()).toBe(2);
+  });
+});
+
+describe('review round 1', () => {
+  async function cloneWithRemoteData(): Promise<{ clone: TestRepoHandle; repoPath: string }> {
+    const origin = await dataBranchRepo();
+    const dir = await mkdtemp(join(tmpdir(), 'gitsheets-db-clone-'));
+    dirs.push(dir);
+    await exec('git', ['clone', '-q', origin.path, dir]);
+    const clone: TestRepoHandle = {
+      path: dir,
+      gitDir: join(dir, '.git'),
+      git: (...args: string[]) => exec('git', args, { cwd: dir }),
+      cleanup: async () => {},
+    };
+    await clone.git('config', 'user.name', 'C');
+    await clone.git('config', 'user.email', 'c@x.org');
+    return { clone, repoPath: dir };
+  }
+
+  it('a branch present only as a remote-tracking ref is config_invalid, naming the remedy', async () => {
+    const { clone } = await cloneWithRemoteData();
+    await expect(clone.git('rev-parse', '--verify', '--quiet', 'refs/heads/data')).rejects.toBeTruthy();
+    const err = await openRepo({ gitDir: clone.gitDir, branch: 'data' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as ConfigError).code).toBe('config_invalid');
+    expect((err as Error).message).toContain('git branch data origin/data');
+    await clone.git('config', 'gitsheets.branch', 'data');
+    await expect(openRepo({ gitDir: clone.gitDir })).rejects.toMatchObject({ code: 'config_invalid' });
+    // The remedy works.
+    await clone.git('branch', 'data', 'origin/data');
+    const repo = await openRepo({ gitDir: clone.gitDir });
+    expect(await (await repo.openSheet('users')).count()).toBe(1);
+  });
+
+  it('a remote-tracking copy fetched after open blocks the bootstrap write', async () => {
+    const origin = await dataBranchRepo();
+    const fixture = await testRepo({ withInitialCommit: true });
+    handles.push(fixture);
+    const repo = await openRepo({ gitDir: fixture.gitDir, branch: 'data' });
+    await fixture.git('remote', 'add', 'origin', origin.path);
+    await fixture.git('fetch', '-q', 'origin');
+    await expect(
+      repo.transact({ message: 'x' }, async (tx) => {
+        tx.writeFile('a.txt', 'a');
+      }),
+    ).rejects.toMatchObject({ code: 'config_invalid' });
+    await expect(fixture.git('rev-parse', '--verify', '--quiet', 'refs/heads/data')).rejects.toBeTruthy();
+  });
+
+  it('tag() defaults to the default branch tip; HEAD when bound to a detached HEAD', async () => {
+    const fixture = await dataBranchRepo();
+    const repo = await openRepo({ gitDir: fixture.gitDir, branch: 'data' });
+    expect(await repo.tag('snap')).toBe(await git(fixture, 'rev-parse', 'data'));
+    await fixture.git('checkout', '-q', '--detach', 'main');
+    const detached = await openRepo({ gitDir: fixture.gitDir });
+    expect(detached.branch).toBeNull();
+    expect(await detached.tag('head-snap')).toBe(await git(fixture, 'rev-parse', 'HEAD'));
+    // An explicit target still means what it names.
+    expect(await repo.tag('main-snap', 'main')).toBe(await git(fixture, 'rev-parse', 'main'));
+  });
+
+  it('merge moves a default branch whose name looks like a hash', async () => {
+    const fixture = await dataBranchRepo();
+    await fixture.git('branch', '2026', 'data');
+    await fixture.git('branch', 'import', 'data');
+    await commitFiles(fixture, 'import', { 'users/imp.toml': 'email = "imp@x.org"\nslug = "imp"\n' }, 'import');
+    await commitFiles(fixture, '2026', { 'users/loc.toml': 'email = "loc@x.org"\nslug = "loc"\n' }, 'local');
+    const repo = await openRepo({ gitDir: fixture.gitDir, branch: '2026' });
+    const users = await repo.openSheet('users');
+    const r = await repo.merge({ theirs: 'import' });
+    expect(r.outcome).toBe('merged');
+    expect(await git(fixture, 'rev-parse', 'refs/heads/2026')).toBe(r.commit);
+    expect(await git(fixture, 'log', '-1', '--format=%s', 'refs/heads/2026')).toBe('Merge import into 2026');
+    expect(await users.count()).toBe(3);
+  });
+
+  it('detached HEAD + binding: writes land on the bound branch, HEAD stays detached', async () => {
+    const fixture = await dataBranchRepo();
+    await fixture.git('checkout', '-q', '--detach', 'main');
+    const head0 = await git(fixture, 'rev-parse', 'HEAD');
+    const data0 = await git(fixture, 'rev-parse', 'data');
+    const repo = await openRepo({ gitDir: fixture.gitDir, branch: 'data' });
+    const users = await repo.openSheet('users');
+    await users.upsert({ slug: 'ada', email: 'ada@x.org' });
+    expect(await git(fixture, 'rev-parse', 'data^')).toBe(data0);
+    expect(await git(fixture, 'rev-parse', 'HEAD')).toBe(head0);
+    await expect(fixture.git('symbolic-ref', '--quiet', 'HEAD')).rejects.toBeTruthy();
     expect(await users.count()).toBe(2);
   });
 });

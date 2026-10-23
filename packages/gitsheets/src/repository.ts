@@ -537,15 +537,19 @@ export class Repository {
       } else if (start.kind === 'unborn') {
         // Bootstrap an unborn default branch with a root commit. The core
         // resolves only HEAD's own unborn branch implicitly, so this rides
-        // its orphan path — tracked for mutations so a handler that writes
-        // nothing still commits nothing, as on a fresh HEAD.
+        // its orphan path; a handler that writes nothing is discarded below
+        // so it still commits nothing, as on a fresh HEAD.
+        if (coreOpts.branch !== undefined && (await resolveCommit(this.#gitDir, qualifyBranch(coreOpts.branch))) !== null) {
+          throw new TransactionError(
+            'commit_failed',
+            `the default branch ${start.ref} is unborn, so there is no tip to parent a commit onto ${coreOpts.branch} — pass opts.parent explicitly`,
+          );
+        }
         coreOpts.orphan = true;
         coreOpts.branch ??= start.ref;
       }
 
-      const rawCoreTx = callCore(() => CoreTransaction.begin(this.#gitDir, coreOpts));
-      const mutation = { seen: false };
-      const coreTx = start.kind === 'unborn' ? trackMutations(rawCoreTx, mutation) : rawCoreTx;
+      const coreTx = callCore(() => CoreTransaction.begin(this.#gitDir, coreOpts));
       const tx: Transaction = new Transaction({
         coreTx,
         gitDir: this.#gitDir,
@@ -564,7 +568,7 @@ export class Repository {
         tx.discard();
         throw err;
       }
-      if (start.kind === 'unborn' && !mutation.seen) {
+      if (start.kind === 'unborn' && !coreTx.isMutated()) {
         tx.discard();
         return { value, commitHash: null, treeHash: null, ref: null, parentCommitHash: null };
       }
@@ -714,7 +718,7 @@ export class Repository {
       if (!defaultRef) {
         throw new RefError('ref_not_found', 'repo.merge: HEAD is detached — pass opts.ours');
       }
-      ours = defaultRef.replace(/^refs\/heads\//, '');
+      ours = defaultRef;
     }
     const coreOpts: import('@gitsheets/core-napi').JsMergeOptions = {
       ours,
@@ -726,6 +730,12 @@ export class Repository {
       offsetMinutes: -new Date().getTimezoneOffset(),
     };
     if (opts.message !== undefined) coreOpts.message = opts.message;
+    else if (opts.ours === undefined) {
+      // The default `ours` is passed fully qualified (a branch named like a
+      // hash, e.g. `2026`, would otherwise be misread as a commit); keep the
+      // core's default message naming the short branch.
+      coreOpts.message = `Merge ${opts.theirs} into ${ours.replace(/^refs\/heads\//, '')}\n`;
+    }
     if (opts.author !== undefined) coreOpts.author = opts.author;
     if (opts.committer !== undefined) coreOpts.committer = opts.committer;
     const oursArg = ours;
@@ -756,13 +766,15 @@ export class Repository {
   }
 
   /**
-   * Point the lightweight tag `refs/tags/<name>` at `target` (default HEAD),
+   * Point the lightweight tag `refs/tags/<name>` at `target` (default: the
+   * default branch's tip; HEAD when bound to a detached HEAD),
    * in the core. Refuses an existing tag with TransactionError(commit_failed)
    * unless `opts.force` (then moves it — `git tag -f`). Returns the tagged
    * object id. See specs/api/repository.md#repotagname-target-opts.
    */
-  async tag(name: string, target = 'HEAD', opts: { readonly force?: boolean } = {}): Promise<string> {
-    return callCore(() => addon.tagSet(this.#gitDir, name, target, opts.force ?? false));
+  async tag(name: string, target?: string, opts: { readonly force?: boolean } = {}): Promise<string> {
+    const resolved = target ?? (this.#branch !== null ? `refs/heads/${this.#branch}` : 'HEAD');
+    return callCore(() => addon.tagSet(this.#gitDir, name, resolved, opts.force ?? false));
   }
 
   /**
@@ -886,6 +898,8 @@ export class Repository {
     const ref = `refs/heads/${this.#branch}`;
     if ((await resolveCommit(this.#gitDir, ref)) !== null) return { kind: 'tip', ref };
     if ((await this.#headBranchRef()) === ref) return { kind: 'as-given' };
+    // A remote-tracking copy may have been fetched since open.
+    await assertNotRemoteOnly(this.#gitDir, this.#branch, 'the default branch');
     return { kind: 'unborn', ref };
   }
 
@@ -974,6 +988,7 @@ async function validateBranchName(gitDir: string, raw: string, source: string): 
     throw invalid('is not a valid branch name');
   }
   if ((await resolveCommit(gitDir, `refs/heads/${name}`)) !== null) return name;
+  await assertNotRemoteOnly(gitDir, name, source);
   try {
     const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', name], { cwd: gitDir });
     if (stdout.trim() !== '') throw invalid('names a tag, commit, or other ref, not a branch');
@@ -985,35 +1000,33 @@ async function validateBranchName(gitDir: string, raw: string, source: string): 
 }
 
 /**
- * Wrap a core transaction so any mutating call flips `flag.seen` — used for
- * an unborn-default-branch transaction (an orphan in the core, which would
- * otherwise commit even when the handler wrote nothing).
+ * Refuse a branch that exists only as a remote-tracking ref
+ * (`refs/remotes/<remote>/<name>`, e.g. on a fresh clone): it is not unborn,
+ * and treating it so would let the first write start an unrelated root.
+ * gitsheets never creates a local branch from a remote one implicitly.
+ * See specs/behaviors/default-branch.md "Resolution".
  */
-function trackMutations(coreTx: CoreTransaction, flag: { seen: boolean }): CoreTransaction {
-  const always = new Set(['stageUpsert', 'delete', 'clear', 'setAttachments', 'setAttachment', 'writeFile', 'deleteAttachment']);
-  const whenTrue = new Set(['deleteFile', 'deleteAttachments']);
-  return new Proxy(coreTx, {
-    get(target, prop) {
-      const value: unknown = Reflect.get(target, prop);
-      if (typeof value !== 'function') return value;
-      const fn = value as (...args: unknown[]) => unknown;
-      if (typeof prop === 'string' && always.has(prop)) {
-        return (...args: unknown[]) => {
-          const out = fn.apply(target, args);
-          flag.seen = true;
-          return out;
-        };
-      }
-      if (typeof prop === 'string' && whenTrue.has(prop)) {
-        return (...args: unknown[]) => {
-          const out = fn.apply(target, args);
-          if (out === true) flag.seen = true;
-          return out;
-        };
-      }
-      return fn.bind(target);
-    },
-  });
+export async function assertNotRemoteOnly(gitDir: string, name: string, source: string): Promise<void> {
+  let remotes: string[];
+  try {
+    const { stdout } = await exec('git', ['remote'], { cwd: gitDir });
+    remotes = stdout.split('\n').map((r) => r.trim()).filter((r) => r.length > 0);
+  } catch {
+    return;
+  }
+  for (const remote of remotes) {
+    if ((await resolveCommit(gitDir, `refs/remotes/${remote}/${name}`)) !== null) {
+      throw new ConfigError(
+        'config_invalid',
+        `${source}: branch ${JSON.stringify(name)} exists only as ${remote}/${name} — create the local branch first: git branch ${name} ${remote}/${name}`,
+      );
+    }
+  }
+}
+
+/** `name` as a fully-qualified ref (`refs/heads/<name>` unless already under `refs/`). */
+function qualifyBranch(name: string): string {
+  return name.startsWith('refs/') ? name : `refs/heads/${name}`;
 }
 
 /** Convenience factory: `openRepo({ gitDir?, branch? })`. */
