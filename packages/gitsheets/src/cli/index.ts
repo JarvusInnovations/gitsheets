@@ -501,9 +501,10 @@ async function runAggregate(argv: AggregateArgs): Promise<void> {
   if (format !== 'json' && format !== 'toml') {
     throw new Error(`--format must be one of: json, toml (got "${format}")`);
   }
-  const aggregates: Record<string, AggregateSpec> = {};
+  // Null-prototype so names like `toString` aren't mistaken for duplicates.
+  const aggregates = Object.create(null) as Record<string, AggregateSpec>;
   for (const [name, spec] of argv.agg) {
-    if (name in aggregates) throw new Error(`--agg ${name} given twice`);
+    if (Object.hasOwn(aggregates, name)) throw new Error(`--agg ${name} given twice`);
     aggregates[name] = argv.groupBy !== undefined ? { ...spec, groupBy: argv.groupBy } : spec;
   }
   const filter = (argv.filter as RecordLike | undefined) ?? {};

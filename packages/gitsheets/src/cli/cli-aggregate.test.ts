@@ -97,6 +97,15 @@ describe('CLI: aggregate', () => {
     });
   });
 
+  it('accepts aggregate names that shadow Object.prototype members', async () => {
+    const h = await seeded();
+    const { code, out } = await run([
+      '--git-dir', h.gitDir, 'aggregate', 'transactions', '--agg', 'toString=count', '--agg', 'hasOwnProperty=sum:amountCents',
+    ]);
+    expect(code).toBe(0);
+    expect(JSON.parse(out)).toEqual({ toString: 4, hasOwnProperty: 3099 });
+  });
+
   it('emits TOML with --format toml', async () => {
     const h = await seeded();
     const { code, out } = await run([
