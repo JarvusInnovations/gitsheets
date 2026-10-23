@@ -169,4 +169,45 @@ describe('CLI init bootstraps a data branch', () => {
       await rm(bare, { recursive: true, force: true });
     }
   });
+
+  it('only a plain branch name is bootstrapped from an unresolved --ref', async () => {
+    const fixture = await testRepo(); // fresh: HEAD unresolvable
+    handles.push(fixture);
+    for (const bad of ['HEAD', 'refs/tags/x', 'refs/remotes/origin/x', 'a..b']) {
+      const r = await run(['--git-dir', fixture.gitDir, '--ref', bad, 'init', 'users']);
+      expect(r.code, bad).not.toBe(0);
+    }
+    expect(await git(fixture, 'for-each-ref', '--format=%(refname)')).toBe('');
+    // refs/heads/<name> is a plain branch name.
+    const ok = await run(['--git-dir', fixture.gitDir, '--ref', 'refs/heads/data', 'init', 'users']);
+    expect(ok.code).toBe(0);
+    expect(await git(fixture, 'for-each-ref', '--format=%(refname)')).toBe('refs/heads/data');
+  });
+
+  it('a --ref branch that exists only on a remote is not bootstrapped', async () => {
+    const origin = await testRepo({ withInitialCommit: true });
+    handles.push(origin);
+    await origin.git('branch', 'data');
+    const fixture = await testRepo({ withInitialCommit: true });
+    handles.push(fixture);
+    await fixture.git('remote', 'add', 'origin', origin.path);
+    await fixture.git('fetch', '-q', 'origin');
+    const r = await run(['--git-dir', fixture.gitDir, '--ref', 'data', 'init', 'users']);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain('git branch data origin/data');
+    const bound = await run(['--git-dir', fixture.gitDir, '--branch', 'data', 'init', 'users']);
+    expect(bound.code).not.toBe(0);
+    expect(bound.err).toContain('--branch / GITSHEETS_BRANCH');
+    await expect(fixture.git('rev-parse', '--verify', '--quiet', 'refs/heads/data')).rejects.toBeTruthy();
+  });
+
+  it('init --no-commit is rejected', async () => {
+    const fixture = await testRepo({ withInitialCommit: true });
+    handles.push(fixture);
+    const head0 = await git(fixture, 'rev-parse', 'HEAD');
+    const r = await run(['--git-dir', fixture.gitDir, 'init', 'users', '--no-commit']);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain('--no-commit');
+    expect(await git(fixture, 'rev-parse', 'HEAD')).toBe(head0);
+  });
 });
