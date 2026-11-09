@@ -284,15 +284,20 @@ impl Template {
                     }
                     Err(_) => None,
                 },
-                Part::Expression { handle, .. } => match engine.call(*handle, std::slice::from_ref(record)) {
+                Part::Expression { handle, source } => match engine.call(*handle, std::slice::from_ref(record)) {
                     Ok(value) => engine.to_path_string(&value),
                     // An undefined identifier is "un-renderable", not fatal —
                     // lets a partial query walk the tree fully (host parity).
                     Err(SnippetError::UndefinedReference(_)) => None,
+                    // Any other throw — including the deterministic realm's
+                    // denial of the clock / entropy / host locale (spec:
+                    // rust-core.md "Embedded code execution") — is a render
+                    // failure naming the expression, in write and query alike.
                     Err(SnippetError::Other(message)) => {
                         return Err(Error::PathRenderFailed {
                             message: format!(
-                                "expression in component of \"{}\" failed: {message}",
+                                "expression ${{{{ {} }}}} in \"{}\" failed: {message}",
+                                source.trim(),
                                 self.source
                             ),
                         });
@@ -1496,5 +1501,50 @@ mod tests {
         assert_eq!(iso_instant("2026-03-09").unwrap().to_string(), "2026-03-09 00:00:00");
         assert_eq!(iso_instant("2026-03-09T01:00:00+01:00").unwrap().to_string(), "2026-03-09 00:00:00");
         assert!(iso_instant("yesterday").is_none());
+    }
+
+    // ── determinism rule (rust-core.md "Determinism rule for definition
+    //    snippets"; #362) ──────────────────────────────────────────────────
+
+    #[test]
+    fn an_expression_reading_the_clock_or_entropy_fails_the_render() {
+        let r = table(&[("slug", Value::String("x".into()))]);
+        for (expr, named) in [
+            ("Date.now()", "Date.now()"),
+            ("Math.random()", "Math.random()"),
+            ("new Date().getUTCFullYear()", "new Date() with no arguments"),
+        ] {
+            let template = format!("${{{{ {expr} }}}}/${{{{ slug }}}}");
+            let err = render(&template, &r).unwrap_err();
+            assert_eq!(err.code(), "path_render_failed", "{expr}");
+            let msg = err.message();
+            assert!(msg.contains(&format!("${{{{ {expr} }}}}")), "names the expression: {msg}");
+            assert!(msg.contains(named), "names the forbidden call: {msg}");
+            assert!(msg.contains("not available in a gitsheets snippet"), "{msg}");
+
+            // Query planning surfaces it too — a throw is never "un-renderable".
+            let mut eng = Engine::new().unwrap();
+            let t = Template::compile(&template, &mut eng).unwrap();
+            let err = t.plan_query(&r, &mut eng).unwrap_err();
+            assert_eq!(err.code(), "path_render_failed", "plan {expr}");
+        }
+    }
+
+    #[test]
+    fn a_local_time_expression_renders_at_utc_whatever_the_host_zone() {
+        std::env::set_var("TZ", "America/New_York");
+        let at: Value = Value::Datetime("2026-03-04T02:06:07Z".parse().unwrap());
+        let r = table(&[("at", at), ("slug", Value::String("x".into()))]);
+        // New York local time would be 21:06 on Mar 03.
+        assert_eq!(
+            render("${{ at.getFullYear() }}/${{ at.getDate() }}/${{ at.getHours() }}/${{ slug }}", &r).unwrap(),
+            "2026/4/2/x"
+        );
+        assert_eq!(
+            render("${{ new Date(at.getTime() + 86400000).getUTCDate() }}", &r).unwrap(),
+            "5",
+            "argument-taking Date forms still work"
+        );
+        assert_eq!(render("${{ Date.UTC(2026, 0, 1) }}", &r).unwrap(), "1767225600000");
     }
 }

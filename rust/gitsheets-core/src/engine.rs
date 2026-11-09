@@ -52,8 +52,8 @@ pub const AGGREGATE_STACK_LIMIT: usize = 10 * 1024;
 /// tree expansion is exponential even when its depth is small.
 pub const MAX_UNMARSHAL_NODES: usize = 1_000_000;
 
-/// Host hooks for the aggregate realm: the local time zone is UTC on every
-/// host, whatever the process's own offset (see [`Engine::new_limited`]).
+/// Host hooks for every embedded realm: the local time zone is UTC on every
+/// host, whatever the process's own offset (see [`Engine::new`]).
 #[derive(Debug, Clone, Copy)]
 struct DeterministicHooks;
 
@@ -63,22 +63,28 @@ impl boa_engine::context::HostHooks for DeterministicHooks {
     }
 }
 
-/// Evaluated once into every aggregate realm: removes the clock and entropy
-/// sources a `reduce` / `finalize` snippet could reach. Calling one throws a
-/// `TypeError`, which the fold reports as `AggregationError`. `Date` stays a
-/// constructor for every argument-taking form (and `instanceof Date` keeps
+/// Evaluated once into every realm: removes the clock and entropy sources a
+/// definition snippet (path expression, comparator, aggregate `reduce` /
+/// `finalize`) could reach. Calling one throws a `TypeError`, which each call
+/// site maps to its specced error (`PathTemplateError` for a path expression,
+/// `ConfigError` for a comparator, `AggregationError` for a fold). `Date` stays
+/// a constructor for every argument-taking form (and `instanceof Date` keeps
 /// working — the replacement shares the intrinsic prototype).
+///
+/// The Node binding's `node:vm` path applies the same contract with the same
+/// messages (`packages/gitsheets/src/sandbox.ts`) — keep the two in step.
 const DENY_NONDETERMINISM: &str = r#"(() => {
   const D = Date;
+  const why = ': gitsheets definition snippets must be a pure function of their inputs';
   const deny = (what) => function () {
-    throw new TypeError(what + ' is not available in an aggregate snippet: it is nondeterministic, and aggregate results must be a pure function of the records');
+    throw new TypeError(what + ' is not available in a gitsheets snippet: it is nondeterministic' + why);
   };
   const SafeDate = function Date(...args) {
     if (new.target === undefined) {
-      throw new TypeError('Date() is not available in an aggregate snippet: it reads the clock, and aggregate results must be a pure function of the records');
+      throw new TypeError('Date() is not available in a gitsheets snippet: it reads the clock' + why);
     }
     if (args.length === 0) {
-      throw new TypeError('new Date() with no arguments is not available in an aggregate snippet: it reads the clock, and aggregate results must be a pure function of the records');
+      throw new TypeError('new Date() with no arguments is not available in a gitsheets snippet: it reads the clock' + why);
     }
     return Reflect.construct(D, args, new.target);
   };
@@ -89,6 +95,14 @@ const DENY_NONDETERMINISM: &str = r#"(() => {
   SafeDate.now = deny('Date.now()');
   Object.defineProperty(globalThis, 'Date', { value: SafeDate, writable: true, configurable: true, enumerable: false });
   Math.random = deny('Math.random()');
+  for (const m of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) {
+    Object.defineProperty(D.prototype, m, {
+      value: function () {
+        throw new TypeError('Date.prototype.' + m + '() is not available in a gitsheets snippet: it reads the host locale and time zone' + why);
+      },
+      writable: true, configurable: true, enumerable: false,
+    });
+  }
 })();"#;
 
 /// An opaque handle to a snippet compiled into the engine, returned by
@@ -124,9 +138,52 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Build a fresh engine. Evaluates the one bootstrap helper (`make_date`).
+    /// Build a fresh **deterministic** engine — the realm path-template
+    /// expressions, raw-JS sort comparators, index `keyFn`s, and query filter
+    /// predicates run in (spec: `rust-core.md` "Embedded code execution",
+    /// determinism rule). Their results decide committed bytes (where a record
+    /// lives, the order of an array in canonical TOML), so they must be a
+    /// function of their inputs alone:
+    ///
+    /// - **No clock, no entropy**: `Math.random`, `Date.now`, and the
+    ///   argument-less `Date` (`new Date()` / `Date()`) throw a `TypeError`;
+    ///   `new Date(ms)`, `new Date(string)`, `new Date(y, m, …)`, `Date.UTC`,
+    ///   and `Date.parse` remain.
+    /// - **No host time zone**: underneath the JS-level denial the host hooks
+    ///   are pinned — the clock is fixed at the epoch and the local time-zone
+    ///   offset is UTC — so a `Date`'s local-time methods (`getHours`,
+    ///   `toString`) read UTC on every host and thread. boa's default hook
+    ///   consults the process's local offset, which differs between hosts and
+    ///   between a Python host and Node.
+    ///
+    /// **No runtime limits** here, unlike [`Engine::new_limited`]: this engine
+    /// is long-lived (held on the sheet handle for its lifetime) and also runs
+    /// caller-supplied query filters and index `keyFn`s, where a loop or
+    /// recursion cap would be a new, unspecced failure mode. The limits are a
+    /// fold-scoped guarantee of the aggregate realm (`behaviors/aggregation.md`).
     pub fn new() -> Result<Self> {
-        Engine::with_context(Context::default())
+        Engine::deterministic()
+    }
+
+    /// The shared deterministic setup behind [`Engine::new`] and
+    /// [`Engine::new_limited`]: pinned host hooks + clock, then the deny
+    /// bootstrap.
+    fn deterministic() -> Result<Self> {
+        let context = Context::builder()
+            .host_hooks(std::rc::Rc::new(DeterministicHooks))
+            .clock(std::rc::Rc::new(boa_engine::context::time::FixedClock::from_millis(0)))
+            .build()
+            .map_err(|e| Error::ConfigInvalid {
+                message: format!("embedded engine bootstrap failed: {e}"),
+            })?;
+        let mut engine = Engine::with_context(context)?;
+        engine
+            .context
+            .eval(Source::from_bytes(DENY_NONDETERMINISM))
+            .map_err(|e| Error::ConfigInvalid {
+                message: format!("embedded engine hardening failed: {e}"),
+            })?;
+        Ok(engine)
     }
 
     /// Wrap `context` and evaluate the one bootstrap helper (`make_date`).
@@ -143,39 +200,16 @@ impl Engine {
         })
     }
 
-    /// A fresh **deterministic** engine under the aggregate runtime limits —
-    /// the realm `reduce` / `finalize` run in (spec:
-    /// `behaviors/aggregation.md`, purity is enforced). One engine (realm)
-    /// per fold, so `globalThis` state cannot leak between groups, aggregates,
-    /// or calls.
-    ///
-    /// - **Limits**: a loop may iterate at most [`AGGREGATE_LOOP_LIMIT`]
-    ///   times, calls nest at most [`AGGREGATE_RECURSION_LIMIT`] deep, and the
-    ///   VM stack is capped, so a runaway snippet throws instead of hanging.
-    /// - **No clock, no entropy, no local time zone**: `Math.random`,
-    ///   `Date.now`, and the argument-less `Date` (`new Date()` / `Date()`)
-    ///   throw a `TypeError` (→ `AggregationError`); `new Date(ms)`,
-    ///   `new Date(string)`, `Date.UTC`, and `Date.parse` remain. Underneath
-    ///   the JS-level denial the host hooks are pinned too: the clock is fixed
-    ///   at the epoch and the local time-zone offset is UTC, so a `Date`'s
-    ///   local-time methods (`getHours`, `toString`) read UTC on every host
-    ///   and thread — boa's default hook consults the process's local offset,
-    ///   which differs between a single-threaded Python host and Node.
+    /// A fresh deterministic engine (exactly [`Engine::new`]'s realm) under
+    /// the aggregate runtime limits — the realm `reduce` / `finalize` run in
+    /// (spec: `behaviors/aggregation.md`, purity is enforced). One engine
+    /// (realm) per fold, so `globalThis` state cannot leak between groups,
+    /// aggregates, or calls. A loop may iterate at most
+    /// [`AGGREGATE_LOOP_LIMIT`] times, calls nest at most
+    /// [`AGGREGATE_RECURSION_LIMIT`] deep, and the VM stack is capped, so a
+    /// runaway snippet throws (→ `AggregationError`) instead of hanging.
     pub fn new_limited() -> Result<Self> {
-        let context = Context::builder()
-            .host_hooks(std::rc::Rc::new(DeterministicHooks))
-            .clock(std::rc::Rc::new(boa_engine::context::time::FixedClock::from_millis(0)))
-            .build()
-            .map_err(|e| Error::ConfigInvalid {
-                message: format!("embedded engine bootstrap failed: {e}"),
-            })?;
-        let mut engine = Engine::with_context(context)?;
-        engine
-            .context
-            .eval(Source::from_bytes(DENY_NONDETERMINISM))
-            .map_err(|e| Error::ConfigInvalid {
-                message: format!("embedded engine hardening failed: {e}"),
-            })?;
+        let mut engine = Engine::deterministic()?;
         let limits = engine.context.runtime_limits_mut();
         limits.set_loop_iteration_limit(AGGREGATE_LOOP_LIMIT);
         limits.set_recursion_limit(AGGREGATE_RECURSION_LIMIT);
@@ -736,5 +770,82 @@ mod tests {
         rec.insert("x".to_string(), Value::Array(vec![Value::Integer(1)]));
         let out = eng.call(h, &[Value::Table(rec)]).unwrap();
         assert_eq!(eng.to_path_string(&out), None, "array result is un-renderable");
+    }
+
+    // ── determinism rule (spec: rust-core.md "Determinism rule for
+    //    definition snippets"; #362) ─────────────────────────────────────────
+
+    /// Point the process at a non-UTC zone, so a realm that consulted the host
+    /// offset would visibly read local time. Every test that sets it sets the
+    /// same value, so parallel tests can't race to different zones.
+    fn set_new_york_tz() {
+        std::env::set_var("TZ", "America/New_York");
+    }
+
+    fn eval_on(eng: &mut Engine, src: &str, arg: Value) -> std::result::Result<BoaValue, SnippetError> {
+        let h = eng.compile(src).expect("compile");
+        eng.call(h, &[arg])
+    }
+
+    #[test]
+    fn the_snippet_realm_denies_clock_entropy_and_locale() {
+        let mut eng = Engine::new().expect("engine");
+        for (src, named) in [
+            ("() => Date.now()", "Date.now()"),
+            ("() => Math.random()", "Math.random()"),
+            ("() => new Date().getTime()", "new Date() with no arguments"),
+            ("() => Date()", "Date()"),
+            ("() => new (Object.getPrototypeOf(new Date(0)).constructor)().getTime()", "new Date() with no arguments"),
+            ("() => new Date(0).toLocaleString()", "toLocaleString()"),
+            ("() => new Date(0).toLocaleDateString()", "toLocaleDateString()"),
+            ("() => new Date(0).toLocaleTimeString()", "toLocaleTimeString()"),
+        ] {
+            let err = eval_on(&mut eng, src, Value::Integer(0)).unwrap_err();
+            let SnippetError::Other(message) = err else {
+                panic!("{src}: expected a TypeError, got {err:?}");
+            };
+            assert!(message.contains("TypeError"), "{src}: {message}");
+            assert!(message.contains(named), "{src}: {message}");
+            assert!(message.contains("not available in a gitsheets snippet"), "{src}: {message}");
+        }
+    }
+
+    #[test]
+    fn local_time_methods_read_utc_whatever_the_host_zone() {
+        set_new_york_tz();
+        let mut eng = Engine::new().expect("engine");
+        let at = || dt("2026-03-04T05:06:07.089Z");
+        let n = |eng: &mut Engine, src: &str| {
+            let v = eval_on(eng, src, at()).unwrap();
+            eng.to_number(&v).unwrap()
+        };
+        let text = |eng: &mut Engine, src: &str| {
+            let v = eval_on(eng, src, at()).unwrap();
+            eng.to_path_string(&v).unwrap()
+        };
+        assert_eq!(n(&mut eng, "d => d.getHours()"), 5.0, "getHours reads UTC, not New York (00)");
+        assert_eq!(n(&mut eng, "d => d.getDate()"), 4.0);
+        assert_eq!(n(&mut eng, "d => d.getTimezoneOffset()"), 0.0);
+        assert_eq!(text(&mut eng, "d => d.toString()"), "Wed Mar 04 2026 05:06:07 GMT+0000");
+        assert_eq!(text(&mut eng, "d => d.toDateString()"), "Wed Mar 04 2026");
+        assert_eq!(text(&mut eng, "d => d.toTimeString()"), "05:06:07 GMT+0000");
+        // Offset-less local forms are taken at UTC.
+        assert_eq!(n(&mut eng, "d => new Date(2026, 0, 1, 5).getTime()"), 1_767_243_600_000.0);
+        assert_eq!(n(&mut eng, "d => Date.parse('2026-01-01T05:00')"), 1_767_243_600_000.0);
+    }
+
+    #[test]
+    fn argument_taking_date_forms_still_work() {
+        let mut eng = Engine::new().expect("engine");
+        let n = |eng: &mut Engine, src: &str| {
+            let v = eval_on(eng, src, Value::Integer(0)).unwrap();
+            eng.to_number(&v).unwrap()
+        };
+        assert_eq!(n(&mut eng, "() => new Date(86400000).getTime()"), 86_400_000.0);
+        assert_eq!(n(&mut eng, "() => Date.UTC(2026, 0, 1)"), 1_767_225_600_000.0);
+        assert_eq!(n(&mut eng, "() => Date.parse('2026-01-01T00:00:00Z')"), 1_767_225_600_000.0);
+        assert_eq!(n(&mut eng, "() => new Date('2026-01-01T00:00:00Z').getUTCFullYear()"), 2026.0);
+        let v = eval_on(&mut eng, "() => new Date(0) instanceof Date", Value::Integer(0)).unwrap();
+        assert!(v.to_boolean());
     }
 }
