@@ -365,6 +365,20 @@ A sheet config with `[gitsheet.rollup] from = '<source>'` and a `path` that is a
 
 Python binding (`gitsheets` 0.7.0 on PyPI): `record_aggregate`, `record_query(sheet=, stale=)`, `rollup_status`, `Transaction.materialize_rollups`; the commit-time rollup pass runs inside `transact` with no Python-side work.
 
+## v2.12 → v2.13
+
+### Definition snippets run in a deterministic realm
+
+Path-template expression components (`${{ … }}`) and raw-JS sort comparators (`[gitsheet.fields.<f>] sort = '<js body>'`) now run under the same rule aggregate `reduce` / `finalize` snippets already did ([rust-core.md § Determinism rule](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/rust-core.md#determinism-rule-for-definition-snippets)), in the core and in the Node `Template` / `normalizeRecord` path alike:
+
+- `Math.random()`, `Date.now()`, `Date()`, and `new Date()` with no arguments **throw**. In a path expression that is `PathTemplateError` (`path_render_failed`) on write or query; in a comparator it is `ConfigError` (`config_invalid`) on write or `normalizeRecord`. Both name the expression or field and the forbidden call.
+- Local-time `Date` methods read **UTC on every host**: `getHours()`, `getDate()`, `getFullYear()`, `getTimezoneOffset()` (always `0`), `toString()`, and the multi-argument `new Date(y, m, d, …)` constructor. An offset-less ISO date-time string (`'2026-01-01T05:00'`) parses at UTC. `toLocaleString()` / `toLocaleDateString()` / `toLocaleTimeString()` throw.
+- `new Date(ms)`, `new Date(isoString)`, `Date.UTC`, and `Date.parse` keep working.
+
+**Who is affected:** any sheet whose template or comparator reads the clock, randomness, or host local time. A template that called `getFullYear()`, `getMonth()`, `getHours()`, etc. on a datetime field and ran on a host whose time zone is not UTC rendered paths in that zone; it now renders them at UTC, so records written that way may now live at a path the template no longer produces (for a date near midnight, or always for an hour bucket). On a UTC host nothing moves. A template or comparator using `Date.now()` / `Math.random()` was never reproducible and now fails loudly.
+
+**Fix:** spell the accessor you mean in UTC (`getUTCFullYear()`, `getUTCHours()`), or better, use the declarative date-bucket form (`${{ publishedAt: YYYY/MM }}`), which has always rendered at UTC. Then run `git sheet normalize <sheet>` once: it re-upserts every record through the current template in a single commit, so any record whose rendered path changed shows up there as a rename you can review. Derive anything time-based from a record field rather than the clock.
+
 ## Going forward
 
 Once migrated, the recipes are the fastest path to common patterns:
