@@ -1,5 +1,5 @@
 ---
-status: planned
+status: done
 depends: []
 specs:
   - specs/behaviors/default-branch.md
@@ -7,6 +7,7 @@ specs:
   - specs/api/cli.md
   - specs/api/axi.md
 issues: [361]
+pr: 371
 ---
 
 # Plan: explicit opt-out of an inherited branch or submodule binding
@@ -58,20 +59,47 @@ Out of scope: `stagePointer` (`false` already overrides env and config) and
 
 ## Validation
 
-- [ ] `openRepo({ submodule: null })` with `GITSHEETS_SUBMODULE` exported
+- [x] `openRepo({ submodule: null })` with `GITSHEETS_SUBMODULE` exported
       opens the superproject; with global `gitsheets.submodule` set, too.
-- [ ] `openRepo({ branch: null })` with a global `gitsheets.branch` (and
+- [x] `openRepo({ branch: null })` with a global `gitsheets.branch` (and
       with `GITSHEETS_BRANCH`) binds to `HEAD`'s branch.
-- [ ] Omitted options still resolve env → config (existing suites pass).
-- [ ] `GITSHEETS_SUBMODULE=data git sheet --no-submodule query users`
+- [x] Omitted options still resolve env → config (existing suites pass).
+- [x] `GITSHEETS_SUBMODULE=data git sheet --no-submodule query users`
       reads the superproject; `--no-branch` likewise ignores
       `GITSHEETS_BRANCH`.
-- [ ] `gitsheets-axi` honors `--no-submodule` / `--no-branch` before and
+- [x] `gitsheets-axi` honors `--no-submodule` / `--no-branch` before and
       after the command name; `--no-submodule=x` is `VALIDATION_ERROR`.
-- [ ] An empty `GITSHEETS_SUBMODULE=` still falls through to git config.
-- [ ] `npm run build`, `npm run type-check`, `npm test` green.
+- [x] An empty `GITSHEETS_SUBMODULE=` still falls through to git config.
+- [x] `npm run build`, `npm run type-check`, `npm test` green.
 
 ## Risks / unknowns
 
 - yargs collects a flag given twice (`--submodule x --no-submodule`) into
   an array; the coerce must reduce it to the last value.
+
+## Notes
+
+- **Empty env stays unset.** `GITSHEETS_SUBMODULE=` / `GITSHEETS_BRANCH=`
+  fall through to git config, as before. An empty variable is how shells,
+  CI templates, and env files spell "nothing here"
+  (`GITSHEETS_SUBMODULE=${DATA_SUBMODULE:-}`), so giving it a meaning would
+  turn an unfilled template into a silent rebind. The opt-out is the flag
+  or `null`, which say it on purpose.
+- An empty **config** value was already "unset at its tier", which gives a
+  clone-level opt-out for free: `git config gitsheets.submodule ""` in the
+  local config shadows a global one. Specced and tested; no code change.
+- yargs' default boolean negation already parses `--no-submodule` on a
+  `type: 'string'` option as `false`, and a command-line value beats its env
+  folding, so no extra option was needed. A flag given twice arrives as an
+  array; a `coerce` keeps the last value (also fixes `--submodule a
+  --submodule b`, which previously passed an array through).
+- `submodule init` reads the global `--branch`; it now treats `false`
+  (`--no-branch`) as unset instead of crashing on `false.replace`.
+- The global-config tests point `GIT_CONFIG_GLOBAL` at a scratch file;
+  `gitExec` does not scrub it, matching git's own layering.
+- The axi `bulk-patch` "large batch commits once" test timed out in the full
+  run under load (~31) and passed alone — the known flake.
+
+## Follow-ups
+
+None.
