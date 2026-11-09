@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -814,6 +814,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1445,6 +1456,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1649,6 +1671,7 @@
 <span class="w">  </span><span class="c1">// error classes</span>
 <span class="w">  </span><span class="nx">GitsheetsError</span><span class="p">,</span><span class="w"> </span><span class="nx">ConfigError</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidationError</span><span class="p">,</span><span class="w"> </span><span class="nx">TransactionError</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">IndexError</span><span class="p">,</span><span class="w"> </span><span class="nx">RefError</span><span class="p">,</span><span class="w"> </span><span class="nx">PathTemplateError</span><span class="p">,</span><span class="w"> </span><span class="nx">NotFoundError</span><span class="p">,</span><span class="w"> </span><span class="nx">ContractError</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">AggregationError</span><span class="p">,</span>
 
 <span class="w">  </span><span class="c1">// utilities</span>
 <span class="w">  </span><span class="nx">mergePatch</span><span class="p">,</span><span class="w"> </span><span class="nx">validateRecord</span><span class="p">,</span><span class="w"> </span><span class="nx">canonicalContractHash</span><span class="p">,</span>
@@ -1666,6 +1689,7 @@
 <span class="w">  </span><span class="nx">SheetConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SheetFieldConfig</span><span class="p">,</span><span class="w"> </span><span class="nx">SortRule</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertResult</span><span class="p">,</span><span class="w"> </span><span class="nx">UpsertOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">WillChangeResult</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">SheetConstructorOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">IndexKeyFn</span><span class="p">,</span><span class="w"> </span><span class="nx">DefineIndexOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryFilter</span><span class="p">,</span><span class="w"> </span><span class="nx">RangeFilter</span><span class="p">,</span><span class="w"> </span><span class="nx">QueryOptions</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">DiffStatus</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">DiffChange</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">AggregateSpec</span><span class="p">,</span><span class="w"> </span><span class="nx">AggregatesSpec</span><span class="p">,</span><span class="w"> </span><span class="nx">AggregateModifiers</span><span class="p">,</span><span class="w"> </span><span class="nx">AggregateOptions</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">AttachmentBlobHandle</span><span class="p">,</span><span class="w"> </span><span class="nx">AttachmentEntry</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">Format</span><span class="p">,</span><span class="w"> </span><span class="nx">FormatConfig</span><span class="p">,</span>
 <span class="w">  </span><span class="nx">OpenStoreOptions</span><span class="p">,</span><span class="w"> </span><span class="nx">Store</span><span class="p">,</span><span class="w"> </span><span class="nx">StoreTx</span><span class="p">,</span><span class="w"> </span><span class="nx">StoreTransactFn</span><span class="p">,</span><span class="w"> </span><span class="nx">ValidatorMap</span><span class="p">,</span><span class="w"> </span><span class="nx">InferRecord</span><span class="p">,</span>
@@ -1933,6 +1957,46 @@
 </tbody>
 </table>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/sheet.md"><code>specs/api/sheet.md</code></a> · <a href="../recipes/secondary-indices/">indexing recipe</a></p>
+<h3 id="aggregation">Aggregation<a class="headerlink" href="#aggregation" title="Permanent link"> ¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sheet.aggregate(filter, aggregates, opts?)</code></td>
+<td><code>Promise&lt;Record&lt;string, unknown&gt;&gt;</code> — one value per named aggregate over the records matching <code>filter</code> (pass <code>undefined</code> or <code>{}</code> for all). Computed in the core: pruned like <code>query</code>, read body-less, folded in canonical path order. <code>opts.signal</code> for cancellation; works on a tx-bound sheet</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">sheet</span><span class="p">.</span><span class="nx">aggregate</span><span class="p">(</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="nx">postedAt</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">$gte</span><span class="o">:</span><span class="w"> </span><span class="s1">'2026-01-01'</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">count</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">count</span><span class="o">:</span><span class="w"> </span><span class="kt">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">total</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">sum</span><span class="o">:</span><span class="w"> </span><span class="s1">'amountCents'</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">byStatus</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">count</span><span class="o">:</span><span class="w"> </span><span class="kt">true</span><span class="p">,</span><span class="w"> </span><span class="nx">groupBy</span><span class="o">:</span><span class="w"> </span><span class="s1">'status'</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">latest</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">max</span><span class="o">:</span><span class="w"> </span><span class="s1">'postedAt'</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nx">ids</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">reduce</span><span class="o">:</span><span class="w"> </span><span class="s1">'acc.push(record.id); return acc;'</span><span class="p">,</span><span class="w"> </span><span class="nx">initial</span><span class="o">:</span><span class="w"> </span><span class="p">[]</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="p">);</span>
+<span class="c1">// → { count: 1402, total: 98231100, byStatus: { posted: 1390, pending: 12 }, latest: Date, ids: [...] }</span>
+</code></pre></div>
+<p>Forms: <code>{ count: true }</code>, <code>{ sum: 'f' }</code>, <code>{ avg: 'f' }</code>, <code>{ min: 'f' }</code>, <code>{ max: 'f' }</code>, <code>{ distinct: 'f' }</code>, and the <code>{ reduce, initial, finalize? }</code> escape hatch, whose bodies run in the core&rsquo;s embedded JS engine (never in Node) so every binding gets the same answer. Each form takes <code>where</code> (an equality/range filter, no functions) and <code>groupBy</code> (a field; the result becomes a table keyed by its string form).</p>
+<ul>
+<li><code>sum</code> is an integer when every contributing value is, else the float fold in path order; <code>avg</code> is a float.</li>
+<li><code>min</code>/<code>max</code> order numbers, strings, and datetimes; <code>distinct</code> returns the sorted unique scalars. Mixing kinds in one field throws <code>AggregationError</code>.</li>
+<li>An aggregate with nothing to fold is left out of the result, except <code>count</code> and <code>sum</code> (<code>0</code>). A grouped aggregate is always a table (<code>{}</code> when empty).</li>
+<li><code>filter</code> may carry function predicates as on <code>query</code>; they run host-side to pick the records, then the core folds over exactly those.</li>
+<li><code>distinct</code> holds every unique value in memory — fine at gitsheets&rsquo; scale, but don&rsquo;t point it at a high-cardinality field you don&rsquo;t need.</li>
+<li><code>reduce</code> / <code>finalize</code> must be pure (no clock, randomness, or I/O). That is required but <strong>not enforced</strong> yet: <code>Math.random()</code> / <code>Date.now()</code> are reachable and make results nondeterministic — your problem, not a guarantee. Each <code>reduce</code> group runs in a fresh engine realm under loop / recursion / stack limits, so a runaway snippet is an <code>AggregationError</code>, not a hang. Hardening is tracked in <a href="https://github.com/JarvusInnovations/gitsheets/issues/354">#354</a>.</li>
+<li>Numbers coming out of a <code>reduce</code> follow the engine&rsquo;s one rule: an exact integer within ±(2^53 − 1) is an integer, anything else a float. On Node, an integral float result (<code>4.0</code>, e.g. from <code>avg</code>) is indistinguishable from <code>4</code> anyway — JS has one number type (a pre-existing binding projection, not specific to aggregation).</li>
+<li>Grouped results are plain objects, so JS orders integer-like keys numerically first (<code>"9"</code> before <code>"10"</code>, both before <code>"a"</code>); the core and the TOML output sort keys by byte order. A group literally named <code>__proto__</code> is an ordinary own key.</li>
+<li>Throws <code>TypeError</code> for a malformed spec or a body-field reference on a content-typed sheet; <code>AggregationError</code> (<code>aggregation_failed</code>, with <code>sheet</code> and <code>aggregate</code>) when the data can&rsquo;t be aggregated, or a <code>reduce</code> throws or returns something TOML can&rsquo;t hold.</li>
+</ul>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/aggregation.md"><code>specs/behaviors/aggregation.md</code></a></p>
 <h2 id="transaction">Transaction<a class="headerlink" href="#transaction" title="Permanent link"> ¶</a></h2>
 <table>
 <thead>
@@ -2085,6 +2149,10 @@
 <td><code>ContractError</code></td>
 <td><code>contract_missing</code>, <code>contract_invalid</code>, <code>contract_unsatisfied</code> (carries <code>contract</code> and, on <code>contract_unsatisfied</code>, the conformance report in <code>issues</code>)</td>
 </tr>
+<tr>
+<td><code>AggregationError</code></td>
+<td><code>aggregation_failed</code> (carries <code>sheet</code>, <code>aggregate</code>, and <code>partition</code> for a persisted rollup)</td>
+</tr>
 </tbody>
 </table>
 <p>Consumers switch on <code>instanceof</code> or <code>err.code</code> — never on <code>err.message</code>.</p>
@@ -2208,10 +2276,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@8.5.0/dist/mermaid.min.js"></script>
       

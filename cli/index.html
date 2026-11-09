@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -704,6 +704,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-aggregate-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets aggregate &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-read-sheet-path" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1252,6 +1263,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-aggregate-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets aggregate &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-read-sheet-path" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1529,6 +1551,22 @@ gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="
 <li><code>--body</code> / <code>--no-body</code> — for content-typed (markdown/mdx) sheets, include or suppress the body field in the output. Default <code>true</code>. Use <code>--no-body</code> for bulk metadata pipelines on large bodies. No effect on TOML sheets.</li>
 </ul>
 <p>TOML output emits a <code>[[records]]</code> array of tables, round-trippable through <code>upsert --format=toml</code>.</p>
+<h3 id="gitsheets-aggregate-sheet"><code>gitsheets aggregate &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-aggregate-sheet" title="Permanent link"> ¶</a></h3>
+<p>Compute ad-hoc aggregates over the records matching <code>--filter</code>. Output is one object with a key per <code>--agg</code> name.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>aggregate<span class="w"> </span>transactions<span class="w"> </span>--agg<span class="w"> </span><span class="nv">count</span><span class="o">=</span>count<span class="w"> </span>--agg<span class="w"> </span><span class="nv">total</span><span class="o">=</span>sum:amountCents
+<span class="c1"># {"count":1402,"total":98231100}</span>
+gitsheets<span class="w"> </span>aggregate<span class="w"> </span>transactions<span class="w"> </span>--filter<span class="w"> </span><span class="s1">'postedAt&gt;=2026-01-01'</span><span class="w"> </span>--agg<span class="w"> </span><span class="nv">total</span><span class="o">=</span>sum:amountCents<span class="w"> </span>--group-by<span class="w"> </span>status
+<span class="c1"># {"total":{"pending":-500,"posted":3500}}</span>
+gitsheets<span class="w"> </span>aggregate<span class="w"> </span>repos<span class="w"> </span>--agg<span class="w"> </span><span class="nv">teams</span><span class="o">=</span>distinct:targetTeam<span class="w"> </span>--format<span class="w"> </span>toml
+</code></pre></div>
+<p>Flags:</p>
+<ul>
+<li><code>--agg &lt;name&gt;=&lt;form&gt;[:&lt;field&gt;]</code> (repeatable, at least one) — <code>count</code>, or <code>sum</code> / <code>min</code> / <code>max</code> / <code>avg</code> / <code>distinct</code> with a field.</li>
+<li><code>--filter</code> — as on <code>query</code>.</li>
+<li><code>--group-by &lt;field&gt;</code> — applies <code>groupBy</code> to every aggregate; each result becomes an object keyed by the field&rsquo;s string form. Records whose field isn&rsquo;t a string, integer, or boolean don&rsquo;t contribute.</li>
+<li><code>--format &lt;json|toml&gt;</code> — default <code>json</code>.</li>
+</ul>
+<p>The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except <code>count</code> and <code>sum</code> (<code>0</code>). <code>reduce</code> snippets are library-only (<a href="../api/#aggregation"><code>sheet.aggregate</code></a>). A field holding mixed kinds under <code>min</code>/<code>max</code>/<code>distinct</code> fails with <code>AggregationError</code> (exit <code>1</code>).</p>
 <h3 id="gitsheets-read-sheet-path"><code>gitsheets read &lt;sheet&gt; &lt;path&gt;</code><a class="headerlink" href="#gitsheets-read-sheet-path" title="Permanent link"> ¶</a></h3>
 <p>Read a single record by its rendered path.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span><span class="nb">read</span><span class="w"> </span>users<span class="w"> </span>jane
@@ -1771,10 +1809,10 @@ gitsheets<span class="w"> </span>contracts<span class="w"> </span>prune<span cla
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@8.5.0/dist/mermaid.min.js"></script>
       
