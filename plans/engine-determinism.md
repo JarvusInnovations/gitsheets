@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/rust-core.md
@@ -9,6 +9,7 @@ specs:
   - specs/api/errors.md
   - specs/api/python-binding.md
 issues: [362]
+pr: 372
 ---
 
 # Plan: deterministic realm for path-template and comparator snippets
@@ -91,25 +92,85 @@ Out of scope:
 
 ## Validation
 
-- [ ] `cargo build --workspace --all-targets`, `cargo test -p gitsheets-core`,
+- [x] `cargo build --workspace --all-targets`, `cargo test -p gitsheets-core`,
   `cargo clippy --workspace --all-targets -- -D warnings` green
-- [ ] Core tests: expression and comparator calling `Date.now()` /
+- [x] Core tests: expression and comparator calling `Date.now()` /
   `Math.random()` / `new Date()` fail with the specced error naming the
   expression / field and the call; `getHours()` under
   `TZ=America/New_York` reads UTC; `new Date(ms)` / `Date.UTC` still work
-- [ ] Node tests mirror the same for the `node:vm` path and match the core
-- [ ] napi suite green
-- [ ] `npm run build`, `npm run type-check`, `npm test` green
-- [ ] Python suite green, including the cross-binding `getHours()` parity test
-- [ ] Review round 1: the vm realm matches the addon on the hard cases
+- [x] Node tests mirror the same for the `node:vm` path and match the core
+- [x] napi suite green
+- [x] `npm run build`, `npm run type-check`, `npm test` green
+- [x] Python suite green, including the cross-binding `getHours()` parity test
+- [x] Review round 1: the vm realm matches the addon on the hard cases
   (setters incl. `setYear`, two-digit years, a DST-boundary instant,
   `toJSON`/`toISOString`, `String` objects, class-instance records,
   `Intl`/`localeCompare`/`toLocale*`, legacy and malformed date strings)
   under at least two host zones
-- [ ] Review round 1: `$pred` filters and index key snippets run in a query
+- [x] Review round 1: `$pred` filters and index key snippets run in a query
   realm with the clock (Python and napi tests), specced in `rust-core.md`
   and `python-binding.md`
-- [ ] Review round 1: Rust TZ tests run in a child process per zone; the
+- [x] Review round 1: Rust TZ tests run in a child process per zone; the
   `rust-core.yml` Python job builds `packages/gitsheets/dist` so the host
   leg of the cross-binding test runs
 - [ ] `rust-core.yml` cross-binding parity gate green on the PR
+
+## Notes
+
+- Verified totals at closeout (develop at 7a9d1af, no newer commits):
+  `cargo test -p gitsheets-core` 346 + 4 (5 `#[ignore]`d TZ inner tests run
+  through their wrappers, each under America/New_York and Asia/Kolkata),
+  clippy `-D warnings` clean, `cargo build --workspace --all-targets` clean;
+  release napi build; vitest 610 (gitsheets; 24 in
+  `snippet-determinism.test.ts`) + 172 (gitsheets-axi); napi `node --test`
+  158; pytest 96 with `TZ=America/New_York` (the cross-binding local-time
+  test also passes with `CI=1`, i.e. with the host leg asserted);
+  `npm run type-check` clean. No generated napi files changed.
+- `rust-core.yml` parity-gate box left unchecked: it runs in CI on the PR
+  (now including the host `Template` leg), not verifiable locally.
+- **Release ordering:** `gitsheets-core` behavior changed (the realms, the
+  query realm, error messages), so per CLAUDE.md a `core-napi-v*` release
+  must ship BEFORE the next JS `v*` release, then the manifest sync —
+  `publish-npm` runs `snippet-determinism.test.ts` against the published
+  platform binaries and would fail on stale ones. PyPI needs a `py-v*` bump.
+- **Shim coverage** (`packages/gitsheets/src/sandbox.ts`), each diffed
+  against the addon under New York, Kolkata, and UTC: the deny list and
+  messages; the global names (V8-only `Intl`, `WebAssembly`, `console`,
+  `FinalizationRegistry`, `Iterator`, `escape`, `unescape` removed;
+  `SharedArrayBuffer` / `Atomics` removed in both realms); every local-time
+  getter and setter incl. Annex B `getYear` / `setYear`; `getTimezoneOffset`;
+  `toString` / `toDateString` / `toTimeString`; the multi-argument
+  constructor; ToPrimitive in `new Date(x)`; string parsing computed from
+  regex captures (never V8's parser); `localeCompare`, `toLocaleUpper/
+  LowerCase`, `Number` / `BigInt` / `Array` / typed-array `toLocaleString`;
+  argument copying (own enumerable keys, `__proto__` as an own key, holes
+  kept). Probed boa first for each behavior and matched it (boa joins
+  `Array#toLocaleString` with `', '`, parses ISO fractions only at exactly
+  three digits, validates toString-form days per month but accepts any
+  weekday name and offset hours up to 99).
+- **Known divergences, specced:** boa accepts `T24:01` / `T24:00:00.001Z`
+  (the host returns NaN; a boa bug, not mimicked); boa exposes non-standard
+  `TypedArray` and `Float16Array` globals the host lacks.
+- **Predicate-realm decision:** `$pred` filters and index key snippets are
+  query-time snippets, never committed, so they run in a nested query realm
+  (`Engine::compile_query`): UTC offset pinned, real clock, no deny
+  bootstrap, separate globals so nothing leaks to definition snippets. This
+  restores `{"$pred": "value < Date.now()"}`, which the first round had
+  turned into a `config_invalid` error.
+- Runtime limits deliberately not applied to `Engine::new` (long-lived
+  sheet engine); they stay the aggregate realm's guarantee.
+- A comparator that does not compile is `config_invalid` naming the field.
+  In practice the core reports it when the Node sheet's config is checked,
+  so the host `normalizeRecord` wrap is a fallback.
+- `Template.fromString`'s process-wide cache (pre-existing) still shares one
+  realm per expression across repositories; only the comparator cache was
+  scoped per Sheet. #373 removes the host realm altogether.
+- Verified that `git sheet normalize` renames a record whose rendered path
+  changed (scratch repo: `people/{jane.toml => x-jane.toml}`); the spec and
+  the migration guide say so.
+
+## Follow-ups
+
+- Tracked as: [#373](https://github.com/JarvusInnovations/gitsheets/issues/373) —
+  route the Node `Template` and `normalizeRecord` comparators through the
+  core engine and delete the `node:vm` shim.
