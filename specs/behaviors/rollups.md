@@ -87,12 +87,17 @@ path = '${{ postedAt: YYYY/MM }}/${{ id }}'
   components are `ConfigError` (`config_invalid`). A `YYYY/WW` bucket may only
   be partitioned at `YYYY/WW` itself (its `YYYY` is the ISO week-year, which
   the rollup's own `YYYY` bucket would render differently).
-- A rollup's data subtree must be disjoint from **every other sheet's** in
-  the same `.gitsheets/` directory, its source included: a rollup `root`
-  equal to, inside, or containing another sheet's `root` is `config_invalid`
-  (a rollup record under a source root would change the very partition some
-  rollup summarizes, so that stamp could never match; under any other sheet it
-  would be read as that sheet's data).
+- A rollup's data subtree must be disjoint from the data subtree of **every
+  rollup's source** and of **every other rollup** in the same `.gitsheets/`
+  directory: a rollup `root` equal to, inside, or containing such a root is
+  `config_invalid` (a rollup record under a source root would change the very
+  partition some rollup summarizes, so that stamp could never match; two
+  overlapping rollups would read each other's records). Overlap with an
+  ordinary sheet that no rollup reads from is allowed, as overlapping roots
+  are for any sheets. A consequence: a source sheet rooted at `.` (the
+  default) cannot have a rollup at all — every rollup root would sit inside
+  the partition it stamps — so that case is `config_invalid`, asking for the
+  source sheet to be given a `root`.
 - `root`, `[gitsheet.schema]`, `implements`, `[gitsheet.fields.*]`, and
   `[gitsheet.format]` (TOML only — a content-typed rollup is `config_invalid`)
   behave as for any sheet. A schema is optional; when present, generated
