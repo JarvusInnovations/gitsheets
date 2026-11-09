@@ -7,7 +7,7 @@ under that checkout, and `git status` starts reporting your records as
 deleted or modified. Nothing is lost. The checkout is just behind the ref.
 
 The fix is the layout, not a sync step: keep the records on a branch you never
-check out. Then there is no working tree of records to fall behind, nothing
+check out, or in a data submodule you never materialize. Then there is no working tree of records to fall behind, nothing
 for `git status` to report, and no checkout cost that grows with the record
 count.
 
@@ -23,6 +23,7 @@ can bind it to any other branch.
 | [Records on the code branch](#records-on-the-code-branch) | nothing | yes, and it goes stale after every write | mixed with code |
 | [Orphan data branch, same repo](#orphan-data-branch) | `gitsheets.branch` (or `--branch` / `branch:`) | none | separate branch that travels with every clone |
 | [Separate data repository, bare clone](#bare-data-clone) | `--git-dir` / `gitDir` | none | separate repo |
+| [Data submodule](#data-submodule) | `gitsheets.submodule` (or `--submodule` / `submodule:`); `git sheet submodule init` to set up | none | separate repo; **each code commit pins a data snapshot** |
 
 ## Binding the default branch
 
@@ -175,6 +176,127 @@ branch, add `branch` (or `git -C /srv/app-data.git config gitsheets.branch data`
 `repo.sync()` and `repo.fetch()` use explicit refspecs, so they work in a bare
 clone without a configured fetch refspec.
 
+## Data submodule
+
+The records live in their own repository, attached to the code repository as
+a git submodule whose files are never checked out. The submodule's `HEAD` is
+the code repository's **pointer** to a data snapshot. Each gitsheets write
+advances it, so `git status` in the code repository reports
+`modified: data (new commits)`, and you commit the pointer along with your
+code. Every code commit then records exactly which data it was built against.
+
+### Set it up
+
+`git sheet submodule init` adds the submodule without a checkout of the
+records:
+
+```bash
+git sheet submodule init data --url git@example.com:acme/app-data.git --branch main
+git commit -m "Add data submodule"
+git config gitsheets.submodule data
+```
+
+It writes the `.gitmodules` entry (`path`, `url`, `branch`), clones into
+`.git/modules/data` with no checkout, leaves only the `data/.git` pointer
+file on disk, puts the submodule's `HEAD` on `main`, sets
+`submodule.data.ignore = dirty`, and stages `.gitmodules` plus the pointer.
+It never commits. Without `--branch` it uses the remote's default branch; an
+empty data repository needs `--branch`, and the branch is created by the
+first write.
+
+### Write, then commit the pointer
+
+With `gitsheets.submodule` set, `git sheet` and `gitsheets-axi` read and
+write the submodule with no flags (or pass `--submodule data`, or export
+`GITSHEETS_SUBMODULE=data`):
+
+```bash
+git sheet upsert users '{"slug":"jane","email":"jane@x.org"}'
+git status --short        # " M data": the pointer moved, nothing else
+git add data
+git commit -m "Add jane"  # or commit the pointer together with your code change
+```
+
+gitsheets stages nothing in the code repository unless you ask it to. In
+code, `stagePointer: true` updates the index entry for the pointer after each
+write, so `git commit -a` carries it:
+
+```typescript
+import { openRepo } from 'gitsheets';
+
+const repo = await openRepo({ submodule: 'data' }); // or gitsheets.submodule / GITSHEETS_SUBMODULE
+console.log(repo.submodule, repo.branch);           // 'data' 'main'
+const users = await repo.openSheet('users');
+await users.upsert({ slug: 'ada', email: 'ada@x.org' });
+
+const staging = await openRepo({ submodule: 'data', stagePointer: true });
+```
+
+`{ submodule: 'data', branch: 'drafts' }` writes to another branch of the data
+repository. That does not move the pointer, so the code repository sees
+nothing.
+
+### Read the data a release shipped with
+
+`at` takes any commit-ish of the code repository and pins every sheet,
+read-only, to the data commit it points at:
+
+```typescript
+const shipped = await openRepo({ submodule: 'data', at: 'v1.2.0' });
+const users = await shipped.openSheet('users'); // the users as of v1.2.0
+```
+
+Writes through `shipped` throw `TransactionError` (`transaction_required`).
+A commit-ish with no `data` pointer throws `RefError` (`ref_not_found`).
+
+### Fresh clones
+
+A fresh clone of the code repository has an empty `data/` directory. Run
+`submodule init` with no `--url`. It fetches the data repository and puts
+`HEAD` on the `.gitmodules` branch at the commit your checkout pins, still
+without checking out any records:
+
+```bash
+git clone git@example.com:acme/app.git && cd app
+git sheet submodule init data
+git config gitsheets.submodule data
+git sheet query users
+```
+
+Re-running it is safe: a data branch that already exists is left where it is.
+Plain `git submodule update --init` works too, but it checks the records out
+and leaves `HEAD` detached. On a detached `HEAD`, gitsheets advances `HEAD`
+itself, so the pointer still moves, but `sync`, `fetch`, and the push daemon
+need a branch and refuse until `HEAD` is on one (`git sheet submodule init
+data` puts it back on the `.gitmodules` branch).
+
+### Push the data before the pointer
+
+The push daemon (or `git -C data push origin main`) pushes the data
+repository. A code commit must not reach the remote before the data commit it
+points at, or other clones cannot fetch what it pins. Have git enforce the
+order in the code repository:
+
+```bash
+git config push.recurseSubmodules check      # refuse to push a pointer whose data isn't pushed
+# or
+git config push.recurseSubmodules on-demand  # push the data repository first, then the code
+```
+
+gitsheets does not push the code repository for you. That stays your
+`git push`.
+
+!!! warning "`ignore = dirty` hides edits under `data/`"
+    The submodule's working tree is empty on purpose, which plain git
+    would report as `modified content` on every `git status`.
+    `submodule.data.ignore = dirty` silences that, so only pointer
+    movement shows. It also hides any files you edit by hand under
+    `data/`. If you want the files, `git -C data checkout HEAD -- .`
+    writes them out, but they are then a stale view like
+    [records on the code branch](#records-on-the-code-branch): gitsheets
+    moves the ref and the files stay put until the next checkout. Edit
+    records through gitsheets, not in `data/`.
+
 ## Editing configs on a branch you never check out
 
 Every config-writing command commits through a transaction, so it works the
@@ -186,5 +308,7 @@ existing config from the default branch and commit the new one there.
 
 The Python binding's batch functions take an explicit `tree_ref` on every
 call (`record_query(git_dir, tree_ref, …)`). `gitsheets.branch` and
-`GITSHEETS_BRANCH` do not apply there. Pass `'refs/heads/data'` (or the tree
-it resolves to) yourself.
+`GITSHEETS_BRANCH` do not apply there, and neither do `gitsheets.submodule` and
+`GITSHEETS_SUBMODULE`. Pass `'refs/heads/data'` (or the tree it resolves to)
+yourself, with the submodule's git dir (`.git/modules/data`) as `git_dir` in
+submodule mode.
