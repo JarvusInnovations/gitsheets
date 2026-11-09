@@ -1391,7 +1391,7 @@ gitsheets-axi<span class="w">              </span><span class="c1"># session-awa
 <tr>
 <td>Default output</td>
 <td>JSON / pretty per <code>--format</code></td>
-<td><strong>TOON</strong> (~40% fewer tokens), <code>--format=json</code> opt-out</td>
+<td><strong>TOON</strong> (~40% fewer tokens); no <code>--format</code> flag — <code>query</code> has <code>--json-out</code> / <code>--ndjson-out</code> / <code>--csv-out</code> side-channel exports</td>
 </tr>
 <tr>
 <td>Default schema</td>
@@ -1419,7 +1419,10 @@ records[2]{slug,email,name,path}:
 help[1]: Run `gitsheets-axi read users &lt;path&gt;` to view a single record
 </code></pre></div>
 <p>The <code>records[2]{slug,email,name,path}:</code> header declares the schema; each subsequent line is a row. Object detail views use <code>key: value</code> shape. Suggestions arrive as <code>help[N]:</code> lists. TOON saves ~40% on tokens compared to equivalent JSON while staying readable.</p>
-<p><code>--format=json</code> opts back to JSON for agents / pipelines that prefer it.</p>
+<p>stdout is always TOON; there is no <code>--format</code> flag. A pipeline that wants
+JSON, NDJSON, or CSV uses <code>query</code>&rsquo;s side-channel exports (<code>--json-out[=path]</code>,
+<code>--ndjson-out[=path]</code>, <code>--csv-out[=path]</code>), which write the verbatim records
+while stdout keeps the TOON summary.</p>
 <h2 id="idempotency">Idempotency<a class="headerlink" href="#idempotency" title="Permanent link"> ¶</a></h2>
 <p>Every mutation pre-flights against the current on-disk state. When the resulting bytes would match what&rsquo;s already there, the command exits <code>0</code> with <code>result: "no-op"</code> and <strong>produces no commit</strong>.</p>
 <div class="highlight"><pre><span></span><code>$ gitsheets-axi upsert users --data '{"slug":"jane","email":"jane@x.org"}'
@@ -1450,10 +1453,13 @@ path: jane
 <div class="highlight"><pre><span></span><code>gitsheets-axi                            # home view (bare invocation)
 gitsheets-axi sheets [list|view &lt;name&gt;]  # sheets in this repo
 gitsheets-axi query &lt;sheet&gt; [filters]    # list records
+gitsheets-axi count &lt;sheet&gt; [filters]    # count matching records
+gitsheets-axi distinct &lt;sheet&gt; &lt;field&gt;   # distinct values of a field, with counts
 gitsheets-axi aggregate &lt;sheet&gt; --agg …  # count/sum/min/max/avg/distinct, --group-by
 gitsheets-axi read &lt;sheet&gt; &lt;path&gt;        # single record detail
 gitsheets-axi upsert &lt;sheet&gt;             # create or replace (idempotent)
 gitsheets-axi patch &lt;sheet&gt; &lt;q&gt; &lt;p&gt;      # RFC 7396 merge patch (idempotent)
+gitsheets-axi rename &lt;sheet&gt; &lt;old&gt; &lt;new&gt; # move a record (and its attachments) to a new path
 gitsheets-axi delete &lt;sheet&gt; &lt;path&gt;      # remove a record (idempotent)
 gitsheets-axi check &lt;sheet&gt; &lt;file&gt;       # verify + optionally --fix
 gitsheets-axi diff &lt;sheet&gt; [&lt;src-ref&gt;]   # TOON change summary
@@ -1462,11 +1468,14 @@ gitsheets-axi init &lt;sheet&gt;               # commit a starter config
 gitsheets-axi infer &lt;sheet&gt;              # observe records → schema
 gitsheets-axi migrate-config &lt;sheet&gt;     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment &lt;list|get|set|delete&gt; &lt;sheet&gt; &lt;path&gt; [&lt;name&gt;]
+gitsheets-axi contracts [list|verify|test] # schema contracts
 gitsheets-axi push                       # one-shot git push
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 gitsheets-axi rollup &lt;sheet&gt; [--check]   # materialize / check a rollup sheet
 </code></pre></div>
-<p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.</p>
+<p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.
+The full contract — every command, flag, and error code — is specified in
+<a href="../specs/api/axi.md"><code>specs/api/axi.md</code></a>.</p>
 <h3 id="default-branch">Default branch<a class="headerlink" href="#default-branch" title="Permanent link"> ¶</a></h3>
 <p>Every command reads and writes the repository&rsquo;s <strong>default branch</strong>: the
 global <code>--branch &lt;name&gt;</code> flag (accepted on any command, e.g.
@@ -1481,6 +1490,19 @@ write advances the submodule&rsquo;s <code>HEAD</code>, so the superproject&rsqu
 shows <code>modified: data (new commits)</code> and nothing else. A submodule that is
 not set up yet is <code>CONFIG_MISSING</code>, with <code>git sheet submodule init &lt;path&gt;</code>
 as the fix.</p>
+<p>Two more global flags work with <code>--submodule</code> (any command, any position):</p>
+<ul>
+<li><code>--stage-pointer</code> also stages the moved gitlink in the superproject&rsquo;s
+  index after each write, so <code>git commit -a</code> carries it
+  (<code>--no-stage-pointer</code> turns it off; else <code>GITSHEETS_STAGE_POINTER</code>, else
+  the superproject&rsquo;s <code>gitsheets.stagePointer</code>, else off).</li>
+<li><code>--at &lt;superproject-ref&gt;</code> (else <code>GITSHEETS_AT</code>) reads the data snapshot
+  that superproject ref pins (<code>gitsheets-axi query users --submodule data
+  --at v1.2.0</code>); writes are refused. It is a per-run pin, so it has no git
+  config.</li>
+</ul>
+<p>A malformed global flag (<code>--branch</code> with no value, <code>--stage-pointer=yes</code>) is
+a <code>VALIDATION_ERROR</code> (exit 2), like any other usage error.</p>
 <p>After a write, the materialize hint (<code>git checkout HEAD -- .</code>) appears only
 when the records live on the checked-out branch, where the working tree now
 lags the commit. It leads with the lasting fix, a headless layout
@@ -1531,8 +1553,13 @@ field counted under the empty value.</p>
 code: VALIDATION_FAILED
 help[1]: Run `gitsheets-axi sheets view users` to see the schema
 </code></pre></div>
-<p>Stable codes the agent can switch on: <code>VALIDATION_FAILED</code>, <code>NOT_FOUND</code>, <code>CONFIG_INVALID</code>, <code>NOT_CANONICAL</code>, <code>INDEX_CONFLICT</code>, <code>NOT_A_REPOSITORY</code>, <code>INVALID_JSON</code>, <code>PATH_TEMPLATE_ERROR</code>, <code>REF_ERROR</code>, <code>TRANSACTION_ERROR</code>, <code>CONFIG_EXISTS</code>, <code>NO_RECORDS</code>, <code>WRITE_ERROR</code>, <code>NON_FAST_FORWARD</code>, <code>PUSH_FAILED</code>, <code>AGGREGATION_FAILED</code>.</p>
-<p>Exit codes are stable: <code>0</code> for success (incl. no-ops), <code>2</code> for validation/usage errors, <code>1</code> for everything else.</p>
+<p>Stable codes the agent can switch on (agents switch on <code>code</code>, never on the message):</p>
+<ul>
+<li><code>VALIDATION_ERROR</code> — a usage error: unknown command or flag, missing argument, malformed <code>--filter</code> / <code>--agg</code> or global flag, a command applied to the wrong kind of sheet. The only code that exits <code>2</code>.</li>
+<li><code>VALIDATION_FAILED</code> — a record failed the sheet&rsquo;s JSON Schema or a contract (a data error, not a usage error).</li>
+<li><code>NOT_FOUND</code>, <code>CONFIG_MISSING</code> (the data submodule is not set up), <code>CONFIG_INVALID</code>, <code>CONFIG_EXISTS</code>, <code>INVALID_JSON</code>, <code>NO_RECORDS</code>, <code>NOT_A_REPOSITORY</code>, <code>NOT_CANONICAL</code>, <code>INDEX_CONFLICT</code>, <code>PATH_TEMPLATE_ERROR</code>, <code>REF_ERROR</code>, <code>SHEET_DERIVED</code>, <code>TRANSACTION_ERROR</code>, <code>ROLLUP_STALE</code>, <code>AGGREGATION_FAILED</code>, <code>CONTRACT_MISSING</code> / <code>CONTRACT_INVALID</code> / <code>CONTRACT_UNSATISFIED</code>, <code>WRITE_ERROR</code>, <code>NON_FAST_FORWARD</code>, <code>PUSH_FAILED</code>, <code>HOOK_INSTALL_FAILED</code>, <code>UNKNOWN_ERROR</code>.</li>
+</ul>
+<p>Exit codes are stable: <code>0</code> for success (incl. no-ops), <code>2</code> for <code>VALIDATION_ERROR</code>, <code>1</code> for every other code. See <a href="../specs/api/axi.md#errors"><code>specs/api/axi.md</code></a> for what raises each code.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link"> ¶</a></h2>
 <ul>
 <li><a href="../api/">API reference</a> — the library both tools share</li>

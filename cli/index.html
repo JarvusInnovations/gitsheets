@@ -1580,8 +1580,18 @@ operation on a <code>Repository</code> (or <code>Sheet</code>/<code>Transaction<
 <td><code>GITSHEETS_SUBMODULE</code></td>
 </tr>
 <tr>
+<td><code>--stage-pointer</code> / <code>--no-stage-pointer</code></td>
+<td><code>gitsheets.stagePointer</code> git config, else off</td>
+<td><code>GITSHEETS_STAGE_POINTER</code></td>
+</tr>
+<tr>
+<td><code>--at &lt;superproject-ref&gt;</code></td>
+<td>none</td>
+<td><code>GITSHEETS_AT</code></td>
+</tr>
+<tr>
 <td><code>--ref &lt;ref&gt;</code></td>
-<td>the default branch</td>
+<td>the default branch (the pinned commit under <code>--at</code>)</td>
 <td><code>GITSHEETS_REF</code></td>
 </tr>
 <tr>
@@ -1636,6 +1646,26 @@ the submodule</em>). Set the submodule up with
 gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane"}'</span>
 git<span class="w"> </span>add<span class="w"> </span>data<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"Add jane"</span>
 </code></pre></div>
+<p>Two more flags apply in submodule mode:</p>
+<ul>
+<li><code>--stage-pointer</code> also stages the moved gitlink in the superproject&rsquo;s index
+  after each write, so <code>git commit -a</code> carries it. It resolves flag →
+  <code>GITSHEETS_STAGE_POINTER</code> → the superproject&rsquo;s <code>gitsheets.stagePointer</code> →
+  off, and takes git booleans (<code>true</code>/<code>false</code>, <code>yes</code>/<code>no</code>, <code>on</code>/<code>off</code>,
+  <code>1</code>/<code>0</code>); <code>--no-stage-pointer</code> turns it off for one run. The library&rsquo;s
+  <code>openRepo</code> reads the same environment variable and config.</li>
+<li><code>--at &lt;superproject-ref&gt;</code> (or <code>GITSHEETS_AT</code>) reads the data snapshot that
+  superproject commit pins — the data a given code revision shipped with.
+  Writes are refused (<code>TransactionError</code>, exit <code>69</code>). It is a one-run pin,
+  like <code>--ref</code>, so it has no git config setting.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>--submodule<span class="w"> </span>data<span class="w"> </span>--at<span class="w"> </span>v1.2.0<span class="w"> </span>query<span class="w"> </span>users<span class="w">   </span><span class="c1"># data as of the v1.2.0 release</span>
+git<span class="w"> </span>config<span class="w"> </span>gitsheets.stagePointer<span class="w"> </span><span class="nb">true</span><span class="w">               </span><span class="c1"># stage the pointer after every write</span>
+</code></pre></div>
+<p><code>--ref &lt;ref&gt;</code> pins what a command reads and the commit it builds on:
+<code>query</code>, <code>read</code>, and <code>aggregate</code> read <code>&lt;ref&gt;</code>; <code>normalize</code>,
+<code>upsert --delete-missing</code>, <code>edit</code>, <code>infer</code>, and <code>rollup</code> read <code>&lt;ref&gt;</code> and
+commit onto it. Without <code>--ref</code>, both are the default branch.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link"> ¶</a></h2>
 <h3 id="gitsheets-upsert-sheet-input"><code>gitsheets upsert &lt;sheet&gt; [input]</code><a class="headerlink" href="#gitsheets-upsert-sheet-input" title="Permanent link"> ¶</a></h3>
 <p>Insert or update one or more records.</p>
@@ -1704,7 +1734,7 @@ gitsheets<span class="w"> </span>aggregate<span class="w"> </span>repos<span cla
 <li><code>--group-by &lt;field&gt;</code> — applies <code>groupBy</code> to every aggregate; each result becomes an object keyed by the field&rsquo;s string form. Records whose field isn&rsquo;t a string, integer, or boolean don&rsquo;t contribute.</li>
 <li><code>--format &lt;json|toml&gt;</code> — default <code>json</code>.</li>
 </ul>
-<p>The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except <code>count</code> and <code>sum</code> (<code>0</code>). <code>reduce</code> snippets are library-only (<a href="../api/#aggregation"><code>sheet.aggregate</code></a>). A field holding mixed kinds under <code>min</code>/<code>max</code>/<code>distinct</code> fails with <code>AggregationError</code> (exit <code>1</code>).</p>
+<p>The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except <code>count</code> and <code>sum</code> (<code>0</code>). <code>reduce</code> snippets are library-only (<a href="../api/#aggregation"><code>sheet.aggregate</code></a>). A field holding mixed kinds under <code>min</code>/<code>max</code>/<code>distinct</code> fails with <code>AggregationError</code> (exit <code>23</code>). A malformed <code>--agg</code> clause is an argument error (exit <code>2</code>).</p>
 <h3 id="gitsheets-rollup-sheet"><code>gitsheets rollup &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-rollup-sheet" title="Permanent link"> ¶</a></h3>
 <p>Materialize a <a href="../recipes/rollups/">rollup sheet</a>: recompute every stale or missing rollup record and delete orphaned ones, in one commit — none when everything is fresh. Honors the transaction flags (<code>--message</code>, <code>--author-*</code>, <code>--trailer</code>, <code>--ref</code>, <code>--commit-to</code>, <code>--prefix</code>). Prints one <code>&lt;status&gt; &lt;partition&gt;</code> line per partition touched.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>rollup<span class="w"> </span>transactions-monthly
@@ -1894,11 +1924,15 @@ gitsheets<span class="w"> </span>submodule<span class="w"> </span>init<span clas
 </tr>
 <tr>
 <td>2</td>
-<td>Argument-parsing error</td>
+<td>Argument-parsing error: unknown flag or command, missing positional, malformed <code>--filter</code> / <code>--agg</code> / <code>--trailer</code> / <code>--attachment</code> / <code>--encoding</code> value, or an invalid flag combination</td>
 </tr>
 <tr>
 <td>22</td>
 <td><code>ValidationError</code></td>
+</tr>
+<tr>
+<td>23</td>
+<td><code>AggregationError</code></td>
 </tr>
 <tr>
 <td>64</td>
@@ -1926,12 +1960,22 @@ gitsheets<span class="w"> </span>submodule<span class="w"> </span>init<span clas
 </tr>
 </tbody>
 </table>
-<p>Per <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/errors.md"><code>specs/api/errors.md</code></a>.</p>
+<p>Per <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/cli.md#exit-codes"><code>specs/api/cli.md</code></a>.</p>
 <h2 id="error-output">Error output<a class="headerlink" href="#error-output" title="Permanent link"> ¶</a></h2>
 <p>Errors print to stderr in this shape:</p>
 <div class="highlight"><pre><span></span><code>gitsheets: ValidationError: record failed JSON Schema validation
   code:   validation_failed
   issue:  email: must match format "email" (json-schema)
+</code></pre></div>
+<p>An <code>AggregationError</code> names the sheet, the aggregate, and (for a rollup
+partition) the partition:</p>
+<div class="highlight"><pre><span></span><code>gitsheets: AggregationError: min over mixed value kinds
+  code:   aggregation_failed
+  sheet:  transactions
+  aggregate: low
+</code></pre></div>
+<p>An argument error (exit <code>2</code>) prints one line:</p>
+<div class="highlight"><pre><span></span><code>gitsheets: --agg n: sum needs a field (n=sum:&lt;field&gt;)
 </code></pre></div>
 
 
