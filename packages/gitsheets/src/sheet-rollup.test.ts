@@ -276,14 +276,11 @@ describe('rollup sheets', () => {
   it('a plain git merge leaves a stale stamp that reads self-heal and materialize repairs', async () => {
     const fixture = await seeded();
     const repo = await openRepo({ gitDir: fixture.gitDir });
-    await fixture.git('reset', '-q', '--hard');
-    await fixture.git('checkout', '-q', '-b', 'side');
-    await repo.transact({ message: 'side' }, async (tx) => {
+    await fixture.git('branch', 'side');
+    await repo.transact({ message: 'side', parent: 'side' }, async (tx) => {
       await tx.sheet('transactions').upsert({ id: 's', postedAt: new Date('2026-01-11T00:00:00Z'), amountCents: 1, status: 'posted', category: 'fun' });
     });
-    await fixture.git('reset', '-q', '--hard');
-    await fixture.git('checkout', '-q', '-');
-    await repo.transact({ message: 'main' }, async (tx) => {
+    await repo.transact({ message: 'main', parent: 'main' }, async (tx) => {
       await tx.sheet('transactions').upsert({ id: 'm', postedAt: new Date('2026-01-12T00:00:00Z'), amountCents: 1, status: 'posted', category: 'fun' });
     });
     await fixture.git('reset', '-q', '--hard');
