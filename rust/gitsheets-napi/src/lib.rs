@@ -2630,6 +2630,41 @@ pub fn rollup_get(
         .map_err(|err| raise_core_error(&env, &err))
 }
 
+/// Ad-hoc aggregation over a rollup sheet's **read-through** records (spec:
+/// `behaviors/rollups.md` "Reads"): the rows `rollupQuery` would yield for
+/// `filter`, folded by `aggregates` like `recordAggregate` (same forms,
+/// `paths`, and errors). A rollup sheet's stored bytes may be stale, so the
+/// stateless `recordAggregate` over its root is not used.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn rollup_aggregate(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    name: String,
+    config_path: String,
+    open_root: String,
+    prefix: String,
+    filter: JsObject,
+    aggregates: JsUnknown,
+    paths: Option<Vec<String>>,
+) -> Result<JsValue> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut sheet = open_core_sheet(&env, &ctx, &mut tree, &name, &config_path, &open_root, &prefix)?;
+    let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
+    let prepared = prepare_aggregates(&env, aggregates, None, &parsed)?;
+    let rows = sheet
+        .query_stale(&ctx, &mut tree, &parsed, false, Stale::Recompute)
+        .map_err(|err| raise_core_error(&env, &err))?;
+    let mut fold_engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let only = admitted_paths(paths);
+    aggregate::fold_rows(&name, &rows, ".toml", only.as_ref(), &prepared, &mut fold_engine)
+        .map(JsValue)
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
 /// The non-fresh partitions of a rollup sheet at `treeRef` — `git sheet
 /// rollup --check`. Writes nothing.
 #[napi]

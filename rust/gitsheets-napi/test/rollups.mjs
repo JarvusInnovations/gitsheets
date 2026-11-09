@@ -66,7 +66,8 @@ test('finalize runs the rollup pass: records and rollups in one commit', () => {
     const r = upsertAll(gitDir, [rec('a', '2026-03-01T00:00:00Z', 5), rec('b', '2026-03-02T00:00:00Z', 7)]);
     const text = git(dir, 'show', `${r.commitHash}:transactions-monthly/2026/03.toml`);
     const stamp = git(dir, 'rev-parse', `${r.commitHash}:transactions/2026/03`).trim();
-    assert.equal(text, `count = 2\npostedAt = 2026-03-01\nsourceTree = "${stamp}"\ntotal = 12\n`);
+    const cfg = git(dir, 'rev-parse', `${r.commitHash}:.gitsheets`).trim();
+    assert.equal(text, `configTree = "${cfg}"\ncount = 2\npostedAt = 2026-03-01\nsourceTree = "${stamp}"\ntotal = 12\n`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

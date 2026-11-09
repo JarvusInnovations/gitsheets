@@ -171,6 +171,7 @@ module.exports = {
   rollupQuery: wrap(addon.rollupQuery),
   rollupGet: wrap(addon.rollupGet),
   rollupStatus: wrap(addon.rollupStatus),
+  rollupAggregate: wrap(addon.rollupAggregate),
   treeReadBlob: wrap(addon.treeReadBlob),
   treeEntryHash: wrap(addon.treeEntryHash),
   blobRead: wrap(addon.blobRead),
