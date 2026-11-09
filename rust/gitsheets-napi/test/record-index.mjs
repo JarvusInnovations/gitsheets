@@ -98,6 +98,18 @@ test('unique index lookup matches the host index', () => {
   }
 });
 
+test('an index key snippet may read the clock (query realm)', () => {
+  const { dir, gitDir } = freshRepo();
+  try {
+    const tree = seed(gitDir, 'people', PEOPLE);
+    const snippet = '(r) => (Date.now() > 0 && new Date() instanceof Date ? r.email.toLowerCase() : undefined)';
+    const [hit] = recordIndexUnique(gitDir, tree, 'people', snippet, ['jane@x.org']);
+    assert.equal(hit?.slug, 'jane', 'key snippet ran with the clock available');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('non-unique index lookup matches the host index', () => {
   const { dir, gitDir } = freshRepo();
   try {

@@ -520,6 +520,31 @@ def test_range_filter_numeric_and_malformed(fresh_repo):
             gitsheets.record_query(git_dir, tree, "people", "${{ slug }}", {"age": bad})
 
 
+def test_query_time_snippets_keep_the_clock(fresh_repo):
+    """`$pred` filters and index key snippets are query-time snippets: they run
+    in the query realm, with the clock (specs/rust-core.md "Query-time
+    snippets", #362) — not under the definition-snippet deny rule."""
+    _, git_dir = fresh_repo
+    people = [
+        ("amy", {"slug": "amy", "seen": dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)}),
+        ("zed", {"slug": "zed", "seen": dt.datetime(2999, 1, 1, tzinfo=dt.timezone.utc)}),
+    ]
+    tree = gitsheets.record_write(
+        git_dir, gitsheets.EMPTY_TREE_HASH, "people", [p for p, _ in people], [r for _, r in people]
+    )["tree_hash"]
+    past = gitsheets.record_query(
+        git_dir, tree, "people", "${{ slug }}", {"seen": {"$pred": "value < Date.now() && Math.random() < 1"}}
+    )
+    assert [e["path"] for e in past] == ["amy"]
+    hit = gitsheets.record_index_unique(
+        git_dir, tree, "people", "(r) => r.seen < new Date() ? r.slug : undefined", ["amy", "zed"]
+    )
+    assert [r["slug"] if r else None for r in hit] == ["amy", None]
+    # A path template in the same call is still a definition snippet.
+    with pytest.raises(gitsheets.PathTemplateError):
+        gitsheets.record_query(git_dir, tree, "people", "${{ Date.now() }}", {})
+
+
 # ── core-native reads: format-aware record_query + blob primitives ──────────────
 # specs/rust-core.md "Query traversal + filtering" / "Blob reads". The same
 # markdown bytes the Node binding writes decode byte-identically here; no

@@ -159,6 +159,16 @@ test('recordQuery matches host queryTree + queryMatches (equality, nested, $pred
         ref: { email: (value) => value.endsWith('x.org') },
       },
       {
+        // Query-time snippets keep the clock (specs/rust-core.md
+        // "Query-time snippets", #362) — unlike path expressions.
+        name: 'escape-hatch predicate reading the clock (query realm)',
+        base: 'people',
+        tree: peopleTree,
+        template: '${{ slug }}',
+        rust: { age: { $pred: 'value < Date.now() && Math.random() < 1' } },
+        ref: { age: (value) => value < Date.now() },
+      },
+      {
         name: 'escape-hatch predicate using the whole record',
         base: 'people',
         tree: peopleTree,
