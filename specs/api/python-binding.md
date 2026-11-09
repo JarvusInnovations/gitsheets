@@ -35,7 +35,7 @@ The 0.x releases are honestly scoped as a **transactional writer with parity-pro
 - `sync_branch(git_dir, branch, remote_ref, time_seconds, offset_minutes=0, on_conflict='fail', conflict_branch_prefix=None, committer=None)` — the object-database half of `repo.sync()` ([behaviors/push-sync.md](../behaviors/push-sync.md)): classifies `branch` against an already-fetched `remote_ref` and moves it; returns `{outcome, old_commit, new_commit, ahead, behind, conflict_commit, conflict_branch}`. It does not fetch or push.
 - `is_ancestor(git_dir, a, b)` — whether commit `a` is reachable from `b` (or equal); Node's `repo.isAncestor`.
 - `tree_list(git_dir, tree_ref, path='.')` — the direct entries at `tree_ref:path` as `[{name, type, mode, hash}]`, or `None` when nothing (or a blob) is there; Node's `repo.listTree`.
-- `tag_set(git_dir, name, target='HEAD', force=False)` — point the lightweight tag `refs/tags/<name>` at `target`, refusing an existing tag unless `force`; returns the tagged object id. Node's `repo.tag`.
+- `tag_set(git_dir, name, target=None, force=False)` — point the lightweight tag `refs/tags/<name>` at `target` (default: the default branch's tip — see [Default-branch binding](#default-branch-binding)), refusing an existing tag unless `force`; returns the tagged object id. Node's `repo.tag`.
 - `merge_sheets(git_dir, ours, theirs, time_seconds, offset_minutes=0, open_root='.', prefer='fail', commit=True, message=None, author=None, committer=None)` — sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)); returns `{outcome, ours_commit, theirs_commit, base, tree, commit, merged_records, conflicts}`. `ours` is resolved as given (pass `refs/heads/<name>` for a hex-looking branch name).
 - `merge_record_texts(git_dir, tree_ref, sheet_name, config_path, open_root, base, ours, theirs, prefer='fail')` — field-merge one record's three texts through the sheet at `tree_ref` (the merge-driver primitive); returns `{text, conflicts}`.
 - `tree_read_blob(git_dir, tree_ref, path)` — the blob at `tree_ref:path` as `{hash, content}` (bytes), or `None` when absent or a subtree.
@@ -51,6 +51,89 @@ The 0.x releases are honestly scoped as a **transactional writer with parity-pro
 - `roundtrip(records)` — pass records through the core's value marshalling and back, preserving TOML type fidelity (a parity probe).
 
 **Test-only, not API** — `substrate_stats()`, `substrate_reset()` (holo-tree's process-wide counters and the tree cache) and `simulate_core_error(code)` (raises the typed exception for a stable code, to test the error mapping) are exported for the binding's own tests. They carry no compatibility promise and may change or disappear in any release.
+
+## Default-branch binding
+
+The binding honors the repository's default-branch and submodule binding
+([behaviors/default-branch.md](../behaviors/default-branch.md#python-binding)),
+so one clone has one binding across the CLI, Node, and Python.
+
+```python
+resolve_binding(git_dir=None, *, branch=None, submodule=None, stage_pointer=None) -> Binding
+```
+
+- `git_dir` — the repository (or superproject) to resolve from, located the
+  way `openRepo({ gitDir })` locates it (`git rev-parse --absolute-git-dir`
+  run there, with `GIT_DIR` and the other redirecting variables cleared);
+  `None` discovers from the working directory and honors an inherited
+  `GIT_DIR`, as `openRepo()` does.
+- `branch` — `None` resolves `GITSHEETS_BRANCH` → `gitsheets.branch` →
+  `HEAD`'s branch; a name (`'data'`, `'refs/heads/data'`) sets it; `False`
+  opts out to `HEAD`'s branch without reading env or config.
+- `submodule` — `None` resolves `GITSHEETS_SUBMODULE` → the superproject's
+  `gitsheets.submodule` → no submodule; a path sets it; `False` opts out (the
+  repository `git_dir` names).
+- `stage_pointer` — `None` resolves `GITSHEETS_STAGE_POINTER` → the
+  superproject's `gitsheets.stagePointer` → `False`; a `bool` sets it.
+
+`False` is the opt-out because `None` is Python's "argument not given": it
+plays the role of Node's `undefined`, and `False` reads as the CLI's
+`--no-branch` / `--no-submodule`. Errors are Node's: `ConfigError`
+(`config_invalid` / `config_missing`) with the same codes, the message
+naming the tier (`resolve_binding(branch=)`, `GITSHEETS_BRANCH`,
+`git config gitsheets.branch`, and the submodule equivalents).
+
+`Binding` is a `str` subclass whose value is the **bound git dir** (the
+submodule's in submodule mode), so it passes anywhere a `git_dir` goes. It
+carries the resolution as read-only attributes:
+
+| Attribute | Value |
+| --- | --- |
+| `git_dir` | the bound git dir (same as `str(binding)`) |
+| `branch` | the default branch's short name, or `None` when bound to a detached `HEAD` |
+| `submodule` | the submodule path, or `None` in branch mode |
+| `stage_pointer` | whether a pointer-moving commit stages the gitlink (always `False` outside submodule mode) |
+| `superproject_git_dir` / `superproject_work_tree` | submodule mode: the superproject's git dir and working tree (`None` otherwise, and for a bare superproject's work tree) |
+| `ref` | `refs/heads/<branch>`, or `'HEAD'` when bound to a detached `HEAD` |
+
+**Defaults that follow it.** Each of these resolves its `git_dir` through
+`resolve_binding` when given a plain `str` and uses it as-is when given a
+`Binding`:
+
+- `transact(git_dir, …, parent=None)` — with no `parent` (and not `orphan`),
+  the transaction starts at the default branch's tip and commits to it
+  (`branch` still overrides the target). An unborn default branch gets a
+  root commit; a handler that stages nothing commits nothing (`result`
+  carries `commit_hash=None`); a `branch` naming another existing branch is
+  `TransactionError` (`commit_failed`) while the default branch is unborn.
+  Bound to a detached `HEAD`, the core resolves `HEAD` as before. Submodule
+  mode: a default-started commit (no `parent`, `branch`, or `orphan`) on a
+  detached `HEAD` advances `HEAD` by compare-and-swap (`parent_moved` /
+  `commit_failed` as in Node) and reports `ref_name == 'HEAD'`; when the
+  commit moved the pointer and `stage_pointer` is on, the superproject's
+  gitlink is staged after the commit, and a failed index update raises
+  `TransactionError` (`pointer_stage_failed`) with `commit_hash` set.
+- Every read that takes a `tree_ref` — `record_read`, `record_list`,
+  `record_query`, `record_query_candidates`, `record_aggregate`,
+  `rollup_status`, `verify_sheet_contract`, `record_index_unique`,
+  `record_index_multi`, `core_discover_sheets`, `tree_list`,
+  `tree_read_blob`, `tree_entry_hash`, `merge_record_texts` — accepts
+  `tree_ref=None` (positionally or by keyword) for the default branch's tree:
+  the empty tree when it is unborn, `HEAD`'s tree when bound to a detached
+  `HEAD`.
+- `tag_set(git_dir, name, target=None)` — no `target` tags the default
+  branch's tip (`HEAD` when bound to a detached `HEAD`).
+
+An explicit `tree_ref`, `parent`, or `target` keeps its existing meaning,
+resolved in the repository the call was given: a plain `str` `git_dir` is
+consulted for the binding only when a default is taken. Resolution runs a
+few `git` subprocesses per call; resolve once and pass the `Binding` in a
+loop or a long-lived process.
+
+Not mirrored, by design: `at` (pass the gitlinked commit as `tree_ref`),
+pointer staging after `sync_branch` / `merge_sheets` (both take their
+branch explicitly), and the live-sheet rebind (the batch surface has no
+live sheets).
 
 ## Known gaps (documented, tracked, not blockers for 0.x)
 
