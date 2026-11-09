@@ -944,6 +944,8 @@
       
         
       
+        
+      
     
     
     
@@ -1088,6 +1090,34 @@
     
   
     Production push daemon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/headless-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless data (records off the checked-out branch)
   
 
     
@@ -1466,8 +1496,13 @@ operation on a <code>Repository</code> (or <code>Sheet</code>/<code>Transaction<
 <td><code>GITSHEETS_PREFIX</code></td>
 </tr>
 <tr>
+<td><code>--branch &lt;name&gt;</code></td>
+<td><code>gitsheets.branch</code> git config, else <code>HEAD</code>&rsquo;s branch</td>
+<td><code>GITSHEETS_BRANCH</code></td>
+</tr>
+<tr>
 <td><code>--ref &lt;ref&gt;</code></td>
-<td><code>HEAD</code></td>
+<td>the default branch</td>
 <td><code>GITSHEETS_REF</code></td>
 </tr>
 <tr>
@@ -1498,6 +1533,18 @@ under <code>&lt;root&gt;/&lt;tenant&gt;/...</code>. With <code>--prefix tenant-a
 declares <code>root = 'users'</code> reads/writes records at <code>users/tenant-a/&lt;path&gt;.toml</code>.
 The sheet&rsquo;s <code>.gitsheets/&lt;name&gt;.toml</code> config file is unaffected — only the
 record data tree is scoped.</p>
+<p><code>--branch</code> selects the repository&rsquo;s <strong>default branch</strong> — the branch commands
+read from and commit to. It resolves flag → <code>GITSHEETS_BRANCH</code> →
+<code>gitsheets.branch</code> git config → the branch <code>HEAD</code> points at, the same order
+the library&rsquo;s <code>openRepo</code> uses, so one <code>git config gitsheets.branch data</code> per
+clone binds both the CLI and the application. <code>--ref</code> defaults to that
+branch. Records on a branch that is never checked out need no working tree
+and leave <code>git status</code> clean — see <a href="../recipes/headless-data/">Headless data</a>.</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>config<span class="w"> </span>gitsheets.branch<span class="w"> </span>data<span class="w">     </span><span class="c1"># once per clone</span>
+gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="w">                </span><span class="c1"># reads the data branch</span>
+<span class="nv">GITSHEETS_BRANCH</span><span class="o">=</span>data<span class="w"> </span>gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane"}'</span>
+gitsheets<span class="w"> </span>--branch<span class="w"> </span>data<span class="w"> </span><span class="nb">read</span><span class="w"> </span>users<span class="w"> </span>jane
+</code></pre></div>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link"> ¶</a></h2>
 <h3 id="gitsheets-upsert-sheet-input"><code>gitsheets upsert &lt;sheet&gt; [input]</code><a class="headerlink" href="#gitsheets-upsert-sheet-input" title="Permanent link"> ¶</a></h3>
 <p>Insert or update one or more records.</p>
@@ -1610,7 +1657,9 @@ or after a manual edit that didn&rsquo;t preserve canonical key order.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>normalize<span class="w"> </span>users
 </code></pre></div>
 <h3 id="gitsheets-init-sheet"><code>gitsheets init &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-init-sheet" title="Permanent link"> ¶</a></h3>
-<p>Scaffold <code>.gitsheets/&lt;sheet&gt;.toml</code> with sensible defaults. Useful as a first-step before bulk-importing records.</p>
+<p>Commit a starter <code>.gitsheets/&lt;sheet&gt;.toml</code> with sensible defaults to the target ref (<code>--ref</code> / <code>--commit-to</code>, default the default branch). Useful as a first-step before bulk-importing records. The working tree is not written. When the target branch does not exist yet, it is created with a root commit holding only the config — the way to start a data branch:</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--commit<span class="w"> </span>--branch<span class="w"> </span>data
+</code></pre></div>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>init<span class="w"> </span>users
 gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--path<span class="o">=</span><span class="s1">'${{ slug }}'</span>
 gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--schema<span class="o">=</span>./schemas/user.schema.json
@@ -1625,6 +1674,7 @@ gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w
 <li><code>--path &lt;tpl&gt;</code> — override the path template.</li>
 <li><code>--schema &lt;file&gt;</code> — embed a JSON Schema file under <code>[gitsheet.schema]</code>. The schema is validated through the same loader the runtime uses; an invalid schema aborts before the transaction commits.</li>
 <li><code>--force</code> — overwrite an existing <code>.gitsheets/&lt;sheet&gt;.toml</code>. Without <code>--force</code>, init refuses to clobber.</li>
+<li><code>--commit</code> — the explicit spelling of what init does (commit the config); reads well in bootstrap scripts.</li>
 </ul>
 <h3 id="gitsheets-infer-sheet"><code>gitsheets infer &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-infer-sheet" title="Permanent link"> ¶</a></h3>
 <p>Scan every record in the sheet and write a conservative starter <code>[gitsheet.schema]</code> block into <code>.gitsheets/&lt;sheet&gt;.toml</code>. The committed schema captures observed types per field, plus <code>minimum</code>/<code>maximum</code> hints for numeric fields and <code>items.type</code> for arrays. Fields present in every record are listed under <code>required</code>.</p>
@@ -1668,7 +1718,7 @@ gitsheets<span class="w"> </span>init<span class="w"> </span>users<span class="w
 </table>
 <h3 id="gitsheets-merge-theirs"><code>gitsheets merge &lt;theirs&gt;</code><a class="headerlink" href="#gitsheets-merge-theirs" title="Permanent link"> ¶</a></h3>
 <p>Sheet-aware merge (<a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/merge.md">spec</a>): record files changed on both sides since the merge base are merged <strong>field by field</strong> and written in canonical form, so a merged repo never carries a mix of serializations. Non-record files merge the way git merges them.</p>
-<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w">                      </span><span class="c1"># into HEAD's branch</span>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w">                      </span><span class="c1"># into the default branch</span>
 gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w"> </span>--into<span class="w"> </span>published<span class="w">     </span><span class="c1"># into another branch</span>
 gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w"> </span>--dry-run<span class="w">            </span><span class="c1"># report the merged tree, move nothing</span>
 gitsheets<span class="w"> </span>merge<span class="w"> </span>import<span class="w"> </span>--prefer<span class="w"> </span>theirs<span class="w">      </span><span class="c1"># resolve field / delete-modify / blob conflicts for one side</span>

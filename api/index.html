@@ -1055,6 +1055,8 @@
       
         
       
+        
+      
     
     
     
@@ -1199,6 +1201,34 @@
     
   
     Production push daemon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/headless-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless data (records off the checked-out branch)
   
 
     
@@ -1706,7 +1736,9 @@
 <p>Open a <code>Repository</code> against a git directory. Discovers from cwd upward when <code>gitDir</code> is omitted. Fresh-but-initialized repositories (no commits yet) are supported.</p>
 <div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">();</span><span class="w">                         </span><span class="c1">// discovered</span>
 <span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">gitDir</span><span class="o">:</span><span class="w"> </span><span class="s1">'/.git'</span><span class="w"> </span><span class="p">});</span><span class="w">      </span><span class="c1">// explicit</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">branch</span><span class="o">:</span><span class="w"> </span><span class="s1">'data'</span><span class="w"> </span><span class="p">});</span><span class="w">       </span><span class="c1">// branch mode: records live on `data`</span>
 </code></pre></div>
+<p><strong>Default branch.</strong> Every repository is bound to one <em>default branch</em>: the branch live sheets read, transactions commit to when given no <code>parent</code>, and <code>refresh</code> / <code>sync</code> / <code>fetch</code> / the push daemon / <code>merge</code> target when given no ref. It resolves once, at open, from the first of <code>opts.branch</code> → <code>GITSHEETS_BRANCH</code> → the <code>gitsheets.branch</code> git config of the opened repository → the branch <code>HEAD</code> points at. <code>repo.branch</code> reports it (<code>'data'</code>), or <code>null</code> when the repository is bound to a detached <code>HEAD</code> (every default then follows <code>HEAD</code>, as before). A tag, commit, or malformed name throws <code>ConfigError</code> (<code>config_invalid</code>). The branch may not exist yet: it reads as empty and the first committing transaction creates it with a root commit. Explicit refs — <code>readBlob('HEAD', …)</code>, <code>openSheet(name, { ref: 'HEAD' })</code>, <code>transact({ parent: 'main' })</code> — keep meaning exactly what they name. See <a href="../recipes/headless-data/">Headless data</a>.</p>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md"><code>specs/api/repository.md</code></a></p>
 <h3 id="openstorerepo-opts-promisestorev"><code>openStore(repo, opts?)</code> → <code>Promise&lt;Store&lt;V&gt;&gt;</code><a class="headerlink" href="#openstorerepo-opts-promisestorev" title="Permanent link"> ¶</a></h3>
 <p>Typed wrapper over <code>Repository.openSheets()</code> that binds per-sheet Standard Schema validators. <code>store.&lt;sheet&gt;</code> is <code>Sheet&lt;InferRecord&lt;V[sheet]&gt;&gt;</code> for every sheet in <code>opts.validators</code>.</p>
@@ -1767,7 +1799,7 @@
 </tr>
 <tr>
 <td><code>repo.tag(name, target?, { force? })</code></td>
-<td>Lightweight tag (default target <code>HEAD</code>); refuses an existing tag unless <code>force</code> — <code>git tag -f</code> without the spawn</td>
+<td>Lightweight tag (default target: the default branch&rsquo;s tip, <code>HEAD</code> when bound to a detached <code>HEAD</code>); refuses an existing tag unless <code>force</code> — <code>git tag -f</code> without the spawn</td>
 </tr>
 <tr>
 <td><code>repo.listTree(ref, path?)</code></td>
@@ -1779,7 +1811,11 @@
 </tr>
 <tr>
 <td><code>repo.refresh()</code></td>
-<td>Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful <code>transact</code> and <code>repo.sync()</code> auto-refresh)</td>
+<td>Rebind every live Sheet to the default branch&rsquo;s current tree — for out-of-band ref movement (a successful <code>transact</code> and <code>repo.sync()</code> auto-refresh)</td>
+</tr>
+<tr>
+<td><code>repo.branch</code></td>
+<td>The default branch&rsquo;s short name, or <code>null</code> when bound to a detached <code>HEAD</code></td>
 </tr>
 <tr>
 <td><code>repo.readBlob(ref, path)</code></td>
@@ -1826,7 +1862,7 @@
 </tr>
 <tr>
 <td><code>sheet.refresh()</code></td>
-<td>Rebind this sheet&rsquo;s read snapshot to the current HEAD tree (out-of-band movement; own commits auto-refresh)</td>
+<td>Rebind this sheet&rsquo;s read snapshot to the default branch&rsquo;s current tree (out-of-band movement; own commits auto-refresh)</td>
 </tr>
 <tr>
 <td><code>sheet.pathForRecord(record)</code></td>
@@ -2048,7 +2084,7 @@
 <span class="w">  </span><span class="k">readonly</span><span class="w"> </span><span class="nx">refresh</span><span class="o">:</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nb">Promise</span><span class="o">&lt;</span><span class="ow">void</span><span class="o">&gt;</span><span class="p">;</span>
 <span class="p">};</span>
 </code></pre></div>
-<p><code>store.&lt;sheet&gt;</code> for each sheet declared in <code>validators</code>. <code>store.transact(opts, async tx =&gt; ...)</code> mirrors <code>repo.transact</code> with <code>tx.&lt;sheet&gt;</code> aliases that thread validators through. <code>store.refresh()</code> rebinds every sheet to the current HEAD tree (delegates to <code>repo.refresh()</code>).</p>
+<p><code>store.&lt;sheet&gt;</code> for each sheet declared in <code>validators</code>. <code>store.transact(opts, async tx =&gt; ...)</code> mirrors <code>repo.transact</code> with <code>tx.&lt;sheet&gt;</code> aliases that thread validators through. <code>store.refresh()</code> rebinds every sheet to the default branch&rsquo;s current tree (delegates to <code>repo.refresh()</code>).</p>
 <p>Reads through <code>store.&lt;sheet&gt;</code> follow the freshness model: a successful <code>store.transact</code> / <code>repo.transact</code> auto-refreshes, so post-commit reads reflect the committed state — see <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/freshness.md"><code>specs/behaviors/freshness.md</code></a>.</p>
 <p>Sheets not in <code>validators</code> are accessible via <code>repo.openSheet(name)</code> for one-off un-typed access.</p>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/store.md"><code>specs/api/store.md</code></a></p>

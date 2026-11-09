@@ -16,7 +16,7 @@
         <link rel="prev" href="../secondary-indices/">
       
       
-        <link rel="next" href="../markdown-cms/">
+        <link rel="next" href="../headless-data/">
       
       
         
@@ -701,6 +701,8 @@
       
         
       
+        
+      
     
     
     
@@ -1075,6 +1077,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../headless-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless data (records off the checked-out branch)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../markdown-cms/" class="md-nav__link">
         
   
@@ -1380,7 +1410,7 @@
 <span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">();</span>
 <span class="kd">const</span><span class="w"> </span><span class="nx">daemon</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">startPushDaemon</span><span class="p">({</span>
 <span class="w">  </span><span class="nx">remote</span><span class="o">:</span><span class="w"> </span><span class="s1">'origin'</span><span class="p">,</span>
-<span class="w">  </span><span class="nx">branch</span><span class="o">:</span><span class="w"> </span><span class="s1">'main'</span><span class="p">,</span><span class="w">                  </span><span class="c1">// default: HEAD's branch</span>
+<span class="w">  </span><span class="nx">branch</span><span class="o">:</span><span class="w"> </span><span class="s1">'main'</span><span class="p">,</span><span class="w">                  </span><span class="c1">// default: the repo's default branch</span>
 <span class="w">  </span><span class="nx">backoff</span><span class="o">:</span><span class="w"> </span><span class="s1">'exponential'</span><span class="p">,</span><span class="w">          </span><span class="c1">// default: 1s base, ×2 each retry, cap 1h</span>
 <span class="w">  </span><span class="nx">maxRetries</span><span class="o">:</span><span class="w"> </span><span class="kt">Infinity</span><span class="p">,</span><span class="w">            </span><span class="c1">// default: never give up unless stopped</span>
 <span class="p">});</span>

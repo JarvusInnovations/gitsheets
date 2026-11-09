@@ -778,6 +778,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -826,6 +843,8 @@
   
     
     
+      
+        
       
         
       
@@ -983,6 +1002,34 @@
     
   
     Production push daemon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/headless-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless data (records off the checked-out branch)
   
 
     
@@ -1176,6 +1223,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1364,7 +1428,7 @@ gitsheets-axi delete &lt;sheet&gt; &lt;path&gt;      # remove a record (idempote
 gitsheets-axi check &lt;sheet&gt; &lt;file&gt;       # verify + optionally --fix
 gitsheets-axi diff &lt;sheet&gt; [&lt;src-ref&gt;]   # TOON change summary
 gitsheets-axi normalize &lt;sheet&gt;          # bulk re-canonicalize
-gitsheets-axi init &lt;sheet&gt;               # scaffold a starter config
+gitsheets-axi init &lt;sheet&gt;               # commit a starter config
 gitsheets-axi infer &lt;sheet&gt;              # observe records → schema
 gitsheets-axi migrate-config &lt;sheet&gt;     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment &lt;list|get|set|delete&gt; &lt;sheet&gt; &lt;path&gt; [&lt;name&gt;]
@@ -1372,6 +1436,14 @@ gitsheets-axi push                       # one-shot git push
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 </code></pre></div>
 <p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.</p>
+<h3 id="default-branch">Default branch<a class="headerlink" href="#default-branch" title="Permanent link"> ¶</a></h3>
+<p>Every command reads and writes the repository&rsquo;s <strong>default branch</strong>: the
+global <code>--branch &lt;name&gt;</code> flag (accepted on any command, e.g.
+<code>gitsheets-axi query users --branch data</code>), else <code>GITSHEETS_BRANCH</code>, else
+the clone&rsquo;s <code>gitsheets.branch</code> git config, else the branch <code>HEAD</code> points at.
+<code>push</code> pushes that branch. A tag or malformed name is <code>CONFIG_INVALID</code>. See
+<a href="../recipes/headless-data/">Headless data</a> for keeping records on a branch
+you never check out.</p>
 <p><code>query</code>, <code>count</code>, and <code>distinct</code> share a <code>--filter</code> mini-DSL (<code>k=v</code>, <code>k!=v</code>,
 <code>k&lt;v</code>, <code>k&gt;v</code>, <code>k&lt;=v</code>, <code>k&gt;=v</code>, <code>k~regex</code>, <code>k in (a,b)</code>, <code>k:present</code>,
 <code>k:empty</code>). Ordered comparisons on a <strong>date-bucket path field</strong> (a sheet

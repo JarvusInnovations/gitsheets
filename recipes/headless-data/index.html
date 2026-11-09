@@ -1,0 +1,1494 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A git-backed document store for low-volume, high-touch, human-scale data">
+      
+      
+        <meta name="author" content="Jarvus Innovations">
+      
+      
+      
+        <link rel="prev" href="../production-push-daemon/">
+      
+      
+        <link rel="next" href="../markdown-cms/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Headless data (records off the checked-out branch) - gitsheets</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="orange" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#headless-data" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="gitsheets" class="md-header__button md-logo" aria-label="gitsheets" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            gitsheets
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Headless data (records off the checked-out branch)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/JarvusInnovations/gitsheets" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../quick-start/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../concepts/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Concepts
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../path-templates/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../typed-sheet-with-zod/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Recipes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../migration-guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migration guide
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="gitsheets" class="md-nav__button md-logo" aria-label="gitsheets" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    gitsheets
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/JarvusInnovations/gitsheets" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quick-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../path-templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Path templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../axi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    gitsheets-axi (agent CLI)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Recipes
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../typed-sheet-with-zod/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Typed sheet with Zod
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../request-bound-transactions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Request-bound transactions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secondary-indices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Secondary indices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-push-daemon/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production push daemon
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless data (records off the checked-out branch)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless data (records off the checked-out branch)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pick-a-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pick a layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binding-the-default-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binding the default branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#records-on-the-code-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Records on the code branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orphan-data-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orphan data branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bare-data-clone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bare data clone
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editing-configs-on-a-branch-you-never-check-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editing configs on a branch you never check out
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../markdown-cms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Markdown CMS pattern
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migrating-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating a fields config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../migration-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pick-a-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pick a layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binding-the-default-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binding the default branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#records-on-the-code-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Records on the code branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orphan-data-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orphan data branch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bare-data-clone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bare data clone
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editing-configs-on-a-branch-you-never-check-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editing configs on a branch you never check out
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/JarvusInnovations/gitsheets/edit/develop/docs/recipes/headless-data.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="headless-data">Headless data<a class="headerlink" href="#headless-data" title="Permanent link"> ¶</a></h1>
+<p>gitsheets reads and writes git <strong>refs</strong>. It never touches a working tree. A
+checkout is a view of one ref that you manage. When the live records sit on
+the same branch you check out, every gitsheets write moves the ref out from
+under that checkout, and <code>git status</code> starts reporting your records as
+deleted or modified. Nothing is lost. The checkout is just behind the ref.</p>
+<p>The fix is the layout, not a sync step: keep the records on a branch you never
+check out. Then there is no working tree of records to fall behind, nothing
+for <code>git status</code> to report, and no checkout cost that grows with the record
+count.</p>
+<p>Every repository is bound to one <strong>default branch</strong>. That is the branch live
+sheets read, transactions commit to, and <code>sync</code>, the push daemon, and <code>merge</code>
+target when you name no ref. By default it is the branch <code>HEAD</code> points at. You
+can bind it to any other branch.</p>
+<h2 id="pick-a-layout">Pick a layout<a class="headerlink" href="#pick-a-layout" title="Permanent link"> ¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Layout</th>
+<th>What you set</th>
+<th>Working tree of records</th>
+<th>History</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#records-on-the-code-branch">Records on the code branch</a></td>
+<td>nothing</td>
+<td>yes, and it goes stale after every write</td>
+<td>mixed with code</td>
+</tr>
+<tr>
+<td><a href="#orphan-data-branch">Orphan data branch, same repo</a></td>
+<td><code>gitsheets.branch</code> (or <code>--branch</code> / <code>branch:</code>)</td>
+<td>none</td>
+<td>separate branch that travels with every clone</td>
+</tr>
+<tr>
+<td><a href="#bare-data-clone">Separate data repository, bare clone</a></td>
+<td><code>--git-dir</code> / <code>gitDir</code></td>
+<td>none</td>
+<td>separate repo</td>
+</tr>
+</tbody>
+</table>
+<h2 id="binding-the-default-branch">Binding the default branch<a class="headerlink" href="#binding-the-default-branch" title="Permanent link"> ¶</a></h2>
+<p>The binding layers the way git&rsquo;s own settings do. The command-line flag wins
+over the environment variable, which wins over git config. With none of
+them set, the default branch is the branch <code>HEAD</code> points at. The library and
+both CLIs read the same sources, so one <code>git config</code> per clone binds
+<code>git sheet</code>, <code>gitsheets-axi</code>, and your application together.</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Example</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openRepo</code> option</td>
+<td><code>openRepo({ branch: 'data' })</code></td>
+<td>code that knows its layout</td>
+</tr>
+<tr>
+<td>CLI flag</td>
+<td><code>git sheet --branch data query users</code>, <code>gitsheets-axi query users --branch data</code></td>
+<td>one invocation</td>
+</tr>
+<tr>
+<td>environment</td>
+<td><code>GITSHEETS_BRANCH=data</code></td>
+<td>a shell, a container, a CI job</td>
+</tr>
+<tr>
+<td>git config</td>
+<td><code>git config gitsheets.branch data</code></td>
+<td>one clone, unversioned, like <code>remote.pushDefault</code></td>
+</tr>
+<tr>
+<td>none of these</td>
+<td>the branch <code>HEAD</code> points at</td>
+<td>today&rsquo;s behavior</td>
+</tr>
+</tbody>
+</table>
+<p>The value must name a branch (<code>data</code> or <code>refs/heads/data</code>). A tag, a commit
+hash, or a malformed name is rejected with <code>ConfigError</code> (<code>config_invalid</code>).
+<code>repo.branch</code> reports what was resolved.</p>
+<p>Explicit refs keep meaning what they name. <code>repo.readBlob('HEAD', path)</code>,
+<code>openSheet(name, { ref: 'HEAD' })</code>, and <code>transact({ parent: 'main' })</code> still
+read from or commit to exactly that ref.</p>
+<h2 id="records-on-the-code-branch">Records on the code branch<a class="headerlink" href="#records-on-the-code-branch" title="Permanent link"> ¶</a></h2>
+<p>This is the default and needs no setup. It suits a repo where people edit
+records by hand and commit them alongside code.</p>
+<p>The catch is the working tree. After a gitsheets write, the ref holds the new
+records and your checkout still holds the old ones. With a <code>users</code> sheet set
+up:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>sheet<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane","email":"jane@x.org"}'</span>
+git<span class="w"> </span>status<span class="w"> </span>--short<span class="w">    </span><span class="c1"># shows "D  users/jane.toml": the index and files are behind the ref</span>
+</code></pre></div>
+<p>To bring the checkout up to date with the ref:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>checkout<span class="w"> </span>HEAD<span class="w"> </span>--<span class="w"> </span>.
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">A stale checkout can undo writes</p>
+<p>Until you refresh it, the working tree is an old copy. If you edit
+a stale record file and commit it with plain <code>git commit -a</code>, you commit
+the old content back over what gitsheets wrote. Refresh first, or move the
+records off the code branch.</p>
+</div>
+<h2 id="orphan-data-branch">Orphan data branch<a class="headerlink" href="#orphan-data-branch" title="Permanent link"> ¶</a></h2>
+<p>The records live on a branch with no shared history with your code, such as
+<code>data</code>, in the same repository. The branch travels with every clone and push.
+You never check it out.</p>
+<p>Start the branch. <code>init</code> commits the sheet config to <code>data</code> as a root commit
+and leaves your checked-out branch alone:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>sheet<span class="w"> </span>init<span class="w"> </span>users<span class="w"> </span>--commit<span class="w"> </span>--branch<span class="w"> </span>data<span class="w"> </span>--path<span class="w"> </span><span class="s1">'${{ slug }}'</span>
+git<span class="w"> </span>status<span class="w"> </span>--short<span class="w">    </span><span class="c1"># clean</span>
+</code></pre></div>
+<p>Bind the clone once, then use <code>git sheet</code> with no flags:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>config<span class="w"> </span>gitsheets.branch<span class="w"> </span>data
+git<span class="w"> </span>sheet<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane","email":"jane@x.org"}'</span>
+git<span class="w"> </span>sheet<span class="w"> </span>query<span class="w"> </span>users
+git<span class="w"> </span>status<span class="w"> </span>--short<span class="w">    </span><span class="c1"># still clean</span>
+</code></pre></div>
+<p>Your application picks up the same binding from git config. You can also pass
+it in code:</p>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">();</span><span class="w">                    </span><span class="c1">// reads gitsheets.branch</span>
+<span class="c1">// const repo = await openRepo({ branch: 'data' }); // or say so in code</span>
+<span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">repo</span><span class="p">.</span><span class="nx">branch</span><span class="p">);</span><span class="w">                         </span><span class="c1">// 'data'</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">users</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">'users'</span><span class="p">);</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'ada'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'ada@x.org'</span><span class="w"> </span><span class="p">});</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">daemon</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">startPushDaemon</span><span class="p">({</span><span class="w"> </span><span class="nx">remote</span><span class="o">:</span><span class="w"> </span><span class="s1">'origin'</span><span class="w"> </span><span class="p">});</span><span class="w"> </span><span class="c1">// pushes data</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">sync</span><span class="p">();</span><span class="w">                                               </span><span class="c1">// syncs data</span>
+</code></pre></div>
+<p>Push and fetch the branch by name, like any other branch:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>data
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Fresh clones need a local <code>data</code> branch</p>
+<p><code>git clone</code> creates a local branch only for the remote&rsquo;s default
+branch. On a new clone, <code>data</code> exists only as <code>origin/data</code>, and
+gitsheets refuses to bind to it (<code>ConfigError</code> <code>config_invalid</code>, naming
+the fix) rather than treat it as unborn and start a root commit
+unrelated to the remote&rsquo;s history. It never creates the local branch
+for you. Create it before you bind:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>branch<span class="w"> </span>data<span class="w"> </span>origin/data
+git<span class="w"> </span>config<span class="w"> </span>gitsheets.branch<span class="w"> </span>data
+</code></pre></div>
+</div>
+<p>To look at the records now and then, add a <strong>detached</strong> worktree:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>worktree<span class="w"> </span>add<span class="w"> </span>--detach<span class="w"> </span>../app-data<span class="w"> </span>data
+ls<span class="w"> </span>../app-data/users
+</code></pre></div>
+<p>A detached view is a snapshot of one commit, so it never reports phantom
+changes when gitsheets moves <code>data</code>. To refresh it:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>-C<span class="w"> </span>../app-data<span class="w"> </span>checkout<span class="w"> </span>--detach<span class="w"> </span>data
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Do not check <code>data</code> out as a branch</p>
+<p><code>git worktree add ../app-data data</code> (without <code>--detach</code>) checks out
+the branch itself. That worktree then has the same stale-checkout problem
+as <a href="#records-on-the-code-branch">records on the code branch</a>: every
+gitsheets write leaves it behind, and committing stale files from it
+reverts the writes. Use <code>--detach</code>, and remove the view when you&rsquo;re
+done (<code>git worktree remove ../app-data</code>).</p>
+</div>
+<h2 id="bare-data-clone">Bare data clone<a class="headerlink" href="#bare-data-clone" title="Permanent link"> ¶</a></h2>
+<p>The records live in their own repository. Each host that reads or writes them
+keeps a bare clone, which has no working tree at all. Nothing needs binding:
+the clone&rsquo;s <code>HEAD</code> already points at its data branch.</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>--bare<span class="w"> </span>git@example.com:acme/app-data.git<span class="w"> </span>/srv/app-data.git
+git<span class="w"> </span>sheet<span class="w"> </span>--git-dir<span class="w"> </span>/srv/app-data.git<span class="w"> </span>query<span class="w"> </span>users
+<span class="nv">GIT_DIR</span><span class="o">=</span>/srv/app-data.git<span class="w"> </span>git<span class="w"> </span>sheet<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane","email":"jane@x.org"}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">gitDir</span><span class="o">:</span><span class="w"> </span><span class="s1">'/srv/app-data.git'</span><span class="w"> </span><span class="p">});</span>
+</code></pre></div>
+<p>If the data repository keeps its records on a branch other than its default
+branch, add <code>branch</code> (or <code>git -C /srv/app-data.git config gitsheets.branch data</code>).
+<code>repo.sync()</code> and <code>repo.fetch()</code> use explicit refspecs, so they work in a bare
+clone without a configured fetch refspec.</p>
+<h2 id="editing-configs-on-a-branch-you-never-check-out">Editing configs on a branch you never check out<a class="headerlink" href="#editing-configs-on-a-branch-you-never-check-out" title="Permanent link"> ¶</a></h2>
+<p>Every config-writing command commits through a transaction, so it works the
+same on a data branch: <code>git sheet init</code>, <code>infer</code>, <code>migrate-config</code>, and the
+<code>gitsheets-axi</code> <code>init</code> / <code>infer</code> / <code>migrate-config</code> commands all read the
+existing config from the default branch and commit the new one there.</p>
+<h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link"> ¶</a></h2>
+<p>The Python binding&rsquo;s batch functions take an explicit <code>tree_ref</code> on every
+call (<code>record_query(git_dir, tree_ref, …)</code>). <code>gitsheets.branch</code> and
+<code>GITSHEETS_BRANCH</code> do not apply there. Pass <code>'refs/heads/data'</code> (or the tree
+it resolves to) yourself.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache-2.0 — Jarvus Innovations
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@8.5.0/dist/mermaid.min.js"></script>
+      
+    
+  </body>
+</html>
