@@ -32,6 +32,7 @@ nav:
       - Typed sheet with Zod: recipes/typed-sheet-with-zod.md
       - Request-bound transactions: recipes/request-bound-transactions.md
       - Secondary indices: recipes/secondary-indices.md
+      - Rollups (stored aggregates): recipes/rollups.md
       - Production push daemon: recipes/production-push-daemon.md
       - Headless data (records off the checked-out branch): recipes/headless-data.md
       - Markdown CMS pattern: recipes/markdown-cms.md

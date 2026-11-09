@@ -143,6 +143,22 @@ results:
 
 `sum` stays an integer when every value is one (store money as integer cents). An aggregate with nothing to fold is omitted, except `count` and `sum` (`0`). Mixed kinds in one field under `min`/`max`/`distinct` → `AGGREGATION_FAILED`. Custom folds (`reduce`) are library-only.
 
+### `gitsheets-axi rollup <sheet> [--check] [--prefix p] [--message m]`
+
+Maintains a rollup sheet (`[gitsheet.rollup]` — stored per-partition aggregates). Reads of a rollup sheet are always correct (stale partitions recompute on read); this persists the repair after a plain `git merge` or an outside writer.
+
+```text
+$ gitsheets-axi rollup transactions-monthly --check
+error: 1 partition(s) of transactions-monthly are not fresh: stale 2026/03
+code: ROLLUP_STALE
+$ gitsheets-axi rollup transactions-monthly
+result: committed
+partitions[1]{path,status}:
+  2026/03,recomputed
+```
+
+Fresh → `result: no-op`, no commit. Writing a rollup sheet → `SHEET_DERIVED`; a non-rollup sheet → `VALIDATION_ERROR`.
+
 ### `gitsheets-axi read <sheet> <path> [--full]`
 
 Single-record detail. For markdown/mdx sheets, the body field is truncated to ~500 chars with `(truncated, N chars total)` and a `--full` hint. Surfaces `_path` and `_sheet` as plain fields (the `RECORD_PATH_KEY` / `RECORD_SHEET_KEY` Symbol annotations).

@@ -11,6 +11,7 @@ A sheet is declared by a TOML file at `.gitsheets/<sheet-name>.toml` in the data
 - [`[gitsheet.fields.<name>]`](#gitsheetfieldsname) — per-field rules (sort)
 - [`[gitsheet.format]`](#gitsheetformat) — TOML (default) / markdown / mdx
 - [Body field collision](#body-field-collision) — markdown sheets
+- [`[gitsheet.rollup]`](#gitsheetrollup) — rollup sheets (stored per-partition aggregates)
 - [Common patterns](#common-patterns)
 - [Template fields must be schema-required](#template-fields-must-be-schema-required)
 - [Validation behavior](#validation-behavior)
@@ -246,6 +247,31 @@ This is the body. Normalized on write by the core's native markdown formatter.
 ## Body field collision
 
 For markdown / mdx sheets: the `body` field name **must not** appear in the path template. A sheet with `path = '${{ body }}'` + `body = 'body'` raises `ConfigError('config_invalid')` at sheet-open — the body field can't also identify the record (it would render the same path for any body content).
+
+## `[gitsheet.rollup]`
+
+Declares a **rollup sheet**: one record per partition of a source sheet, holding aggregates, written by gitsheets in the same commit as the record changes and stamped with the partition's tree id.
+
+```toml
+# .gitsheets/transactions-monthly.toml   (source: path = '${{ postedAt: YYYY/MM }}/${{ id }}')
+[gitsheet]
+root = 'transactions-monthly'          # must not overlap the source's root
+path = '${{ postedAt: YYYY/MM }}'      # a PROPER prefix of the source's path
+
+[gitsheet.rollup]
+from = 'transactions'                  # same .gitsheets/ dir; not itself a rollup
+
+[gitsheet.rollup.aggregates]           # the sheet.aggregate grammar, in TOML
+count      = { count = true }
+total      = { sum = 'amountCents' }
+posted     = { sum = 'amountCents', where = { status = 'posted' } }
+byCategory = { sum = 'amountCents', groupBy = 'category' }
+```
+
+- Partition components: literal, plain field (`${{ domain }}`), date bucket (cut `YYYY/MM/DD` at `YYYY` or `YYYY/MM`; `YYYY/WW` only whole). `path = 'all'` (literals only) = one whole-sheet record.
+- Generated record: the key fields (bucket → period-start local date, e.g. `postedAt = 2026-03-01`), `sourceTree`, one field per aggregate. Aggregate names can't be a key field or `sourceTree`.
+- TOML format only; `[gitsheet.schema]` optional (validates generated records). Aggregates can't reference a markdown source's body field.
+- Every violation → `ConfigError('config_invalid')` at sheet open.
 
 ## Common patterns
 

@@ -8,6 +8,7 @@
 - [upsert](#upsert) — insert or update records
 - [query](#query) — read records
 - [aggregate](#aggregate) — count / sum / min / max / avg / distinct
+- [rollup](#rollup) — materialize / check a rollup sheet
 - [read](#read) — read a single record
 - [edit](#edit) — open a record in $EDITOR
 - [check](#check) — validate + optionally fix a working-tree file
@@ -111,6 +112,15 @@ gitsheets aggregate repos --agg teams=distinct:targetTeam --format toml
 - `--format <json|toml>` — default `json`: one object with a key per `--agg` name
 
 Computed in the core, body-less, canonical path order. Empty aggregates are omitted except `count` / `sum` (`0`). `reduce` is library-only.
+
+## rollup
+
+```bash
+gitsheets rollup transactions-monthly           # recompute stale/missing, delete orphans — one commit (none if fresh)
+gitsheets rollup transactions-monthly --check   # list stale / missing / orphaned, write nothing, exit 1 if any
+```
+
+Prints `<status> <partition>` per line (`recomputed` / `deleted`, or with `--check` `stale` / `missing` / `orphaned`). Honors the transaction flags and `--prefix`. Use `--check` as the CI gate on data branches other tools write to; writes to a rollup sheet fail with exit `69` (`sheet_derived`).
 
 ## read
 

@@ -111,6 +111,7 @@ gitsheets-axi migrate-config <sheet>     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
 gitsheets-axi push                       # one-shot git push
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
+gitsheets-axi rollup <sheet> [--check]   # materialize / check a rollup sheet
 ```
 
 Every command supports `--help` with its specific flags and 2-3 examples.
@@ -167,6 +168,15 @@ field are also pushed down so the walk prunes; then the core folds over the
 picked records. A clause on a markdown sheet's body field is a
 `VALIDATION_ERROR` (aggregates read body-less). A field with mixed kinds
 under `min`/`max`/`distinct` fails with `AGGREGATION_FAILED`.
+
+`rollup <sheet> [--check] [--prefix p] [--message m]` maintains a
+[rollup sheet](recipes/rollups.md). Without `--check` it recomputes every
+stale or missing rollup record and deletes orphans in one commit (`result:
+no-op`, no commit, when everything is fresh), listing each partition as
+`recomputed` or `deleted`. With `--check` it writes nothing and fails with
+`ROLLUP_STALE` (exit 1), naming each `stale` / `missing` / `orphaned`
+partition. A write to a rollup sheet fails with `SHEET_DERIVED`; a
+non-rollup sheet is a `VALIDATION_ERROR`.
 
 `query --group-by <field>` is a separate TOON view, not an `aggregate`
 call: `{value,count}` facets biggest-first, computed host-side over the
