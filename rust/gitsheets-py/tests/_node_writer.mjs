@@ -5,6 +5,10 @@
 //   record-write <fixture>            → { treeHash, blobHashes }
 //   commit <gitDir>                   → { commitHash, treeHash, refName }
 //   comparator <rule> <aJson> <bJson> → { result }
+//   render <template> <recordJson> → { core, host } — the path the napi core
+//     renders, and the one the gitsheets package's host `Template` (node:vm
+//     shim) renders when packages/gitsheets/dist is built (else host: null).
+//     String values under a `$date` key ({"$date": iso}) become JS Dates.
 //   contract-hash <kind> <input>      → { hash } — kind: data|json|toml
 //   verify-contract <gitDir> <docJson> [mode]
 //     → { ok: true, report } | { ok: false, code, contract, issues }
@@ -22,6 +26,7 @@
 // here as native JS values (the whole point: the same logical data, expressed in
 // each host's native types, must serialize to identical bytes via the core).
 
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -156,6 +161,19 @@ if (op === 'record-write') {
   const a = JSON.parse(args[1]);
   const b = JSON.parse(args[2]);
   out({ result: binding.runComparator(rule, a, b) });
+} else if (op === 'render') {
+  const template = args[0];
+  const record = JSON.parse(args[1], (_k, v) =>
+    v !== null && typeof v === 'object' && typeof v.$date === 'string' ? new Date(v.$date) : v,
+  );
+  const [core] = binding.renderPathsBatch(template, [record]);
+  let host = null;
+  const dist = new URL('../../../packages/gitsheets/dist/path-template/index.js', import.meta.url);
+  if (existsSync(dist)) {
+    const { Template } = await import(dist.href);
+    host = Template.fromString(template).render(record);
+  }
+  out({ core, host });
 } else if (op === 'contract-hash') {
   const kind = args[0]; // 'data' | 'json' | 'toml'
   const input = kind === 'data' ? JSON.parse(args[1]) : args[1];
