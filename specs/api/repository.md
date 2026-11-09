@@ -14,8 +14,8 @@ import { openRepo } from 'gitsheets';
 const repo = await openRepo({
   gitDir?: string,           // path to a .git directory; default: discovered from cwd
   workTree?: string | null,  // optional working-tree path; default: null (bare-style operation)
-  branch?: string,           // branch mode: the default branch — reads, commits, refresh, sync all target it; default: GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch
-  submodule?: string,        // submodule mode: open this submodule of the project; writes advance its HEAD (the superproject's pointer)
+  branch?: string | null,    // branch mode: the default branch — reads, commits, refresh, sync all target it; default: GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch; null: HEAD's branch, env and config not read
+  submodule?: string | null, // submodule mode: open this submodule of the project; writes advance its HEAD (the superproject's pointer); default: GITSHEETS_SUBMODULE, else gitsheets.submodule git config, else none; null: none, env and config not read
   at?: string,               // submodule mode: read-only, pinned to the snapshot the superproject's commit-ish gitlinks
   stagePointer?: boolean,    // submodule mode: also update the superproject's index gitlink after each commit; default: GITSHEETS_STAGE_POINTER, else the superproject's gitsheets.stagePointer git config, else false
 });
@@ -26,6 +26,8 @@ Discovery is `git rev-parse --absolute-git-dir`: from `gitDir` alone when it is 
 A fresh-but-initialized repository (no commits yet) is supported — see [#19](https://github.com/JarvusInnovations/gitsheets/issues/19).
 
 **`opts.branch`** binds the repository to a **default branch** other than the one `HEAD` points at — the branch every live sheet reads, every transaction commits to by default, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. **`opts.submodule`** opens a submodule's repository instead, with the submodule's `HEAD` as the default branch so each commit advances the superproject's pointer; `at` pins it read-only to the snapshot a superproject commit gitlinks; `stagePointer` also stages the moved gitlink. The resolution order (option → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` → `gitsheets.branch` / `gitsheets.submodule` git config → `HEAD`), the full list of what the binding governs, submodule-mode pointer semantics, and the bootstrap paths are in [behaviors/default-branch.md](../behaviors/default-branch.md). `repo.branch` reports the resolved short name (`null` on a detached `HEAD`); `repo.submodule` the submodule path (`null` in branch mode).
+
+**`null` opts out.** An explicit option always beats env and config, and `null` is an explicit option: `openRepo({ submodule: null })` opens the repository `gitDir` / discovery names even when `GITSHEETS_SUBMODULE` is exported or `gitsheets.submodule` is set, and `openRepo({ branch: null })` binds to the branch `HEAD` points at even when `GITSHEETS_BRANCH` or `gitsheets.branch` names another. Omitting the option (`undefined`) keeps the env → config → default chain. The two opt out independently. `stagePointer: false` already overrides its env and config, and `at` is never read from env or config by the library, so neither takes `null`. See [behaviors/default-branch.md](../behaviors/default-branch.md#resolution) "Explicit opt-out".
 
 ## Methods
 
@@ -312,7 +314,7 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit |
 | `ConfigError` | `config_missing` | No git repository at `gitDir` / `cwd` (`openRepo`); `.gitsheets/<name>.toml` not found in `openSheet`; `openRepo({ submodule })` finds neither `<path>/.git` nor `modules/<name>` (message names `git sheet submodule init <path>`) |
-| `ConfigError` | `config_invalid` | Sheet config TOML is malformed; `openRepo({ submodule })` names a path with no `.gitmodules` entry ("not a submodule of this repository"); `openRepo({ at })` without `submodule` (and no `GITSHEETS_SUBMODULE` / `gitsheets.submodule`) — `at` pins a data submodule |
+| `ConfigError` | `config_invalid` | Sheet config TOML is malformed; `openRepo({ submodule })` names a path with no `.gitmodules` entry ("not a submodule of this repository"); `openRepo({ at })` without `submodule` (and no `GITSHEETS_SUBMODULE` / `gitsheets.submodule`), or with `submodule: null` — `at` pins a data submodule |
 | `ContractError` | `contract_missing` | `implements` names a contract with no vendored document in the committed tree |
 | `ContractError` | `contract_invalid` | Vendored contract violates document requirements (compile, `$id`/path, canonical form, openness, self-containment) |
 | `ContractError` | `contract_unsatisfied` | `openSheet` with `opts.contract` failed verification (carries conformance report) |

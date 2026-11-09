@@ -24,12 +24,14 @@ The binary is `gitsheets-axi`. A command's `--help` prints a short reference wit
 
 ### Global flags
 
-Accepted on any command, in any position (before or after the command name), as `--flag value` or `--flag=value`:
+Accepted on any command, in any position (before or after the command name), as `--flag value` or `--flag=value` (the `--no-*` forms take no value; when a flag and its `--no-` form both appear, the last wins):
 
 | Flag | Meaning |
 | --- | --- |
 | `--branch <name>` | Bind the repository to this default branch ([behaviors/default-branch.md](../behaviors/default-branch.md)); else `GITSHEETS_BRANCH`, else `gitsheets.branch` git config, else `HEAD`'s branch. A tag, commit, or malformed name is `CONFIG_INVALID` |
+| `--no-branch` | Bind to the branch `HEAD` points at, ignoring `GITSHEETS_BRANCH` and `gitsheets.branch` (`openRepo({ branch: null })`). Takes no value |
 | `--submodule <path>` | Submodule mode: read and write this data submodule; each write advances its `HEAD` (the superproject's pointer). Else `GITSHEETS_SUBMODULE`, else `gitsheets.submodule`. A path that is not a submodule is `CONFIG_INVALID`; one not set up yet is `CONFIG_MISSING`, naming `git sheet submodule init <path>` |
+| `--no-submodule` | Read and write the superproject itself, ignoring `GITSHEETS_SUBMODULE` and `gitsheets.submodule` (`openRepo({ submodule: null })`). Takes no value. An empty `GITSHEETS_SUBMODULE=` is unset, not an opt-out ([behaviors/default-branch.md](../behaviors/default-branch.md#resolution)) |
 | `--stage-pointer` / `--no-stage-pointer` | Submodule mode: also stage the moved gitlink in the superproject index after each commit ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)). Else `GITSHEETS_STAGE_POINTER`, else the superproject's `gitsheets.stagePointer` git config, else off. A non-boolean value is `CONFIG_INVALID` |
 | `--at <superproject-ref>` | Submodule mode: read every sheet pinned at the data snapshot that superproject commit gitlinks; writes are refused. Else `GITSHEETS_AT`. Outside submodule mode it is `CONFIG_INVALID`; a ref with no gitlink for the submodule is `REF_ERROR` |
 
