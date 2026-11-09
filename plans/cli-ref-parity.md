@@ -1,11 +1,12 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/api/cli.md
   - specs/principles.md
   - specs/behaviors/default-branch.md
 issues: [352]
+pr: 368
 ---
 
 # Plan: CLI `--ref` reads, rollup binding flags, `--stage-pointer` / `--at`, exit codes
@@ -91,35 +92,35 @@ Out of scope: a `gitsheets.root` / `gitsheets.prefix` config tier
 
 ## Validation
 
-- [ ] `git sheet query|read|aggregate --ref <other>` read `<other>`, not the
+- [x] `git sheet query|read|aggregate --ref <other>` read `<other>`, not the
       default branch (test).
-- [ ] `normalize --ref <other>` and `upsert --delete-missing --ref <other>`
+- [x] `normalize --ref <other>` and `upsert --delete-missing --ref <other>`
       read and commit on `<other>`; the default branch does not move (test).
-- [ ] `git sheet rollup --branch data` / `--check --branch data` operate on
+- [x] `git sheet rollup --branch data` / `--check --branch data` operate on
       the data branch (test).
-- [ ] `--stage-pointer`, `GITSHEETS_STAGE_POINTER=1`, and
+- [x] `--stage-pointer`, `GITSHEETS_STAGE_POINTER=1`, and
       `gitsheets.stagePointer = true` stage the gitlink after a CLI write;
       `--no-stage-pointer` beats config; an invalid env value is exit 64
       (tests).
-- [ ] `openRepo({ submodule })` honors `GITSHEETS_STAGE_POINTER` /
+- [x] `openRepo({ submodule })` honors `GITSHEETS_STAGE_POINTER` /
       `gitsheets.stagePointer`, and an explicit `stagePointer: false` wins
       (test).
-- [ ] `--at HEAD` / `GITSHEETS_AT` read the pinned snapshot; a write under
+- [x] `--at HEAD` / `GITSHEETS_AT` read the pinned snapshot; a write under
       `--at` exits 69; `--at` without submodule mode exits 64 naming `--at`
       (tests).
-- [ ] `gitsheets-axi` accepts `--at` and `--stage-pointer` before or after
+- [x] `gitsheets-axi` accepts `--at` and `--stage-pointer` before or after
       the command (tests).
-- [ ] Malformed `--agg`, `--trailer`, `--attachment`, `--filter` exit 2; an
+- [x] Malformed `--agg`, `--trailer`, `--attachment`, `--filter` exit 2; an
       `AggregationError` exits 23 with `sheet:` / `aggregate:` lines (tests).
-- [ ] `merge --help` says the default branch.
-- [ ] A malformed axi global flag (`--at` with no value, `--branch`,
+- [x] `merge --help` says the default branch.
+- [x] A malformed axi global flag (`--at` with no value, `--branch`,
       `--submodule=`, `--stage-pointer=yes`) exits 2 with
       `VALIDATION_ERROR` (test).
-- [ ] `gitsheets-axi check --help` lists only exit codes 0 / 1 / 2.
-- [ ] `docs/axi.md` matches the code: no `--format`, the full error-code
+- [x] `gitsheets-axi check --help` lists only exit codes 0 / 1 / 2.
+- [x] `docs/axi.md` matches the code: no `--format`, the full error-code
       list, all commands, links `specs/api/axi.md`.
-- [ ] `writeBlob` / `rollupStatus` carry no `@internal`.
-- [ ] `npm run build`, `npm run type-check`, `npm test` green.
+- [x] `writeBlob` / `rollupStatus` carry no `@internal`.
+- [x] `npm run build`, `npm run type-check`, `npm test` green.
 
 ## Risks / unknowns
 
@@ -133,4 +134,30 @@ Out of scope: a `gitsheets.root` / `gitsheets.prefix` config tier
 
 ## Notes
 
+- `stagePointer` is resolved by `openRepo` itself (option →
+  `GITSHEETS_STAGE_POINTER` → the superproject's `gitsheets.stagePointer`),
+  not by the CLIs, so the application and `git sheet` agree in one clone.
+  The CLI keeps `--stage-pointer` out of yargs' `.env()` folding with a
+  middleware: yargs reads only `"true"` as true and would turn
+  `GITSHEETS_STAGE_POINTER=1` into an explicit `false`.
+- yargs wraps an error thrown from a `coerce` in its own `YError`, so the
+  `.fail()` handler maps any `YError` to `CliUsageError` (exit 2). `.fail()`
+  now rethrows to `main`'s catch instead of calling `process.exit`, which
+  also makes the exit-2 paths testable in-process.
+- `gitsheets-axi` renders a malformed global flag through the SDK by
+  dispatching it as a synthetic command that rethrows the `AxiError`
+  (`parseGlobalFlagsForDispatch`), because the SDK does not export its
+  error renderer.
+- `--ref` pins the sheet for every command that goes through
+  `loadRepoAndSheet`; `upsert --ref <absent-branch>` now fails at
+  `openSheet` (`RefError`, exit 65) instead of at the transaction — same
+  exit code.
+
 ## Follow-ups
+
+- `specs/api/repository.md` `openRepo` options: the `stagePointer` default
+  should name the `GITSHEETS_STAGE_POINTER` / `gitsheets.stagePointer` tiers
+  (now in `default-branch.md`).
+- `specs/api/axi.md` "Global flags" table: add `--stage-pointer` /
+  `--no-stage-pointer` and `--at <superproject-ref>`, and note that a
+  malformed global flag is `VALIDATION_ERROR` (exit 2).
