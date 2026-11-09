@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import type { Argv } from 'yargs';
 
 import { ConfigError, RefError } from '../errors.js';
+import { cleanGitEnv, gitExec } from '../git-exec.js';
 import { gitmodulesEntries, normalizeSubmodulePath, superprojectWorkTree } from '../submodule.js';
 import type { GlobalArgs } from './shared.js';
 
@@ -34,17 +35,28 @@ export function registerSubmoduleCommands(y: Argv): Argv {
     .demandCommand(1, 'Specify a submodule subcommand (init)');
 }
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await exec('git', args, { cwd });
-  return stdout.trim();
+/** `git <args>` against `gitDir` (explicit GIT_DIR — see git-exec.ts); trimmed stdout. */
+async function git(gitDir: string, args: string[], workTree?: string): Promise<string> {
+  return (await gitExec(gitDir, args, { workTree: workTree ?? null })).stdout.trim();
 }
 
-async function gitOrNull(cwd: string, args: string[]): Promise<string | null> {
+/** As {@link git}, but null on a non-zero exit or empty output. */
+async function gitOrNull(gitDir: string, args: string[], workTree?: string): Promise<string | null> {
   try {
-    const out = await git(cwd, args);
+    const out = await git(gitDir, args, workTree);
     return out === '' ? null : out;
   } catch {
     return null;
+  }
+}
+
+/** `git merge-base --is-ancestor a b`: whether `a` is reachable from `b`. */
+async function isAncestor(gitDir: string, a: string, b: string): Promise<boolean> {
+  try {
+    await gitExec(gitDir, ['merge-base', '--is-ancestor', a, b]);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -52,7 +64,10 @@ async function runSubmoduleInit(argv: SubmoduleInitArgs): Promise<void> {
   const cwd = argv.gitDir ?? process.cwd();
   let superGitDir: string;
   try {
-    superGitDir = await git(cwd, ['rev-parse', '--absolute-git-dir']);
+    // An explicit --git-dir is discovered from that path alone; with none, an
+    // inherited GIT_DIR names the repository, as it does for git itself.
+    const env = argv.gitDir !== undefined ? cleanGitEnv() : process.env;
+    superGitDir = (await exec('git', ['rev-parse', '--absolute-git-dir'], { cwd, env })).stdout.trim();
   } catch (err) {
     throw new ConfigError('config_missing', `submodule init: no git repository at ${cwd}`, { cause: err });
   }
@@ -60,6 +75,9 @@ async function runSubmoduleInit(argv: SubmoduleInitArgs): Promise<void> {
   if (workTree === null) {
     throw new ConfigError('config_invalid', 'submodule init: the superproject has no working tree to hold .gitmodules');
   }
+  const superGit = (args: string[]): Promise<string> => git(superGitDir, args, workTree);
+  const superGitOrNull = (args: string[]): Promise<string | null> => gitOrNull(superGitDir, args, workTree);
+
   const path = normalizeSubmodulePath(argv.path, 'submodule init');
   const entry = (await gitmodulesEntries(superGitDir, workTree)).find((e) => e.path === path);
   if (entry !== undefined && argv.url !== undefined && entry.url !== argv.url) {
@@ -78,33 +96,21 @@ async function runSubmoduleInit(argv: SubmoduleInitArgs): Promise<void> {
 
   // Branch: new → --branch, else the remote's HEAD; existing → .gitmodules, else --branch, else the remote's HEAD.
   let branch: string | null | undefined = isNew ? argv.branch : (entry.branch ?? argv.branch);
-  if (branch === '.') branch = (await gitOrNull(superGitDir, ['symbolic-ref', '--quiet', '--short', 'HEAD'])) ?? undefined;
+  if (branch === '.') branch = (await superGitOrNull(['symbolic-ref', '--quiet', '--short', 'HEAD'])) ?? undefined;
   branch ??= await remoteHeadBranch(url);
   if (branch === null || branch === undefined) {
     throw new ConfigError('config_invalid', `submodule init: ${url} has no HEAD branch (an empty repository?) — pass --branch <name>`);
   }
   branch = branch.replace(/^refs\/heads\//, '');
   try {
-    await git(superGitDir, ['check-ref-format', '--branch', branch]);
+    await superGit(['check-ref-format', '--branch', branch]);
   } catch (err) {
     throw new ConfigError('config_invalid', `submodule init: ${JSON.stringify(branch)} is not a valid branch name`, { cause: err });
   }
 
-  if (isNew) {
-    const gitmodules = join(workTree, '.gitmodules');
-    await git(workTree, ['config', '-f', gitmodules, `submodule.${name}.path`, path]);
-    await git(workTree, ['config', '-f', gitmodules, `submodule.${name}.url`, rawUrl]);
-    await git(workTree, ['config', '-f', gitmodules, `submodule.${name}.branch`, branch]);
-  }
-  // What `git submodule init` records in the superproject's config.
-  if ((await gitOrNull(superGitDir, ['config', '--get', `submodule.${name}.url`])) === null) {
-    await git(superGitDir, ['config', `submodule.${name}.url`, url]);
-  }
-  if ((await gitOrNull(superGitDir, ['config', '--get', `submodule.${name}.active`])) === null) {
-    await git(superGitDir, ['config', `submodule.${name}.active`, 'true']);
-  }
-
-  // The submodule's git dir: modules/<name>, cloned with no checkout when absent.
+  // The submodule's git dir — reached first: nothing is written to
+  // .gitmodules or the superproject's config until the clone/fetch succeeded,
+  // so a failed clone leaves nothing behind and a retry starts clean.
   const subWorkTree = join(workTree, path);
   const modulesDir = join(superGitDir, 'modules', name);
   let cloned = false;
@@ -120,17 +126,36 @@ async function runSubmoduleInit(argv: SubmoduleInitArgs): Promise<void> {
     }
     await mkdir(dirname(modulesDir), { recursive: true });
     try {
-      await exec('git', ['clone', '--quiet', '--no-checkout', '--separate-git-dir', modulesDir, url, subWorkTree], { cwd: workTree });
+      await exec('git', ['clone', '--quiet', '--no-checkout', '--separate-git-dir', modulesDir, url, subWorkTree], {
+        cwd: workTree,
+        env: cleanGitEnv(),
+      });
     } catch (err) {
       throw new ConfigError('config_invalid', `submodule init: could not clone ${url}: ${errText(err)}`, { cause: err });
     }
     cloned = true;
   } else {
     try {
-      await exec('git', ['fetch', '--quiet', 'origin'], { cwd: modulesDir });
+      await gitExec(modulesDir, ['fetch', '--quiet', 'origin']);
     } catch (err) {
       throw new ConfigError('config_invalid', `submodule init: could not fetch ${path} from origin: ${errText(err)}`, { cause: err });
     }
+  }
+
+  if (isNew) {
+    const gitmodules = join(workTree, '.gitmodules');
+    await superGit(['config', '-f', gitmodules, `submodule.${name}.path`, path]);
+    await superGit(['config', '-f', gitmodules, `submodule.${name}.url`, rawUrl]);
+    await superGit(['config', '-f', gitmodules, `submodule.${name}.branch`, branch]);
+  }
+  // What `git submodule init` records in the superproject's config. A URL
+  // given with --url (new, or matching the entry) refreshes a stale one.
+  const configuredUrl = await superGitOrNull(['config', '--get', `submodule.${name}.url`]);
+  if (configuredUrl === null || (argv.url !== undefined && configuredUrl !== url)) {
+    await superGit(['config', `submodule.${name}.url`, url]);
+  }
+  if ((await superGitOrNull(['config', '--get', `submodule.${name}.active`])) === null) {
+    await superGit(['config', `submodule.${name}.active`, 'true']);
   }
 
   // The gitdir pointer and its back-link, both relative (as git writes them).
@@ -139,29 +164,23 @@ async function runSubmoduleInit(argv: SubmoduleInitArgs): Promise<void> {
   await git(modulesDir, ['config', 'core.bare', 'false']);
   await git(modulesDir, ['config', 'core.worktree', relative(modulesDir, subWorkTree).split('\\').join('/')]);
 
-  // HEAD on the branch — at the gitlinked commit when the branch is (re)created.
-  const gitlinked = isNew ? null : await gitlinkInIndex(workTree, path);
-  const branchRef = `refs/heads/${branch}`;
-  const localTip = await gitOrNull(modulesDir, ['rev-parse', '--verify', '--quiet', `${branchRef}^{commit}`]);
-  if (localTip === null || (cloned && gitlinked !== null)) {
-    const target = gitlinked ?? (await gitOrNull(modulesDir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}^{commit}`]));
-    if (target !== null) {
-      if ((await gitOrNull(modulesDir, ['rev-parse', '--verify', '--quiet', `${target}^{commit}`])) === null) {
-        throw new RefError('ref_not_found', `submodule init: ${path} is pinned at ${target}, which ${url} does not have — push the data repository first`);
-      }
-      await git(modulesDir, ['update-ref', '-m', 'gitsheets: submodule init', branchRef, target]);
-    }
-  }
-  await git(modulesDir, ['symbolic-ref', 'HEAD', branchRef]);
+  await placeHeadOnBranch({
+    modulesDir,
+    path,
+    url,
+    branch,
+    cloned,
+    gitlinked: isNew ? null : await gitlinkInIndex(superGitDir, workTree, path),
+  });
 
   // Only pointer movement is reported: the working tree is never materialized.
-  await git(superGitDir, ['config', `submodule.${name}.ignore`, 'dirty']);
+  await superGit(['config', `submodule.${name}.ignore`, 'dirty']);
 
   const head = await gitOrNull(modulesDir, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
   if (isNew) {
-    await git(workTree, ['add', '--', '.gitmodules']);
+    await superGit(['add', '--', '.gitmodules']);
     if (head !== null) {
-      await git(workTree, ['update-index', '--add', '--cacheinfo', `160000,${head},${path}`]);
+      await superGit(['update-index', '--add', '--cacheinfo', `160000,${head},${path}`]);
     }
   }
 
@@ -175,10 +194,70 @@ async function runSubmoduleInit(argv: SubmoduleInitArgs): Promise<void> {
   }
 }
 
+/**
+ * Put the submodule's `HEAD` on `branch` without orphaning anything.
+ *
+ * - Just cloned: the branch starts at the gitlinked commit (else the
+ *   remote's tip, else unborn).
+ * - Otherwise an existing branch is left where it is, and a missing one is
+ *   created at the gitlinked commit (else the remote's tip). A detached
+ *   `HEAD` — where gitsheets writes advance `HEAD` itself — may hold data
+ *   commits nothing else references: when the branch base is an ancestor of
+ *   `HEAD`, the branch is fast-forwarded to `HEAD` first; when `HEAD` is an
+ *   ancestor of it, nothing is lost; when they diverged, `ConfigError
+ *   (config_invalid)` and nothing changes.
+ *
+ * See specs/behaviors/default-branch.md "Bootstrapping".
+ */
+async function placeHeadOnBranch(o: {
+  modulesDir: string;
+  path: string;
+  url: string;
+  branch: string;
+  cloned: boolean;
+  gitlinked: string | null;
+}): Promise<void> {
+  const { modulesDir, path, url, branch, cloned, gitlinked } = o;
+  const branchRef = `refs/heads/${branch}`;
+  const resolve = (rev: string): Promise<string | null> => gitOrNull(modulesDir, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+  const localTip = await resolve(branchRef);
+  const originTip = await resolve(`refs/remotes/origin/${branch}`);
+  const headIsSymref = (await gitOrNull(modulesDir, ['symbolic-ref', '--quiet', 'HEAD'])) !== null;
+  const headCommit = cloned || headIsSymref ? null : await resolve('HEAD');
+
+  if (gitlinked !== null && (await resolve(gitlinked)) === null) {
+    throw new RefError('ref_not_found', `submodule init: ${path} is pinned at ${gitlinked}, which ${url} does not have — push the data repository first`);
+  }
+
+  let target: string | null;
+  if (cloned) {
+    target = gitlinked ?? (localTip === null ? originTip : null);
+  } else {
+    const base = localTip ?? gitlinked ?? originTip;
+    target = localTip === null ? base : null;
+    if (headCommit !== null && headCommit !== base) {
+      if (base === null || (await isAncestor(modulesDir, base, headCommit))) {
+        target = headCommit; // fast-forward over the detached HEAD's commits
+      } else if (!(await isAncestor(modulesDir, headCommit, base))) {
+        throw new ConfigError(
+          'config_invalid',
+          `submodule init: ${path}'s detached HEAD (${headCommit}) and ${branch} (${base}) have diverged — putting HEAD on ${branch} would orphan ${headCommit}. ` +
+            `Merge it (git -C ${path} merge ${headCommit} after checking out ${branch}) or move the branch (git -C ${path} branch -f ${branch} ${headCommit}), then re-run`,
+        );
+      }
+    }
+  }
+  if (target !== null && target !== localTip) {
+    const cas = localTip !== null && !cloned ? [localTip] : [];
+    await git(modulesDir, ['update-ref', '-m', 'gitsheets: submodule init', branchRef, target, ...cas]);
+  }
+  await git(modulesDir, ['symbolic-ref', 'HEAD', branchRef]);
+}
+
 /** The branch `url`'s `HEAD` points at, or null (an empty repository). */
 async function remoteHeadBranch(url: string): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['ls-remote', '--symref', url, 'HEAD']);
+    const { stdout } = await exec('git', ['ls-remote', '--symref', url, 'HEAD'], { env: cleanGitEnv() });
     const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(stdout);
     return m ? m[1]! : null;
   } catch (err) {
@@ -206,11 +285,11 @@ async function resolveSubmoduleUrl(superGitDir: string, workTree: string, url: s
 }
 
 /** The commit the superproject's index gitlinks at `path` (else `HEAD`'s tree), or null. */
-async function gitlinkInIndex(workTree: string, path: string): Promise<string | null> {
-  const staged = await gitOrNull(workTree, ['ls-files', '--stage', '--', path]);
+async function gitlinkInIndex(superGitDir: string, workTree: string, path: string): Promise<string | null> {
+  const staged = await gitOrNull(superGitDir, ['ls-files', '--stage', '--', path], workTree);
   const fromIndex = staged !== null ? /^160000 ([0-9a-f]+) /.exec(staged) : null;
   if (fromIndex) return fromIndex[1]!;
-  const committed = await gitOrNull(workTree, ['ls-tree', '--full-tree', 'HEAD', '--', path]);
+  const committed = await gitOrNull(superGitDir, ['ls-tree', '--full-tree', 'HEAD', '--', path], workTree);
   const fromHead = committed !== null ? /^160000 commit ([0-9a-f]+)\t/.exec(committed) : null;
   return fromHead ? fromHead[1]! : null;
 }

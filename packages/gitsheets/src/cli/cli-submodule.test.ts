@@ -209,7 +209,130 @@ describe('git sheet submodule init --url', () => {
   });
 });
 
+describe('submodule init after git submodule update (detached HEAD)', () => {
+  /** A pushed+pinned data submodule, then a fresh superproject clone set up with plain `git submodule update --init`. */
+  async function detachedClone(fx: SubmoduleFixture): Promise<{ app: string; modules: string }> {
+    expect((await initNew(fx)).code).toBe(0);
+    await fx.git(fx.superproject.path, 'commit', '--quiet', '-m', 'add data');
+    const clone = await testRepo();
+    fixtures.push(clone);
+    await fx.git(clone.path, 'clone', '--quiet', fx.superproject.path, 'app');
+    const app = join(clone.path, 'app');
+    await fx.git(app, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--quiet');
+    const modules = join(app, '.git', 'modules', 'data');
+    await configureIdentity(fx, modules);
+    expect(await fx.git(modules, 'symbolic-ref', '--quiet', 'HEAD').catch(() => 'detached')).toBe('detached');
+    return { app, modules };
+  }
+
+  it('fast-forwards the branch over gitsheets writes on the detached HEAD instead of orphaning them', async () => {
+    const fx = await fixture();
+    const { app, modules } = await detachedClone(fx);
+    const up = await run(['--git-dir', join(app, '.git'), '--submodule', 'data', 'upsert', 'users', '{"slug":"bob","email":"bob@x.org"}']);
+    expect(up.code).toBe(0);
+    const written = await fx.git(modules, 'rev-parse', 'HEAD');
+
+    const init = await run(['--git-dir', join(app, '.git'), 'submodule', 'init', 'data']);
+    expect(init.code).toBe(0);
+    expect(await fx.git(modules, 'symbolic-ref', 'HEAD')).toBe('refs/heads/main');
+    expect(await fx.git(modules, 'rev-parse', 'refs/heads/main')).toBe(written);
+  });
+
+  it('refuses when the detached HEAD and the branch have diverged, changing nothing', async () => {
+    const fx = await fixture();
+    const { app, modules } = await detachedClone(fx);
+    await run(['--git-dir', join(app, '.git'), '--submodule', 'data', 'upsert', 'users', '{"slug":"bob","email":"bob@x.org"}']);
+    const written = await fx.git(modules, 'rev-parse', 'HEAD');
+    // Another write lands on main itself (not through the pointer).
+    const side = await openRepo({ gitDir: join(app, '.git'), submodule: 'data', branch: 'main' });
+    await side.transact({ message: 'carol' }, async (tx) => {
+      await tx.sheet('users').upsert({ slug: 'carol', email: 'carol@x.org' });
+    });
+    const mainTip = await fx.git(modules, 'rev-parse', 'refs/heads/main');
+
+    const init = await run(['--git-dir', join(app, '.git'), 'submodule', 'init', 'data']);
+    expect(init.code).toBe(64);
+    expect(init.err).toContain('diverged');
+    expect(init.err).toContain(written);
+    expect(await fx.git(modules, 'rev-parse', 'HEAD')).toBe(written);
+    expect(await fx.git(modules, 'symbolic-ref', '--quiet', 'HEAD').catch(() => 'detached')).toBe('detached');
+    expect(await fx.git(modules, 'rev-parse', 'refs/heads/main')).toBe(mainTip);
+  });
+});
+
+describe('submodule init --url ordering and URL refresh', () => {
+  it('a failed clone writes nothing, so a retry starts clean', async () => {
+    const fx = await fixture();
+    const cwd = fx.superproject.path;
+    const bad = await run(['--git-dir', fx.superproject.gitDir, 'submodule', 'init', 'data', '--url', `${fx.remote}-missing`, '--branch', 'main']);
+    expect(bad.code).toBe(64);
+    expect(await fx.git(cwd, 'status', '--porcelain')).toBe('');
+    expect(await fx.git(cwd, 'config', '--get', 'submodule.data.url').catch(() => 'unset')).toBe('unset');
+
+    const good = await initNew(fx);
+    expect(good.code).toBe(0);
+    expect((await fx.git(cwd, 'diff', '--cached', '--name-only')).split('\n').sort()).toEqual(['.gitmodules', 'data']);
+  });
+
+  it('a matching --url refreshes a stale submodule.<name>.url', async () => {
+    const fx = await fixture();
+    expect((await initNew(fx)).code).toBe(0);
+    await fx.git(fx.superproject.path, 'config', 'submodule.data.url', '/stale.git');
+    expect((await initNew(fx)).code).toBe(0);
+    expect(await fx.git(fx.superproject.path, 'config', '--get', 'submodule.data.url')).toBe(fx.remote);
+  });
+});
+
+describe('linked worktree superproject', () => {
+  it('submodule init writes the worktree\'s own modules/ dir, which openRepo then uses', async () => {
+    const fx = await fixture();
+    expect((await initNew(fx)).code).toBe(0);
+    await fx.git(fx.superproject.path, 'commit', '--quiet', '-m', 'add data');
+    const holder = await testRepo();
+    fixtures.push(holder);
+    const wt = join(holder.path, 'wt');
+    await fx.git(fx.superproject.path, 'worktree', 'add', '--quiet', '--detach', wt);
+    const wtGitDir = await fx.git(wt, 'rev-parse', '--absolute-git-dir');
+    expect(wtGitDir).toContain('/worktrees/');
+
+    await expect(openRepo({ gitDir: wt, submodule: 'data' })).rejects.toMatchObject({ code: 'config_missing' });
+    const init = await run(['--git-dir', wt, 'submodule', 'init', 'data']);
+    expect(init.code).toBe(0);
+    const repo = await openRepo({ gitDir: wt, submodule: 'data' });
+    expect(repo.gitDir).toBe(join(wtGitDir, 'modules', 'data'));
+    expect(await (await repo.openSheet('users')).queryFirst({ slug: 'jane' })).toBeDefined();
+  });
+});
+
+describe('GIT_DIR in the environment', () => {
+  it('GIT_DIR=<super>/.git git sheet --submodule data query users reads the submodule', async () => {
+    const fx = await fixture();
+    expect((await initNew(fx)).code).toBe(0);
+    const saved = process.env['GIT_DIR'];
+    process.env['GIT_DIR'] = fx.superproject.gitDir;
+    try {
+      const q = await run(['--submodule', 'data', 'query', 'users']);
+      expect(q.code).toBe(0);
+      expect(q.out).toContain('"slug":"jane"');
+    } finally {
+      if (saved === undefined) delete process.env['GIT_DIR'];
+      else process.env['GIT_DIR'] = saved;
+    }
+  });
+});
+
 describe('gitsheets.submodule git config', () => {
+  it('errors name the source the user actually set', async () => {
+    const fx = await fixture();
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.submodule', 'nope');
+    const fromConfig = await run(['--git-dir', fx.superproject.gitDir, 'query', 'users']);
+    expect(fromConfig.code).toBe(64);
+    expect(fromConfig.err).toContain('git config gitsheets.submodule: ');
+    const fromFlag = await run(['--git-dir', fx.superproject.gitDir, '--submodule', 'nope', 'query', 'users']);
+    expect(fromFlag.err).toContain('--submodule / GITSHEETS_SUBMODULE: ');
+    expect(fromFlag.err.split('\n')[0]).not.toContain('openRepo(');
+  });
+
   it('binds `git sheet` to the data submodule with no flags', async () => {
     const fx = await fixture();
     expect((await initNew(fx)).code).toBe(0);
