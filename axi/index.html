@@ -1490,6 +1490,12 @@ write advances the submodule&rsquo;s <code>HEAD</code>, so the superproject&rsqu
 shows <code>modified: data (new commits)</code> and nothing else. A submodule that is
 not set up yet is <code>CONFIG_MISSING</code>, with <code>git sheet submodule init &lt;path&gt;</code>
 as the fix.</p>
+<p><code>--no-submodule</code> and <code>--no-branch</code> (any command, any position, no value)
+opt out of an inherited binding for one run: <code>--no-submodule</code> reads and
+writes the superproject itself, <code>--no-branch</code> the branch <code>HEAD</code> points at,
+and neither consults the environment variable or git config
+(<code>GITSHEETS_SUBMODULE=data gitsheets-axi query users --no-submodule</code>). An
+empty <code>GITSHEETS_SUBMODULE=</code> counts as unset, so the flag is the opt-out.</p>
 <p>Two more global flags work with <code>--submodule</code> (any command, any position):</p>
 <ul>
 <li><code>--stage-pointer</code> also stages the moved gitlink in the superproject&rsquo;s
@@ -1501,7 +1507,8 @@ as the fix.</p>
   --at v1.2.0</code>); writes are refused. It is a per-run pin, so it has no git
   config.</li>
 </ul>
-<p>A malformed global flag (<code>--branch</code> with no value, <code>--stage-pointer=yes</code>) is
+<p>A malformed global flag (<code>--branch</code> with no value, <code>--stage-pointer=yes</code>,
+<code>--no-submodule=data</code>) is
 a <code>VALIDATION_ERROR</code> (exit 2), like any other usage error.</p>
 <p>After a write, the materialize hint (<code>git checkout HEAD -- .</code>) appears only
 when the records live on the checked-out branch, where the working tree now

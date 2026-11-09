@@ -1570,12 +1570,12 @@ operation on a <code>Repository</code> (or <code>Sheet</code>/<code>Transaction<
 <td><code>GITSHEETS_PREFIX</code></td>
 </tr>
 <tr>
-<td><code>--branch &lt;name&gt;</code></td>
+<td><code>--branch &lt;name&gt;</code> / <code>--no-branch</code></td>
 <td><code>gitsheets.branch</code> git config, else <code>HEAD</code>&rsquo;s branch</td>
 <td><code>GITSHEETS_BRANCH</code></td>
 </tr>
 <tr>
-<td><code>--submodule &lt;path&gt;</code></td>
+<td><code>--submodule &lt;path&gt;</code> / <code>--no-submodule</code></td>
 <td><code>gitsheets.submodule</code> git config, else none</td>
 <td><code>GITSHEETS_SUBMODULE</code></td>
 </tr>
@@ -1645,6 +1645,13 @@ the submodule</em>). Set the submodule up with
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>config<span class="w"> </span>gitsheets.submodule<span class="w"> </span>data<span class="w">  </span><span class="c1"># once per clone</span>
 gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane"}'</span>
 git<span class="w"> </span>add<span class="w"> </span>data<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"Add jane"</span>
+</code></pre></div>
+<p>To skip an inherited binding for one run, <code>--no-submodule</code> reads and writes
+the superproject itself and <code>--no-branch</code> uses the branch <code>HEAD</code> points at;
+neither consults the environment variable or git config. An empty
+<code>GITSHEETS_SUBMODULE=</code> or <code>GITSHEETS_BRANCH=</code> counts as unset and falls
+through to git config, so use the flag to opt out.</p>
+<div class="highlight"><pre><span></span><code><span class="nv">GITSHEETS_SUBMODULE</span><span class="o">=</span>data<span class="w"> </span>gitsheets<span class="w"> </span>--no-submodule<span class="w"> </span>query<span class="w"> </span>users<span class="w">  </span><span class="c1"># the superproject's own users sheet</span>
 </code></pre></div>
 <p>Two more flags apply in submodule mode:</p>
 <ul>

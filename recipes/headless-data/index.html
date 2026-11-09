@@ -1647,6 +1647,12 @@ the error is <code>TransactionError</code> <code>pointer_stage_failed</code> wit
 <p><code>{ submodule: 'data', branch: 'drafts' }</code> writes to another branch of the data
 repository. That does not move the pointer, so the code repository sees
 nothing.</p>
+<p>Code that needs the code repository&rsquo;s own sheets while the binding is set
+(a migration script, a build step) opts out explicitly with <code>null</code>, which
+skips <code>GITSHEETS_SUBMODULE</code> and <code>gitsheets.submodule</code>; on the command line it
+is <code>--no-submodule</code> (and <code>branch: null</code> / <code>--no-branch</code> for a bound branch):</p>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">code</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">submodule</span><span class="o">:</span><span class="w"> </span><span class="kt">null</span><span class="w"> </span><span class="p">});</span><span class="w"> </span><span class="c1">// the superproject itself, whatever env or config say</span>
+</code></pre></div>
 <h3 id="read-the-data-a-release-shipped-with">Read the data a release shipped with<a class="headerlink" href="#read-the-data-a-release-shipped-with" title="Permanent link"> ¶</a></h3>
 <p><code>at</code> takes any commit-ish of the code repository and pins every sheet,
 read-only, to the data commit it points at:</p>
