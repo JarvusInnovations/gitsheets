@@ -13,7 +13,7 @@ Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and 
 ## Get started
 
 - **[Quick start](quick-start.md)** — `npm install gitsheets`, declare a sheet, write a record, read it back. ≤ 5 minutes.
-- **[Concepts](concepts.md)** — Repository, Sheet, Path Template, Transaction, Store, Index, Push Daemon. The vocabulary every consumer needs.
+- **[Concepts](concepts.md)** — Repository (and its default branch or data submodule), Sheet, Path Template, Transaction, Store, Index, Rollup sheet, Push Daemon. The vocabulary every consumer needs.
 
 ## Reference
 
@@ -23,12 +23,16 @@ Targets Node.js ≥ 20 and Bun ≥ 1. ESM-only. CLI installs as `gitsheets` and 
 - **[Path templates](path-templates.md)** — syntax, recursive fields, query pruning, invalid-char handling.
 - **[Validation](validation.md)** — JSON Schema in `.gitsheets/<sheet>.toml`, optional Standard Schema layering.
 - **Sync and merge** — [`repo.sync()`](recipes/production-push-daemon.md#taking-in-other-writers-commits-reposync) takes in other writers' commits under the write lock; [`repo.merge()` / `git sheet merge`](cli.md#gitsheets-merge-theirs) merges two branches record-by-record with canonical output, and `git sheet merge --install-driver` makes plain `git merge` do the same.
+- **Headless data** — [records off the checked-out branch](recipes/headless-data.md): `openRepo({ branch })` / `--branch` / `GITSHEETS_BRANCH` / `gitsheets.branch`, or `openRepo({ submodule })` with `git sheet submodule init` for a data submodule whose pointer each code commit pins.
+- **Aggregation and rollups** — [`sheet.aggregate()` / `git sheet aggregate`](api.md#aggregation) for ad-hoc counts, sums and folds; [rollup sheets](recipes/rollups.md) for committed per-partition aggregates kept fresh by every gitsheets commit (`git sheet rollup --check`).
 
 ## Recipes
 
 - **[Typed sheet with Zod](recipes/typed-sheet-with-zod.md)** — Standard Schema validator threading, type-safe upsert/query.
 - **[Request-bound transactions in Fastify](recipes/request-bound-transactions.md)** — one commit per HTTP request, with structured trailers.
 - **[Secondary indices](recipes/secondary-indices.md)** — in-memory `findByEmail` / `findByForeignKey` patterns.
+- **[Rollups (stored aggregates)](recipes/rollups.md)** — a ledger partitioned by month with committed monthly totals; stamps, `materialize`, `--check` in CI.
+- **[Headless data](recipes/headless-data.md)** — the four layouts for keeping records off the branch you check out, and the git-config / env / flag layering that selects them.
 - **[Production push daemon](recipes/production-push-daemon.md)** — backoff config, auth strategies, monitoring.
 - **[Markdown CMS pattern](recipes/markdown-cms.md)** — content-typed sheets: records as `.md` with TOML frontmatter; lazy body loading.
 - **[Migrating a `[gitsheet.fields]` config](recipes/migrating-config.md)** — pre-v1.0 → v1.0 schema migration.

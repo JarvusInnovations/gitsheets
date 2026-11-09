@@ -92,6 +92,12 @@ const jane = await store.users.queryFirst({ slug: 'janedoe' });
 3. `store.transact` committed the staged tree with your message, author, and
    trailers, and advanced `main` to the new commit.
 
+That commit landed on `main`, the branch you have checked out, so `git status`
+will now show the new record file as missing from your working tree until you
+`git checkout HEAD -- .` — gitsheets writes refs, not files. To keep records off
+the code branch entirely, bind the repository to a data branch or a data
+submodule: see the [headless data recipe](recipes/headless-data.md).
+
 See [`docs/cli.md`](cli.md) for the shell-side surface or the
 [`specs/`](https://github.com/JarvusInnovations/gitsheets/tree/develop/specs)
 directory for the full contract.
