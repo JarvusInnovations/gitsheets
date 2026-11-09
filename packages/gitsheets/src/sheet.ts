@@ -147,18 +147,14 @@ function joinTreePath(...parts: string[]): string {
     .join('/');
 }
 
-// Compiled comparators, keyed by rule (a sheet's rules are fixed per config,
-// so each compiles into its own realm once rather than per normalizeRecord).
-const SORTER_CACHE = new Map<string, (a: unknown, b: unknown) => number>();
+/** A Sheet's compiled comparators, keyed by comparator body. */
+type SorterCache = Map<string, (a: unknown, b: unknown) => number>;
 
-/**
- * Build the comparator for an array-field sort rule. Raw-JS and directive
- * rules run in the deterministic snippet realm (specs/rust-core.md
- * "Determinism rule for definition snippets"); a throw — including a call the
- * realm forbids — is `ConfigError('config_invalid')` naming the field, as in
- * the core.
- */
-function buildSorter(field: string, rule: SortRule): (a: unknown, b: unknown) => number {
+function buildSorter(
+  field: string,
+  rule: SortRule,
+  cache: SorterCache,
+): (a: unknown, b: unknown) => number {
   if (rule === true) {
     return (a, b) =>
       String(a).localeCompare(String(b), undefined, {
@@ -192,21 +188,27 @@ function buildSorter(field: string, rule: SortRule): (a: unknown, b: unknown) =>
     exprLines.push('return 0;');
     body = exprLines.join('\n');
   }
-  let compiled = SORTER_CACHE.get(body);
+  const fail = (err: unknown): ConfigError =>
+    new ConfigError(
+      'config_invalid',
+      `array-field sort comparator for field ${JSON.stringify(field)} failed: ${thrownMessage(err)}`,
+      { cause: err },
+    );
+  let compiled = cache.get(body);
   if (compiled === undefined) {
-    compiled = compileSnippet(`(a, b) => { ${body} }`) as (a: unknown, b: unknown) => number;
-    SORTER_CACHE.set(body, compiled);
+    try {
+      compiled = compileSnippet(`(a, b) => { ${body} }`) as (a: unknown, b: unknown) => number;
+    } catch (err) {
+      throw fail(err);
+    }
+    cache.set(body, compiled);
   }
   const comparator = compiled;
   return (a, b) => {
     try {
       return comparator(a, b);
     } catch (err) {
-      throw new ConfigError(
-        'config_invalid',
-        `array-field sort comparator for field ${JSON.stringify(field)} failed: ${thrownMessage(err)}`,
-        { cause: err },
-      );
+      throw fail(err);
     }
   };
 }
@@ -1011,6 +1013,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #prefix: string;
   readonly #pinnedRef: string | undefined;
   readonly #indexes = new Map<string, IndexState<T>>();
+  // Comparators compiled for this sheet's sort rules — one realm per rule,
+  // never shared with another Sheet (or repository).
+  readonly #sorters: SorterCache = new Map();
   #configPromise: Promise<SheetConfig> | undefined;
   /** Set by {@link verifyContract} on a successful `openSheet({ contract })`. */
   #contractVerification: ConformanceReport | undefined;
@@ -1788,7 +1793,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     for (const [field, fcfg] of Object.entries(config.fields)) {
       const value = out[field];
       if (fcfg.sort !== undefined && Array.isArray(value)) {
-        const sorter = buildSorter(field, fcfg.sort);
+        const sorter = buildSorter(field, fcfg.sort, this.#sorters);
         out[field] = [...value].sort(sorter);
       }
     }

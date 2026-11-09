@@ -109,9 +109,7 @@ function compileExpression(source: string, template: string): (record: RecordLik
   } catch (err) {
     throw new PathTemplateError(
       'path_render_failed',
-      `expression ${JSON.stringify(source)} failed to compile: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `expression ${JSON.stringify(source)} failed to compile: ${thrownMessage(err)}`,
       { cause: err },
     );
   }
