@@ -25,6 +25,7 @@ import { attachmentCommand, ATTACHMENT_HELP } from './commands/attachment.js';
 import { contractsCommand, CONTRACTS_HELP } from './commands/contracts.js';
 import { pushCommand, PUSH_HELP } from './commands/push.js';
 import { setupCommand, SETUP_HELP } from './commands/setup.js';
+import { rollupCommand, ROLLUP_HELP } from './commands/rollup.js';
 
 const DESCRIPTION =
   'gitsheets — agent-facing interface for the git-backed document store. ' +
@@ -33,12 +34,12 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[21]:
+commands[22]:
   (none)=home, sheets, query, count,
   distinct, aggregate, read, upsert, patch, rename,
   delete, check, diff, normalize,
   init, infer, migrate-config,
-  attachment, contracts, push, setup
+  attachment, contracts, push, setup, rollup
 flags[4]:
   --help, -v/-V/--version
   --branch <name>  Default branch every command reads/writes (any command;
@@ -60,6 +61,7 @@ examples:
   gitsheets-axi attachment list users jane
   gitsheets-axi contracts verify
   gitsheets-axi setup hooks
+  gitsheets-axi rollup transactions-monthly --check
 `;
 
 const COMMAND_HELP: Record<string, string> = {
@@ -83,6 +85,7 @@ const COMMAND_HELP: Record<string, string> = {
   contracts: CONTRACTS_HELP,
   push: PUSH_HELP,
   setup: SETUP_HELP,
+  rollup: ROLLUP_HELP,
 };
 
 type CommandFn = (args: string[], ctx: GitsheetsContext) => Promise<string | Record<string, unknown>>;
@@ -108,6 +111,7 @@ const COMMANDS: Record<string, CommandFn> = {
   contracts: contractsCommand,
   push: pushCommand,
   setup: setupCommand,
+  rollup: rollupCommand,
 };
 
 export async function main(): Promise<void> {
