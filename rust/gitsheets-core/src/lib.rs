@@ -31,6 +31,7 @@ pub mod merge;
 pub mod path_template;
 pub mod query;
 pub mod record;
+pub mod rollup;
 pub mod sheet;
 pub mod store;
 pub mod sync;
@@ -97,6 +98,7 @@ pub fn example_error(code: &str) -> Option<Error> {
         "commit_failed" => Error::CommitFailed { message: msg },
         "push_daemon_running" => Error::PushDaemonRunning { message: msg },
         "transaction_closed" => Error::TransactionClosed { message: msg },
+        "sheet_derived" => Error::SheetDerived { message: msg },
         "index_unique_conflict" => Error::IndexUniqueConflict {
             message: msg,
             conflicting_paths: vec!["people/by-email/a@b.com".into()],
@@ -164,6 +166,7 @@ mod tests {
             "commit_failed",
             "push_daemon_running",
             "transaction_closed",
+            "sheet_derived",
             "index_unique_conflict",
             "index_not_defined",
             "ref_not_found",

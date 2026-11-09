@@ -75,7 +75,7 @@ enum Part {
 /// ISO week-based year ([`BucketUnit::IsoWeekYear`]), a *different* value from
 /// the calendar year near year boundaries — see the spec's ISO-week rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BucketUnit {
+pub enum BucketUnit {
     CalendarYear,
     Month,
     Day,
@@ -126,6 +126,26 @@ pub struct Bounds {
     pub token: usize,
 }
 
+/// What one template component is, as far as a rollup partition cares
+/// (`specs/behaviors/rollups.md` "Declaration"): only literal, plain-field, and
+/// date-bucket components may form a partition, because only their key value
+/// is recoverable from the rendered path. Everything else (an expression, a
+/// multi-reference or prefixed/suffixed component, a recursive `field/**`)
+/// is [`PartitionKind::Other`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PartitionKind {
+    Literal(String),
+    Field(String),
+    Bucket {
+        /// The referenced field, split on `.`.
+        field: Vec<String>,
+        unit: BucketUnit,
+        /// The bucket token this segment belongs to (0-based, source order).
+        token: usize,
+    },
+    Other,
+}
+
 /// The range operators a filter value may carry, in the `$`-keyed object form
 /// shared by every binding (`{ "$gte": a, "$lt": b }`). Shared with
 /// [`crate::query`] so the planner and the record-level filter agree on the
@@ -168,6 +188,23 @@ impl Template {
     /// Number of slash-separated components.
     pub fn component_count(&self) -> usize {
         self.components.len()
+    }
+
+    /// Each component's [`PartitionKind`], in order.
+    pub fn partition_kinds(&self) -> Vec<PartitionKind> {
+        self.components
+            .iter()
+            .map(|c| match c.parts.as_slice() {
+                [Part::Literal(text)] => PartitionKind::Literal(text.clone()),
+                [Part::Field { name, recursive: false }] => PartitionKind::Field(name.clone()),
+                [Part::Bucket { field, unit, token }] => PartitionKind::Bucket {
+                    field: field.clone(),
+                    unit: *unit,
+                    token: *token,
+                },
+                _ => PartitionKind::Other,
+            })
+            .collect()
     }
 
     /// Render the template against a full record into a slash-joined path
@@ -629,6 +666,50 @@ fn render_bucket_unit(date: &NaiveDate, unit: BucketUnit) -> String {
         BucketUnit::Day => format!("{:02}", date.day()),
         BucketUnit::IsoWeekYear => format!("{:04}", date.iso_week().year()),
         BucketUnit::IsoWeek => format!("{:02}", date.iso_week().week()),
+    }
+}
+
+// ── bucket segments back to dates (rollup partition keys) ─────────────────────
+
+/// Parse one rendered bucket segment back to its numeric value, or `None`
+/// when `segment` is not a rendering `unit` could have produced (four digits
+/// for a year, two for a month `01`–`12`, a day `01`–`31`, an ISO week
+/// `01`–`53`). Used by rollup partition enumeration to tell a partition from a
+/// stray directory.
+pub fn parse_bucket_segment(segment: &str, unit: BucketUnit) -> Option<u32> {
+    let width = match unit {
+        BucketUnit::CalendarYear | BucketUnit::IsoWeekYear => 4,
+        BucketUnit::Month | BucketUnit::Day | BucketUnit::IsoWeek => 2,
+    };
+    if segment.len() != width || !segment.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n: u32 = segment.parse().ok()?;
+    let ok = match unit {
+        BucketUnit::CalendarYear | BucketUnit::IsoWeekYear => true,
+        BucketUnit::Month => (1..=12).contains(&n),
+        BucketUnit::Day => (1..=31).contains(&n),
+        BucketUnit::IsoWeek => (1..=53).contains(&n),
+    };
+    ok.then_some(n)
+}
+
+/// The first day of the period one bucket token's rendered segments name —
+/// `(unit, value)` pairs from the token's leading segments, in order: January
+/// 1 for a bare year, the 1st for a year/month, the day itself for
+/// year/month/day, and the Monday for an ISO year/week. `None` when the
+/// segments name no real date (Feb 30, ISO week 53 of a 52-week year) or are
+/// not a token's leading run.
+pub fn period_start(segments: &[(BucketUnit, u32)]) -> Option<NaiveDate> {
+    use BucketUnit::*;
+    match segments {
+        [(CalendarYear, y)] => NaiveDate::from_ymd_opt(*y as i32, 1, 1),
+        [(CalendarYear, y), (Month, m)] => NaiveDate::from_ymd_opt(*y as i32, *m, 1),
+        [(CalendarYear, y), (Month, m), (Day, d)] => NaiveDate::from_ymd_opt(*y as i32, *m, *d),
+        [(IsoWeekYear, y), (IsoWeek, w)] => {
+            NaiveDate::from_isoywd_opt(*y as i32, *w, chrono::Weekday::Mon)
+        }
+        _ => None,
     }
 }
 

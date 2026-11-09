@@ -28,8 +28,8 @@
 //! discipline the embedded engine ([`crate::engine`]) already requires.
 
 use gix::bstr::ByteSlice;
-use holo_tree::{MutableTree, ObjectId};
-pub use holo_tree::{Context, TreeCache};
+use holo_tree::ObjectId;
+pub use holo_tree::{Context, MutableTree, TreeCache};
 
 use crate::canonical;
 use crate::diff::{create_patch, PatchOp};
