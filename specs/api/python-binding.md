@@ -46,6 +46,8 @@ The 0.x releases are honestly scoped as a **transactional writer with parity-pro
 - `template_field_names(template)` — the record fields a path template reads (the set a query filter prunes on).
 - `core_check_validators(declared, validator_names)` — the store-open check that every validator names a declared sheet; raises `ConfigError` (`config_missing`) otherwise.
 - `run_comparator(rule, a, b)` — run a raw-JS sort comparator body once in the core's engine, so a Python caller gets Node's result for the same snippet.
+
+**JS snippets in a call.** A `record_query` / `record_aggregate` filter value `{"$pred": "<js expr>"}` (evaluated as `(value, record) => (<expr>)`) and the `key_snippet` of `record_index_unique` / `record_index_multi` are *query-time* snippets: they run in the core engine's query realm, where local time is UTC but the clock and `Math.random` are available (`{"$pred": "value < Date.now()"}` works). Path templates and comparators (`render_paths_batch`, `run_comparator`, `CompiledDefinition`) are definition snippets under the determinism rule. Both are specced in [rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets).
 - `roundtrip(records)` — pass records through the core's value marshalling and back, preserving TOML type fidelity (a parity probe).
 
 **Test-only, not API** — `substrate_stats()`, `substrate_reset()` (holo-tree's process-wide counters and the tree cache) and `simulate_core_error(code)` (raises the typed exception for a stable code, to test the error mapping) are exported for the binding's own tests. They carry no compatibility promise and may change or disappear in any release.
