@@ -37,6 +37,12 @@ An **aggregates table** maps a result name to one form each:
 | `{ distinct = 'f' }` | records whose `f` is a scalar | sorted array of the distinct values (numbers numerically, strings by byte order, datetimes chronologically); mixed kinds is `AggregationError` |
 | `{ reduce = '<body>', initial = <value>, finalize = '<body>' }` | every record | whatever `finalize` (or the fold) returns — must be a TOML-representable value |
 
+Each spec carries **exactly one** form key (`count`, `sum`, `avg`, `min`,
+`max`, `distinct`, `reduce`). Any key other than its form key, the
+modifiers below, and (for `reduce`) `initial` / `finalize` is rejected: a
+`TypeError` at a call site, `ConfigError` (`config_invalid`) in a sheet
+config.
+
 Modifiers, allowed on every form:
 
 - **`where = { … }`** — an equality filter in the `query` filter grammar

@@ -21,7 +21,7 @@ const repo = await openRepo({
 });
 ```
 
-Backed by hologit's repo discovery. If `gitDir` is omitted, the library probes `cwd` upward for a `.git`.
+Discovery is `git rev-parse --absolute-git-dir`: from `gitDir` alone when it is given, otherwise from `cwd` upward (an inherited `GIT_DIR` names the repository, as it does for git itself). No git repository there is `ConfigError` (`config_missing`).
 
 A fresh-but-initialized repository (no commits yet) is supported — see [#19](https://github.com/JarvusInnovations/gitsheets/issues/19).
 
@@ -110,7 +110,7 @@ See [behaviors/transactions.md](../behaviors/transactions.md) for semantics (mut
 
 ### `repo.refresh()`
 
-Rebind every live `Sheet` this `Repository` has issued (via `openSheet`, `openSheets`, `openStore`, or `Sheet.clone()`) to the repository's current `HEAD` tree. Returns `Promise<void>`.
+Rebind every live `Sheet` this `Repository` has issued (via `openSheet`, `openSheets`, `openStore`, or `Sheet.clone()`) to the current tree of the repository's **default branch**, re-resolved now ([behaviors/default-branch.md](../behaviors/default-branch.md); the empty tree while that branch is unborn). Ref-pinned sheets are skipped. Returns `Promise<void>`.
 
 ```typescript
 // after an out-of-band ref movement (external process commit, fetch+reset):
@@ -127,6 +127,15 @@ The blob at `<ref>:<path>`, resolved **at call time** — independent of any she
 const blob = await repo.readBlob('HEAD', 'people/janedoe/avatar.jpg');
 reply.header('ETag', `"${blob.hash}"`).header('Content-Length', blob.size);
 blob.stream().pipe(reply.raw);
+```
+
+### `repo.writeBlob(content)`
+
+Write `content` (a `Buffer`) to the object store as a loose blob and return its `BlobHandle` (`hash`, `mode` `100644`, `size`, `read()`, `stream()`). Writes no tree, moves no ref, and needs no transaction; an unreferenced blob is garbage until something points at it. The usual consumer passes the handle to `setAttachment` / `setAttachments`, which reuse it by hash ([behaviors/attachments.md](../behaviors/attachments.md)); `git sheet upsert --attachment` hashes binary file content this way. For one-shot attaches, passing the raw bytes to `setAttachment` directly is equivalent.
+
+```typescript
+const blob = await repo.writeBlob(await readFile('avatar.jpg'));
+await users.setAttachment({ slug: 'janedoe' }, 'avatar.jpg', blob);
 ```
 
 ### `repo.readBlobStream(ref, path)`
@@ -285,6 +294,8 @@ interface TransactionResult<T> {
 }
 ```
 
+In submodule mode with a detached `HEAD` as the default branch, a commit advances `HEAD` itself and `ref` is the string `'HEAD'` ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)).
+
 When the handler stages no mutations, the transaction does **not** commit — `commitHash`, `treeHash`, and `ref` are `null`, and the parent ref is unchanged. This applies to both `repo.transact` and permissive-mode auto-transactions. See [behaviors/transactions.md](../behaviors/transactions.md#commit-on-success-only).
 
 ## Errors
@@ -300,8 +311,8 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | `RefError` | `not_an_ancestor` | `sync`: the local branch and the remote-tracking branch share no history |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit |
-| `ConfigError` | `config_missing` | `.gitsheets/<name>.toml` not found in `openSheet`; `openRepo({ submodule })` finds neither `<path>/.git` nor `modules/<name>` (message names `git sheet submodule init <path>`) |
-| `ConfigError` | `config_invalid` | Sheet config TOML is malformed; `openRepo({ submodule })` names a path with no `.gitmodules` entry ("not a submodule of this repository") |
+| `ConfigError` | `config_missing` | No git repository at `gitDir` / `cwd` (`openRepo`); `.gitsheets/<name>.toml` not found in `openSheet`; `openRepo({ submodule })` finds neither `<path>/.git` nor `modules/<name>` (message names `git sheet submodule init <path>`) |
+| `ConfigError` | `config_invalid` | Sheet config TOML is malformed; `openRepo({ submodule })` names a path with no `.gitmodules` entry ("not a submodule of this repository"); `openRepo({ at })` without `submodule` (and no `GITSHEETS_SUBMODULE` / `gitsheets.submodule`) — `at` pins a data submodule |
 | `ContractError` | `contract_missing` | `implements` names a contract with no vendored document in the committed tree |
 | `ContractError` | `contract_invalid` | Vendored contract violates document requirements (compile, `$id`/path, canonical form, openness, self-containment) |
 | `ContractError` | `contract_unsatisfied` | `openSheet` with `opts.contract` failed verification (carries conformance report) |

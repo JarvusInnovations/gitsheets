@@ -8,7 +8,7 @@ A `Repository` can run an optional **push daemon** that asynchronously pushes ne
 
 - [api/repository.md](../api/repository.md) — `repo.startPushDaemon(opts)`, `repo.sync(opts)`, `repo.isAncestor(a, b)`
 - [api/transaction.md](../api/transaction.md) — commits produced by `repo.transact` are what the daemon pushes
-- [behaviors/freshness.md](freshness.md) — a sync that moves `HEAD`'s branch rebinds live sheets
+- [behaviors/freshness.md](freshness.md) — a sync that moves the default branch rebinds live sheets
 
 ## Why the daemon is push-only
 
@@ -46,7 +46,7 @@ const result = await repo.sync({
 
    `ahead` / `behind` are the commit counts `B..L` / `B..R`.
 
-3. **Refresh.** When the branch moved and it is the branch `HEAD` points at, every live sheet is rebound to the new tree before `sync` resolves — exactly as a committing transaction does ([freshness.md](freshness.md)). Ref-pinned sheets are untouched.
+3. **Refresh.** When the branch moved and it is the repository's default branch ([default-branch.md](default-branch.md)), every live sheet is rebound to the new tree before `sync` resolves — exactly as a committing transaction does ([freshness.md](freshness.md)). Ref-pinned sheets are untouched.
 4. **`afterMove(result)`, still under the lock.** When the branch moved (`fast-forwarded`, `rebased`, `conflict-escaped`) and the caller passed `afterMove`, `sync` awaits it **before releasing the write lock**, after the rebind. This is the consumer's critical section: a hot reload rebuilds its in-memory state there, and no transaction can commit between the ref move and the rebuild (a write validated against pre-reload state would otherwise land on top of what the reload brought in). Inside `afterMove`, `transact` and `withLock` are `lock_held` as everywhere under the lock; reads, `refresh()` and `store.refresh()` work. A throw from `afterMove` propagates out of `sync` after the lock is released — the ref has already moved and stays moved. The push-daemon hand-off and the conflict-branch push happen after `afterMove` returns.
 
 The fetch step is also available on its own as **`repo.fetch({ remote?, branch? })`**: the same explicit-refspec fetch, run without the lock, returning `{ ok: true, remoteRef, remoteCommit }` or `{ ok: false, remoteRef, error }` (never throwing for a network or auth failure). A consumer that wants the round-trip outside any lock it holds calls `repo.fetch()` first and then `repo.sync({ fetch: false })`.

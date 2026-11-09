@@ -18,7 +18,7 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 | Consumer language | **TypeScript** (strict) | Discoverability for consumers; type-flow from `.gitsheets/<sheet>.toml` JSON Schema through to typed `Store.<sheet>.upsert(...)` |
 | Module format | **ESM-only** | Modern Node + Bun + edge runtimes all handle ESM. Dual CJS/ESM build deferred until a concrete consumer needs it. |
 | Runtime | **Node.js ≥ 20**, **Bun ≥ 1** | Both have native ESM, both can host the CLI. No Deno target in v1.0. |
-| Tree primitives | **`holo-tree`** (gitoxide), inside `gitsheets-core` | Mutable in-memory git trees over [gitoxide](https://github.com/GitoxideLabs/gitoxide) — deep-path writes/reads/deletes, blob hashing, commit + compare-and-swap ref updates, no `git` subprocess on the tree-mutation path. Tree/blob/commit ops now run inside the Rust core; the JS package reaches them through `gitsheets-core` and no longer depends on `@hologit/holo-tree` directly (the hologit JS dependency was dropped in [#127](https://github.com/JarvusInnovations/gitsheets/issues/127); the direct `@hologit/holo-tree` binding was removed at the core cutover, [#216](https://github.com/JarvusInnovations/gitsheets/pull/216)). Record, config, and attachment **reads** go through the core as well — no `git cat-file` on any read path ([rust-core.md](rust-core.md#rust-core-gitsheets-core)), with one deliberate exception: `Repository.readBlobStream`, whose contract is a true streaming read that never buffers the blob. The binding still shells out to `git` only for that stream, push, `diff-tree` change enumeration, `ls-tree` attachment listing, working-tree materialization, and repository discovery. |
+| Tree primitives | **`holo-tree`** (gitoxide), inside `gitsheets-core` | Mutable in-memory git trees over [gitoxide](https://github.com/GitoxideLabs/gitoxide) — deep-path writes/reads/deletes, blob hashing, commit + compare-and-swap ref updates, no `git` subprocess on the tree-mutation path. Tree/blob/commit ops now run inside the Rust core; the JS package reaches them through `gitsheets-core` and no longer depends on `@hologit/holo-tree` directly (the hologit JS dependency was dropped in [#127](https://github.com/JarvusInnovations/gitsheets/issues/127); the direct `@hologit/holo-tree` binding was removed at the core cutover, [#216](https://github.com/JarvusInnovations/gitsheets/pull/216)). Record, config, and attachment **reads** go through the core as well — no `git cat-file` on any read path ([rust-core.md](rust-core.md#rust-core-gitsheets-core)), with one deliberate exception: `Repository.readBlobStream`, whose contract is a true streaming read that never buffers the blob. The binding still shells out to `git` for: that stream; repository discovery and ref/config resolution (`rev-parse`, `symbolic-ref`, `check-ref-format`, `config`); fetch and push (`repo.fetch` / `sync`, the push daemon); submodule plumbing (gitlink lookup, `submodule init`'s clone, the detached-`HEAD` pointer `update-ref`); superproject index staging (`update-index` for `stagePointer`); `diff-tree` change enumeration for `diffFrom`; `ls-tree` attachment listing; and the merge driver's `merge-file` fallback. |
 | TOML parse | **Rust core `toml` crate** | Reads happen in the core (the bytes-authority), which preserves TOML's four datetime kinds and the integer/float distinction across the FFI boundary; the Node binding surfaces datetimes as `Date` (`instanceof Date` preserved). Replaced the JS `smol-toml` parser. |
 | TOML serialize | **Rust core `toml` crate** | Writes serialize in the core to the byte-stable canonical form, so bytes are identical across every binding. Replaced the JS `@iarna/toml` serializer; see the [canonical-form re-baseline](behaviors/normalization.md#canonical-form-re-baseline-the-rust-serializer). |
 | Canonical key sort | **Rust core** (`toml` `BTreeMap` deep sort) | Deep alphabetical key sorting on every write for byte-stable normalization, native in the core. The JS **`sort-keys`** dependency is retained only for the public `Sheet.normalizeRecord` array-field sort. |
@@ -41,11 +41,15 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 
 ## Packaging
 
-- **Single published package: `gitsheets`** — library + CLI in one. One `package.json`, one set of dependencies. Splitting into `@gitsheets/core` + `@gitsheets/cli` is deferred until there's a reason.
-- **npm workspaces monorepo.** The repo root is a private workspaces shell (`{"workspaces": ["packages/*"], "private": true}`); the published package lives at `packages/gitsheets/`. This layout is what makes room for sibling packages (e.g., the agent-facing CLI tracked in [#170](https://github.com/JarvusInnovations/gitsheets/issues/170)) without churning the published surface — `gitsheets@1.x` keeps its name, contents, and import paths.
+- **Two JS packages, published in lockstep on `v*`:**
+  - **`gitsheets`** — library + `git sheet` CLI in one. One `package.json`, one set of dependencies. Splitting into `@gitsheets/core` + `@gitsheets/cli` is deferred until there's a reason.
+  - **`gitsheets-axi`** — the agent-facing companion CLI ([api/axi.md](api/axi.md), [#170](https://github.com/JarvusInnovations/gitsheets/issues/170)), a consumer of the `gitsheets` library. `publish-npm.yml` stamps both with the tag's version and pins `gitsheets-axi`'s `gitsheets` dependency to `^<version>` at publish time.
+  - The native addon (`@gitsheets/core-napi` + platform packages) and the Python binding ship on their own tracks ([behaviors/distribution.md](behaviors/distribution.md)).
+- **npm workspaces monorepo.** The repo root is a private workspaces shell (`{"workspaces": ["packages/*"], "private": true}`); the published packages live at `packages/gitsheets/` and `packages/gitsheets-axi/`. Sibling packages are added without churning the published surface — `gitsheets` keeps its name, contents, and import paths.
 - **Entry points:**
   - `import { ... } from 'gitsheets'` → public library exports
   - `bin/gitsheets` (also installed as `git-sheet` for the `git sheet <cmd>` invocation)
+  - `gitsheets-axi` (from the `gitsheets-axi` package)
 - **Published artifacts:** built `dist/`, type definitions, source maps. No source TypeScript in the published package.
 
 ## Repository layout
@@ -53,29 +57,34 @@ Concrete v1.0 ship list lives across [GitHub issues #128–#141 in the 1.0.0 mil
 ```text
 gitsheets/
 ├── packages/
-│   └── gitsheets/                # the published npm package
-│       ├── src/                  # TypeScript library
-│       │   ├── cli/              # CLI entry + command modules
-│       │   ├── format/           # pluggable record formats (toml/markdown/mdx)
-│       │   ├── path-template/    # path template parser + query traversal
-│       │   ├── errors.ts         # exported error classes
-│       │   ├── repository.ts     # Repository class
-│       │   ├── sheet.ts          # Sheet class
-│       │   ├── transaction.ts    # Transaction class
-│       │   ├── store.ts          # openStore + Store type
-│       │   ├── *.test.ts         # Vitest specs co-located with the units they cover
-│       │   └── index.ts          # public re-exports
-│       ├── bin/                  # CLI entry shim
-│       ├── package.json
-│       ├── tsconfig.json
-│       └── vitest.config.ts
+│   ├── gitsheets/                # the published npm package
+│   │   ├── src/                  # TypeScript library
+│   │   │   ├── cli/              # CLI entry + command modules
+│   │   │   ├── format/           # pluggable record formats (toml/markdown/mdx)
+│   │   │   ├── path-template/    # path template parser + query traversal
+│   │   │   ├── errors.ts         # exported error classes
+│   │   │   ├── repository.ts     # Repository class
+│   │   │   ├── sheet.ts          # Sheet class
+│   │   │   ├── transaction.ts    # Transaction class
+│   │   │   ├── store.ts          # openStore + Store type
+│   │   │   ├── *.test.ts         # Vitest specs co-located with the units they cover
+│   │   │   └── index.ts          # public re-exports
+│   │   ├── bin/                  # CLI entry shim
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   └── vitest.config.ts
+│   └── gitsheets-axi/            # the agent-facing CLI (published in lockstep)
+│       ├── src/                  # cli.ts, commands/, output/ (TOON), errors.ts
+│       ├── bin/                  # gitsheets-axi entry shim
+│       └── test/
 ├── rust/                         # the Rust engine + language bindings
 │   ├── gitsheets-core/           # the bytes-authority engine crate
 │   ├── gitsheets-napi/           # napi-rs binding → @gitsheets/core-napi (Node)
 │   └── gitsheets-py/             # pyo3 binding (Python)
 ├── docs/                         # User-facing documentation (mkdocs)
 ├── specs/                        # ← source of truth, this directory
-├── skills/                       # bundled Claude Code skill (skills/gitsheets/)
+├── skills/
+│   └── gitsheets/                # bundled agent skill (SKILL.md, references/, evals/)
 ├── .claude/
 │   ├── agents/                   # spec-drift-auditor
 │   └── commands/                 # /audit-spec-drift
@@ -103,7 +112,7 @@ These belong to the Rust `gitsheets-core` engine (the bytes-authority) and are s
 
 ## Distribution
 
-- **npm:** `gitsheets` (current owner: themightychris).
+- **npm:** `gitsheets` and `gitsheets-axi` (lockstep, `v*`), `@gitsheets/core-napi` + platform packages (`core-napi-v*`). **PyPI:** `gitsheets` (`py-v*`). Tracks and version-source rules: [behaviors/distribution.md](behaviors/distribution.md).
 - **Versioning:** semver. v1.0.0 is the cut after all `[1.0]`-tagged issues in the [1.0.0 milestone](https://github.com/JarvusInnovations/gitsheets/milestone/1) close. Patch releases inside 1.x preserve the documented API.
 - **Breaking changes** — only at major boundaries. The library's pre-1.0 API does not constrain v1.0 (the legacy `GitSheets` class is purged outright; no migration shim).
 

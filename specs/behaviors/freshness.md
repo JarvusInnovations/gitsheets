@@ -15,7 +15,7 @@ snapshot is **rebound to the default branch's current tree**:
 2. **Explicitly**, via `sheet.refresh()`, `store.refresh()`, or
    `repo.refresh()` — the consumer's tool after **out-of-band ref movement**
    (another process committed, a `git fetch` + reset, a hot-reload merge).
-3. **After `repo.sync()`** moves the branch `HEAD` points at
+3. **After `repo.sync()`** moves the default branch
    ([push-sync.md](push-sync.md#sync-opt-in-explicit)) — the library moved
    the ref itself, so it rebinds before `sync` resolves, like a commit.
 
@@ -67,8 +67,9 @@ downstream of it:
   issued — via `openSheet`, `openSheets`, `openStore`, or `Sheet.clone()` —
   **except ref-pinned sheets** (below). Sheets are tracked weakly; holding a
   `Sheet` does not leak, and dropping one requires no lifecycle call.
-- `repo.refresh()` re-resolves `HEAD^{tree}` once and rebinds every live
-  sheet. `sheet.refresh()` rebinds only that sheet (the "did my row land?"
+- `repo.refresh()` re-resolves the default branch's tree once (the empty
+  tree while that branch is unborn) and rebinds every live sheet.
+  `sheet.refresh()` rebinds only that sheet (the "did my row land?"
   primitive). `store.refresh()` delegates to `repo.refresh()` — a Store's
   sheets are Repository-issued sheets, and partial-store freshness is not a
   meaningful state.

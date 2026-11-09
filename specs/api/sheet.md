@@ -6,6 +6,19 @@ A typed handle to a single sheet within a repository. The most-touched object in
 
 A `Sheet<T>` represents one declared sheet in `.gitsheets/<name>.toml`. It owns the path template, the JSON Schema, the canonical-normalization rules, and the secondary in-memory indices. All record-level mutations and queries go through it.
 
+## Properties
+
+The public read-only properties of a `Sheet` handle:
+
+| Property | Type | Meaning |
+| --- | --- | --- |
+| `name` | `string` | The sheet's name (`.gitsheets/<name>.toml`) |
+| `pinnedRef` | `string \| undefined` | The ref this sheet is pinned to (`openSheet({ ref })`, or the gitlinked commit under `openRepo({ at })`); `undefined` for a live sheet |
+| `isTransactionBound` | `boolean` | `true` for `tx.sheet(name)` handles, which read the transaction's private tree |
+| `contractVerification` | object \| `undefined` | Set when opened with `opts.contract` — see [api/repository.md § openSheet](repository.md#repoopensheetname-opts) |
+
+Members the source tags `@internal` (for example `rebindReadTree`, `verifyContract`) are not public API and are deliberately unspecified; they may change in any release.
+
 ## Type parameter
 
 `T` is the record shape inferred from the sheet's JSON Schema, optionally narrowed by a consumer-supplied Standard Schema validator. Without a validator, `T = Record<string, unknown>`.
@@ -16,11 +29,11 @@ Non-transaction reads resolve against the sheet's **read snapshot** — rebound 
 
 ### `sheet.refresh()`
 
-Rebind this sheet's read snapshot to the repository's current `HEAD` tree. Returns `Promise<void>`.
+Rebind this sheet's read snapshot to the current tree of the repository's **default branch** ([behaviors/default-branch.md](../behaviors/default-branch.md)), re-resolved now. A ref-pinned sheet re-resolves its own `ref` instead (see [api/repository.md § openSheet](repository.md#repoopensheetname-opts)). Returns `Promise<void>`.
 
 ```typescript
 await sheet.refresh();       // pick up out-of-band ref movement
-await sheet.queryAll();      // now reflects the current HEAD tree
+await sheet.queryAll();      // now reflects the default branch's current tree
 ```
 
 - Rebinds **only this sheet** — the "did my row land?" primitive. For every open sheet at once, use `repo.refresh()` / `store.refresh()`.
@@ -170,7 +183,7 @@ Returns `Promise<{ blob, path }>` matching `upsert`.
 
 Removes every record from the sheet's tree. Used during full-replace imports (snapshot importers, full re-syncs).
 
-**O(1)** regardless of record count — internally points the sheet's subtree at git's canonical empty-tree hash (`4b825dc642cb6eb9a060e54bf8d69288fbee4904`) via hologit's `TreeObject.clearChildren()`. Invalidates the sheet's in-memory indexes. The resulting empty subtree is omitted from the committed tree (hologit's `write()` skips empty subtrees), so consumers querying the committed sheet root after a clear see no entries.
+**O(1)** regardless of record count — the core points the sheet's subtree at git's canonical empty-tree hash (`4b825dc642cb6eb9a060e54bf8d69288fbee4904`) without loading the cleared subtree's contents (holo-tree's `clear_children`). Invalidates the sheet's in-memory indexes. The resulting empty subtree is pruned when the transaction's tree is written, so consumers querying the committed sheet root after a clear see no entries.
 
 Pairs naturally with `Transaction#finalize`'s no-op detection (see [transaction.md](transaction.md)) — a `clear()` + re-upsert of byte-identical data produces no commit.
 
@@ -184,7 +197,22 @@ A sheet declared with `[gitsheet.rollup]` ([behaviors/rollups.md](../behaviors/r
 
 ### `sheet.materialize()`
 
-Rollup sheets only. Recomputes every stale or missing rollup record and deletes orphaned ones in one transaction (into the current one on a transaction-bound sheet). Returns `Promise<{ recomputed: string[], deleted: string[] }>` of partition paths; no commit when nothing is stale. `TypeError` on a non-rollup sheet. See [behaviors/rollups.md § Materializing explicitly](../behaviors/rollups.md#materializing-explicitly).
+Rollup sheets only. Recomputes every stale or missing rollup record and deletes orphaned ones in one transaction (into the current one on a transaction-bound sheet). Returns `Promise<MaterializeResult>` — `{ recomputed: string[], deleted: string[] }` of partition paths; no commit when nothing is stale. `TypeError` on a non-rollup sheet. See [behaviors/rollups.md § Materializing explicitly](../behaviors/rollups.md#materializing-explicitly).
+
+Called on a standing (non-transaction) sheet from inside a `repo.transact` handler, `materialize()` joins that transaction instead of opening its own, so the repairs commit with the handler's other changes. Like the other permissive writes it throws `TransactionError` (`transaction_required`) when no transaction is open and the repository is in strict mode, and always on a ref-pinned sheet.
+
+### `sheet.rollupStatus()`
+
+Rollup sheets only. Reports the partitions that are **not** fresh against the sheet's read snapshot (a transaction-bound sheet: the transaction's tree), writing nothing. Returns `Promise<RollupStatusEntry[]>`:
+
+```typescript
+interface RollupStatusEntry {
+  path: string;                                  // partition path
+  status: 'stale' | 'missing' | 'orphaned';      // stamp mismatch / no stored record / no source partition
+}
+```
+
+An empty array means every stored rollup record matches its source. `TypeError` on a non-rollup sheet. Backs `git sheet rollup --check` ([api/cli.md](cli.md)); the Python twin is `rollup_status` ([api/python-binding.md](python-binding.md)).
 
 ## Indexing
 
