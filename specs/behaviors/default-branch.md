@@ -127,12 +127,27 @@ sheet at any ref, including `HEAD` when the default branch is something else.
 `Repository` it returns reads and writes the submodule's git dir; the
 superproject is consulted only to find it and to pin snapshots.
 
-**Locating the git dir.** `<superproject>/data/.git` (a gitdir pointer file,
-or a directory) when present; otherwise `<superproject git dir>/modules/data`
-(an initialized-then-deinitialized submodule). Neither → `ConfigError`
-(`config_missing`) naming the remedy (`git sheet submodule init data`). The
-superproject is the repository `openRepo` would otherwise have opened
-(`gitDir` / discovery).
+**Locating the git dir.** The superproject is the repository `openRepo`
+would otherwise have opened (`gitDir` / discovery). `data` must be a
+submodule of it: a `.gitmodules` entry (in the working tree, else committed
+at `HEAD`) whose `path` is `data`. A nested repository with no entry is
+`ConfigError` (`config_invalid`, "not a submodule of this repository"). The
+git dir is `<superproject>/data/.git` (a gitdir pointer file, or a
+directory) when present; otherwise `<superproject git dir>/modules/<name>`
+(an initialized-then-deinitialized submodule). For a superproject that is a
+linked worktree, that is the worktree's own git dir
+(`.git/worktrees/<id>/modules/<name>`), never the main worktree's — each
+worktree has its own submodule checkout and pointer, and writing through
+another worktree's would move the wrong pointer. Neither → `ConfigError`
+(`config_missing`) naming the remedy (`git sheet submodule init data`).
+
+Every git subprocess gitsheets runs for a repository — the submodule, the
+superproject, or a plain repository — names its git dir explicitly
+(`GIT_DIR`) and clears `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+`GIT_COMMON_DIR`, and `GIT_NAMESPACE`, so an inherited environment (a git
+hook, `GIT_DIR=… git sheet …`) cannot redirect it to another repository.
+Superproject index updates set `GIT_DIR` / `GIT_WORK_TREE` to the
+superproject's.
 
 **The pointer.** The submodule's `HEAD` is the managed pointer: whatever it
 names is what the superproject's `git status` compares against the gitlink
@@ -144,7 +159,18 @@ in its index. In submodule mode the default branch is therefore:
   leaves a submodule in): a commit advances `HEAD` directly, the way
   `git commit` does on a detached `HEAD`. This is the one place a gitsheets
   commit updates `HEAD` rather than a branch, so the pointer never silently
-  stops moving. `sync` / `fetch` / the push daemon need a branch and throw
+  stops moving. The update is a compare-and-swap from the transaction's
+  parent: if `HEAD` moved to another commit meanwhile, `TransactionError`
+  (`parent_moved`); if it has become a symref (the user checked a branch out
+  meanwhile), gitsheets leaves `HEAD` alone and throws `TransactionError`
+  (`commit_failed`, as for a failed branch update in the core). Both
+  messages name the written commit so it can be recovered. A narrow window
+  remains between the symref check and the swap — git's `update-ref` cannot
+  express "only if still detached" — in which a concurrent checkout at the
+  same commit would be detached again. Until the superproject pins it, a
+  detached-mode commit is reachable **only from `HEAD`**: a later
+  `git submodule update` or checkout that moves `HEAD` leaves it to the
+  reflog. `sync` / `fetch` / the push daemon need a branch and throw
   `RefError` (`ref_not_found`) until one is checked out (`.gitmodules`
   `branch = data` plus `git -C data switch data`, or `submodule init`
   below, puts the submodule on a branch).
@@ -152,18 +178,28 @@ in its index. In submodule mode the default branch is therefore:
   **does not move the pointer**; the superproject sees nothing. That is
   "write to a side branch of the data", and it is deliberate.
 
+The binding is resolved once, at `openRepo`: a long-lived process does not
+notice a later `git submodule update` detaching `HEAD` (or a checkout
+attaching it). Its commits then follow the binding it opened with — a
+symref binding keeps advancing the branch, which no longer moves the
+pointer — until it reopens the repository.
+
 **After a commit.** By default gitsheets stages nothing in the superproject:
 `git status` there reports `modified: data (new commits)`, and the user
 commits the pointer with their code (or `git add data` on its own). Each
 superproject commit thereby records exactly which data snapshot it was built
 against. `openRepo({ …, stagePointer: true })` additionally updates the
 superproject's index entry for the gitlink (`160000 <new commit>`) after every
-commit that moves the pointer (a write to a side branch moves nothing, so
-stages nothing) — for consumers that want `git commit -a` to carry the
-pointer without a separate `git add`. It never commits in the superproject.
-If the index update fails (a held `index.lock`), the data commit has already
-landed: the transaction throws `TransactionError` (`commit_failed`) naming
-the commit and the `git add <path>` that stages it by hand.
+commit that moves the pointer — a `transact`, or a `merge` / `sync` that
+advances `HEAD`'s branch (a write to a side branch moves nothing, so stages
+nothing) — for consumers that want `git commit -a` to carry the pointer
+without a separate `git add`. It never commits in the superproject. Staging
+runs after the commit's own effects (live-sheet rebind, post-commit hooks
+such as the push daemon). If the index update fails (a held `index.lock`),
+the data commit has already landed: the operation throws `TransactionError`
+(`pointer_stage_failed`) carrying `commitHash`, whose message says the
+commit landed and names the `git add <path>` that stages it by hand. Do not
+retry the write.
 
 **No record files on disk.** gitsheets does not materialize the submodule's
 working tree. An initialized submodule whose working tree is empty (or
@@ -184,7 +220,7 @@ refused on an `at`-bound repository exactly as on ref-pinned sheets
 (`TransactionError` `transaction_required`): `openSheet` / `openSheets` /
 `openStore` without `ref` return sheets pinned at the gitlinked commit, and
 every operation that would move a ref — `transact` (and so permissive-mode
-writes), `sync`, `merge`, `tag`, `startPushDaemon` — throws.
+writes), `sync`, `fetch`, `merge`, `tag`, `startPushDaemon` — throws.
 
 **Pushing.** The push daemon pushes the submodule's branch as usual. The
 superproject's pointer commit must not reach a remote before the data commit
@@ -246,6 +282,13 @@ sets up a submodule with **no record checkout**:
   `HEAD` on the `.gitmodules` branch at the gitlinked commit, sets `ignore`.
   Idempotent: a local branch that already exists is left where it is (it may
   hold data commits not yet pinned), and `HEAD` is only re-pointed at it.
+  When `HEAD` is detached (after `git submodule update`, where gitsheets
+  writes advance `HEAD` itself), re-pointing must not orphan those writes:
+  if the branch tip is an ancestor of `HEAD`, the branch is first
+  fast-forwarded to `HEAD`; if `HEAD` is an ancestor of the tip, nothing is
+  lost; if the two have diverged, `ConfigError` (`config_invalid`) names both
+  commits and the remedy (merge or reset the branch, then re-run) and
+  changes nothing.
 
 The branch is, for a new entry, `--branch`, else the remote's `HEAD`
 branch; for an existing entry, its `.gitmodules` `branch`, else `--branch`,
@@ -253,7 +296,13 @@ else the remote's `HEAD` branch. A remote with no `HEAD` (an empty repository)
 needs `--branch`, and the branch then starts unborn — the first write
 creates it, and only `.gitmodules` is staged until then. `--url` on a path
 that already has a `.gitmodules` entry with a different URL is
-`ConfigError` (`config_invalid`); the same URL is the existing-entry form.
+`ConfigError` (`config_invalid`); the same URL is the existing-entry form,
+and refreshes a stale `submodule.<name>.url` in the local config.
+
+The new form reaches the remote first (resolving the branch, cloning) and
+writes `.gitmodules` and the superproject's local config only after the
+clone succeeded, so a failed clone leaves nothing behind and a retry starts
+clean.
 
 Plain `git submodule update --init` also works (gitsheets reads the git dir
 either way); it just leaves a checkout of the records behind.
@@ -306,7 +355,8 @@ The Python binding's batch surface takes an explicit `tree_ref` (reads) and
   commit, a watcher). The split people hit is a symptom of keeping live
   records on the branch they also check out, and the fix is the layout, not
   a reconciler. The submodule pointer is not an exception: advancing `HEAD`
-  *is* the ref write, and the superproject's index is left for the user.
+  *is* the ref write, and the superproject's index is, by default, left for
+  the user.
 
 ## Coordinates with
 

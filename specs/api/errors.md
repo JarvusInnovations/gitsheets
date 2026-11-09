@@ -15,7 +15,9 @@ export class ConfigError extends GitsheetsError {}
 export class ValidationError extends GitsheetsError {
   readonly issues: ValidationIssue[];
 }
-export class TransactionError extends GitsheetsError {}
+export class TransactionError extends GitsheetsError {
+  readonly commitHash?: string;     // pointer_stage_failed: the data commit that landed
+}
 export class IndexError extends GitsheetsError {
   readonly conflictingPaths?: string[];
 }
@@ -61,6 +63,7 @@ try {
 | `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode, or a permissive-mode write on a ref-pinned (read-only) sheet |
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero |
+| `TransactionError` | `pointer_stage_failed` | 500 | Submodule mode with `stagePointer`: the data commit **landed** but the superproject's index could not be updated; carries `commitHash`. Stage by hand (`git add <path>`); do not retry the write ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)) |
 | `TransactionError` | `push_daemon_running` | 409 | `repo.startPushDaemon` while one is already active |
 | `TransactionError` | `transaction_closed` | 409 | `tx.sheet(...)` after the transaction has been finalized or discarded |
 | `TransactionError` | `lock_held` | 409 | `repo.withLock` / `repo.transact` attempted while the caller's own async context already holds the write lock — the lock is not reentrant |
