@@ -494,9 +494,9 @@ export class Repository {
   }
 
   /**
-   * @internal — Write raw bytes as a loose blob in the ODB and return a
-   * gitsheets blob handle. Used by the CLI to hash binary attachments before
-   * placing them in a record's attachment tree.
+   * Write raw bytes as a loose blob in the ODB and return a gitsheets blob
+   * handle — e.g. to hash binary attachment content before placing it in a
+   * record's attachment tree. See specs/api/repository.md.
    */
   async writeBlob(content: Buffer): Promise<BlobHandle> {
     const hash = callCore(() => addon.writeBlob(this.#gitDir, content));
