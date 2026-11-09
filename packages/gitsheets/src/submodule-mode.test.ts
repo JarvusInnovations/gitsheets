@@ -203,6 +203,16 @@ describe('openRepo({ submodule })', () => {
     expect((await openRepo({ gitDir: fx.superproject.gitDir, submodule: './data/' })).submodule).toBe('data');
   });
 
+  it('a branch that exists only as a remote-tracking ref of the submodule is refused', async () => {
+    const fx = await withSubmodule();
+    await fx.git(fx.remote, 'branch', 'archive', 'main');
+    await sub(fx, 'fetch', '--quiet', 'origin');
+    const err = await open(fx, { branch: 'archive' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as ConfigError).code).toBe('config_invalid');
+    expect((err as ConfigError).message).toContain('git branch archive origin/archive');
+  });
+
   it('gitsheets.branch resolves inside the submodule', async () => {
     const fx = await withSubmodule();
     await sub(fx, 'branch', 'side');
