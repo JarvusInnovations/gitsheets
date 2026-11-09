@@ -28,8 +28,8 @@
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
-| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
-| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
+| `--branch <name>` / `--no-branch` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
+| `--submodule <path>` / `--no-submodule` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
 | `--stage-pointer` / `--no-stage-pointer` | `gitsheets.stagePointer` git config, else off | `GITSHEETS_STAGE_POINTER` |
 | `--at <superproject-ref>` | none | `GITSHEETS_AT` |
 | `--ref <ref>` | the default branch (the pinned commit under `--at`) | `GITSHEETS_REF` |
@@ -42,7 +42,7 @@
 
 A `--working` flag (read/write the working tree's state) is documented but deferred — see issue #165.
 
-`--branch` binds the repository's **default branch** (what commands read and commit to); `--submodule` binds a **data submodule** instead (its `HEAD` is the superproject's pointer; combine with `--branch` for a branch of the submodule). Both resolve flag → env → git config, so one `git config gitsheets.branch data` or `git config gitsheets.submodule data` per clone binds the CLI, `gitsheets-axi`, and the application alike.
+`--branch` binds the repository's **default branch** (what commands read and commit to); `--submodule` binds a **data submodule** instead (its `HEAD` is the superproject's pointer; combine with `--branch` for a branch of the submodule). Both resolve flag → env → git config, so one `git config gitsheets.branch data` or `git config gitsheets.submodule data` per clone binds the CLI, `gitsheets-axi`, and the application alike. `--no-submodule` / `--no-branch` opt out of an inherited binding for one run (the superproject itself / `HEAD`'s branch), ignoring env and git config; an empty `GITSHEETS_SUBMODULE=` is unset, not an opt-out. In code: `openRepo({ submodule: null })` / `openRepo({ branch: null })`.
 
 In submodule mode, `--stage-pointer` (flag → `GITSHEETS_STAGE_POINTER` → the superproject's `gitsheets.stagePointer`, git booleans) also stages the moved gitlink after each write, and `--at <superproject-ref>` (or `GITSHEETS_AT`; no git config — it is a one-run pin) reads the data snapshot that superproject commit pins, refusing writes (exit `69`).
 
