@@ -17,9 +17,10 @@ examples:
   gitsheets-axi check users users/jane.toml --fix
 exit codes:
   0   File is canonical (or rewritten if --fix)
-  1   File is not canonical and --fix was not passed
-  22  ValidationError — record fails the sheet's JSON Schema
-  64  ConfigError — file failed to parse as the sheet's format
+  1   Not canonical without --fix (NOT_CANONICAL), fails the sheet's schema
+      (VALIDATION_FAILED), or fails to parse as the sheet's format
+      (CONFIG_INVALID) — the error code on stdout says which
+  2   Usage error (VALIDATION_ERROR)
 behavior:
   Reads from the working tree (not git). Never commits. Designed as a
   post-edit hook for agents that wrote a record directly: run with --fix
@@ -112,7 +113,7 @@ export async function checkCommand(
     );
   }
 
-  // Parse via the sheet's format. Failure → ConfigError → exit 64.
+  // Parse via the sheet's format. Failure → ConfigError → CONFIG_INVALID (exit 1).
   let record;
   try {
     record = format.parse(original, config.format);
@@ -126,7 +127,7 @@ export async function checkCommand(
     );
   }
 
-  // Validate against the sheet's schema → ValidationError → exit 22.
+  // Validate against the sheet's schema → ValidationError → VALIDATION_FAILED (exit 1).
   let validated;
   try {
     validated = await validateRecord({

@@ -21,7 +21,7 @@ const git = async (cwd: string, ...args: string[]): Promise<string> => (await ex
 
 const cleanups: Array<() => Promise<void>> = [];
 const saved: Record<string, string | undefined> = {};
-const ENV = ['GITSHEETS_BRANCH', 'GITSHEETS_SUBMODULE'] as const;
+const ENV = ['GITSHEETS_BRANCH', 'GITSHEETS_SUBMODULE', 'GITSHEETS_STAGE_POINTER', 'GITSHEETS_AT'] as const;
 beforeEach(() => {
   for (const k of ENV) {
     saved[k] = process.env[k];
@@ -118,6 +118,61 @@ describe('gitsheets-axi --submodule', () => {
     await git(join(h.gitDir, 'modules', 'data'), 'checkout', '--quiet', '--detach');
     const r = await runCli(['push', '--submodule', 'data'], h.path);
     expect(r.exitCode).not.toBe(0);
+  });
+});
+
+describe('gitsheets-axi --stage-pointer / --at', () => {
+  const staged = (h: TestRepoHandle): Promise<string> => git(h.path, 'ls-files', '--stage', 'data');
+  const tip = (h: TestRepoHandle): Promise<string> => git(join(h.gitDir, 'modules', 'data'), 'rev-parse', 'HEAD');
+
+  it('--stage-pointer (either position) stages the moved gitlink; --no-stage-pointer beats gitsheets.stagePointer', async () => {
+    const h = await superproject();
+    const base = await staged(h);
+    expect((await runCli(['--submodule', 'data', 'upsert', 'users', '--data', '{"slug":"bob","email":"b@x.org"}'], h.path)).exitCode).toBe(0);
+    expect(await staged(h)).toBe(base);
+    expect((await runCli(['upsert', 'users', '--data', '{"slug":"carol","email":"c@x.org"}', '--submodule', 'data', '--stage-pointer'], h.path)).exitCode).toBe(0);
+    expect(await staged(h)).toBe(`160000 ${await tip(h)} 0\tdata`);
+
+    await git(h.path, 'reset', '--quiet', '--', 'data');
+    const reset = await staged(h);
+    await git(h.path, 'config', 'gitsheets.stagePointer', 'true');
+    expect((await runCli(['--no-stage-pointer', 'upsert', 'users', '--data', '{"slug":"dave","email":"d@x.org"}', '--submodule', 'data'], h.path)).exitCode).toBe(0);
+    expect(await staged(h)).toBe(reset);
+    process.env['GITSHEETS_STAGE_POINTER'] = 'maybe';
+    const bad = await runCli(['query', 'users', '--submodule', 'data'], h.path);
+    expect(bad.exitCode).toBe(1);
+    expect(bad.stdout).toContain('CONFIG_INVALID');
+    expect(bad.stdout).toContain('GITSHEETS_STAGE_POINTER');
+  });
+
+  it('--at / GITSHEETS_AT read the snapshot the superproject pins and refuse writes', async () => {
+    const h = await superproject(); // HEAD pins jane only
+    expect((await runCli(['upsert', 'users', '--data', '{"slug":"bob","email":"b@x.org"}', '--submodule', 'data'], h.path)).exitCode).toBe(0);
+    expect((await runCli(['query', 'users', '--submodule', 'data'], h.path)).stdout).toContain('bob');
+    const pinned = await runCli(['query', 'users', '--submodule', 'data', '--at', 'HEAD'], h.path);
+    expect(pinned.exitCode).toBe(0);
+    expect(pinned.stdout).toContain('jane');
+    expect(pinned.stdout).not.toContain('bob');
+    expect((await runCli(['--at=HEAD', '--submodule=data', 'query', 'users'], h.path)).stdout).not.toContain('bob');
+
+    process.env['GITSHEETS_AT'] = 'HEAD';
+    expect((await runCli(['query', 'users', '--submodule', 'data'], h.path)).stdout).not.toContain('bob');
+    const write = await runCli(['upsert', 'users', '--data', '{"slug":"carol","email":"c@x.org"}', '--submodule', 'data'], h.path);
+    expect(write.exitCode).not.toBe(0);
+    delete process.env['GITSHEETS_AT'];
+
+    const noSubmodule = await runCli(['query', 'users', '--at', 'HEAD'], h.path);
+    expect(noSubmodule.exitCode).toBe(1);
+    expect(noSubmodule.stdout).toContain('--at / GITSHEETS_AT');
+  });
+
+  it('malformed global flags are usage errors (VALIDATION_ERROR, exit 2)', async () => {
+    const h = await superproject();
+    for (const argv of [['query', 'users', '--at'], ['query', 'users', '--branch'], ['--submodule=', 'query', 'users'], ['query', 'users', '--stage-pointer=yes']]) {
+      const r = await runCli(argv, h.path);
+      expect(r.exitCode, argv.join(' ')).toBe(2);
+      expect(r.stdout, argv.join(' ')).toContain('VALIDATION_ERROR');
+    }
   });
 });
 
