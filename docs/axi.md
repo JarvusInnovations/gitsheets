@@ -33,7 +33,7 @@ Every difference is in service of agents talking to the CLI through shell execut
 | Errors | stderr, non-zero exit | **stdout** (agents read it), non-zero exit |
 | `$ <bin>` with no args | usage / help | **live content** (sheets + counts + suggested actions) |
 | Duplicate / no-op mutation | throws `NotFoundError` / similar | **idempotent**, exit 0 with `result: "no-op"` |
-| Default output | JSON / pretty per `--format` | **TOON** (~40% fewer tokens), `--format=json` opt-out |
+| Default output | JSON / pretty per `--format` | **TOON** (~40% fewer tokens); no `--format` flag — `query` has `--json-out` / `--ndjson-out` / `--csv-out` side-channel exports |
 | Default schema | every field a human might want | **minimal**, `--fields` opts in to more |
 | `--help` | full manual per command | concise reference + 2-3 examples |
 | Session-hook install | doesn't touch agent config | **opt-in** SessionStart hooks via `setup hooks` |
@@ -52,7 +52,10 @@ help[1]: Run `gitsheets-axi read users <path>` to view a single record
 
 The `records[2]{slug,email,name,path}:` header declares the schema; each subsequent line is a row. Object detail views use `key: value` shape. Suggestions arrive as `help[N]:` lists. TOON saves ~40% on tokens compared to equivalent JSON while staying readable.
 
-`--format=json` opts back to JSON for agents / pipelines that prefer it.
+stdout is always TOON; there is no `--format` flag. A pipeline that wants
+JSON, NDJSON, or CSV uses `query`'s side-channel exports (`--json-out[=path]`,
+`--ndjson-out[=path]`, `--csv-out[=path]`), which write the verbatim records
+while stdout keeps the TOON summary.
 
 ## Idempotency
 
@@ -97,10 +100,13 @@ The hook runs the bare home view at every session start, so the agent's initial 
 gitsheets-axi                            # home view (bare invocation)
 gitsheets-axi sheets [list|view <name>]  # sheets in this repo
 gitsheets-axi query <sheet> [filters]    # list records
+gitsheets-axi count <sheet> [filters]    # count matching records
+gitsheets-axi distinct <sheet> <field>   # distinct values of a field, with counts
 gitsheets-axi aggregate <sheet> --agg …  # count/sum/min/max/avg/distinct, --group-by
 gitsheets-axi read <sheet> <path>        # single record detail
 gitsheets-axi upsert <sheet>             # create or replace (idempotent)
 gitsheets-axi patch <sheet> <q> <p>      # RFC 7396 merge patch (idempotent)
+gitsheets-axi rename <sheet> <old> <new> # move a record (and its attachments) to a new path
 gitsheets-axi delete <sheet> <path>      # remove a record (idempotent)
 gitsheets-axi check <sheet> <file>       # verify + optionally --fix
 gitsheets-axi diff <sheet> [<src-ref>]   # TOON change summary
@@ -109,12 +115,15 @@ gitsheets-axi init <sheet>               # commit a starter config
 gitsheets-axi infer <sheet>              # observe records → schema
 gitsheets-axi migrate-config <sheet>     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
+gitsheets-axi contracts [list|verify|test] # schema contracts
 gitsheets-axi push                       # one-shot git push
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 gitsheets-axi rollup <sheet> [--check]   # materialize / check a rollup sheet
 ```
 
 Every command supports `--help` with its specific flags and 2-3 examples.
+The full contract — every command, flag, and error code — is specified in
+[`specs/api/axi.md`](../specs/api/axi.md).
 
 ### Default branch
 
@@ -132,6 +141,20 @@ write advances the submodule's `HEAD`, so the superproject's `git status`
 shows `modified: data (new commits)` and nothing else. A submodule that is
 not set up yet is `CONFIG_MISSING`, with `git sheet submodule init <path>`
 as the fix.
+
+Two more global flags work with `--submodule` (any command, any position):
+
+- `--stage-pointer` also stages the moved gitlink in the superproject's
+  index after each write, so `git commit -a` carries it
+  (`--no-stage-pointer` turns it off; else `GITSHEETS_STAGE_POINTER`, else
+  the superproject's `gitsheets.stagePointer`, else off).
+- `--at <superproject-ref>` (else `GITSHEETS_AT`) reads the data snapshot
+  that superproject ref pins (`gitsheets-axi query users --submodule data
+  --at v1.2.0`); writes are refused. It is a per-run pin, so it has no git
+  config.
+
+A malformed global flag (`--branch` with no value, `--stage-pointer=yes`) is
+a `VALIDATION_ERROR` (exit 2), like any other usage error.
 
 After a write, the materialize hint (`git checkout HEAD -- .`) appears only
 when the records live on the checked-out branch, where the working tree now
@@ -193,9 +216,13 @@ code: VALIDATION_FAILED
 help[1]: Run `gitsheets-axi sheets view users` to see the schema
 ```
 
-Stable codes the agent can switch on: `VALIDATION_FAILED`, `NOT_FOUND`, `CONFIG_INVALID`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `NOT_A_REPOSITORY`, `INVALID_JSON`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `TRANSACTION_ERROR`, `CONFIG_EXISTS`, `NO_RECORDS`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`, `AGGREGATION_FAILED`.
+Stable codes the agent can switch on (agents switch on `code`, never on the message):
 
-Exit codes are stable: `0` for success (incl. no-ops), `2` for validation/usage errors, `1` for everything else.
+- `VALIDATION_ERROR` — a usage error: unknown command or flag, missing argument, malformed `--filter` / `--agg` or global flag, a command applied to the wrong kind of sheet. The only code that exits `2`.
+- `VALIDATION_FAILED` — a record failed the sheet's JSON Schema or a contract (a data error, not a usage error).
+- `NOT_FOUND`, `CONFIG_MISSING` (the data submodule is not set up), `CONFIG_INVALID`, `CONFIG_EXISTS`, `INVALID_JSON`, `NO_RECORDS`, `NOT_A_REPOSITORY`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `SHEET_DERIVED`, `TRANSACTION_ERROR`, `ROLLUP_STALE`, `AGGREGATION_FAILED`, `CONTRACT_MISSING` / `CONTRACT_INVALID` / `CONTRACT_UNSATISFIED`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`, `HOOK_INSTALL_FAILED`, `UNKNOWN_ERROR`.
+
+Exit codes are stable: `0` for success (incl. no-ops), `2` for `VALIDATION_ERROR`, `1` for every other code. See [`specs/api/axi.md`](../specs/api/axi.md#errors) for what raises each code.
 
 ## See also
 
