@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [default-branch-binding]
 specs:
   - specs/behaviors/default-branch.md
