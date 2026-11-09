@@ -454,6 +454,14 @@ export declare function rollupQuery(gitDir: string, treeRef: string, name: strin
  */
 export declare function rollupGet(gitDir: string, treeRef: string, name: string, configPath: string, openRoot: string, prefix: string, path: string, stale?: string | undefined | null): JsValue | null
 /**
+ * Ad-hoc aggregation over a rollup sheet's **read-through** records (spec:
+ * `behaviors/rollups.md` "Reads"): the rows `rollupQuery` would yield for
+ * `filter`, folded by `aggregates` like `recordAggregate` (same forms,
+ * `paths`, and errors). A rollup sheet's stored bytes may be stale, so the
+ * stateless `recordAggregate` over its root is not used.
+ */
+export declare function rollupAggregate(gitDir: string, treeRef: string, name: string, configPath: string, openRoot: string, prefix: string, filter: object, aggregates: unknown, paths?: Array<string> | undefined | null): JsValue
+/**
  * The non-fresh partitions of a rollup sheet at `treeRef` — `git sheet
  * rollup --check`. Writes nothing.
  */
