@@ -140,6 +140,29 @@ describe('resolution', () => {
     expect((await openRepo({ gitDir: fixture.gitDir })).branch).toBe('data');
   });
 
+  it('openRepo({ branch: null }) binds HEAD’s branch, ignoring GITSHEETS_BRANCH and gitsheets.branch (global too)', async () => {
+    const fixture = await dataBranchRepo();
+    const savedGlobal = process.env['GIT_CONFIG_GLOBAL'];
+    const globalFile = join(fixture.path, '..', `${fixture.path.split('/').pop()}-global.gitconfig`);
+    await fixture.git('config', '--file', globalFile, 'gitsheets.branch', 'data');
+    process.env['GIT_CONFIG_GLOBAL'] = globalFile;
+    try {
+      expect((await openRepo({ gitDir: fixture.gitDir })).branch).toBe('data');
+      expect((await openRepo({ gitDir: fixture.gitDir, branch: null })).branch).toBe('main');
+
+      process.env['GITSHEETS_BRANCH'] = 'data';
+      expect((await openRepo({ gitDir: fixture.gitDir, branch: null })).branch).toBe('main');
+
+      // A detached HEAD stays HEAD itself.
+      await fixture.git('checkout', '-q', '--detach');
+      expect((await openRepo({ gitDir: fixture.gitDir, branch: null })).branch).toBeNull();
+    } finally {
+      if (savedGlobal === undefined) delete process.env['GIT_CONFIG_GLOBAL'];
+      else process.env['GIT_CONFIG_GLOBAL'] = savedGlobal;
+      await rm(globalFile, { force: true });
+    }
+  });
+
   it('a binding overrides a detached HEAD', async () => {
     const fixture = await dataBranchRepo();
     await fixture.git('checkout', '-q', '--detach');
