@@ -20,6 +20,16 @@ import {
 } from './push-daemon.js';
 import { Sheet } from './sheet.js';
 import {
+  advanceDetachedHead,
+  gitlinkCommit,
+  locateSubmoduleGitDir,
+  resolveSubmodulePath,
+  stageGitlink,
+  submoduleNameForPath,
+  superprojectWorkTree,
+  type SuperprojectBinding,
+} from './submodule.js';
+import {
   Mutex,
   Transaction,
   resolveAuthor,
@@ -59,6 +69,31 @@ export interface OpenRepoOptions {
    * unborn branch is a fresh-repo start. See specs/behaviors/default-branch.md.
    */
   readonly branch?: string;
+  /**
+   * **Submodule mode**: open the submodule at this path (relative to the
+   * superproject root, as in `.gitmodules`) instead of the superproject.
+   * Its `HEAD` is the superproject's managed pointer: the default branch is
+   * `HEAD`'s branch, or `HEAD` itself when detached (a commit then advances
+   * `HEAD` directly). `branch` then names a branch *of the submodule*.
+   * Default: `GITSHEETS_SUBMODULE`, else the superproject's
+   * `gitsheets.submodule` git config, else none. A submodule with no git dir
+   * is `ConfigError(config_missing)` naming `git sheet submodule init <path>`.
+   * See specs/behaviors/default-branch.md "Submodule mode".
+   */
+  readonly submodule?: string;
+  /**
+   * Submodule mode: bind read-only to the commit the superproject's
+   * commit-ish `at` gitlinks for the submodule — every sheet ref-pinned
+   * there, every ref-moving operation `TransactionError(transaction_required)`.
+   * `RefError(ref_not_found)` when `at` has no gitlink at the path.
+   */
+  readonly at?: string;
+  /**
+   * Submodule mode: after each commit that moves the pointer, also update
+   * the superproject's index entry for the gitlink (`160000 <commit>`).
+   * Never commits in the superproject. Default false.
+   */
+  readonly stagePointer?: boolean;
 }
 
 export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
@@ -236,10 +271,25 @@ export class Repository {
    * binding existed. See specs/behaviors/default-branch.md "Resolution".
    */
   readonly #branch: string | null;
+  /** Submodule mode: the superproject this repository was opened through; `null` otherwise. */
+  readonly #superproject: SuperprojectBinding | null;
+  /** Submodule mode: stage the moved gitlink in the superproject's index after each commit. */
+  readonly #stagePointer: boolean;
+  /** `openRepo({ submodule, at })`: the gitlinked commit every sheet is pinned at (read-only). */
+  readonly #pinnedAt: string | null;
 
-  constructor(opts: { gitDir: string; branch?: string | null }) {
+  constructor(opts: {
+    gitDir: string;
+    branch?: string | null;
+    superproject?: SuperprojectBinding | null;
+    stagePointer?: boolean;
+    pinnedAt?: string | null;
+  }) {
     this.#gitDir = opts.gitDir;
     this.#branch = opts.branch ?? null;
+    this.#superproject = opts.superproject ?? null;
+    this.#stagePointer = opts.stagePointer ?? false;
+    this.#pinnedAt = opts.pinnedAt ?? null;
   }
 
   /** Discover a `.git` upward from `cwd` and open it. */
@@ -250,8 +300,30 @@ export class Repository {
   /** Open a specific git directory (or discover one from the cwd). */
   static async open(opts: OpenRepoOptions): Promise<Repository> {
     const gitDir = await resolveGitDir(opts.gitDir);
+    const submodulePath = await resolveSubmodulePath(gitDir, opts.submodule);
+    if (submodulePath === null) {
+      if (opts.at !== undefined) {
+        throw new ConfigError('config_invalid', 'openRepo({ at }) pins a data submodule — pass submodule (or set GITSHEETS_SUBMODULE / gitsheets.submodule)');
+      }
+      const branch = await resolveDefaultBranch(gitDir, opts.branch);
+      return new Repository({ gitDir, branch });
+    }
+    return Repository.#openSubmodule(gitDir, submodulePath, opts);
+  }
+
+  /**
+   * Submodule mode: open the submodule at `path` of the superproject at
+   * `superGitDir`, with the branch tiers resolved inside the submodule.
+   * See specs/behaviors/default-branch.md "Submodule mode".
+   */
+  static async #openSubmodule(superGitDir: string, path: string, opts: OpenRepoOptions): Promise<Repository> {
+    const workTree = await superprojectWorkTree(superGitDir, opts.workTree);
+    const name = await submoduleNameForPath(superGitDir, workTree, path);
+    const superproject: SuperprojectBinding = { path, name, gitDir: superGitDir, workTree };
+    const gitDir = await locateSubmoduleGitDir(superproject);
     const branch = await resolveDefaultBranch(gitDir, opts.branch);
-    return new Repository({ gitDir, branch });
+    const pinnedAt = opts.at !== undefined ? await gitlinkCommit(superGitDir, opts.at, path, gitDir) : null;
+    return new Repository({ gitDir, branch, superproject, stagePointer: opts.stagePointer ?? false, pinnedAt });
   }
 
   get gitDir(): string {
@@ -266,6 +338,14 @@ export class Repository {
    */
   get branch(): string | null {
     return this.#branch;
+  }
+
+  /**
+   * Submodule mode: the submodule's path in the superproject (`'data'`), or
+   * `null` in branch mode. See specs/behaviors/default-branch.md.
+   */
+  get submodule(): string | null {
+    return this.#superproject?.path ?? null;
   }
 
   /** @internal — used by Sheet to enforce strict mode. Library cross-class signal, not a consumer API. */
@@ -422,7 +502,8 @@ export class Repository {
     opts: OpenSheetOptions<T> = {},
   ): Promise<Sheet<T>> {
     const root = opts.root ?? '.';
-    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
+    const pin = opts.ref ?? this.#pinnedAt ?? undefined;
+    const readRef = pin !== undefined ? await this.resolveTreeForRef(pin) : await this.#resolveReadTree();
     const configPath = joinTreePath(root, '.gitsheets', `${name}.toml`);
     const sheetOpts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
@@ -437,8 +518,8 @@ export class Repository {
     if (opts.prefix !== undefined) {
       Object.assign(sheetOpts, { prefix: opts.prefix });
     }
-    if (opts.ref !== undefined) {
-      Object.assign(sheetOpts, { pinnedRef: opts.ref });
+    if (pin !== undefined) {
+      Object.assign(sheetOpts, { pinnedRef: pin });
     }
     const sheet = new Sheet<T>(sheetOpts);
     // Eagerly validate config exists by reading once.
@@ -455,7 +536,8 @@ export class Repository {
   /** Discover every sheet declared in `<root>/.gitsheets/*.toml`. */
   async openSheets(opts: OpenSheetsOptions = {}): Promise<Record<string, Sheet>> {
     const root = opts.root ?? '.';
-    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
+    const pin = opts.ref ?? this.#pinnedAt ?? undefined;
+    const readRef = pin !== undefined ? await this.resolveTreeForRef(pin) : await this.#resolveReadTree();
     let names: string[];
     try {
       names = callCore(() => addon.coreDiscoverSheets(this.#gitDir, readRef, root));
@@ -475,8 +557,8 @@ export class Repository {
       if (opts.prefix !== undefined) {
         Object.assign(sheetOpts, { prefix: opts.prefix });
       }
-      if (opts.ref !== undefined) {
-        Object.assign(sheetOpts, { pinnedRef: opts.ref });
+      if (pin !== undefined) {
+        Object.assign(sheetOpts, { pinnedRef: pin });
       }
       out[sheetName] = new Sheet(sheetOpts);
     }
@@ -507,6 +589,7 @@ export class Repository {
       );
     }
 
+    this.#assertWritable('repo.transact');
     const normalized = Transaction.normalizeOptions(opts);
     const author = await resolveAuthor(this.#gitDir, normalized.author);
     const committer = normalized.committer ?? author;
@@ -572,7 +655,11 @@ export class Repository {
         tx.discard();
         return { value, commitHash: null, treeHash: null, ref: null, parentCommitHash: null };
       }
-      const result = await tx.finalize(value);
+      let result = await tx.finalize(value);
+      if (result.commitHash !== null && this.#superproject !== null) {
+        const defaultStarted = normalized.parent === undefined && !normalized.orphan && normalized.branch === undefined;
+        result = await this.#afterSubmoduleCommit(result, defaultStarted, normalized.message);
+      }
       if (result.commitHash !== null) {
         // Auto-refresh: rebind every live sheet to the default branch's
         // post-commit tree (read-your-writes — specs/behaviors/freshness.md),
@@ -646,6 +733,7 @@ export class Repository {
    * See specs/behaviors/push-sync.md "Sync (opt-in, explicit)".
    */
   async sync(opts: SyncOptions = {}): Promise<SyncResult> {
+    this.#assertWritable('repo.sync');
     const remote = opts.remote ?? 'origin';
     const bare = (await this.#syncBranch(opts.branch, 'repo.sync')).replace(/^refs\/heads\//, '');
     const remoteRef = `refs/remotes/${remote}/${bare}`;
@@ -712,6 +800,7 @@ export class Repository {
    * branch moved. See specs/behaviors/merge.md.
    */
   async merge(opts: MergeOptions): Promise<MergeResult> {
+    this.#assertWritable('repo.merge');
     let ours = opts.ours;
     if (ours === undefined) {
       const defaultRef = await this.#defaultBranchRef();
@@ -773,6 +862,7 @@ export class Repository {
    * object id. See specs/api/repository.md#repotagname-target-opts.
    */
   async tag(name: string, target?: string, opts: { readonly force?: boolean } = {}): Promise<string> {
+    this.#assertWritable('repo.tag');
     const resolved = target ?? (this.#branch !== null ? `refs/heads/${this.#branch}` : 'HEAD');
     return callCore(() => addon.tagSet(this.#gitDir, name, resolved, opts.force ?? false));
   }
@@ -801,6 +891,7 @@ export class Repository {
    * See specs/behaviors/push-sync.md.
    */
   async startPushDaemon(opts: PushDaemonOptions): Promise<PushDaemon> {
+    this.#assertWritable('repo.startPushDaemon');
     if (this.#pushDaemon) {
       throw new TransactionError(
         'push_daemon_running',
@@ -843,6 +934,46 @@ export class Repository {
   }
 
   // --- Private helpers ---
+
+  /**
+   * `openRepo({ submodule, at })` binds read-only: every ref-moving
+   * operation is `TransactionError(transaction_required)`, as a write on a
+   * ref-pinned sheet is. See specs/behaviors/default-branch.md
+   * "Reading a pinned snapshot".
+   */
+  #assertWritable(op: string): void {
+    if (this.#pinnedAt === null) return;
+    throw new TransactionError(
+      'transaction_required',
+      `${op}: this repository is pinned read-only to ${this.#pinnedAt} (openRepo({ at })) — open it without at to write`,
+    );
+  }
+
+  /**
+   * Submodule mode, after a commit: a default-started commit on a detached
+   * `HEAD` advances `HEAD` itself (strict CAS); then, with `stagePointer`,
+   * a commit that moved the pointer is staged as the superproject's gitlink.
+   * See specs/behaviors/default-branch.md "The pointer" / "After a commit".
+   */
+  async #afterSubmoduleCommit<T>(
+    result: TransactionResult<T>,
+    defaultStarted: boolean,
+    message: string,
+  ): Promise<TransactionResult<T>> {
+    const superproject = this.#superproject!;
+    const commit = result.commitHash!;
+    let moved = false;
+    if (this.#branch === null && defaultStarted && result.ref === null && result.parentCommitHash !== null) {
+      const subject = message.split('\n', 1)[0] ?? '';
+      await advanceDetachedHead(this.#gitDir, commit, result.parentCommitHash, `gitsheets: ${subject}`);
+      result = { ...result, ref: 'HEAD' };
+      moved = true;
+    } else if (result.ref !== null && result.ref === (await this.#headBranchRef())) {
+      moved = true;
+    }
+    if (moved && this.#stagePointer) await stageGitlink(superproject, commit);
+    return result;
+  }
 
   #makeTxSheet<T extends RecordLike = RecordLike>(
     tx: Transaction,
