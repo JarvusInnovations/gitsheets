@@ -38,12 +38,13 @@ for await (const user of sheet.query({ accountLevel: 'staff' })) {
 }
 ```
 
-- `filter` is a plain object. Each key on the filter is matched against the record's field by equality. Function-valued filter entries are called as `(recordValue, record) => boolean`. Nested objects descend recursively — except a **range object**, below.
+- `filter` is a plain object. Each key on the filter is matched against the record's field by equality. Equality against a **local-date** field (a TOML `2026-03-01`, such as a rollup's bucket key field) also accepts that day as an ISO date string (`'2026-03-01'`) or as a datetime at midnight UTC (a JS `Date` of that day), the same coercion ranges apply. Function-valued filter entries are called as `(recordValue, record) => boolean`. Nested objects descend recursively — except a **range object**, below.
 - **Range filter entries.** A filter value that is a plain object whose keys are all drawn from `$gt`, `$gte`, `$lt`, `$lte` (at least one) is a range predicate on that field, not a nested-table filter. Every bound present must hold. Comparison is by kind: integer and float bounds compare numerically against integer or float fields (`30` and `30.0` are the same bound); string bounds compare lexicographically against string fields; datetime bounds compare chronologically against datetime fields (offset datetimes as instants, offset-less values at face value in UTC, a local-date as its midnight). A **string bound in an accepted ISO 8601 shape** (date-only, datetime with or without offset — the same shapes [behaviors/path-templates.md](../behaviors/path-templates.md#rendering-semantics) accepts for buckets) compares chronologically against a datetime field, so `{ publishedAt: { $gte: '2026-01-01' } }` works without constructing a `Date`. Any other kind pairing (an absent field, a string bound against a number, a table or array field) does not match. A `$`-prefixed key outside this set, or a range object that mixes range keys with other keys, is `TypeError` at query start.
 - If the filter includes fields from the path template, gitsheets prunes the tree traversal to only matching subtrees (see [behaviors/path-templates.md](../behaviors/path-templates.md)). A range entry on a **date-bucket** field prunes to the bounded span of partitions ([behaviors/path-templates.md § Range-pruned traversal](../behaviors/path-templates.md#range-pruned-traversal)); a range on any other field applies record-level only.
 - Order of results: filesystem order within each tree level. Not guaranteed stable across implementation changes — sort in consumer code if order matters.
 - `opts.signal?: AbortSignal` — cancel a streaming query. The query checks the signal before iteration starts and again before each yield. If aborted, the next iteration throws `signal.reason` (a `DOMException` with name `'AbortError'` by default, or whatever value the consumer passed to `controller.abort(reason)`). See [api/conventions.md](conventions.md#cancellation).
 - `opts.withBody?: boolean` — for content-typed (markdown/mdx) sheets, whether to load the body field. Default `true`. Setting `false` reads only the frontmatter; the body field is `undefined` on yielded records. No effect on TOML sheets. Filters that reference the body field throw `TypeError` under `withBody: false`. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
+- `opts.stale?: 'recompute' | 'serve'` — [rollup sheets](#rollup-sheets) only (ignored elsewhere): `'recompute'` (default) recomputes a partition whose stored record's stamp no longer matches; `'serve'` yields the stored records exactly as committed. Also honored by `queryFirst`, `queryAll`, and `get`. See [behaviors/rollups.md § Reads](../behaviors/rollups.md#reads-always-correct-stamps-as-the-cache).
 
 ### `sheet.queryFirst(filter?, opts?)`
 
@@ -56,6 +57,10 @@ Returns `Promise<T[]>`. All matches collected into an array. Convenience over `f
 ### `sheet.count(filter?)`
 
 Returns `Promise<number>`, the number of matching records. With no filter (outside a transaction) it counts candidate paths from the tree walk without parsing any record, so it stays cheap on large sheets. A non-empty filter (value or function predicate) or a tx-bound sheet falls back to a body-less scan that honors the filter. Throws `TypeError` if passed a function.
+
+### `sheet.aggregate(filter?, aggregates, opts?)`
+
+Returns `Promise<Record<string, unknown>>`: one value per named aggregate, computed over the records matching `filter` (pruned like `query`). `aggregates` maps names to specs in the grammar of [behaviors/aggregation.md § Aggregate forms](../behaviors/aggregation.md#aggregate-forms) — `{ count: true }`, `{ sum: 'f' }`, `{ min: 'f' }`, `{ max: 'f' }`, `{ avg: 'f' }`, `{ distinct: 'f' }`, `{ reduce, initial, finalize }`, each with optional `where` (a filter) and `groupBy` (a field; the value becomes a table keyed by group). Evaluation follows [§ Canonical computation](../behaviors/aggregation.md#canonical-computation): canonical path order, body-less, empty results omitted except `count` (`0`) and `sum` (`0`). `filter` takes everything `query` does, function predicates included (they run host-side; the core folds over exactly the records they admit). Works on a tx-bound sheet against the transaction's private tree. Honors `opts.signal`. Throws `TypeError` for a malformed spec or a reference to a content-typed sheet's body field, `AggregationError` (`aggregation_failed`) for a data-dependent failure.
 
 ### `sheet.get(path, opts?)`
 
@@ -173,6 +178,14 @@ Pairs naturally with `Transaction#finalize`'s no-op detection (see [transaction.
 
 Returns a deep clone of the `Sheet` instance with a cloned data tree. Used to stage a tentative state for diffing / proposing without mutating the original. A clone is a Repository-issued sheet like any other: it participates in the freshness model (auto-refresh on commit, `refresh()`), and is **not** a pinned snapshot — see [behaviors/freshness.md](../behaviors/freshness.md#pinned--historical-reads).
 
+## Rollup sheets
+
+A sheet declared with `[gitsheet.rollup]` ([behaviors/rollups.md](../behaviors/rollups.md)) is **derived**: its records are per-partition aggregates over a source sheet, regenerated by gitsheets at every commit it produces and stamped with the source partition's tree id. Every read method above works unchanged — `query` prunes by the key fields (including bucket ranges) exactly as on the source — and always returns correct values: a partition whose stamp (`sourceTree` + `configTree`) no longer matches is recomputed transiently on read. `sheet.aggregate` on a rollup sheet folds over those read-through records, not the stored bytes. The write methods (`upsert`, `delete`, `patch`, `clear`, `setAttachment(s)`, `deleteAttachment(s)`) throw `TransactionError` (`sheet_derived`).
+
+### `sheet.materialize()`
+
+Rollup sheets only. Recomputes every stale or missing rollup record and deletes orphaned ones in one transaction (into the current one on a transaction-bound sheet). Returns `Promise<{ recomputed: string[], deleted: string[] }>` of partition paths; no commit when nothing is stale. `TypeError` on a non-rollup sheet. See [behaviors/rollups.md § Materializing explicitly](../behaviors/rollups.md#materializing-explicitly).
+
 ## Indexing
 
 ### `sheet.defineIndex(name, opts?, keyFn)`
@@ -287,3 +300,5 @@ See [api/errors.md](errors.md). Common: `ValidationError`, `NotFoundError`, `Pat
 - [behaviors/indexing.md](../behaviors/indexing.md)
 - [behaviors/patch-semantics.md](../behaviors/patch-semantics.md)
 - [behaviors/attachments.md](../behaviors/attachments.md)
+- [behaviors/aggregation.md](../behaviors/aggregation.md)
+- [behaviors/rollups.md](../behaviors/rollups.md)

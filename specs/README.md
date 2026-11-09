@@ -46,8 +46,11 @@ specs/
     ├── normalization.md
     ├── transactions.md
     ├── freshness.md
+    ├── default-branch.md
     ├── indexing.md
     ├── push-sync.md
+    ├── aggregation.md
+    ├── rollups.md
     ├── attachments.md
     ├── content-types.md
     └── patch-semantics.md

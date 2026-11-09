@@ -24,6 +24,7 @@ const {
   RefError,
   PathTemplateError,
   NotFoundError,
+  AggregationError,
 } = binding;
 
 // Capture the thrown error from a code.
@@ -55,6 +56,17 @@ test('index_unique_conflict maps to IndexError with conflictingPaths', () => {
   assert.equal(err.code, 'index_unique_conflict');
   assert.equal(err.status, 409);
   assert.ok(Array.isArray(err.conflictingPaths) && err.conflictingPaths.length > 0);
+});
+
+test('aggregation_failed maps to AggregationError with sheet + aggregate', () => {
+  const err = thrownFor('aggregation_failed');
+  assert.ok(err instanceof AggregationError);
+  assert.ok(err instanceof GitsheetsError);
+  assert.equal(err.code, 'aggregation_failed');
+  assert.equal(err.status, 422);
+  assert.equal(err.sheet, 'transactions');
+  assert.equal(err.aggregate, 'total');
+  assert.equal(err.partition, undefined);
 });
 
 test('each code maps to its typed class, code, and status', () => {

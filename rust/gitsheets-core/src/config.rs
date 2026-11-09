@@ -114,6 +114,33 @@ pub struct SheetConfig {
     /// the sheet declares no contracts (the default, and the only case for a
     /// sheet written before contracts existed).
     pub implements: Vec<String>,
+    /// The `[gitsheet.rollup]` table, when this is a rollup sheet
+    /// (`specs/behaviors/rollups.md`). Resolved against its source at
+    /// sheet-open ([`crate::rollup`]).
+    pub rollup: Option<RollupConfig>,
+}
+
+/// A parsed `[gitsheet.rollup]` table: the source sheet and the aggregates
+/// (already parsed — a malformed aggregate is `config_invalid` here).
+#[derive(Clone, Debug)]
+pub struct RollupConfig {
+    /// `from` — the source sheet's name, in the same `.gitsheets/` directory.
+    pub from: String,
+    /// `[gitsheet.rollup.aggregates]`, in declaration order.
+    pub aggregates: crate::aggregate::Aggregates,
+}
+
+impl PartialEq for RollupConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.from == other.from
+            && self.aggregates.specs.len() == other.aggregates.specs.len()
+            && self
+                .aggregates
+                .specs
+                .iter()
+                .zip(&other.aggregates.specs)
+                .all(|(a, b)| a.name == b.name && a.form == b.form && a.group_by == b.group_by)
+    }
 }
 
 fn as_table(v: &Value) -> Option<&IndexMap<String, Value>> {
@@ -256,6 +283,11 @@ pub fn parse_config(raw: &Value, source: &str) -> Result<SheetConfig> {
         });
     }
 
+    let rollup = match gitsheet.get("rollup") {
+        None => None,
+        Some(raw) => Some(parse_rollup(raw, source)?),
+    };
+
     Ok(SheetConfig {
         root,
         path,
@@ -263,7 +295,37 @@ pub fn parse_config(raw: &Value, source: &str) -> Result<SheetConfig> {
         schema,
         format,
         implements,
+        rollup,
     })
+}
+
+fn parse_rollup(raw: &Value, source: &str) -> Result<RollupConfig> {
+    let invalid = |m: String| Error::ConfigInvalid {
+        message: format!("{source}: [gitsheet.rollup] {m}"),
+    };
+    let table = as_table(raw).ok_or_else(|| invalid("must be a table".into()))?;
+    for key in table.keys() {
+        if key != "from" && key != "aggregates" {
+            return Err(invalid(format!(
+                "has unknown key {key:?} — expected `from` and `aggregates`"
+            )));
+        }
+    }
+    let from = table
+        .get("from")
+        .and_then(as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| invalid("needs `from`, the source sheet's name (a non-empty string)".into()))?
+        .to_string();
+    let aggs_raw = table
+        .get("aggregates")
+        .ok_or_else(|| invalid("needs an `[gitsheet.rollup.aggregates]` table".into()))?;
+    let aggregates = crate::aggregate::Aggregates::from_value(aggs_raw)
+        .map_err(|e| invalid(format!("aggregates: {}", e.message())))?;
+    if aggregates.specs.is_empty() {
+        return Err(invalid("aggregates must declare at least one aggregate".into()));
+    }
+    Ok(RollupConfig { from, aggregates })
 }
 
 fn parse_format(raw: Option<&Value>, source: &str) -> Result<FormatConfig> {

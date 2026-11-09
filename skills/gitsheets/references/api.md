@@ -13,6 +13,8 @@ ESM-only. `import { … } from 'gitsheets'`. Targets Node ≥ 20 / Bun ≥ 1, `s
   - [Attachments](#attachments) — get / set / delete / iterator
   - [Indexing](#indexing) — defineIndex / findByIndex
   - [Diff](#diff) — diffFrom
+  - [Aggregation](#aggregation) — aggregate
+  - [Rollup sheets](#rollup-sheets) — stored per-partition aggregates, materialize
 - [Transaction](#transaction) — the handler arg of `repo.transact`
 - [openStore + Store](#openstore--store) — typed multi-sheet wrapper
 - [PushDaemon](#pushdaemon) — async push to remote
@@ -34,6 +36,7 @@ import {
   // error classes
   GitsheetsError, ConfigError, ValidationError, TransactionError,
   IndexError, RefError, PathTemplateError, NotFoundError,
+  AggregationError,
 
   // utilities
   mergePatch, validateRecord,
@@ -48,6 +51,7 @@ import type {
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions,
   IndexKeyFn, DefineIndexOptions,
   QueryFilter, RangeFilter, QueryOptions, DiffStatus, DiffOptions, DiffChange,
+  AggregateSpec, AggregatesSpec, AggregateModifiers, AggregateOptions,
   AttachmentBlobHandle, AttachmentEntry,
   Format, FormatConfig,
   OpenStoreOptions, Store, StoreTx, StoreTransactFn, ValidatorMap, InferRecord,
@@ -65,7 +69,13 @@ Don't deep-import (`gitsheets/lib/...`). The package-root surface is the only st
 const repo = await openRepo();                          // discover from cwd
 const repo = await openRepo({ gitDir: '/.git' });       // explicit
 const repo = await openRepo({ gitDir, workTree });      // working-tree hint
+const repo = await openRepo({ branch: 'data' });        // branch mode: records on a never-checked-out branch
+const repo = await openRepo({ submodule: 'data' });     // submodule mode: records in the `data` submodule
+const repo = await openRepo({ submodule: 'data', stagePointer: true }); // also stage the moved gitlink
+const repo = await openRepo({ submodule: 'data', at: 'v1.2.0' });       // read-only: the data v1.2.0 pinned
 ```
+
+Binding resolves option → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` → `gitsheets.branch` / `gitsheets.submodule` git config → `HEAD`'s branch; `repo.branch` / `repo.submodule` report it. In submodule mode the submodule's `HEAD` is the superproject's pointer: a write advances it (its branch, or a detached `HEAD` directly), the superproject shows `modified: data (new commits)`, and the user commits the pointer. A submodule with no git dir is `ConfigError(config_missing)` naming `git sheet submodule init <path>`; `at` with no pointer is `RefError(ref_not_found)`, and writes on an `at`-bound repo are `TransactionError(transaction_required)`. A `stagePointer` index update that fails after the commit landed is `TransactionError(pointer_stage_failed)` with `err.commitHash` — stage with `git add <path>`, never retry the write.
 
 Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized repositories (no commits yet) are supported.
 
@@ -255,6 +265,60 @@ Scope: matches the sheet's storage format (`.toml` for TOML sheets, `.md` for ma
 
 Throws `RefError(ref_not_found)` if `srcCommitHash` doesn't resolve.
 
+### Aggregation
+
+`sheet.aggregate(filter, aggregates, opts?)` → `Promise<Record<string, unknown>>`. Reach for it instead of `queryAll` + a JS reduce: the fold runs in the core (identical across Node and Python), reads body-less, and folds in canonical path order.
+
+```typescript
+const r = await sheet.aggregate(
+  { postedAt: { $gte: '2026-01-01' } },               // any query filter (functions allowed); undefined or {} = all
+  {
+    n: { count: true },
+    total: { sum: 'amountCents' },                     // integer when every value is; else the float fold
+    mean: { avg: 'amountCents' },                      // float
+    range: { min: 'postedAt' },                        // number / string / datetime, one kind per field
+    teams: { distinct: 'team' },                       // sorted unique scalars
+    byStatus: { count: true, groupBy: 'status' },      // → { posted: 1390, pending: 12 }
+    refunds: { sum: 'amountCents', where: { kind: 'refund' } },
+    ids: { reduce: 'acc.push(record.id); return acc;', initial: [], finalize: 'return acc.length;' },
+  },
+);
+```
+
+- `where` takes values and ranges only (no functions). `groupBy` keys by the field's string form (string / integer / boolean values only); a grouped result is always an object.
+- Nothing to fold → the aggregate is omitted, except `count` / `sum` (`0`).
+- `reduce` / `finalize` are JS **bodies** (use `return`), run in the core's embedded engine — pure by construction: `Math.random()`, `Date.now()`, and argument-less `new Date()` / `Date()` throw → `AggregationError` (`new Date(ms)`, `Date.UTC`, `Date.parse` work; local-time methods read UTC); runaway loops hit runtime limits → `AggregationError`. `acc` starts at `initial` (required). Integral numbers come back as integers (`1.0` → `1`).
+- Throws `TypeError` for a malformed spec or a body-field reference (markdown sheets); `AggregationError` (`aggregation_failed`, `.sheet`, `.aggregate`) for mixed kinds under `min`/`max`/`distinct`, a throwing `reduce`, or a non-TOML result.
+
+### Rollup sheets
+
+A sheet config with `[gitsheet.rollup]` is a **rollup sheet**: one record per partition of a source sheet, regenerated by every gitsheets commit that touches the partition (same commit), stamped `sourceTree = <partition tree id>` + `configTree = <.gitsheets/ tree id>` (fresh only while both match).
+
+```toml
+[gitsheet]
+root = 'transactions-monthly'
+path = '${{ postedAt: YYYY/MM }}'        # proper prefix of the source path; 'all' = whole sheet
+
+[gitsheet.rollup]
+from = 'transactions'
+
+[gitsheet.rollup.aggregates]
+count = { count = true }
+total = { sum = 'amountCents' }
+```
+
+```typescript
+const monthly = await repo.openSheet('transactions-monthly');
+await monthly.queryAll({ postedAt: { $gte: '2026-01-01' } });  // read-through: stale partitions recomputed, nothing written
+await monthly.get('2026/03', { stale: 'serve' });              // the stored record as committed
+await monthly.materialize();                                    // → { recomputed, deleted }; one commit, none when fresh
+```
+
+- Records carry the key fields (a bucket → the period's first day as a TOML local date; equality accepts `'2026-03-01'` or a midnight-UTC `Date`), `sourceTree`, `configTree`, and one field per aggregate. `aggregate()` on a rollup sheet folds the read-through. Prefixed sources → per-prefix rollups at `<root>/<prefix>/…`.
+- Writes (`upsert`/`delete`/`patch`/`clear`/attachments) → `TransactionError('sheet_derived')`. Bad config (not a prefix, expression component, overlapping roots, a chain, …) → `ConfigError('config_invalid')` at open.
+- An aggregate failure aborts the commit: `AggregationError` with `.sheet`, `.aggregate`, `.partition`.
+- `repo.merge` and `repo.sync` regenerate them; a plain `git merge` leaves stale stamps → `git sheet rollup [--check]`.
+
 ## Transaction
 
 The handler argument of `repo.transact`. Don't construct directly.
@@ -380,6 +444,7 @@ Subclasses + codes:
 | `RefError` | `ref_not_found`, `not_an_ancestor` |
 | `PathTemplateError` | `path_render_failed`, `path_invalid_chars` |
 | `NotFoundError` | `record_not_found` |
+| `AggregationError` | `aggregation_failed` (carries `sheet`, `aggregate`, `partition?`) |
 
 Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 

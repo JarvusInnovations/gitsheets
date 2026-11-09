@@ -19,6 +19,7 @@ import {
   sheetConfigCheck,
 } from './core.js';
 import type { ConformanceReport, OpenSheetContractOptions } from './contracts.js';
+import { gitEnv } from './git-exec.js';
 import {
   ConfigError,
   ContractError,
@@ -74,6 +75,30 @@ export interface SheetConfig {
   readonly schema: JSONSchema | null;
   /** Storage-format config from `[gitsheet.format]` (default: `type = 'toml'`). */
   readonly format: FormatConfig;
+  /**
+   * `[gitsheet.rollup]`, when this is a rollup sheet: the source sheet it
+   * aggregates. The core resolves and validates the rest at open.
+   * @see specs/behaviors/rollups.md
+   */
+  readonly rollup?: RollupConfig;
+}
+
+/** A rollup sheet's `[gitsheet.rollup]` (specs/behaviors/rollups.md). */
+export interface RollupConfig {
+  /** The source sheet's name. */
+  readonly from: string;
+}
+
+/** What {@link Sheet.materialize} recomputed and deleted, as partition paths. */
+export interface MaterializeResult {
+  readonly recomputed: string[];
+  readonly deleted: string[];
+}
+
+/** A rollup partition that is not fresh (`git sheet rollup --check`). */
+export interface RollupStatusEntry {
+  readonly path: string;
+  readonly status: 'stale' | 'missing' | 'orphaned';
 }
 
 // --- Result types ---
@@ -190,6 +215,13 @@ function queryMatches(filter: RecordLike, record: RecordLike): boolean {
       }
       if (rval === null || typeof rval !== 'object') return false;
       if (!queryMatches(qval as RecordLike, rval as RecordLike)) return false;
+      continue;
+    }
+    if (typeof qval === 'string' && rval instanceof Date && /^\d{4}-\d{2}-\d{2}$/.test(qval)) {
+      // An ISO date string against a local-date field (which the binding
+      // surfaces as a midnight-UTC Date): the core already matched it by its
+      // day (specs/api/sheet.md § query); agree here.
+      if (rval.getTime() !== Date.parse(`${qval}T00:00:00Z`)) return false;
       continue;
     }
     if (rval !== qval) return false;
@@ -339,6 +371,7 @@ async function lsTreeBlobs(
     // -z NUL-terminates entries; each line: "<mode> <type> <hash>\t<name>".
     const res = await exec('git', ['ls-tree', '-z', `${treeRef}:${dirPath}`], {
       cwd: gitDir,
+      env: gitEnv(gitDir),
       maxBuffer: 64 * 1024 * 1024,
     });
     stdout = res.stdout;
@@ -480,6 +513,10 @@ function parseConfigEntry(
   coreCheck();
 
   const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };
+  const rollupRaw = (gitsheet as RecordLike)['rollup'];
+  if (rollupRaw !== null && typeof rollupRaw === 'object' && typeof (rollupRaw as RecordLike)['from'] === 'string') {
+    Object.assign(config, { rollup: { from: (rollupRaw as RecordLike)['from'] as string } });
+  }
   CONFIG_CACHE.set(hash, config);
   return config;
 }
@@ -583,6 +620,75 @@ export interface QueryOptions {
    * @see specs/behaviors/content-types.md#lazy-body-loading
    */
   readonly withBody?: boolean;
+  /**
+   * Rollup sheets only (no effect elsewhere): how a stored rollup record
+   * whose `sourceTree` stamp no longer matches its partition is read.
+   * `'recompute'` (default) recomputes it transiently from the source;
+   * `'serve'` yields the stored records exactly as committed.
+   *
+   * @see specs/behaviors/rollups.md#reads-always-correct-stamps-as-the-cache
+   */
+  readonly stale?: 'recompute' | 'serve';
+}
+
+// --- Aggregation (specs/behaviors/aggregation.md) ---
+
+/** Modifiers allowed on every aggregate form. */
+export interface AggregateModifiers {
+  /**
+   * An equality / range filter in the `query` grammar (values and ranges; no
+   * functions), applied before aggregating.
+   */
+  readonly where?: Record<string, unknown>;
+  /** Group by this field's string form; the result becomes a table keyed by group. */
+  readonly groupBy?: string;
+}
+
+/**
+ * One aggregate in the grammar of specs/behaviors/aggregation.md § "Aggregate
+ * forms": a declarative form (`count` / `sum` / `avg` / `min` / `max` /
+ * `distinct`) or the `reduce` escape hatch, whose snippets run in the core's
+ * embedded engine (never host-side), so every binding gets the same answer.
+ */
+export type AggregateSpec = AggregateModifiers &
+  (
+    | { readonly count: true }
+    | { readonly sum: string }
+    | { readonly avg: string }
+    | { readonly min: string }
+    | { readonly max: string }
+    | { readonly distinct: string }
+    | {
+        /** Body of `(acc, record) => { … }`, called per record in canonical path order. */
+        readonly reduce: string;
+        /** The starting accumulator — any TOML value. */
+        readonly initial: unknown;
+        /** Optional body of `(acc) => { … }`, run once at the end. */
+        readonly finalize?: string;
+      }
+  );
+
+/** An aggregates table: result name → spec. */
+export type AggregatesSpec = Readonly<Record<string, AggregateSpec>>;
+
+/** Options for `Sheet.aggregate`. */
+export interface AggregateOptions {
+  /**
+   * Optional AbortSignal. Checked before the call starts and before the
+   * result is returned; an abort throws `signal.reason`.
+   */
+  readonly signal?: AbortSignal;
+}
+
+/** Does a filter carry a function predicate anywhere (nested included)? */
+function filterHasFunctions(filter: RecordLike): boolean {
+  for (const v of Object.values(filter)) {
+    if (typeof v === 'function') return true;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+      if (filterHasFunctions(v as RecordLike)) return true;
+    }
+  }
+  return false;
 }
 
 // --- Attachments iterator (#140) ---
@@ -868,8 +974,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
   /**
-   * Non-transactional read snapshot — mutable: rebound to the current HEAD
-   * tree by the owning Repository's refresh/auto-refresh, or by
+   * Non-transactional read snapshot — mutable: rebound to the default
+   * branch's current tree by the owning Repository's refresh/auto-refresh, or by
    * {@link refresh}. See specs/behaviors/freshness.md.
    */
   #readRef: string | undefined;
@@ -923,7 +1029,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
   /** The tree ref config/reads resolve against (tx parent, or the open snapshot). */
   #configTreeRef(): string {
     if (this.#transaction !== undefined) {
-      return this.#transaction.parentCommitHash ?? 'HEAD';
+      // No parent commit: an orphan or an unborn branch — the tx starts empty.
+      return this.#transaction.parentCommitHash ?? EMPTY_TREE_HASH;
     }
     return this.#readRef ?? EMPTY_TREE_HASH;
   }
@@ -1064,7 +1171,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
-   * Rebind this sheet's read snapshot to the repository's current HEAD tree.
+   * Rebind this sheet's read snapshot to the current tree of the
+   * repository's default branch (specs/behaviors/default-branch.md).
    * Only this sheet — the "did my row land?" primitive; use `repo.refresh()`
    * or `store.refresh()` to rebind every open sheet at once. Not needed after
    * this repository's own `repo.transact` (a successful commit
@@ -1080,7 +1188,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
     }
     // A pinned sheet re-resolves its own ref (a branch catches up with its
-    // tip; a commit/tree hash resolves to the same tree), never HEAD.
+    // tip; a commit/tree hash resolves to the same tree), never the default branch.
     const tree =
       this.#pinnedRef !== undefined
         ? await this.#repo.resolveTreeForRef(this.#pinnedRef)
@@ -1174,7 +1282,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const coreFilter = stripFilterFunctions(filter as RecordLike);
 
     let rows: Array<{ path: string; record: RecordLike }>;
-    if (this.#transaction !== undefined) {
+    if (config.rollup !== undefined) {
+      // A rollup sheet reads through its source (specs/behaviors/rollups.md
+      // "Reads"): stamped records served, stale partitions recomputed.
+      rows = this.#rollupRows(coreFilter, opts.stale);
+    } else if (this.#transaction !== undefined) {
       // Tx-bound: query the in-progress private tree through the core —
       // pruned by the path template and format-aware, exactly like the
       // committed-ref path (specs/api/transaction.md "Read isolation"). The
@@ -1246,8 +1358,14 @@ export class Sheet<T extends RecordLike = RecordLike> {
       throw new TypeError('Sheet.count() does not accept a function — pass a filter object');
     }
     // Fast path: no filter at all + not tx-bound → count candidate paths only.
-    if (Object.keys(filter as object).length === 0 && this.#transaction === undefined) {
-      const config = await this.readConfig();
+    // (A rollup sheet always reads through its source.)
+    const countConfig = await this.readConfig();
+    if (
+      Object.keys(filter as object).length === 0 &&
+      this.#transaction === undefined &&
+      countConfig.rollup === undefined
+    ) {
+      const config = countConfig;
       const format = this.#getFormat(config);
       const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
       const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
@@ -1263,6 +1381,105 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
+   * Ad-hoc aggregation (specs/behaviors/aggregation.md § "Ad-hoc
+   * aggregation"): one value per named aggregate, computed in the core over
+   * the records matching `filter` — pruned by the path template like `query`,
+   * read body-less, folded in canonical path order. Nothing is persisted.
+   *
+   * `filter` takes everything `query` does. Function predicates can't cross
+   * the FFI, so when the filter carries any, the matching record paths are
+   * collected host-side first and the core folds over its own reads of
+   * exactly those records (so the fold never sees the host's lossy number
+   * projection). Works on a tx-bound sheet against the private tree.
+   *
+   * Throws `TypeError` for a malformed spec or a body-field reference,
+   * `AggregationError` (`aggregation_failed`) for a data-dependent failure.
+   */
+  async aggregate(
+    filter: QueryFilter<T> | undefined,
+    aggregates: AggregatesSpec,
+    opts: AggregateOptions = {},
+  ): Promise<Record<string, unknown>> {
+    if (typeof filter === 'function') {
+      throw new TypeError('Sheet.aggregate() does not accept a function filter — pass a filter object');
+    }
+    if (aggregates === null || typeof aggregates !== 'object' || Array.isArray(aggregates)) {
+      throw new TypeError('Sheet.aggregate: aggregates must be an object mapping result names to specs');
+    }
+    const fullFilter = (filter ?? {}) as RecordLike;
+    assertWellFormedOperators(fullFilter);
+
+    const { signal } = opts;
+    if (signal?.aborted) throwAborted(signal);
+
+    const config = await this.readConfig();
+    const format = this.#getFormat(config);
+    const bodyField = config.format.body;
+    if (bodyField !== undefined && bodyField in fullFilter) {
+      throw new TypeError(
+        `Sheet.aggregate: filter references body field ${JSON.stringify(bodyField)} — aggregates read records body-less`,
+      );
+    }
+
+    // Host-side predicates admit records first; the core folds over exactly
+    // those paths (re-read in the core).
+    let paths: string[] | null = null;
+    if (filterHasFunctions(fullFilter)) {
+      paths = [];
+      const q = signal !== undefined ? { withBody: false, signal } : { withBody: false };
+      for await (const record of this.query(filter, q)) {
+        paths.push((record as Record<symbol, unknown>)[RECORD_PATH_KEY] as string);
+      }
+    }
+    const coreFilter = stripFilterFunctions(fullFilter);
+    if (signal?.aborted) throwAborted(signal);
+
+    let result: Record<string, unknown>;
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      result = callCore(() =>
+        this.#transaction!.coreTx.aggregate(this.#name, coreFilter, aggregates, paths),
+      ) as Record<string, unknown>;
+    } else if (config.rollup !== undefined) {
+      // A rollup sheet folds over its read-through records, not the stored
+      // (possibly stale) bytes (specs/behaviors/rollups.md "Reads").
+      result = callCore(() =>
+        addon.rollupAggregate(
+          this.#gitDir,
+          this.#readRef ?? EMPTY_TREE_HASH,
+          this.#name,
+          this.#configPath,
+          openRootFromConfigPath(this.#configPath),
+          this.#prefix,
+          coreFilter,
+          aggregates,
+          paths,
+        ),
+      ) as Record<string, unknown>;
+    } else {
+      const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
+      const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
+      result = callCore(() =>
+        addon.recordAggregate(
+          this.#gitDir,
+          treeRef,
+          this.#name,
+          base,
+          config.path,
+          coreFilter,
+          aggregates,
+          format.extension,
+          bodyField ?? null,
+          config.format.title ?? null,
+          paths,
+        ),
+      ) as Record<string, unknown>;
+    }
+    if (signal?.aborted) throwAborted(signal);
+    return result;
+  }
+
+  /**
    * Read the one record stored at `path` — the rendered path-template result
    * (no extension), the same string `query` annotates on each record — with a
    * single blob read and no tree walk. `undefined` when nothing (or a subtree
@@ -1272,11 +1489,38 @@ export class Sheet<T extends RecordLike = RecordLike> {
    *
    * @see specs/api/sheet.md#sheetgetpath-opts
    */
-  async get(path: string, opts: Pick<QueryOptions, 'withBody'> = {}): Promise<T | undefined> {
+  async get(path: string, opts: Pick<QueryOptions, 'withBody' | 'stale'> = {}): Promise<T | undefined> {
     const config = await this.readConfig();
     const withBody = opts.withBody ?? true;
     let record: RecordLike | undefined;
-    if (this.#transaction !== undefined) {
+    if (config.rollup !== undefined) {
+      // Read through the source (specs/behaviors/rollups.md "Reads").
+      const stale = opts.stale ?? 'recompute';
+      let found: RecordLike | null | undefined;
+      if (this.#transaction !== undefined) {
+        this.#ensureCoreSheetOpened();
+        found = callCore(() =>
+          this.#transaction!.coreTx.readRecord(this.#name, path, true, stale),
+        ) as RecordLike | null | undefined;
+      } else {
+        found = callCore(() =>
+          addon.rollupGet(
+            this.#gitDir,
+            this.#readRef ?? EMPTY_TREE_HASH,
+            this.#name,
+            this.#configPath,
+            openRootFromConfigPath(this.#configPath),
+            this.#prefix,
+            path,
+            stale,
+          ),
+        ) as RecordLike | null | undefined;
+      }
+      if (found === null || found === undefined) return undefined;
+      record = found;
+      (record as Record<symbol, unknown>)[RECORD_SHEET_KEY] = this.#name;
+      (record as Record<symbol, unknown>)[RECORD_PATH_KEY] = path;
+    } else if (this.#transaction !== undefined) {
       this.#ensureCoreSheetOpened();
       const found = callCore(() =>
         this.#transaction!.coreTx.readRecord(this.#name, path, withBody),
@@ -1433,6 +1677,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     try {
       const result = await exec('git', args, {
         cwd: gitDir,
+        env: gitEnv(gitDir),
         maxBuffer: 64 * 1024 * 1024,
       });
       stdout = result.stdout;
@@ -1526,6 +1771,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async clear(): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction === undefined) {
       await this.#repo.transact({ message: `${this.#name} clear` }, async (tx) => {
         await tx.sheet(this.#name, this.#txDelegateOpts()).clear();
@@ -1555,6 +1801,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async upsert(record: T, opts: UpsertOptions = {}): Promise<UpsertResult> {
+    await this.#assertWritable();
     if (this.#transaction !== undefined) {
       return this.#upsertInTx(record, opts);
     }
@@ -1597,6 +1844,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
    * Throws NotFoundError if the query matches no record.
    */
   async patch(query: QueryFilter<T>, partial: Partial<T>): Promise<UpsertResult> {
+    await this.#assertWritable();
     const existing = await this.queryFirst(query);
     if (!existing) {
       throw new NotFoundError(
@@ -1663,6 +1911,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async delete(target: T | string): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction !== undefined) {
       await this.#deleteInTx(target);
       return;
@@ -1841,6 +2090,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     attachments: Record<string, AttachmentContent>,
   ): Promise<void> {
     if (this.#transaction === undefined) {
+    await this.#assertWritable();
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
       if (tx !== undefined) {
@@ -1884,6 +2134,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
    * are left intact. See specs/behaviors/attachments.md.
    */
   async deleteAttachment(record: T | string, name: string): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction === undefined) {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
@@ -1911,6 +2162,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
    * `Sheet.delete`). See specs/behaviors/attachments.md.
    */
   async deleteAttachments(record: T | string): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction === undefined) {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
@@ -1932,13 +2184,115 @@ export class Sheet<T extends RecordLike = RecordLike> {
     callCore(() => this.#transaction!.coreTx.deleteAttachments(this.#name, recordPath));
   }
 
+  // --- Rollup sheets (specs/behaviors/rollups.md) ---
+
+  /**
+   * Rollup sheets only: recompute every stale or missing rollup record and
+   * delete orphaned ones, in one transaction (into the current one on a
+   * transaction-bound sheet, or inside an enclosing `repo.transact`).
+   * Resolves to the partition paths touched; no commit when everything was
+   * fresh. Throws `TypeError` on a non-rollup sheet.
+   *
+   * @see specs/api/sheet.md#sheetmaterialize
+   */
+  async materialize(): Promise<MaterializeResult> {
+    const config = await this.readConfig();
+    if (config.rollup === undefined) {
+      throw new TypeError(`Sheet.materialize: sheet ${JSON.stringify(this.#name)} is not a rollup sheet`);
+    }
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      const out = callCore(() => this.#transaction!.coreTx.materialize(this.#name));
+      return { recomputed: out.recomputed, deleted: out.deleted };
+    }
+    this.#checkStrictMode();
+    const tx = transactionContext.getStore();
+    if (tx !== undefined) {
+      return tx.sheet(this.#name, this.#txDelegateOpts()).materialize();
+    }
+    let out: MaterializeResult = { recomputed: [], deleted: [] };
+    await this.#repo.transact({ message: `${this.#name} materialize` }, async (innerTx) => {
+      out = await innerTx.sheet(this.#name, this.#txDelegateOpts()).materialize();
+    });
+    return out;
+  }
+
+  /**
+   * @internal — rollup sheets only: the partitions that are not fresh
+   * (`stale` / `missing` / `orphaned`) against this sheet's read tree,
+   * writing nothing. Backs `git sheet rollup --check`.
+   */
+  async rollupStatus(): Promise<RollupStatusEntry[]> {
+    const config = await this.readConfig();
+    if (config.rollup === undefined) {
+      throw new TypeError(`Sheet.rollupStatus: sheet ${JSON.stringify(this.#name)} is not a rollup sheet`);
+    }
+    const entries =
+      this.#transaction !== undefined
+        ? (this.#ensureCoreSheetOpened(), callCore(() => this.#transaction!.coreTx.rollupStatus(this.#name)))
+        : callCore(() =>
+            addon.rollupStatus(
+              this.#gitDir,
+              this.#readRef ?? EMPTY_TREE_HASH,
+              this.#name,
+              this.#configPath,
+              openRootFromConfigPath(this.#configPath),
+              this.#prefix,
+            ),
+          );
+    return entries.map((e) => ({ path: e.path, status: e.status as RollupStatusEntry['status'] }));
+  }
+
+  /** A rollup sheet's rows, read through its source in the core. */
+  #rollupRows(
+    coreFilter: RecordLike,
+    stale: QueryOptions['stale'],
+  ): Array<{ path: string; record: RecordLike }> {
+    const mode = stale ?? 'recompute';
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      return callCore(() =>
+        this.#transaction!.coreTx.query(this.#name, coreFilter, true, mode),
+      ) as Array<{ path: string; record: RecordLike }>;
+    }
+    return callCore(() =>
+      addon.rollupQuery(
+        this.#gitDir,
+        this.#readRef ?? EMPTY_TREE_HASH,
+        this.#name,
+        this.#configPath,
+        openRootFromConfigPath(this.#configPath),
+        this.#prefix,
+        coreFilter,
+        mode,
+      ),
+    ) as Array<{ path: string; record: RecordLike }>;
+  }
+
+  /**
+   * Refuse a write to a rollup sheet — its records are regenerated from the
+   * source, never written by consumers (`TransactionError` `sheet_derived`).
+   */
+  async #assertWritable(): Promise<void> {
+    const config = await this.readConfig();
+    if (config.rollup !== undefined) {
+      throw new TransactionError(
+        'sheet_derived',
+        `sheet ${JSON.stringify(this.#name)} is a rollup of ${JSON.stringify(config.rollup.from)}: its records are regenerated from the source at every commit gitsheets produces, and are never written directly (specs/behaviors/rollups.md)`,
+      );
+    }
+  }
+
   // --- Private helpers ---
 
   #checkStrictMode(): void {
     if (this.#pinnedRef !== undefined) {
+      const at = this.#repo.pinnedAtCommit();
       throw new TransactionError(
         'transaction_required',
-        `Sheet.${this.#name} is pinned to ${this.#pinnedRef} and read-only — write through repo.transact({ parent: ${JSON.stringify(this.#pinnedRef)} }, …)`,
+        at !== null && this.#pinnedRef === at
+          ? `Sheet.${this.#name} is pinned to ${at} by openRepo({ at }) and read-only — open the repository without at to write`
+          : `Sheet.${this.#name} is pinned to ${this.#pinnedRef} and read-only — write through repo.transact({ parent: ${JSON.stringify(this.#pinnedRef)} }, …)`,
       );
     }
     if (this.#repo.isStrictMode()) {
@@ -2120,7 +2474,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   /**
    * Run `fn` against a core transaction with this sheet opened. Tx-bound sheets
    * reuse their bound transaction; standalone sheets get a short-lived,
-   * read-only core transaction (opened at HEAD) that is discarded without
+   * read-only core transaction (opened at the default branch) that is discarded without
    * committing — used by `willChange`'s prepare pipeline.
    */
   async #withCoreTx<R>(fn: (coreTx: CoreTransaction) => R): Promise<R> {
@@ -2129,8 +2483,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
       return fn(this.#transaction.coreTx);
     }
     const author = { name: 'gitsheets', email: 'gitsheets@local' };
+    const start = await this.#repo.readTxStart();
     const coreTx = callCore(() =>
       CoreTransaction.begin(this.#gitDir, {
+        ...start,
         message: 'willChange',
         author,
         committer: author,

@@ -191,14 +191,45 @@ pub fn compare_values(field: &Value, bound: &Value) -> Option<Ordering> {
     match (field, bound) {
         (Value::Integer(a), Value::Integer(b)) => Some(a.cmp(b)),
         (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
-        (Value::Integer(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
-        (Value::Float(a), Value::Integer(b)) => a.partial_cmp(&(*b as f64)),
+        (Value::Integer(a), Value::Float(b)) => cmp_int_float(*a, *b),
+        (Value::Float(a), Value::Integer(b)) => cmp_int_float(*b, *a).map(Ordering::reverse),
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
         (Value::Datetime(a), Value::Datetime(b)) => {
             Some(datetime_instant(a)?.cmp(&datetime_instant(b)?))
         }
         (Value::Datetime(a), Value::String(b)) => Some(datetime_instant(a)?.cmp(&iso_instant(b)?)),
         _ => None,
+    }
+}
+
+/// Exact ordering of an integer against a float — no `as f64` rounding, so
+/// `2^53 + 1` is greater than `2^53` as a float rather than equal to it. NaN is
+/// incomparable.
+fn cmp_int_float(i: i64, f: f64) -> Option<Ordering> {
+    if f.is_nan() {
+        return None;
+    }
+    // 2^63 is exactly representable; every i64 is below it.
+    const TWO_63: f64 = 9_223_372_036_854_775_808.0;
+    if f >= TWO_63 {
+        return Some(Ordering::Less);
+    }
+    if f < -TWO_63 {
+        return Some(Ordering::Greater);
+    }
+    let t = f.trunc();
+    // |t| < 2^63 (or t == -2^63), so the conversion is exact.
+    match i.cmp(&(t as i64)) {
+        Ordering::Equal => {
+            if f > t {
+                Some(Ordering::Less)
+            } else if f < t {
+                Some(Ordering::Greater)
+            } else {
+                Some(Ordering::Equal)
+            }
+        }
+        other => Some(other),
     }
 }
 
@@ -219,9 +250,56 @@ impl Filter {
     }
 }
 
+impl Filter {
+    /// Parse a declarative filter table — the binding-neutral `Value` form
+    /// of the query grammar without predicate snippets: a literal is an
+    /// equality clause, a `$`-keyed table a range ([`Range::from_table`]
+    /// validates the vocabulary), any other table a nested-table filter. This
+    /// is the shape an aggregate's `where` takes (spec:
+    /// `behaviors/aggregation.md` "Modifiers"), in a sheet config and at a
+    /// call site alike. A malformed range is `ConfigInvalid`.
+    pub fn from_table(map: &indexmap::IndexMap<String, Value>) -> Result<Filter> {
+        let mut filter = Filter::new();
+        for (key, value) in map {
+            let pred = match value {
+                Value::Table(sub) if sub.keys().any(|k| k.starts_with('$')) => {
+                    FilterPred::Range(Range::from_table(sub)?)
+                }
+                Value::Table(sub) => FilterPred::Nested(Filter::from_table(sub)?),
+                other => FilterPred::Equals(other.clone()),
+            };
+            filter.push(key.clone(), pred);
+        }
+        Ok(filter)
+    }
+
+    /// The top-level field names this filter constrains.
+    pub fn fields(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|(k, _)| k.as_str())
+    }
+}
+
 /// Does `record` satisfy every clause of `filter`? A behavior-preserving port
 /// of the host `queryMatches`. A predicate snippet that throws surfaces as an
 /// error (the host lets such throws propagate, too).
+/// Equality against a **local-date** field also accepts that day as an ISO
+/// date string (`"2026-03-01"`) or as a datetime at midnight UTC (a host
+/// `Date` of that day) — the coercion ranges already apply
+/// (`specs/api/sheet.md` § query).
+fn local_date_equals(field: Option<&Value>, expected: &Value) -> bool {
+    let Some(Value::Datetime(dt)) = field else { return false };
+    if dt.kind() != crate::value::DatetimeKind::LocalDate {
+        return false;
+    }
+    let Some(day) = datetime_instant(dt) else { return false };
+    let wanted = match expected {
+        Value::String(s) if s.len() == 10 => s.parse::<chrono::NaiveDate>().ok().and_then(|d| d.and_hms_opt(0, 0, 0)),
+        Value::Datetime(other) if other.kind() == crate::value::DatetimeKind::OffsetDatetime => datetime_instant(other),
+        _ => None,
+    };
+    wanted == Some(day)
+}
+
 pub fn matches(filter: &Filter, record: &Value, engine: &mut Engine) -> Result<bool> {
     let table = match record {
         Value::Table(map) => map,
@@ -233,7 +311,7 @@ pub fn matches(filter: &Filter, record: &Value, engine: &mut Engine) -> Result<b
         let rval = table.get(key);
         match pred {
             FilterPred::Equals(expected) => {
-                if rval != Some(expected) {
+                if rval != Some(expected) && !local_date_equals(rval, expected) {
                     return Ok(false);
                 }
             }
@@ -421,6 +499,100 @@ pub fn query_candidate_paths(
     let mut paths: Vec<String> = candidates.into_iter().map(|(p, _)| p).collect();
     paths.sort();
     Ok(paths)
+}
+
+/// The record candidates under one subtree of a sheet, starting the template
+/// walk at component `depth` with `prefix` as the subtree's path — a rollup
+/// partition's records (`specs/behaviors/rollups.md`). Unsorted.
+pub(crate) fn candidates_in(
+    ctx: &Context<'_>,
+    subtree: &mut MutableTree,
+    plan: &[QueryComponentPlan],
+    depth: usize,
+    prefix: &str,
+    extension: &str,
+) -> Result<Vec<(String, ObjectId)>> {
+    let mut out = Vec::new();
+    walk_query(ctx, subtree, plan, depth, prefix, extension, &mut out)?;
+    Ok(out)
+}
+
+/// The id of a (possibly dirty) subtree — written to the object database
+/// when dirty, so a transaction's private tree yields real tree ids.
+pub(crate) fn subtree_id(ctx: &Context<'_>, tree: &mut MutableTree) -> Result<ObjectId> {
+    tree.write(ctx).map_err(map_ht)
+}
+
+/// Every subtree at component depth `depth` under `tree` the first `depth`
+/// components of `plan` admit — the rollup partition walk
+/// (`specs/behaviors/rollups.md` "Reads"): a rendered component descends into
+/// that one subtree, a range-bounded bucket into the admitted span, anything
+/// else into every subtree. Returns `(path, tree id)` in sorted path order;
+/// empty subtrees are skipped. `depth == 0` yields `tree` itself at `""`.
+pub(crate) fn walk_partitions(
+    ctx: &Context<'_>,
+    tree: &mut MutableTree,
+    plan: &[QueryComponentPlan],
+    depth: usize,
+) -> Result<Vec<(String, ObjectId)>> {
+    let mut out = Vec::new();
+    walk_partitions_tracked(ctx, tree, plan, 0, depth, "", &mut out, BoundTrack::FRESH)?;
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_partitions_tracked(
+    ctx: &Context<'_>,
+    tree: &mut MutableTree,
+    plan: &[QueryComponentPlan],
+    level: usize,
+    depth: usize,
+    prefix: &str,
+    out: &mut Vec<(String, ObjectId)>,
+    track: BoundTrack,
+) -> Result<()> {
+    if level == depth {
+        let id = subtree_id(ctx, tree)?;
+        if id != holo_tree::tree::empty_tree_id() {
+            out.push((prefix.to_string(), id));
+        }
+        return Ok(());
+    }
+    let comp = &plan[level];
+    if let Some(rendered) = &comp.rendered {
+        if let Some(next) = tree.get_subtree(ctx, rendered).map_err(map_ht)? {
+            let child_prefix = join_path(prefix, rendered);
+            return walk_partitions_tracked(ctx, next, plan, level + 1, depth, &child_prefix, out, track);
+        }
+        return Ok(());
+    }
+    let track = match &comp.bounds {
+        Some(bounds) => track.entering(bounds),
+        None => track,
+    };
+    tree.ensure_children(ctx).map_err(map_ht)?;
+    let names: Vec<String> = tree
+        .children
+        .as_ref()
+        .expect("children loaded")
+        .iter()
+        .filter(|(n, c)| {
+            matches!(c, Child::Tree(_)) && comp.bounds.as_ref().is_none_or(|b| track.admits(b, n))
+        })
+        .map(|(n, _)| n.clone())
+        .collect();
+    for name in names {
+        if let Some(Child::Tree(sub)) = tree.children.as_mut().expect("children loaded").get_mut(&name) {
+            let child_prefix = join_path(prefix, &name);
+            let child_track = match &comp.bounds {
+                Some(bounds) => track.descend(bounds, &name),
+                None => track,
+            };
+            walk_partitions_tracked(ctx, sub, plan, level + 1, depth, &child_prefix, out, child_track)?;
+        }
+    }
+    Ok(())
 }
 
 fn join_path(prefix: &str, name: &str) -> String {
@@ -862,6 +1034,18 @@ mod tests {
         assert_eq!(compare_values(&Value::Integer(3), &Value::Integer(5)), Some(Less));
         assert_eq!(compare_values(&Value::Integer(30), &Value::Float(30.0)), Some(Equal));
         assert_eq!(compare_values(&Value::Float(2.5), &Value::Integer(2)), Some(Greater));
+        // Exact int/float comparison: 2^53 + 1 is not the float 2^53.
+        let big = (1i64 << 53) + 1;
+        assert_eq!(compare_values(&Value::Integer(big), &Value::Float((1i64 << 53) as f64)), Some(Greater));
+        assert_eq!(compare_values(&Value::Float((1i64 << 53) as f64), &Value::Integer(big)), Some(Less));
+        assert_eq!(compare_values(&Value::Integer(-3), &Value::Float(-2.5)), Some(Less));
+        assert_eq!(compare_values(&Value::Integer(-2), &Value::Float(-2.5)), Some(Greater));
+        assert_eq!(compare_values(&Value::Integer(i64::MAX), &Value::Float(9.3e18)), Some(Less));
+        assert_eq!(compare_values(&Value::Integer(i64::MIN), &Value::Float(-1e19)), Some(Greater));
+        assert_eq!(compare_values(&Value::Integer(1), &Value::Float(f64::NAN)), None);
+        // …which tightens range filters too.
+        let r = Range::from_table(&range_table(&[("$gt", Value::Float((1i64 << 53) as f64))])).unwrap();
+        assert!(r.matches(Some(&Value::Integer(big))));
         assert_eq!(compare_values(&s("b"), &s("a")), Some(Greater));
         assert_eq!(
             compare_values(&dt("2026-01-01T00:00:00Z"), &dt("2025-12-31T19:00:00-05:00")),

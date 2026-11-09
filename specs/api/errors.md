@@ -15,7 +15,9 @@ export class ConfigError extends GitsheetsError {}
 export class ValidationError extends GitsheetsError {
   readonly issues: ValidationIssue[];
 }
-export class TransactionError extends GitsheetsError {}
+export class TransactionError extends GitsheetsError {
+  readonly commitHash?: string;     // pointer_stage_failed: the data commit that landed
+}
 export class IndexError extends GitsheetsError {
   readonly conflictingPaths?: string[];
 }
@@ -25,6 +27,11 @@ export class NotFoundError extends GitsheetsError {}
 export class ContractError extends GitsheetsError {
   readonly contract?: string;          // contract name, when one is in scope
   readonly issues?: ValidationIssue[]; // conformance report on contract_unsatisfied
+}
+export class AggregationError extends GitsheetsError {
+  readonly sheet: string;              // the sheet aggregated
+  readonly aggregate: string;          // the aggregate name
+  readonly partition?: string;         // the partition, when the aggregate is a persisted rollup
 }
 ```
 
@@ -56,6 +63,7 @@ try {
 | `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode, or a permissive-mode write on a ref-pinned (read-only) sheet |
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero |
+| `TransactionError` | `pointer_stage_failed` | 500 | Submodule mode with `stagePointer`: the data commit **landed** but the superproject's index could not be updated; carries `commitHash`. Stage by hand (`git add <path>`); do not retry the write ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)) |
 | `TransactionError` | `push_daemon_running` | 409 | `repo.startPushDaemon` while one is already active |
 | `TransactionError` | `transaction_closed` | 409 | `tx.sheet(...)` after the transaction has been finalized or discarded |
 | `TransactionError` | `lock_held` | 409 | `repo.withLock` / `repo.transact` attempted while the caller's own async context already holds the write lock — the lock is not reentrant |
@@ -63,12 +71,14 @@ try {
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
 | `RefError` | `not_an_ancestor` | 409 | Merge-like operation where src is not an ancestor of dst |
+| `TransactionError` | `sheet_derived` | 409 | A write to a rollup sheet — rollup records are regenerated from the source, never written by consumers ([behaviors/rollups.md](../behaviors/rollups.md)) |
 | `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
 | `NotFoundError` | `record_not_found` | 404 | `delete` / `patch` / etc. against a path that doesn't exist |
 | `ContractError` | `contract_missing` | 500 | `implements` names a contract with no vendored document at its derived path |
 | `ContractError` | `contract_invalid` | 500 | Contract document violates [document requirements](../behaviors/contracts.md#contract-document-requirements) (compile, `$id`/path, canonical form, openness, self-containment, TOML data model) |
 | `ContractError` | `contract_unsatisfied` | 422 | Consumer verification failed both rungs (carries the conformance report in `issues`) |
+| `AggregationError` | `aggregation_failed` | 422 | An aggregate could not be computed (mixed value kinds under `min`/`max`/`distinct`, an integer `sum`/`avg` total outside the signed 64-bit range, a `reduce`/`finalize` that threw, exceeded the engine's runtime limits, or returned a non-TOML value); carries sheet and aggregate name, plus the partition for a persisted rollup ([behaviors/aggregation.md](../behaviors/aggregation.md), [behaviors/rollups.md](../behaviors/rollups.md)) |
 
 The `code` strings are stable. New scenarios get new codes; existing codes never change meaning.
 

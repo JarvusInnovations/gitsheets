@@ -57,6 +57,7 @@ fn tree_cache() -> &'static TreeCache {
 }
 use gitsheets_core::sheet::{Sheet as CoreSheet, UpsertCandidate};
 use gitsheets_core::store;
+use gitsheets_core::rollup::{RollupStatus, Stale};
 use gitsheets_core::transaction::{Author as CoreAuthor, Transaction, TransactionOptions};
 use gitsheets_core::validation::CompiledSchema;
 use gitsheets_core::{Datetime, Value};
@@ -84,6 +85,7 @@ create_exception!(_gitsheets, RefError, GitsheetsError);
 create_exception!(_gitsheets, PathTemplateError, GitsheetsError);
 create_exception!(_gitsheets, NotFoundError, GitsheetsError);
 create_exception!(_gitsheets, ContractError, GitsheetsError);
+create_exception!(_gitsheets, AggregationError, GitsheetsError);
 
 /// Map a structured core error onto its typed Python exception, attaching the
 /// `code`/`status`/`gitsheets_class` discriminants and any `issues` /
@@ -101,6 +103,7 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
         "PathTemplateError" => PathTemplateError::new_err(message),
         "NotFoundError" => NotFoundError::new_err(message),
         "ContractError" => ContractError::new_err(message),
+        "AggregationError" => AggregationError::new_err(message),
         _ => GitsheetsError::new_err(message),
     };
     let value = pyerr.value(py);
@@ -130,6 +133,11 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
     }
     if let Some(contract) = err.contract() {
         let _ = value.setattr("contract", contract);
+    }
+    if let Some((sheet, aggregate, partition)) = err.aggregation() {
+        let _ = value.setattr("sheet", sheet);
+        let _ = value.setattr("aggregate", aggregate);
+        let _ = value.setattr("partition", partition);
     }
     pyerr
 }
@@ -1244,7 +1252,7 @@ fn parse_filter_pred(val: &Bound<'_, PyAny>, engine: &mut Engine) -> PyResult<Fi
 /// core decodes each candidate through the frontmatter codec; `with_body=False`
 /// is the lazy-body switch. Without `body_field` records are canonical TOML.
 #[pyfunction]
-#[pyo3(signature = (git_dir, tree_ref, base, template, filter, extension=None, body_field=None, title_field=None, with_body=true))]
+#[pyo3(signature = (git_dir, tree_ref, base, template, filter, extension=None, body_field=None, title_field=None, with_body=true, *, sheet=None, open_root=".".to_string(), prefix=String::new(), stale=None))]
 #[allow(clippy::too_many_arguments)]
 fn record_query<'py>(
     py: Python<'py>,
@@ -1257,11 +1265,35 @@ fn record_query<'py>(
     body_field: Option<String>,
     title_field: Option<String>,
     with_body: bool,
+    sheet: Option<String>,
+    open_root: String,
+    prefix: String,
+    stale: Option<String>,
 ) -> PyResult<Bound<'py, PyList>> {
     let ext = extension_of(extension);
     let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
     let ctx = Context::new(&repo, tree_cache());
     let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    // `sheet=` opens that sheet from the tree (every open-time check,
+    // rollup resolution included); a rollup sheet then reads through its
+    // source with the `stale=` mode (spec: behaviors/rollups.md "Reads").
+    if let Some(name) = &sheet {
+        let stale = parse_stale(stale.as_deref())?;
+        let config_path = gitsheets_core::sheet::join_path(&[&open_root, ".gitsheets", &format!("{name}.toml")]);
+        let mut s = CoreSheet::open(&ctx, &mut tree, name, &config_path, &open_root, &prefix)
+            .map_err(|e| raise_core_error(py, &e))?;
+        if s.is_rollup() {
+            let parsed = parse_filter(filter, s.engine_mut())?;
+            let rows = s
+                .query_stale(&ctx, &mut tree, &parsed, true, stale)
+                .map_err(|e| raise_core_error(py, &e))?;
+            return rows_to_py(py, rows);
+        }
+    } else if stale.is_some() {
+        return Err(PyTypeError::new_err(
+            "record_query: stale= applies to a rollup sheet read — pass sheet=<name> too",
+        ));
+    }
     let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
     let compiled = Template::compile(&template, &mut engine).map_err(|e| raise_core_error(py, &e))?;
     let parsed = parse_filter(filter, &mut engine)?;
@@ -1284,18 +1316,147 @@ fn record_query<'py>(
         None => query::query_records(&ctx, &mut tree, &base, &compiled, &parsed, &mut engine, &ext),
     };
     match rows {
-        Ok(rows) => {
-            let out = PyList::empty(py);
-            for (path, rec) in rows {
-                let d = PyDict::new(py);
-                d.set_item("path", path)?;
-                d.set_item("record", value_to_py(py, rec)?)?;
-                out.append(d)?;
-            }
-            Ok(out)
-        }
+        Ok(rows) => rows_to_py(py, rows),
         Err(err) => Err(raise_core_error(py, &err)),
     }
+}
+
+/// `[{"path", "record"}]` rows as a Python list.
+fn rows_to_py<'py>(py: Python<'py>, rows: Vec<(String, Value)>) -> PyResult<Bound<'py, PyList>> {
+    let out = PyList::empty(py);
+    for (path, rec) in rows {
+        let d = PyDict::new(py);
+        d.set_item("path", path)?;
+        d.set_item("record", value_to_py(py, rec)?)?;
+        out.append(d)?;
+    }
+    Ok(out)
+}
+
+/// Parse the `stale=` read mode (`"recompute"`, the default, or `"serve"`).
+fn parse_stale(s: Option<&str>) -> PyResult<Stale> {
+    match s {
+        None => Ok(Stale::Recompute),
+        Some(v) => Stale::parse(v).ok_or_else(|| {
+            PyValueError::new_err(format!("unknown stale mode {v:?} — expected 'recompute' or 'serve'"))
+        }),
+    }
+}
+
+/// The non-fresh partitions of the rollup sheet `sheet` at `tree_ref` —
+/// `[{"path", "status"}]` with status `stale` / `missing` / `orphaned` (spec:
+/// `behaviors/rollups.md` "Materializing explicitly"). Writes nothing; the
+/// `git sheet rollup --check` primitive. `TypeError` on a non-rollup sheet.
+#[pyfunction]
+#[pyo3(signature = (git_dir, tree_ref, sheet, open_root=".".to_string(), prefix=String::new()))]
+fn rollup_status<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    tree_ref: String,
+    sheet: String,
+    open_root: String,
+    prefix: String,
+) -> PyResult<Bound<'py, PyList>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    let config_path = gitsheets_core::sheet::join_path(&[&open_root, ".gitsheets", &format!("{sheet}.toml")]);
+    let mut s = CoreSheet::open(&ctx, &mut tree, &sheet, &config_path, &open_root, &prefix)
+        .map_err(|e| raise_core_error(py, &e))?;
+    if !s.is_rollup() {
+        return Err(PyTypeError::new_err(format!("rollup_status: sheet {sheet:?} is not a rollup sheet")));
+    }
+    let entries = s.rollup_survey(&ctx, &mut tree).map_err(|e| raise_core_error(py, &e))?;
+    let out = PyList::empty(py);
+    for e in entries.into_iter().filter(|e| e.status != RollupStatus::Fresh) {
+        let d = PyDict::new(py);
+        d.set_item("path", e.path)?;
+        d.set_item("status", e.status.as_str())?;
+        out.append(d)?;
+    }
+    Ok(out)
+}
+
+/// Ad-hoc aggregation (spec: `behaviors/aggregation.md`): the records under
+/// `base` matching `filter` (pruned by `template`, read body-less, the filter
+/// applied in the core — the forms `record_query` takes) folded in canonical
+/// path order by `aggregates`, a dict in the shared grammar (`{"n": {"count":
+/// True}, "total": {"sum": "amountCents", "groupBy": "status"}, ...}`,
+/// including `reduce` / `initial` / `finalize`, which run in the core's
+/// embedded engine). Returns the result dict. `sheet` names the sheet in an
+/// `AggregationError`. A malformed spec (or a body-field reference on a
+/// content-typed sheet) raises `TypeError`; a data-dependent failure raises
+/// `AggregationError` (code `aggregation_failed`, with `sheet` /
+/// `aggregate` / `partition`). `paths`, when given, restricts the contributing
+/// set to those record paths.
+#[pyfunction]
+#[pyo3(signature = (git_dir, tree_ref, sheet, base, template, filter, aggregates, extension=None, body_field=None, title_field=None, paths=None))]
+#[allow(clippy::too_many_arguments)]
+fn record_aggregate<'py>(
+    py: Python<'py>,
+    git_dir: String,
+    tree_ref: String,
+    sheet: String,
+    base: String,
+    template: String,
+    filter: &Bound<'py, PyDict>,
+    aggregates: &Bound<'py, PyAny>,
+    extension: Option<String>,
+    body_field: Option<String>,
+    title_field: Option<String>,
+    paths: Option<Vec<String>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let ext = extension_of(extension);
+    let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
+    let parsed = parse_filter(filter, &mut engine)?;
+    if let Ok(table) = aggregates.cast::<PyDict>() {
+        for (name, spec) in table.iter() {
+            if let Ok(spec) = spec.cast::<PyDict>() {
+                if let Some(initial) = spec.get_item("initial")? {
+                    if initial.is_none() {
+                        return Err(PyTypeError::new_err(format!(
+                            "aggregate spec: {:?}: `initial` must be a TOML value, got None",
+                            name.str()?.to_string()
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    let spec = py_to_value(aggregates)
+        .map_err(|e| PyTypeError::new_err(format!("aggregate spec: {e}")))?;
+    let prepared = gitsheets_core::aggregate::prepare(&spec, body_field.as_deref(), Some(&parsed))
+        .map_err(|e| PyTypeError::new_err(e.message().to_string()))?;
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|e| raise_core_error(py, &e))?;
+    let compiled = Template::compile(&template, &mut engine).map_err(|e| raise_core_error(py, &e))?;
+    let format = gitsheets_core::config::FormatConfig {
+        kind: match (&body_field, ext.as_str()) {
+            (None, _) => gitsheets_core::config::FormatKind::Toml,
+            (Some(_), ".mdx") => gitsheets_core::config::FormatKind::Mdx,
+            (Some(_), _) => gitsheets_core::config::FormatKind::Markdown,
+        },
+        body: body_field,
+        title: title_field,
+        normalize: true,
+    };
+    let only: Option<std::collections::HashSet<String>> = paths.map(|p| p.into_iter().collect());
+    let result = gitsheets_core::aggregate::aggregate_records(
+        &ctx,
+        &mut tree,
+        &base,
+        &compiled,
+        &parsed,
+        &mut engine,
+        &ext,
+        &format,
+        &sheet,
+        &prepared,
+        only.as_ref(),
+    )
+    .map_err(|e| raise_core_error(py, &e))?;
+    value_to_py(py, result)
 }
 
 /// The pruning candidate set alone (no content filter) — the `Template.queryTree`
@@ -1459,8 +1620,9 @@ impl CoreTransaction {
         let tx = inner
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
-        let (ctx, tree) = tx.split();
-        match CoreSheet::open(&ctx, tree, &name, &config_path, &open_root, &prefix) {
+        // Through the transaction, so the commit-time rollup pass runs in
+        // this sheet's (open_root, prefix) scope.
+        match tx.open_sheet(&name, &config_path, &open_root, &prefix) {
             Ok(sheet) => {
                 sheets.insert(name, sheet);
                 Ok(())
@@ -1807,6 +1969,36 @@ impl CoreTransaction {
         Ok(removed)
     }
 
+    /// Materialize the rollup sheet `sheet` (opened first) into this
+    /// transaction's tree (spec: `behaviors/rollups.md` "Materializing
+    /// explicitly"): recompute every stale or missing rollup record and
+    /// delete orphaned ones. Returns `{"recomputed": [...], "deleted": [...]}`
+    /// of partition paths; the transaction stays unmutated (no commit) when
+    /// nothing was stale. `TypeError` on a non-rollup sheet.
+    fn materialize_rollups<'py>(&mut self, py: Python<'py>, sheet: String) -> PyResult<Bound<'py, PyDict>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("transaction is already finalized"))?;
+        let out = {
+            let (ctx, tree) = tx.split();
+            let s = sheets
+                .get_mut(&sheet)
+                .ok_or_else(|| PyValueError::new_err(format!("sheet {sheet:?} not opened")))?;
+            if !s.is_rollup() {
+                return Err(PyTypeError::new_err(format!("materialize_rollups: sheet {sheet:?} is not a rollup sheet")));
+            }
+            s.materialize(&ctx, tree).map_err(|e| raise_core_error(py, &e))?
+        };
+        if !out.is_empty() {
+            tx.mark_mutated();
+        }
+        let d = PyDict::new(py);
+        d.set_item("recomputed", out.recomputed)?;
+        d.set_item("deleted", out.deleted)?;
+        Ok(d)
+    }
+
     /// The parent commit hash captured at open (`None` on a fresh repo).
     fn parent_commit_hash(&self) -> Option<String> {
         self.inner.as_ref().and_then(|t| t.parent_commit_hash())
@@ -1893,6 +2085,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PathTemplateError", py.get_type::<PathTemplateError>())?;
     m.add("NotFoundError", py.get_type::<NotFoundError>())?;
     m.add("ContractError", py.get_type::<ContractError>())?;
+    m.add("AggregationError", py.get_type::<AggregationError>())?;
 
     // Stateful classes.
     m.add_class::<CompiledDefinition>()?;
@@ -1926,6 +2119,8 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff_records, m)?)?;
     m.add_function(wrap_pyfunction!(record_query, m)?)?;
     m.add_function(wrap_pyfunction!(record_query_candidates, m)?)?;
+    m.add_function(wrap_pyfunction!(record_aggregate, m)?)?;
+    m.add_function(wrap_pyfunction!(rollup_status, m)?)?;
     m.add_function(wrap_pyfunction!(tree_read_blob, m)?)?;
     m.add_function(wrap_pyfunction!(tree_entry_hash, m)?)?;
     m.add_function(wrap_pyfunction!(blob_read, m)?)?;

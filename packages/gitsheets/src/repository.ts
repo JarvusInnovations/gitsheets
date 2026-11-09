@@ -10,6 +10,7 @@ import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { addon, callCore, CoreTransaction } from './core.js';
+import { cleanGitEnv, gitExec } from './git-exec.js';
 import type { OpenSheetContractOptions } from './contracts.js';
 import { ConfigError, NotFoundError, RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
@@ -19,6 +20,17 @@ import {
   type PushDaemonOptions,
 } from './push-daemon.js';
 import { Sheet } from './sheet.js';
+import {
+  advanceDetachedHead,
+  gitlinkCommit,
+  locateSubmoduleGitDir,
+  resolveSubmodulePath,
+  stageGitlink,
+  submoduleNameForPath,
+  superprojectWorkTree,
+  type SubmoduleSource,
+  type SuperprojectBinding,
+} from './submodule.js';
 import {
   Mutex,
   Transaction,
@@ -49,6 +61,41 @@ export interface OpenRepoOptions {
   readonly gitDir?: string;
   /** Working tree path; default `null` (bare-style operation). */
   readonly workTree?: string | null;
+  /**
+   * The repository's **default branch** (`'data'` or `'refs/heads/data'`):
+   * the branch live sheets read, transactions commit to by default, and
+   * `refresh` / `sync` / `fetch` / the push daemon / `merge` target when
+   * given no ref. Default: `GITSHEETS_BRANCH`, else the `gitsheets.branch`
+   * git config of the opened repository, else the branch `HEAD` points at.
+   * A tag, commit, or malformed name is `ConfigError(config_invalid)`; an
+   * unborn branch is a fresh-repo start. See specs/behaviors/default-branch.md.
+   */
+  readonly branch?: string;
+  /**
+   * **Submodule mode**: open the submodule at this path (relative to the
+   * superproject root, as in `.gitmodules`) instead of the superproject.
+   * Its `HEAD` is the superproject's managed pointer: the default branch is
+   * `HEAD`'s branch, or `HEAD` itself when detached (a commit then advances
+   * `HEAD` directly). `branch` then names a branch *of the submodule*.
+   * Default: `GITSHEETS_SUBMODULE`, else the superproject's
+   * `gitsheets.submodule` git config, else none. A submodule with no git dir
+   * is `ConfigError(config_missing)` naming `git sheet submodule init <path>`.
+   * See specs/behaviors/default-branch.md "Submodule mode".
+   */
+  readonly submodule?: string;
+  /**
+   * Submodule mode: bind read-only to the commit the superproject's
+   * commit-ish `at` gitlinks for the submodule — every sheet ref-pinned
+   * there, every ref-moving operation `TransactionError(transaction_required)`.
+   * `RefError(ref_not_found)` when `at` has no gitlink at the path.
+   */
+  readonly at?: string;
+  /**
+   * Submodule mode: after each commit that moves the pointer, also update
+   * the superproject's index entry for the gitlink (`160000 <commit>`).
+   * Never commits in the superproject. Default false.
+   */
+  readonly stagePointer?: boolean;
 }
 
 export interface OpenSheetOptions<T extends RecordLike = RecordLike> {
@@ -104,7 +151,7 @@ export interface TreeEntry {
 export interface SyncOptions {
   /** Remote name; default `origin`. */
   readonly remote?: string;
-  /** Branch to sync; default: the branch HEAD points at (RefError when detached). */
+  /** Branch to sync; default: the repository's default branch (RefError when bound to a detached HEAD). */
   readonly branch?: string;
   /** Run `git fetch` first; default true. `false` when the caller already fetched. */
   readonly fetch?: boolean;
@@ -129,7 +176,7 @@ export interface SyncOptions {
 export interface FetchOptions {
   /** Remote name; default `origin`. */
   readonly remote?: string;
-  /** Branch to fetch; default: the branch HEAD points at (RefError when detached). */
+  /** Branch to fetch; default: the repository's default branch (RefError when bound to a detached HEAD). */
   readonly branch?: string;
 }
 
@@ -155,7 +202,7 @@ export interface SyncResult {
 export interface MergeOptions {
   /** Branch, tag, or commit to merge in. */
   readonly theirs: string;
-  /** Branch (or commit) to merge into; default: HEAD's branch. */
+  /** Branch (or commit) to merge into; default: the repository's default branch. */
   readonly ours?: string;
   /** How to resolve conflicts the field merge cannot decide; default `fail` (report, write nothing). */
   readonly prefer?: 'fail' | 'ours' | 'theirs';
@@ -194,7 +241,10 @@ export interface MergeResult {
 async function resolveGitDir(gitDir: string | undefined): Promise<string> {
   const cwd = gitDir ?? process.cwd();
   try {
-    const { stdout } = await exec('git', ['rev-parse', '--absolute-git-dir'], { cwd });
+    // An explicit gitDir is discovered from that path alone; with none, an
+    // inherited GIT_DIR names the repository, as it does for git itself.
+    const env = gitDir !== undefined ? cleanGitEnv() : process.env;
+    const { stdout } = await exec('git', ['rev-parse', '--absolute-git-dir'], { cwd, env });
     return stdout.trim();
   } catch (err) {
     throw new ConfigError(
@@ -212,15 +262,39 @@ export class Repository {
   /**
    * Every live non-transaction Sheet this Repository has issued, held weakly
    * so registration imposes no lifecycle obligation on consumers. Rebound to
-   * the current HEAD tree by {@link refresh} (and the transact auto-refresh).
+   * the default branch's current tree by {@link refresh} (and the transact
+   * auto-refresh).
    * See specs/behaviors/freshness.md.
    */
   readonly #sheetRegistry = new Set<WeakRef<Sheet>>();
   #strictMode = false;
   #pushDaemon: PushDaemon | null = null;
+  /**
+   * The default branch's short name (`'main'`, `'data'`), resolved once at
+   * open — or `null` when the repository is bound to a detached `HEAD`, in
+   * which case every default follows `HEAD` live, exactly as before branch
+   * binding existed. See specs/behaviors/default-branch.md "Resolution".
+   */
+  readonly #branch: string | null;
+  /** Submodule mode: the superproject this repository was opened through; `null` otherwise. */
+  readonly #superproject: SuperprojectBinding | null;
+  /** Submodule mode: stage the moved gitlink in the superproject's index after each commit. */
+  readonly #stagePointer: boolean;
+  /** `openRepo({ submodule, at })`: the gitlinked commit every sheet is pinned at (read-only). */
+  readonly #pinnedAt: string | null;
 
-  constructor(opts: { gitDir: string }) {
+  constructor(opts: {
+    gitDir: string;
+    branch?: string | null;
+    superproject?: SuperprojectBinding | null;
+    stagePointer?: boolean;
+    pinnedAt?: string | null;
+  }) {
     this.#gitDir = opts.gitDir;
+    this.#branch = opts.branch ?? null;
+    this.#superproject = opts.superproject ?? null;
+    this.#stagePointer = opts.stagePointer ?? false;
+    this.#pinnedAt = opts.pinnedAt ?? null;
   }
 
   /** Discover a `.git` upward from `cwd` and open it. */
@@ -231,11 +305,57 @@ export class Repository {
   /** Open a specific git directory (or discover one from the cwd). */
   static async open(opts: OpenRepoOptions): Promise<Repository> {
     const gitDir = await resolveGitDir(opts.gitDir);
-    return new Repository({ gitDir });
+    const submodule = await resolveSubmodulePath(gitDir, opts.submodule);
+    if (submodule === null) {
+      if (opts.at !== undefined) {
+        throw new ConfigError('config_invalid', 'openRepo({ at }) pins a data submodule — pass submodule (or set GITSHEETS_SUBMODULE / gitsheets.submodule)');
+      }
+      const branch = await resolveDefaultBranch(gitDir, opts.branch);
+      return new Repository({ gitDir, branch });
+    }
+    return Repository.#openSubmodule(gitDir, submodule.path, submodule.source, opts);
+  }
+
+  /**
+   * Submodule mode: open the submodule at `path` of the superproject at
+   * `superGitDir`, with the branch tiers resolved inside the submodule.
+   * See specs/behaviors/default-branch.md "Submodule mode".
+   */
+  static async #openSubmodule(
+    superGitDir: string,
+    path: string,
+    source: SubmoduleSource,
+    opts: OpenRepoOptions,
+  ): Promise<Repository> {
+    const workTree = await superprojectWorkTree(superGitDir, opts.workTree);
+    const name = await submoduleNameForPath(superGitDir, workTree, path, source);
+    const superproject: SuperprojectBinding = { path, name, gitDir: superGitDir, workTree };
+    const gitDir = await locateSubmoduleGitDir(superproject, source);
+    const branch = await resolveDefaultBranch(gitDir, opts.branch);
+    const pinnedAt = opts.at !== undefined ? await gitlinkCommit(superGitDir, opts.at, path, gitDir) : null;
+    return new Repository({ gitDir, branch, superproject, stagePointer: opts.stagePointer ?? false, pinnedAt });
   }
 
   get gitDir(): string {
     return this.#gitDir;
+  }
+
+  /**
+   * The repository's default branch as a short name (`'data'`), or `null`
+   * when it is bound to a detached `HEAD`. Resolved once at open from
+   * `openRepo({ branch })` → `GITSHEETS_BRANCH` → `gitsheets.branch` git
+   * config → `HEAD`'s branch. See specs/behaviors/default-branch.md.
+   */
+  get branch(): string | null {
+    return this.#branch;
+  }
+
+  /**
+   * Submodule mode: the submodule's path in the superproject (`'data'`), or
+   * `null` in branch mode. See specs/behaviors/default-branch.md.
+   */
+  get submodule(): string | null {
+    return this.#superproject?.path ?? null;
   }
 
   /** @internal — used by Sheet to enforce strict mode. Library cross-class signal, not a consumer API. */
@@ -259,8 +379,8 @@ export class Repository {
 
   /**
    * @internal — the tree hash non-transaction reads currently resolve
-   * against: HEAD's tree, or the empty tree on a fresh repo. Used by
-   * Sheet.refresh to rebind a single sheet.
+   * against: the default branch's tree, or the empty tree when that branch
+   * is unborn. Used by Sheet.refresh to rebind a single sheet.
    */
   async currentReadTree(): Promise<string> {
     return this.#resolveReadTree();
@@ -274,9 +394,7 @@ export class Repository {
    */
   async resolveTreeForRef(ref: string): Promise<string> {
     try {
-      const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', `${ref}^{tree}`], {
-        cwd: this.#gitDir,
-      });
+      const { stdout } = await gitExec(this.#gitDir, ['rev-parse', '--verify', '--quiet', `${ref}^{tree}`]);
       const hash = stdout.trim();
       if (hash) return hash;
     } catch {
@@ -286,8 +404,8 @@ export class Repository {
   }
 
   /**
-   * Rebind every live Sheet this Repository has issued to the current HEAD
-   * tree. The consumer's tool after out-of-band ref movement; not needed
+   * Rebind every live Sheet this Repository has issued to the default
+   * branch's current tree. The consumer's tool after out-of-band ref movement; not needed
    * after this repository's own transact (a successful commit auto-refreshes).
    * See specs/behaviors/freshness.md.
    */
@@ -383,8 +501,8 @@ export class Repository {
   }
 
   /**
-   * Open a Sheet handle bound to the workspace at the resolved ref (default
-   * HEAD). Throws ConfigError(config_missing) when `.gitsheets/<name>.toml`
+   * Open a Sheet handle bound to the workspace at the resolved ref (default:
+   * the default branch). Throws ConfigError(config_missing) when `.gitsheets/<name>.toml`
    * is absent.
    */
   async openSheet<T extends RecordLike = RecordLike>(
@@ -392,7 +510,8 @@ export class Repository {
     opts: OpenSheetOptions<T> = {},
   ): Promise<Sheet<T>> {
     const root = opts.root ?? '.';
-    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
+    const pin = opts.ref ?? this.#pinnedAt ?? undefined;
+    const readRef = pin !== undefined ? await this.resolveTreeForRef(pin) : await this.#resolveReadTree();
     const configPath = joinTreePath(root, '.gitsheets', `${name}.toml`);
     const sheetOpts: import('./sheet.js').SheetConstructorOptions<T> = {
       repo: this,
@@ -407,8 +526,8 @@ export class Repository {
     if (opts.prefix !== undefined) {
       Object.assign(sheetOpts, { prefix: opts.prefix });
     }
-    if (opts.ref !== undefined) {
-      Object.assign(sheetOpts, { pinnedRef: opts.ref });
+    if (pin !== undefined) {
+      Object.assign(sheetOpts, { pinnedRef: pin });
     }
     const sheet = new Sheet<T>(sheetOpts);
     // Eagerly validate config exists by reading once.
@@ -425,7 +544,8 @@ export class Repository {
   /** Discover every sheet declared in `<root>/.gitsheets/*.toml`. */
   async openSheets(opts: OpenSheetsOptions = {}): Promise<Record<string, Sheet>> {
     const root = opts.root ?? '.';
-    const readRef = opts.ref !== undefined ? await this.resolveTreeForRef(opts.ref) : await this.#resolveReadTree();
+    const pin = opts.ref ?? this.#pinnedAt ?? undefined;
+    const readRef = pin !== undefined ? await this.resolveTreeForRef(pin) : await this.#resolveReadTree();
     let names: string[];
     try {
       names = callCore(() => addon.coreDiscoverSheets(this.#gitDir, readRef, root));
@@ -445,8 +565,8 @@ export class Repository {
       if (opts.prefix !== undefined) {
         Object.assign(sheetOpts, { prefix: opts.prefix });
       }
-      if (opts.ref !== undefined) {
-        Object.assign(sheetOpts, { pinnedRef: opts.ref });
+      if (pin !== undefined) {
+        Object.assign(sheetOpts, { pinnedRef: pin });
       }
       out[sheetName] = new Sheet(sheetOpts);
     }
@@ -477,6 +597,7 @@ export class Repository {
       );
     }
 
+    this.#assertWritable('repo.transact');
     const normalized = Transaction.normalizeOptions(opts);
     const author = await resolveAuthor(this.#gitDir, normalized.author);
     const committer = normalized.committer ?? author;
@@ -496,6 +617,28 @@ export class Repository {
       if (normalized.parent !== undefined) coreOpts.parent = normalized.parent;
       if (normalized.orphan) coreOpts.orphan = true;
       if (normalized.branch !== undefined) coreOpts.branch = normalized.branch;
+      // No parent named: start from the default branch (specs/behaviors/default-branch.md).
+      const start =
+        normalized.parent === undefined && !normalized.orphan
+          ? await this.#defaultStart()
+          : { kind: 'as-given' as const };
+      if (start.kind === 'tip') {
+        coreOpts.parent = start.ref;
+        coreOpts.branch ??= start.ref;
+      } else if (start.kind === 'unborn') {
+        // Bootstrap an unborn default branch with a root commit. The core
+        // resolves only HEAD's own unborn branch implicitly, so this rides
+        // its orphan path; a handler that writes nothing is discarded below
+        // so it still commits nothing, as on a fresh HEAD.
+        if (coreOpts.branch !== undefined && (await resolveCommit(this.#gitDir, qualifyBranch(coreOpts.branch))) !== null) {
+          throw new TransactionError(
+            'commit_failed',
+            `the default branch ${start.ref} is unborn, so there is no tip to parent a commit onto ${coreOpts.branch} — pass opts.parent explicitly`,
+          );
+        }
+        coreOpts.orphan = true;
+        coreOpts.branch ??= start.ref;
+      }
 
       const coreTx = callCore(() => CoreTransaction.begin(this.#gitDir, coreOpts));
       const tx: Transaction = new Transaction({
@@ -516,13 +659,25 @@ export class Repository {
         tx.discard();
         throw err;
       }
-      const result = await tx.finalize(value);
+      if (start.kind === 'unborn' && !coreTx.isMutated()) {
+        tx.discard();
+        return { value, commitHash: null, treeHash: null, ref: null, parentCommitHash: null };
+      }
+      let result = await tx.finalize(value);
+      let pointerMoved = false;
+      if (result.commitHash !== null && this.#superproject !== null) {
+        const defaultStarted = normalized.parent === undefined && !normalized.orphan && normalized.branch === undefined;
+        ({ result, pointerMoved } = await this.#advancePointer(result, defaultStarted, normalized.message));
+      }
       if (result.commitHash !== null) {
-        // Auto-refresh: rebind every live sheet to the post-commit HEAD tree
-        // (read-your-writes — specs/behaviors/freshness.md). Resolved from
-        // HEAD rather than the result tree so a commit onto a non-HEAD branch
-        // doesn't shift HEAD-bound sheets.
-        this.#rebindLiveSheets(await this.#resolveReadTree());
+        // Auto-refresh: rebind every live sheet to the default branch's
+        // post-commit tree (read-your-writes — specs/behaviors/freshness.md),
+        // only when this commit advanced that branch: a commit onto another
+        // branch doesn't shift default-branch sheets. Bound to a detached
+        // HEAD, re-resolve HEAD (a no-op unless it moved).
+        if (this.#branch === null || result.ref === `refs/heads/${this.#branch}`) {
+          this.#rebindLiveSheets(await this.#resolveReadTree());
+        }
         for (const hook of this.#postCommitHooks) {
           try {
             hook(result.commitHash);
@@ -530,6 +685,9 @@ export class Repository {
             // Hooks must not break transactions.
           }
         }
+        // Stage last: a failed index update (pointer_stage_failed) must not
+        // skip read-your-writes or the push daemon for a commit that landed.
+        if (pointerMoved) await this.#stagePointerAt(result.commitHash);
       }
       return result;
     } finally {
@@ -552,11 +710,12 @@ export class Repository {
    * See specs/api/repository.md#repofetchopts.
    */
   async fetch(opts: FetchOptions = {}): Promise<FetchResult> {
+    this.#assertWritable('repo.fetch');
     const remote = opts.remote ?? 'origin';
     const bare = (await this.#syncBranch(opts.branch, 'repo.fetch')).replace(/^refs\/heads\//, '');
     const remoteRef = `refs/remotes/${remote}/${bare}`;
     try {
-      await exec('git', ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`], { cwd: this.#gitDir });
+      await gitExec(this.#gitDir, ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`]);
     } catch (err) {
       return { ok: false, remoteRef, error: err instanceof Error ? err.message : String(err) };
     }
@@ -567,14 +726,14 @@ export class Repository {
     return { ok: true, remoteRef, remoteCommit };
   }
 
-  /** The branch a sync/fetch acts on: `explicit`, else HEAD's branch. */
+  /** The branch a sync/fetch acts on: `explicit`, else the default branch. */
   async #syncBranch(explicit: string | undefined, caller: string): Promise<string> {
     if (explicit !== undefined) return explicit;
-    const headRef = await this.#headBranchRef();
-    if (!headRef) {
-      throw new RefError('ref_not_found', `${caller}: HEAD is detached or the repo is fresh — pass opts.branch`);
+    const ref = await this.#defaultBranchRef();
+    if (!ref) {
+      throw new RefError('ref_not_found', `${caller}: HEAD is detached — pass opts.branch`);
     }
-    return headRef;
+    return ref;
   }
 
   /**
@@ -587,6 +746,7 @@ export class Repository {
    * See specs/behaviors/push-sync.md "Sync (opt-in, explicit)".
    */
   async sync(opts: SyncOptions = {}): Promise<SyncResult> {
+    this.#assertWritable('repo.sync');
     const remote = opts.remote ?? 'origin';
     const bare = (await this.#syncBranch(opts.branch, 'repo.sync')).replace(/^refs\/heads\//, '');
     const remoteRef = `refs/remotes/${remote}/${bare}`;
@@ -622,10 +782,10 @@ export class Repository {
       if (raw.conflictBranch != null) Object.assign(r, { conflictBranch: raw.conflictBranch });
       if (r.newCommit !== r.oldCommit) {
         // The library moved the ref itself: rebind live sheets like a commit
-        // would (specs/behaviors/freshness.md), when it was HEAD's branch —
-        // then give the caller its critical section, still under the lock.
-        const headRef = await this.#headBranchRef();
-        if (headRef === `refs/heads/${bare}`) this.#rebindLiveSheets(await this.#resolveReadTree());
+        // would (specs/behaviors/freshness.md), when it was the default
+        // branch — then give the caller its critical section, still under the lock.
+        const defaultRef = await this.#defaultBranchRef();
+        if (defaultRef === `refs/heads/${bare}`) this.#rebindLiveSheets(await this.#resolveReadTree());
         if (opts.afterMove !== undefined) await opts.afterMove(r);
       }
       return r;
@@ -634,9 +794,12 @@ export class Repository {
     if ((result.outcome === 'ahead' || result.outcome === 'rebased') && this.#pushDaemon) {
       this.#pushDaemon.notifyCommit(result.newCommit);
     }
+    if (result.newCommit !== result.oldCommit && (await this.#movesPointer(`refs/heads/${bare}`))) {
+      await this.#stagePointerAt(result.newCommit);
+    }
     if (result.outcome === 'conflict-escaped' && result.conflictBranch !== undefined && opts.pushConflictBranch !== false) {
       try {
-        await exec('git', ['push', remote, `${result.conflictBranch}:${result.conflictBranch}`], { cwd: this.#gitDir });
+        await gitExec(this.#gitDir, ['push', remote, `${result.conflictBranch}:${result.conflictBranch}`]);
         Object.assign(result, { conflictBranchPushed: true });
       } catch {
         Object.assign(result, { conflictBranchPushed: false });
@@ -653,13 +816,14 @@ export class Repository {
    * branch moved. See specs/behaviors/merge.md.
    */
   async merge(opts: MergeOptions): Promise<MergeResult> {
+    this.#assertWritable('repo.merge');
     let ours = opts.ours;
     if (ours === undefined) {
-      const headRef = await this.#headBranchRef();
-      if (!headRef) {
-        throw new RefError('ref_not_found', 'repo.merge: HEAD is detached or the repo is fresh — pass opts.ours');
+      const defaultRef = await this.#defaultBranchRef();
+      if (!defaultRef) {
+        throw new RefError('ref_not_found', 'repo.merge: HEAD is detached — pass opts.ours');
       }
-      ours = headRef.replace(/^refs\/heads\//, '');
+      ours = defaultRef;
     }
     const coreOpts: import('@gitsheets/core-napi').JsMergeOptions = {
       ours,
@@ -671,6 +835,12 @@ export class Repository {
       offsetMinutes: -new Date().getTimezoneOffset(),
     };
     if (opts.message !== undefined) coreOpts.message = opts.message;
+    else if (opts.ours === undefined) {
+      // The default `ours` is passed fully qualified (a branch named like a
+      // hash, e.g. `2026`, would otherwise be misread as a commit); keep the
+      // core's default message naming the short branch.
+      coreOpts.message = `Merge ${opts.theirs} into ${ours.replace(/^refs\/heads\//, '')}\n`;
+    }
     if (opts.author !== undefined) coreOpts.author = opts.author;
     if (opts.committer !== undefined) coreOpts.committer = opts.committer;
     const oursArg = ours;
@@ -692,22 +862,28 @@ export class Repository {
       }),
     };
     if ((result.outcome === 'merged' || result.outcome === 'fast-forward') && result.commit !== result.oursCommit) {
-      const headRef = await this.#headBranchRef();
-      if (headRef === `refs/heads/${oursArg.replace(/^refs\/heads\//, '')}`) {
+      const defaultRef = await this.#defaultBranchRef();
+      if (defaultRef === `refs/heads/${oursArg.replace(/^refs\/heads\//, '')}`) {
         this.#rebindLiveSheets(await this.#resolveReadTree());
+      }
+      if (result.commit !== null && (await this.#movesPointer(qualifyBranch(oursArg)))) {
+        await this.#stagePointerAt(result.commit);
       }
     }
     return result;
   }
 
   /**
-   * Point the lightweight tag `refs/tags/<name>` at `target` (default HEAD),
+   * Point the lightweight tag `refs/tags/<name>` at `target` (default: the
+   * default branch's tip; HEAD when bound to a detached HEAD),
    * in the core. Refuses an existing tag with TransactionError(commit_failed)
    * unless `opts.force` (then moves it — `git tag -f`). Returns the tagged
    * object id. See specs/api/repository.md#repotagname-target-opts.
    */
-  async tag(name: string, target = 'HEAD', opts: { readonly force?: boolean } = {}): Promise<string> {
-    return callCore(() => addon.tagSet(this.#gitDir, name, target, opts.force ?? false));
+  async tag(name: string, target?: string, opts: { readonly force?: boolean } = {}): Promise<string> {
+    this.#assertWritable('repo.tag');
+    const resolved = target ?? (this.#branch !== null ? `refs/heads/${this.#branch}` : 'HEAD');
+    return callCore(() => addon.tagSet(this.#gitDir, name, resolved, opts.force ?? false));
   }
 
   /**
@@ -734,6 +910,7 @@ export class Repository {
    * See specs/behaviors/push-sync.md.
    */
   async startPushDaemon(opts: PushDaemonOptions): Promise<PushDaemon> {
+    this.#assertWritable('repo.startPushDaemon');
     if (this.#pushDaemon) {
       throw new TransactionError(
         'push_daemon_running',
@@ -742,14 +919,14 @@ export class Repository {
     }
     let branch = opts.branch;
     if (!branch) {
-      const headRef = await this.#headBranchRef();
-      if (!headRef) {
+      const defaultRef = await this.#defaultBranchRef();
+      if (!defaultRef) {
         throw new RefError(
           'ref_not_found',
-          'cannot start push daemon — HEAD is detached or the repo is fresh',
+          'cannot start push daemon — HEAD is detached; pass opts.branch',
         );
       }
-      branch = headRef.replace(/^refs\/heads\//, '');
+      branch = defaultRef.replace(/^refs\/heads\//, '');
     }
     const daemon = new PushDaemon({
       gitDir: this.gitDir,
@@ -777,6 +954,61 @@ export class Repository {
 
   // --- Private helpers ---
 
+  /**
+   * `openRepo({ submodule, at })` binds read-only: every ref-moving
+   * operation is `TransactionError(transaction_required)`, as a write on a
+   * ref-pinned sheet is. See specs/behaviors/default-branch.md
+   * "Reading a pinned snapshot".
+   */
+  #assertWritable(op: string): void {
+    if (this.#pinnedAt === null) return;
+    throw new TransactionError(
+      'transaction_required',
+      `${op}: this repository is pinned read-only to ${this.#pinnedAt} (openRepo({ at })) — open it without at to write`,
+    );
+  }
+
+  /**
+   * @internal — the commit an `openRepo({ submodule, at })` repository pins
+   * every sheet at, or `null`. Lets a pinned Sheet word its write refusal.
+   */
+  pinnedAtCommit(): string | null {
+    return this.#pinnedAt;
+  }
+
+  /**
+   * Submodule mode, after a commit: a default-started commit on a detached
+   * `HEAD` advances `HEAD` itself (strict CAS — see advanceDetachedHead).
+   * Reports whether the pointer moved (that, or the commit advanced `HEAD`'s
+   * branch), for {@link #stagePointerAt}, which runs after rebind and hooks.
+   * See specs/behaviors/default-branch.md "The pointer" / "After a commit".
+   */
+  async #advancePointer<T>(
+    result: TransactionResult<T>,
+    defaultStarted: boolean,
+    message: string,
+  ): Promise<{ result: TransactionResult<T>; pointerMoved: boolean }> {
+    const commit = result.commitHash!;
+    if (this.#branch === null && defaultStarted && result.ref === null && result.parentCommitHash !== null) {
+      const subject = message.split('\n', 1)[0] ?? '';
+      await advanceDetachedHead(this.#gitDir, commit, result.parentCommitHash, `gitsheets: ${subject}`);
+      return { result: { ...result, ref: 'HEAD' }, pointerMoved: true };
+    }
+    return { result, pointerMoved: result.ref !== null && (await this.#movesPointer(result.ref)) };
+  }
+
+  /** Submodule mode: whether advancing `ref` moves the pointer — `HEAD` is a symref to it. */
+  async #movesPointer(ref: string): Promise<boolean> {
+    if (this.#superproject === null) return false;
+    return ref === (await this.#headBranchRef());
+  }
+
+  /** `stagePointer`: stage `commit` as the superproject's gitlink (throws pointer_stage_failed). */
+  async #stagePointerAt(commit: string): Promise<void> {
+    if (this.#superproject === null || !this.#stagePointer) return;
+    await stageGitlink(this.#superproject, commit);
+  }
+
   #makeTxSheet<T extends RecordLike = RecordLike>(
     tx: Transaction,
     name: string,
@@ -795,25 +1027,66 @@ export class Repository {
     return new Sheet<T>(opts);
   }
 
-  /** The tree hash reads resolve against — HEAD's tree, or the empty tree on a fresh repo. */
+  /**
+   * @internal — where a short-lived read-only core transaction should start
+   * so it sees what live sheets see (Sheet.willChange's prepare pipeline):
+   * `{ parent }` at the default branch's tip, `{ orphan: true }` from an
+   * unborn default branch, `{}` for HEAD's own (fresh or detached) state.
+   */
+  async readTxStart(): Promise<{ parent?: string; orphan?: true }> {
+    const start = await this.#defaultStart();
+    if (start.kind === 'tip') return { parent: start.ref };
+    if (start.kind === 'unborn') return { orphan: true };
+    return {};
+  }
+
+  /**
+   * The fully-qualified default branch (`refs/heads/<name>`), or — bound to
+   * a detached HEAD — `null`. With no binding recorded (a directly
+   * constructed Repository), HEAD's branch, read live.
+   */
+  async #defaultBranchRef(): Promise<string | null> {
+    if (this.#branch !== null) return `refs/heads/${this.#branch}`;
+    return this.#headBranchRef();
+  }
+
+  /**
+   * Where a transaction with no `parent` starts: the default branch's tip,
+   * an unborn default branch other than HEAD's (`unborn` — bootstrapped by
+   * an orphan commit), or `as-given` — let the core resolve HEAD (detached,
+   * or HEAD's own unborn branch, which the core already handles).
+   */
+  async #defaultStart(): Promise<
+    { kind: 'tip'; ref: string } | { kind: 'unborn'; ref: string } | { kind: 'as-given' }
+  > {
+    if (this.#branch === null) return { kind: 'as-given' };
+    const ref = `refs/heads/${this.#branch}`;
+    if ((await resolveCommit(this.#gitDir, ref)) !== null) return { kind: 'tip', ref };
+    if ((await this.#headBranchRef()) === ref) return { kind: 'as-given' };
+    // A remote-tracking copy may have been fetched since open.
+    await assertNotRemoteOnly(this.#gitDir, this.#branch, 'the default branch');
+    return { kind: 'unborn', ref };
+  }
+
+  /**
+   * The tree hash reads resolve against — the default branch's tree, or the
+   * empty tree when it is unborn. Bound to a detached HEAD: HEAD's tree.
+   */
   async #resolveReadTree(): Promise<string> {
+    const target = this.#branch !== null ? `refs/heads/${this.#branch}^{tree}` : 'HEAD^{tree}';
     try {
-      const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', 'HEAD^{tree}'], {
-        cwd: this.#gitDir,
-      });
+      const { stdout } = await gitExec(this.#gitDir, ['rev-parse', '--verify', '--quiet', target]);
       const hash = stdout.trim();
       if (hash) return hash;
     } catch {
-      // fresh repo — no HEAD
+      // unborn default branch (or a fresh repo's HEAD)
     }
     return EMPTY_TREE_HASH;
   }
 
   async #headBranchRef(): Promise<string | null> {
     try {
-      const { stdout } = await exec('git', ['symbolic-ref', '--quiet', 'HEAD'], {
-        cwd: this.gitDir,
-      });
+      const { stdout } = await gitExec(this.gitDir, ['symbolic-ref', '--quiet', 'HEAD']);
       return stdout.trim() || null;
     } catch {
       return null;
@@ -821,7 +1094,103 @@ export class Repository {
   }
 }
 
-/** Convenience factory: `openRepo({ gitDir? })`. */
+/**
+ * Resolve the default branch for a repository at `gitDir`, once, at open:
+ * `explicit` (the `openRepo` option) → `GITSHEETS_BRANCH` → `gitsheets.branch`
+ * git config → the branch `HEAD` points at (`null` when HEAD is detached).
+ * Explicit sources must name a branch — `ConfigError(config_invalid)` for a
+ * tag, commit, or malformed name. See specs/behaviors/default-branch.md.
+ */
+async function resolveDefaultBranch(gitDir: string, explicit: string | undefined): Promise<string | null> {
+  if (explicit !== undefined) return validateBranchName(gitDir, explicit, 'openRepo({ branch })');
+  const env = process.env['GITSHEETS_BRANCH'];
+  if (env !== undefined && env !== '') return validateBranchName(gitDir, env, 'GITSHEETS_BRANCH');
+  const configured = await gitConfigValue(gitDir, 'gitsheets.branch');
+  if (configured !== null && configured !== '') {
+    return validateBranchName(gitDir, configured, 'git config gitsheets.branch');
+  }
+  try {
+    const { stdout } = await gitExec(gitDir, ['symbolic-ref', '--quiet', 'HEAD']);
+    const ref = stdout.trim();
+    return ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
+  } catch {
+    return null; // detached
+  }
+}
+
+/** One git-config value for the repository at `gitDir`, or null when unset. */
+async function gitConfigValue(gitDir: string, key: string): Promise<string | null> {
+  try {
+    const { stdout } = await gitExec(gitDir, ['config', '--get', key]);
+    return stdout.trim();
+  } catch {
+    return null; // exit 1: unset
+  }
+}
+
+/**
+ * `raw` as a branch short name, or `ConfigError(config_invalid)`: accepts
+ * `name` or `refs/heads/name`; rejects other `refs/*` namespaces, malformed
+ * names, and — when no such branch exists yet — a name that resolves to
+ * something else (a tag, a commit hash, a remote-tracking ref).
+ */
+async function validateBranchName(gitDir: string, raw: string, source: string): Promise<string> {
+  const invalid = (why: string): ConfigError =>
+    new ConfigError('config_invalid', `${source}: ${JSON.stringify(raw)} ${why} — the default branch must be a branch name (e.g. 'data')`);
+  let name = raw;
+  if (name.startsWith('refs/')) {
+    if (!name.startsWith('refs/heads/')) throw invalid('is not a branch ref');
+    name = name.slice('refs/heads/'.length);
+  }
+  if (name === '' || name === 'HEAD' || name.startsWith('-')) throw invalid('is not a valid branch name');
+  try {
+    await gitExec(gitDir, ['check-ref-format', `refs/heads/${name}`]);
+  } catch {
+    throw invalid('is not a valid branch name');
+  }
+  if ((await resolveCommit(gitDir, `refs/heads/${name}`)) !== null) return name;
+  await assertNotRemoteOnly(gitDir, name, source);
+  try {
+    const { stdout } = await gitExec(gitDir, ['rev-parse', '--verify', '--quiet', name]);
+    if (stdout.trim() !== '') throw invalid('names a tag, commit, or other ref, not a branch');
+  } catch (err) {
+    if (err instanceof ConfigError) throw err;
+    // doesn't resolve: an unborn branch — the bootstrap path
+  }
+  return name;
+}
+
+/**
+ * Refuse a branch that exists only as a remote-tracking ref
+ * (`refs/remotes/<remote>/<name>`, e.g. on a fresh clone): it is not unborn,
+ * and treating it so would let the first write start an unrelated root.
+ * gitsheets never creates a local branch from a remote one implicitly.
+ * See specs/behaviors/default-branch.md "Resolution".
+ */
+export async function assertNotRemoteOnly(gitDir: string, name: string, source: string): Promise<void> {
+  let remotes: string[];
+  try {
+    const { stdout } = await gitExec(gitDir, ['remote']);
+    remotes = stdout.split('\n').map((r) => r.trim()).filter((r) => r.length > 0);
+  } catch {
+    return;
+  }
+  for (const remote of remotes) {
+    if ((await resolveCommit(gitDir, `refs/remotes/${remote}/${name}`)) !== null) {
+      throw new ConfigError(
+        'config_invalid',
+        `${source}: branch ${JSON.stringify(name)} exists only as ${remote}/${name} — create the local branch first: git branch ${name} ${remote}/${name}`,
+      );
+    }
+  }
+}
+
+/** `name` as a fully-qualified ref (`refs/heads/<name>` unless already under `refs/`). */
+function qualifyBranch(name: string): string {
+  return name.startsWith('refs/') ? name : `refs/heads/${name}`;
+}
+
+/** Convenience factory: `openRepo({ gitDir?, branch? })`. */
 export async function openRepo(opts: OpenRepoOptions = {}): Promise<Repository> {
   return Repository.open(opts);
 }
@@ -829,9 +1198,7 @@ export async function openRepo(opts: OpenRepoOptions = {}): Promise<Repository> 
 /** Resolve a ref/commit-ish to its full commit hash via git rev-parse; null on failure. */
 async function resolveCommit(gitDir: string, ref: string): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
-      cwd: gitDir,
-    });
+    const { stdout } = await gitExec(gitDir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
     const hash = stdout.trim();
     return hash || null;
   } catch {

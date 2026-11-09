@@ -6,12 +6,13 @@
 
 import { runAxiCli } from 'axi-sdk-js';
 
-import { createContext, type GitsheetsContext } from '../src/context.js';
+import { createContext, parseGlobalFlags, type GitsheetsContext } from '../src/context.js';
 import { homeCommand } from '../src/commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from '../src/commands/sheets.js';
 import { queryCommand, QUERY_HELP } from '../src/commands/query.js';
 import { countCommand, COUNT_HELP } from '../src/commands/count.js';
 import { distinctCommand, DISTINCT_HELP } from '../src/commands/distinct.js';
+import { aggregateCommand, AGGREGATE_HELP } from '../src/commands/aggregate.js';
 import { readCommand, READ_HELP } from '../src/commands/read.js';
 import { upsertCommand, UPSERT_HELP } from '../src/commands/upsert.js';
 import { patchCommand, PATCH_HELP } from '../src/commands/patch.js';
@@ -30,12 +31,14 @@ import { attachmentCommand, ATTACHMENT_HELP } from '../src/commands/attachment.j
 import { contractsCommand, CONTRACTS_HELP } from '../src/commands/contracts.js';
 import { pushCommand, PUSH_HELP } from '../src/commands/push.js';
 import { setupCommand, SETUP_HELP } from '../src/commands/setup.js';
+import { rollupCommand, ROLLUP_HELP } from '../src/commands/rollup.js';
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
   query: QUERY_HELP,
   count: COUNT_HELP,
   distinct: DISTINCT_HELP,
+  aggregate: AGGREGATE_HELP,
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
@@ -51,6 +54,7 @@ const COMMAND_HELP: Record<string, string> = {
   contracts: CONTRACTS_HELP,
   push: PUSH_HELP,
   setup: SETUP_HELP,
+  rollup: ROLLUP_HELP,
 };
 
 const COMMANDS = {
@@ -58,6 +62,7 @@ const COMMANDS = {
   query: queryCommand,
   count: countCommand,
   distinct: distinctCommand,
+  aggregate: aggregateCommand,
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
@@ -73,6 +78,7 @@ const COMMANDS = {
   contracts: contractsCommand,
   push: pushCommand,
   setup: setupCommand,
+  rollup: rollupCommand,
 } as Record<
   string,
   (args: string[], ctx: GitsheetsContext | undefined) => Promise<string | Record<string, unknown>>
@@ -99,13 +105,14 @@ export async function runCli(argv: string[], cwd: string): Promise<RunResult> {
     process.chdir(cwd);
     process.exitCode = 0;
 
+    const globals = parseGlobalFlags(argv);
     await runAxiCli<GitsheetsContext>({
       description: 'test-instance',
       version: '0.0.0-test',
       topLevelHelp: 'test',
       hooks: false,
-      argv,
-      resolveContext: () => createContext(),
+      argv: globals.rest,
+      resolveContext: () => createContext(globals.flags),
       home: (_args, ctx) => homeCommand(ctx as GitsheetsContext),
       commands: COMMANDS,
       getCommandHelp: (command) => COMMAND_HELP[command],

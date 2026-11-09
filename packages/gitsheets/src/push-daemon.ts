@@ -1,11 +1,9 @@
 // Push daemon — async push-to-remote with retry/backoff.
 // See specs/behaviors/push-sync.md and specs/api/repository.md.
 
-import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { promisify } from 'node:util';
 
-const exec = promisify(execFile);
+import { gitExec } from './git-exec.js';
 
 export interface BackoffConfig {
   /** Initial delay in ms; default 1000. */
@@ -146,7 +144,7 @@ export class PushDaemon extends EventEmitter {
       // continue — rev-list may still resolve against a previously-cached
       // remote-tracking ref.
       try {
-        await exec('git', ['fetch', this.#remote, this.#branch], { cwd: this.#gitDir });
+        await gitExec(this.#gitDir, ['fetch', this.#remote, this.#branch]);
       } catch (err) {
         const reason = classifyPushFailure(err);
         const message = err instanceof Error ? err.message : String(err);
@@ -158,9 +156,7 @@ export class PushDaemon extends EventEmitter {
       let ahead = 0;
       try {
         const range = `${this.#remote}/${this.#branch}..${this.#branch}`;
-        const { stdout } = await exec('git', ['rev-list', '--count', range], {
-          cwd: this.#gitDir,
-        });
+        const { stdout } = await gitExec(this.#gitDir, ['rev-list', '--count', range]);
         const parsed = parseInt(stdout.trim(), 10);
         if (Number.isFinite(parsed) && parsed > 0) ahead = parsed;
       } catch {
@@ -173,9 +169,7 @@ export class PushDaemon extends EventEmitter {
       if (ahead > 0) {
         let headCommit: string | null = null;
         try {
-          const { stdout } = await exec('git', ['rev-parse', this.#branch], {
-            cwd: this.#gitDir,
-          });
+          const { stdout } = await gitExec(this.#gitDir, ['rev-parse', this.#branch]);
           headCommit = stdout.trim() || null;
         } catch {
           /* keep null */
@@ -288,7 +282,7 @@ export class PushDaemon extends EventEmitter {
       this.#currentBackoffMs = null;
       const started = Date.now();
       try {
-        await exec('git', ['push', this.#remote, this.#branch], { cwd: this.#gitDir });
+        await gitExec(this.#gitDir, ['push', this.#remote, this.#branch]);
         this.#lastPushedCounter = counterAtStart;
         this.#lastPushedCommit = commit;
         this.#lastPushAt = new Date().toISOString();

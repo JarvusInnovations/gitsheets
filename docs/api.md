@@ -17,6 +17,7 @@ import {
   // error classes
   GitsheetsError, ConfigError, ValidationError, TransactionError,
   IndexError, RefError, PathTemplateError, NotFoundError, ContractError,
+  AggregationError,
 
   // utilities
   mergePatch, validateRecord, canonicalContractHash,
@@ -37,6 +38,7 @@ import type {
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions, WillChangeResult,
   SheetConstructorOptions, IndexKeyFn, DefineIndexOptions, QueryFilter, RangeFilter, QueryOptions,
   DiffStatus, DiffOptions, DiffChange,
+  AggregateSpec, AggregatesSpec, AggregateModifiers, AggregateOptions,
   AttachmentBlobHandle, AttachmentEntry,
   Format, FormatConfig,
   OpenStoreOptions, Store, StoreTx, StoreTransactFn, ValidatorMap, InferRecord,
@@ -59,6 +61,17 @@ Open a `Repository` against a git directory. Discovers from cwd upward when `git
 ```typescript
 const repo = await openRepo();                         // discovered
 const repo = await openRepo({ gitDir: '/.git' });      // explicit
+const repo = await openRepo({ branch: 'data' });       // branch mode: records live on `data`
+const repo = await openRepo({ submodule: 'data' });    // submodule mode: records live in the `data` submodule
+```
+
+**Default branch.** Every repository is bound to one *default branch*: the branch live sheets read, transactions commit to when given no `parent`, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. It resolves once, at open, from the first of `opts.branch` → `GITSHEETS_BRANCH` → the `gitsheets.branch` git config of the opened repository → the branch `HEAD` points at. `repo.branch` reports it (`'data'`), or `null` when the repository is bound to a detached `HEAD` (every default then follows `HEAD`, as before). A tag, commit, or malformed name throws `ConfigError` (`config_invalid`). The branch may not exist yet: it reads as empty and the first committing transaction creates it with a root commit. Explicit refs — `readBlob('HEAD', …)`, `openSheet(name, { ref: 'HEAD' })`, `transact({ parent: 'main' })` — keep meaning exactly what they name. See [Headless data](recipes/headless-data.md).
+
+**Submodule mode.** `opts.submodule` (else `GITSHEETS_SUBMODULE`, else the superproject's `gitsheets.submodule` git config) opens the git submodule at that path instead — `<path>/.git`, else `.git/modules/<name>`; neither throws `ConfigError` (`config_missing`) naming `git sheet submodule init <path>`. The submodule's `HEAD` is the superproject's pointer to a data snapshot: the default branch is `HEAD`'s branch, or `HEAD` itself when detached (a commit then advances `HEAD` directly, compare-and-swap; `sync` / `fetch` / the push daemon need a branch). `opts.branch` / `GITSHEETS_BRANCH` / `gitsheets.branch` resolve inside the submodule; a branch `HEAD` is not on is written without moving the pointer. After a commit the superproject's `git status` reports `modified: data (new commits)` — commit the pointer with your code; `opts.stagePointer: true` also updates the superproject's index gitlink after each commit, `merge`, or `sync` that moves the pointer (never commits); if that fails after the commit landed, `TransactionError` (`pointer_stage_failed`) carries `err.commitHash` — run `git add <path>`, don't retry. A path with no `.gitmodules` entry is `ConfigError` (`config_invalid`); a linked worktree uses its own `modules/` dir. The binding is resolved at open, so reopen after `git submodule update` changes what `HEAD` is. `opts.at` (a superproject commit-ish) pins every sheet read-only at the data commit it points at: writes, `sync`, `fetch`, `merge`, `tag`, and the push daemon throw `TransactionError` (`transaction_required`); no pointer at that commit throws `RefError` (`ref_not_found`). `repo.submodule` reports the path (`null` in branch mode).
+
+```typescript
+const repo = await openRepo({ submodule: 'data', stagePointer: true });
+const shipped = await openRepo({ submodule: 'data', at: 'v1.2.0' }); // read-only: the data v1.2.0 shipped with
 ```
 
 → [`specs/api/repository.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md)
@@ -90,10 +103,12 @@ const store = await openStore(repo, {
 | `repo.sync(opts?)` | Bring a branch up to date with a remote other writers push to: fetch, then fast-forward / replay local commits / preserve-on-conflict under the write lock; rebinds live sheets; hands new tips to the push daemon. Outcomes `in-sync` · `fast-forwarded` · `ahead` · `rebased` · `conflict` · `conflict-escaped` · `fetch-failed` |
 | `repo.fetch(opts?)` | The fetch step of `sync` on its own, outside any lock: `{ ok, remoteRef, remoteCommit \| error }` — failure is a value |
 | `repo.isAncestor(a, b)` | `Promise<boolean>` — is commit `a` reachable from `b` |
-| `repo.tag(name, target?, { force? })` | Lightweight tag (default target `HEAD`); refuses an existing tag unless `force` — `git tag -f` without the spawn |
+| `repo.tag(name, target?, { force? })` | Lightweight tag (default target: the default branch's tip, `HEAD` when bound to a detached `HEAD`); refuses an existing tag unless `force` — `git tag -f` without the spawn |
 | `repo.listTree(ref, path?)` | Direct entries `{ name, type, mode, hash }` of the tree at `<ref>:<path>`, or `null` — `git ls-tree` without the spawn |
 | `repo.merge({ theirs, ours?, prefer?, commit? })` | Sheet-aware merge: record files changed on both sides are field-merged and written canonically; conflicts follow `prefer` (`fail` · `ours` · `theirs`) or are reported in the result, never thrown. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
-| `repo.refresh()` | Rebind every live Sheet to the current HEAD tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |
+| `repo.refresh()` | Rebind every live Sheet to the default branch's current tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |
+| `repo.branch` | The default branch's short name, or `null` when bound to a detached `HEAD` |
+| `repo.submodule` | Submodule mode: the submodule's path (`'data'`), or `null` |
 | `repo.readBlob(ref, path)` | `Promise<BlobHandle>` — the blob at `<ref>:<path>`, resolved at call time: `hash`, `size` (from the object header), `read()`, `stream()`. Throws `RefError` / `NotFoundError` |
 | `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()`: in-core up to 1 MiB, piped from `git cat-file blob` above that |
 
@@ -114,7 +129,7 @@ const store = await openStore(repo, {
 | `sheet.queryAll(filter?, opts?)` | `Promise<T[]>` — honors `opts.signal`, `opts.withBody` |
 | `sheet.get(path, opts?)` | `Promise<T \| undefined>` — one record by its rendered path (one blob read, no scan); `opts.withBody`; on a tx-bound sheet reads the private tree |
 | `sheet.loadBody(record)` | `Promise<T>` — hydrate a body-less record (content-typed sheets) |
-| `sheet.refresh()` | Rebind this sheet's read snapshot to the current HEAD tree (out-of-band movement; own commits auto-refresh) |
+| `sheet.refresh()` | Rebind this sheet's read snapshot to the default branch's current tree (out-of-band movement; own commits auto-refresh) |
 | `sheet.pathForRecord(record)` | `Promise<string>` — rendered path, no write |
 | `sheet.normalizeRecord(record)` | `Promise<T>` — canonical form, no write |
 
@@ -162,6 +177,73 @@ All write methods route through a transaction — permissive mode auto-opens one
 
 → [`specs/api/sheet.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/sheet.md) · [indexing recipe](recipes/secondary-indices.md)
 
+### Aggregation
+
+| Method | Returns |
+| --- | --- |
+| `sheet.aggregate(filter, aggregates, opts?)` | `Promise<Record<string, unknown>>` — one value per named aggregate over the records matching `filter` (pass `undefined` or `{}` for all). Computed in the core: pruned like `query`, read body-less, folded in canonical path order. `opts.signal` for cancellation; works on a tx-bound sheet |
+
+```typescript
+const r = await sheet.aggregate(
+  { postedAt: { $gte: '2026-01-01' } },
+  {
+    count: { count: true },
+    total: { sum: 'amountCents' },
+    byStatus: { count: true, groupBy: 'status' },
+    latest: { max: 'postedAt' },
+    ids: { reduce: 'acc.push(record.id); return acc;', initial: [] },
+  },
+);
+// → { count: 1402, total: 98231100, byStatus: { posted: 1390, pending: 12 }, latest: Date, ids: [...] }
+```
+
+Forms: `{ count: true }`, `{ sum: 'f' }`, `{ avg: 'f' }`, `{ min: 'f' }`, `{ max: 'f' }`, `{ distinct: 'f' }`, and the `{ reduce, initial, finalize? }` escape hatch, whose bodies run in the core's embedded JS engine (never in Node) so every binding gets the same answer. Each form takes `where` (an equality/range filter, no functions) and `groupBy` (a field; the result becomes a table keyed by its string form).
+
+- `sum` is an integer when every contributing value is, else the float fold in path order; `avg` is a float.
+- `min`/`max` order numbers, strings, and datetimes; `distinct` returns the sorted unique scalars. Mixing kinds in one field throws `AggregationError`.
+- An aggregate with nothing to fold is left out of the result, except `count` and `sum` (`0`). A grouped aggregate is always a table (`{}` when empty).
+- `filter` may carry function predicates as on `query`; they run host-side to pick the records, then the core folds over exactly those.
+- `distinct` holds every unique value in memory — fine at gitsheets' scale, but don't point it at a high-cardinality field you don't need.
+- `reduce` / `finalize` must be pure, and the core enforces it: `Math.random()`, `Date.now()`, and an argument-less `new Date()` / `Date()` throw (an `AggregationError`); `new Date(ms)`, `new Date(isoString)`, `Date.UTC`, and `Date.parse` still work, and a `Date`'s local-time methods read UTC on every host. Each `reduce` group runs in a fresh engine realm under loop / recursion / stack limits, so a runaway snippet is an `AggregationError`, not a hang. That determinism is what lets [rollup sheets](#rollup-sheets) commit `reduce` results.
+- Numbers coming out of a `reduce` follow the engine's one rule: an exact integer within ±(2^53 − 1) is an integer, anything else a float. On Node, an integral float result (`4.0`, e.g. from `avg`) is indistinguishable from `4` anyway — JS has one number type (a pre-existing binding projection, not specific to aggregation).
+- Grouped results are plain objects, so JS orders integer-like keys numerically first (`"9"` before `"10"`, both before `"a"`); the core and the TOML output sort keys by byte order. A group literally named `__proto__` is an ordinary own key.
+- Throws `TypeError` for a malformed spec or a body-field reference on a content-typed sheet; `AggregationError` (`aggregation_failed`, with `sheet` and `aggregate`) when the data can't be aggregated, or a `reduce` throws or returns something TOML can't hold.
+
+→ [`specs/behaviors/aggregation.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/aggregation.md)
+
+### Rollup sheets
+
+A sheet whose config has a `[gitsheet.rollup]` table is a **rollup sheet**: one record per partition of a source sheet, holding aggregates in the grammar above, committed by gitsheets in the same commit as the record changes and stamped with the source partition's git tree id (`sourceTree`) and the `.gitsheets/` directory's (`configTree`). See the [rollups recipe](recipes/rollups.md).
+
+```toml
+# .gitsheets/transactions-monthly.toml
+[gitsheet]
+root = 'transactions-monthly'
+path = '${{ postedAt: YYYY/MM }}'     # a proper prefix of the source's path
+
+[gitsheet.rollup]
+from = 'transactions'
+
+[gitsheet.rollup.aggregates]
+count = { count = true }
+total = { sum = 'amountCents' }
+```
+
+| Member | Behavior |
+| --- | --- |
+| `query` / `queryFirst` / `queryAll` / `get` / `count` / `aggregate` / `findByIndex` | Read **through the source**: a stored record whose stamps match its partition and the configs is served; a stale or missing one is recomputed transiently (nothing is written); a record whose partition is gone is not yielded. Key-field filters (including bucket ranges) prune like on the source |
+| `opts.stale` (on `query`, `queryFirst`, `queryAll`, `get`) | `'recompute'` (default) or `'serve'` — the stored records exactly as committed |
+| `sheet.materialize()` | `Promise<{ recomputed: string[], deleted: string[] }>` — recompute every stale or missing rollup record and delete orphans, in one commit (into the current transaction on a tx-bound sheet); no commit when everything is fresh. `TypeError` on a non-rollup sheet |
+| `upsert` / `delete` / `patch` / `clear` / attachment writers | Throw `TransactionError` (`sheet_derived`) |
+
+- Every commit gitsheets produces — `repo.transact`, a permissive write, `repo.merge`, each `repo.sync` replay — regenerates the rollups of the partitions it touched. A config change regenerates them all.
+- An `AggregationError` in that pass (with `sheet`, `aggregate`, and `partition`) aborts the commit; so does a `ValidationError` against a declared rollup `[gitsheet.schema]`.
+- A plain `git merge` or an outside writer leaves stale stamps: reads stay correct, and `materialize()` / `git sheet rollup` persists the repair.
+- Prefixed (multi-tenant) sources get per-prefix rollups under `<rollup root>/<prefix>/…`; every gitsheets commit, merge, and sync replay maintains all of them.
+- Equality on a date key field accepts `'2026-03-01'` or a midnight-UTC `Date` (any local-date field does).
+
+→ [`specs/behaviors/rollups.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/rollups.md)
+
 ## Transaction
 
 | Member | Purpose |
@@ -201,7 +283,7 @@ type Store<V extends ValidatorMap> = {
 };
 ```
 
-`store.<sheet>` for each sheet declared in `validators`. `store.transact(opts, async tx => ...)` mirrors `repo.transact` with `tx.<sheet>` aliases that thread validators through. `store.refresh()` rebinds every sheet to the current HEAD tree (delegates to `repo.refresh()`).
+`store.<sheet>` for each sheet declared in `validators`. `store.transact(opts, async tx => ...)` mirrors `repo.transact` with `tx.<sheet>` aliases that thread validators through. `store.refresh()` rebinds every sheet to the default branch's current tree (delegates to `repo.refresh()`).
 
 Reads through `store.<sheet>` follow the freshness model: a successful `store.transact` / `repo.transact` auto-refreshes, so post-commit reads reflect the committed state — see [`specs/behaviors/freshness.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/freshness.md).
 
@@ -253,6 +335,7 @@ Subclasses:
 | `PathTemplateError` | `path_render_failed`, `path_invalid_chars` |
 | `NotFoundError` | `record_not_found` |
 | `ContractError` | `contract_missing`, `contract_invalid`, `contract_unsatisfied` (carries `contract` and, on `contract_unsatisfied`, the conformance report in `issues`) |
+| `AggregationError` | `aggregation_failed` (carries `sheet`, `aggregate`, and `partition` for a persisted rollup) |
 
 Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 

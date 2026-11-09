@@ -249,6 +249,19 @@ export declare function substrateReset(): void
  */
 export declare function recordQuery(gitDir: string, treeRef: string, base: string, template: string, filter: object, extension?: string | undefined | null, bodyField?: string | undefined | null, titleField?: string | undefined | null, withBody?: boolean | undefined | null): Array<JsRecordEntry>
 /**
+ * Ad-hoc aggregation over the sheet under `base` in `treeRef`: the records
+ * matching `filter` (pruned by `template`, read body-less, the filter
+ * applied in the core — the same forms `recordQuery` takes) folded in
+ * canonical path order by the `aggregates` table (count / sum / avg / min /
+ * max / distinct / reduce, each with optional `where` / `groupBy`). Returns
+ * one value per aggregate name. `paths`, when given, restricts the
+ * contributing set to those record paths (the binding admits records with
+ * host-side predicates first). A malformed spec throws `TypeError`; a
+ * data-dependent failure throws `AggregationError` (`aggregation_failed`)
+ * carrying `sheet` and `aggregate`. Batch-first: one FFI crossing.
+ */
+export declare function recordAggregate(gitDir: string, treeRef: string, sheet: string, base: string, template: string, filter: object, aggregates: unknown, extension?: string | undefined | null, bodyField?: string | undefined | null, titleField?: string | undefined | null, paths?: Array<string> | undefined | null): JsValue
+/**
  * A blob read by `treeRef:path` — the bytes plus the blob's object id, or
  * `null` when nothing (or a subtree) lives at `path`. Backs sheet-config
  * loading and lazy-body hydration without a `git cat-file` subprocess
@@ -414,6 +427,45 @@ export interface JsAttachmentEntry {
   name: string
   hash: string
 }
+/** `materialize()`'s result: the rollup record paths written and deleted. */
+export interface JsMaterializeOutcome {
+  recomputed: Array<string>
+  deleted: Array<string>
+}
+/**
+ * One non-fresh rollup partition: its rollup record path and status
+ * (`stale` / `missing` / `orphaned`).
+ */
+export interface JsRollupEntry {
+  path: string
+  status: string
+}
+/**
+ * Read a rollup sheet through its source (spec: `behaviors/rollups.md`
+ * "Reads"): partitions pruned by `filter` (the `recordQuery` forms), each
+ * served from its stored record when its `sourceTree` stamp matches and
+ * recomputed transiently otherwise; orphans are not yielded. `stale:
+ * 'serve'` returns the stored records as committed. Sorted by path.
+ */
+export declare function rollupQuery(gitDir: string, treeRef: string, name: string, configPath: string, openRoot: string, prefix: string, filter: object, stale?: string | undefined | null): Array<JsRecordEntry>
+/**
+ * One rollup record by path, read through its source (`stale` as on
+ * `rollupQuery`). `null` when no partition is there.
+ */
+export declare function rollupGet(gitDir: string, treeRef: string, name: string, configPath: string, openRoot: string, prefix: string, path: string, stale?: string | undefined | null): JsValue | null
+/**
+ * Ad-hoc aggregation over a rollup sheet's **read-through** records (spec:
+ * `behaviors/rollups.md` "Reads"): the rows `rollupQuery` would yield for
+ * `filter`, folded by `aggregates` like `recordAggregate` (same forms,
+ * `paths`, and errors). A rollup sheet's stored bytes may be stale, so the
+ * stateless `recordAggregate` over its root is not used.
+ */
+export declare function rollupAggregate(gitDir: string, treeRef: string, name: string, configPath: string, openRoot: string, prefix: string, filter: object, aggregates: unknown, paths?: Array<string> | undefined | null): JsValue
+/**
+ * The non-fresh partitions of a rollup sheet at `treeRef` — `git sheet
+ * rollup --check`. Writes nothing.
+ */
+export declare function rollupStatus(gitDir: string, treeRef: string, name: string, configPath: string, openRoot: string, prefix: string): Array<JsRollupEntry>
 /** Options for [`sync_branch`]. */
 export interface JsSyncOptions {
   /** Local branch (bare name or qualified ref). */
@@ -678,14 +730,21 @@ export declare class CoreTransaction {
    * as `recordQuery` (equality / nested / `$pred` / ranges). Read-only —
    * does not mark the transaction mutated.
    */
-  query(name: string, filter: object, withBody: boolean): Array<JsRecordEntry>
+  query(name: string, filter: object, withBody: boolean, stale?: string | undefined | null): Array<JsRecordEntry>
+  /**
+   * Ad-hoc aggregation over the sheet's records in the transaction's
+   * private tree — the tx-bound `Sheet.aggregate` (spec:
+   * `behaviors/aggregation.md`). Same filter / aggregates / `paths` forms
+   * and errors as `recordAggregate`; reads body-less. Read-only.
+   */
+  aggregate(name: string, filter: object, aggregates: unknown, paths?: Array<string> | undefined | null): JsValue
   /**
    * Read the one record at `recordPath` (relative to the sheet's base, no
    * extension) in the transaction's private tree, decoded through the format
    * codec — the tx-bound `Sheet.get`. `null` when absent; `withBody` is the
    * lazy-body switch. Read-only.
    */
-  readRecord(name: string, recordPath: string, withBody: boolean): JsValue | null
+  readRecord(name: string, recordPath: string, withBody: boolean, stale?: string | undefined | null): JsValue | null
   /**
    * A raw file at `path` (repo-root-relative) in this transaction's
    * private tree — staged writes included — as `{ hash, content }`, or
@@ -693,8 +752,27 @@ export declare class CoreTransaction {
    * loading (specs/api/transaction.md "Read isolation").
    */
   readFile(path: string): JsBlobEntry | null
+  /**
+   * `rollupSheet.materialize()` into this transaction's private tree
+   * (spec: `behaviors/rollups.md` "Materializing explicitly"): recompute
+   * every stale or missing rollup record and delete orphaned ones. Marks
+   * the transaction mutated only when something changed. `TypeError` on a
+   * non-rollup sheet.
+   */
+  materialize(name: string): JsMaterializeOutcome
+  /**
+   * The non-fresh partitions of a rollup sheet in this transaction's tree
+   * (`stale` / `missing` / `orphaned`), writing nothing. `TypeError` on a
+   * non-rollup sheet.
+   */
+  rollupStatus(name: string): Array<JsRollupEntry>
   /** The parent commit hash captured at open (null on a fresh repo). */
   parentCommitHash(): string | null
+  /**
+   * Whether a mutating method has run in this transaction — the flag the
+   * core's no-op short-circuit at finalize reads. False once finalized.
+   */
+  isMutated(): boolean
   /**
    * Finalize: commit-on-success-only with no-op detection + `parent_moved`
    * re-check + CAS ref movement. Consumes the transaction.

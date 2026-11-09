@@ -97,6 +97,7 @@ The hook runs the bare home view at every session start, so the agent's initial 
 gitsheets-axi                            # home view (bare invocation)
 gitsheets-axi sheets [list|view <name>]  # sheets in this repo
 gitsheets-axi query <sheet> [filters]    # list records
+gitsheets-axi aggregate <sheet> --agg …  # count/sum/min/max/avg/distinct, --group-by
 gitsheets-axi read <sheet> <path>        # single record detail
 gitsheets-axi upsert <sheet>             # create or replace (idempotent)
 gitsheets-axi patch <sheet> <q> <p>      # RFC 7396 merge patch (idempotent)
@@ -104,15 +105,39 @@ gitsheets-axi delete <sheet> <path>      # remove a record (idempotent)
 gitsheets-axi check <sheet> <file>       # verify + optionally --fix
 gitsheets-axi diff <sheet> [<src-ref>]   # TOON change summary
 gitsheets-axi normalize <sheet>          # bulk re-canonicalize
-gitsheets-axi init <sheet>               # scaffold a starter config
+gitsheets-axi init <sheet>               # commit a starter config
 gitsheets-axi infer <sheet>              # observe records → schema
 gitsheets-axi migrate-config <sheet>     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
 gitsheets-axi push                       # one-shot git push
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
+gitsheets-axi rollup <sheet> [--check]   # materialize / check a rollup sheet
 ```
 
 Every command supports `--help` with its specific flags and 2-3 examples.
+
+### Default branch
+
+Every command reads and writes the repository's **default branch**: the
+global `--branch <name>` flag (accepted on any command, e.g.
+`gitsheets-axi query users --branch data`), else `GITSHEETS_BRANCH`, else
+the clone's `gitsheets.branch` git config, else the branch `HEAD` points at.
+`push` pushes that branch. A tag or malformed name is `CONFIG_INVALID`. See
+[Headless data](recipes/headless-data.md) for keeping records on a branch
+you never check out.
+
+`--submodule <path>` (any command, any position; else `GITSHEETS_SUBMODULE`,
+else `gitsheets.submodule`) reads and writes a data submodule instead. Each
+write advances the submodule's `HEAD`, so the superproject's `git status`
+shows `modified: data (new commits)` and nothing else. A submodule that is
+not set up yet is `CONFIG_MISSING`, with `git sheet submodule init <path>`
+as the fix.
+
+After a write, the materialize hint (`git checkout HEAD -- .`) appears only
+when the records live on the checked-out branch, where the working tree now
+lags the commit. It leads with the lasting fix, a headless layout
+(`--branch data` or `--submodule data`). Writes to a bound data branch or a
+data submodule show no hint: they touched no checked-out branch.
 
 `query`, `count`, and `distinct` share a `--filter` mini-DSL (`k=v`, `k!=v`,
 `k<v`, `k>v`, `k<=v`, `k>=v`, `k~regex`, `k in (a,b)`, `k:present`,
@@ -132,6 +157,32 @@ the one transaction it commits (pruned lookups on the private tree), prints
 progress to stderr every 100 rows for batches over 200, and a `--dry-run`
 discards that transaction without committing.
 
+`aggregate <sheet> --agg <name>=<form>[:<field>] … [--group-by f] [--filter …]`
+computes named aggregates in the gitsheets core (the same fold as the
+library's `sheet.aggregate`): `count`, or `sum` / `min` / `max` / `avg` /
+`distinct` over a field, each optionally grouped. Records without a string,
+integer, or boolean value for the `--group-by` field don't land in any group.
+The `--filter` DSL keeps its exact semantics: the clauses run as one host
+predicate that picks the records, and ordered clauses on a date-bucket path
+field are also pushed down so the walk prunes; then the core folds over the
+picked records. A clause on a markdown sheet's body field is a
+`VALIDATION_ERROR` (aggregates read body-less). A field with mixed kinds
+under `min`/`max`/`distinct` fails with `AGGREGATION_FAILED`.
+
+`rollup <sheet> [--check] [--prefix p] [--message m]` maintains a
+[rollup sheet](recipes/rollups.md). Without `--check` it recomputes every
+stale or missing rollup record and deletes orphans in one commit (`result:
+no-op`, no commit, when everything is fresh), listing each partition as
+`recomputed` or `deleted`. With `--check` it writes nothing and fails with
+`ROLLUP_STALE` (exit 1), naming each `stale` / `missing` / `orphaned`
+partition. A write to a rollup sheet fails with `SHEET_DERIVED`; a
+non-rollup sheet is a `VALIDATION_ERROR`.
+
+`query --group-by <field>` is a separate TOON view, not an `aggregate`
+call: `{value,count}` facets biggest-first, computed host-side over the
+matched records — any value kind (Dates as ISO strings), records missing the
+field counted under the empty value.
+
 ## Errors
 
 Errors go to **stdout** (not stderr — agents typically don't read stderr), in the same structured shape:
@@ -142,7 +193,7 @@ code: VALIDATION_FAILED
 help[1]: Run `gitsheets-axi sheets view users` to see the schema
 ```
 
-Stable codes the agent can switch on: `VALIDATION_FAILED`, `NOT_FOUND`, `CONFIG_INVALID`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `NOT_A_REPOSITORY`, `INVALID_JSON`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `TRANSACTION_ERROR`, `CONFIG_EXISTS`, `NO_RECORDS`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`.
+Stable codes the agent can switch on: `VALIDATION_FAILED`, `NOT_FOUND`, `CONFIG_INVALID`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `NOT_A_REPOSITORY`, `INVALID_JSON`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `TRANSACTION_ERROR`, `CONFIG_EXISTS`, `NO_RECORDS`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`, `AGGREGATION_FAILED`.
 
 Exit codes are stable: `0` for success (incl. no-ops), `2` for validation/usage errors, `1` for everything else.
 

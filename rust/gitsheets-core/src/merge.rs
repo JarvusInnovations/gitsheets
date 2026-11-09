@@ -13,6 +13,7 @@ use holo_tree::{repo as holo_repo, Context, MutableTree, ObjectId, TreeCache};
 use crate::codec;
 use crate::error::{Error, Result};
 use crate::record;
+use crate::rollup;
 use crate::sheet::{join_path, Sheet};
 use crate::store::discover_sheets;
 use crate::transaction::{build_signature, is_likely_branch, qualify_ref, resolve_author, Author};
@@ -394,11 +395,21 @@ pub fn merge_sheets(repo: &gix::Repository, opts: &MergeOptions) -> Result<Merge
     let ours_changes = blob_changes(repo, base_tree, ours_tree)?;
     let theirs_changes = blob_changes(repo, base_tree, theirs_tree)?;
     let mut sheets = open_sheets(repo, ours_tree, &opts.open_root)?;
+    // Rollup records never enter the record pass and never conflict: the
+    // rollup pass regenerates them below (specs/behaviors/rollups.md "Merge
+    // and sync"). Both sides' declarations count.
+    let mut rollup_roots = rollup::rollup_bases(repo, ours_tree, &opts.open_root)?;
+    rollup_roots.extend(rollup::rollup_bases(repo, theirs_tree, &opts.open_root)?);
+    sheets.retain(|s| !s.sheet.is_rollup());
     let mut handled: BTreeSet<String> = BTreeSet::new();
     for (path, (b, o)) in &ours_changes {
         let Some((_, t)) = theirs_changes.get(path) else { continue };
         if o == t {
             continue; // identical change on both sides — the tree merge took it
+        }
+        if rollup::under_any(path, &rollup_roots) {
+            handled.insert(path.clone());
+            continue;
         }
         let Some(scope) = sheet_for(&mut sheets, path) else { continue };
         handled.insert(path.clone());
@@ -467,7 +478,7 @@ pub fn merge_sheets(repo: &gix::Repository, opts: &MergeOptions) -> Result<Merge
         }
         let (ours_change, _theirs_change) = conflict.changes_in_resolution();
         let path = ours_change.location().to_string();
-        if handled.contains(&path) {
+        if handled.contains(&path) || rollup::under_any(&path, &rollup_roots) {
             continue;
         }
         let entries = conflict.entries();
@@ -500,8 +511,23 @@ pub fn merge_sheets(repo: &gix::Repository, opts: &MergeOptions) -> Result<Merge
         return Ok(result);
     }
 
-    // 4. Commit.
+    // 4. The rollup pass: regenerate every partition changed on either side
+    //    since the base, into the merged tree.
     let tree_id = outcome.tree.write().map_err(failed("write merged tree"))?.detach();
+    let tree_id = rollup::run_pass_on_tree(
+        repo,
+        tree_id,
+        &[
+            (Some(base_tree), ours_tree),
+            (Some(base_tree), theirs_tree),
+            (Some(ours_tree), tree_id),
+            (Some(theirs_tree), tree_id),
+        ],
+        &opts.open_root,
+        true,
+    )?;
+
+    // 5. Commit.
     result.tree = Some(tree_id.to_string());
     if !opts.commit {
         result.outcome = MergeOutcome::DryRun;

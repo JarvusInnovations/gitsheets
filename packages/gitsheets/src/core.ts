@@ -17,6 +17,7 @@ import { createRequire } from 'node:module';
 
 import type * as CoreAddon from '@gitsheets/core-napi';
 import {
+  AggregationError,
   ConfigError,
   ContractError,
   GitsheetsError,
@@ -165,6 +166,9 @@ interface StructuredCoreError {
   readonly issues?: readonly ValidationIssue[];
   readonly conflictingPaths?: readonly string[];
   readonly contract?: string;
+  readonly sheet?: string;
+  readonly aggregate?: string;
+  readonly partition?: string;
 }
 
 function isStructuredCoreError(raw: unknown): raw is StructuredCoreError {
@@ -225,6 +229,13 @@ export function mapCoreError(raw: StructuredCoreError): GitsheetsError {
           ...(raw.issues !== undefined ? { issues: raw.issues } : {}),
         },
       );
+    case 'AggregationError':
+      return new AggregationError('aggregation_failed', raw.message, {
+        cause: raw,
+        sheet: raw.sheet ?? '',
+        aggregate: raw.aggregate ?? '',
+        ...(raw.partition !== undefined ? { partition: raw.partition } : {}),
+      });
     default:
       return new GitsheetsError(code, raw.message, { cause: raw });
   }

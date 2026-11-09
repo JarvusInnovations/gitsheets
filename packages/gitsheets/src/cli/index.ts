@@ -10,6 +10,7 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
 import {
+  AggregationError,
   ConfigError,
   ContractError,
   GitsheetsError,
@@ -21,8 +22,8 @@ import {
 } from '../errors.js';
 import { readTreeBlobText, mergeRecordTexts,
 } from '../core.js';
-import { openRepo } from '../repository.js';
-import type { Sheet, UpsertResult } from '../sheet.js';
+import { assertNotRemoteOnly, openRepo } from '../repository.js';
+import type { AggregateSpec, Sheet, UpsertResult } from '../sheet.js';
 import type { RecordLike } from '../path-template/index.js';
 import { parseToml, stringifyRecord } from '../toml.js';
 import {
@@ -36,7 +37,8 @@ import {
   type OutputFormat,
 } from './formats.js';
 import { registerContractsCommands } from './contracts.js';
-import { buildTxOpts, type GlobalArgs } from './shared.js';
+import { buildTxOpts, openCliRepo, readRef, type GlobalArgs } from './shared.js';
+import { registerSubmoduleCommands } from './submodule.js';
 
 export type { GlobalArgs } from './shared.js';
 
@@ -58,6 +60,19 @@ interface QueryArgs extends GlobalArgs {
   format?: string;
   headers?: boolean;
   body?: boolean;
+}
+
+interface AggregateArgs extends GlobalArgs {
+  sheet: string;
+  filter?: Record<string, string>;
+  agg: Array<[string, AggregateSpec]>;
+  groupBy?: string;
+  format?: string;
+}
+
+interface RollupArgs extends GlobalArgs {
+  sheet: string;
+  check: boolean;
 }
 
 interface ReadArgs extends GlobalArgs {
@@ -88,6 +103,8 @@ interface InitArgs extends GlobalArgs {
   path?: string;
   schema?: string;
   force?: boolean;
+  /** Explicit spelling of what init does — commit the config (specs/behaviors/default-branch.md#bootstrapping). */
+  commit?: boolean;
 }
 
 interface MergeArgs extends GlobalArgs {
@@ -144,6 +161,10 @@ function reportError(err: unknown): void {
         );
       }
     }
+    if (err instanceof AggregationError) {
+      out.write(`  sheet:  ${err.sheet}\n  aggregate: ${err.aggregate}\n`);
+      if (err.partition !== undefined) out.write(`  partition: ${err.partition}\n`);
+    }
     if (err.cause !== undefined) {
       out.write(`  cause:  ${err.cause instanceof Error ? err.cause.message : String(err.cause)}\n`);
     }
@@ -193,7 +214,7 @@ function resolveEncoding(raw: string | undefined): BufferEncoding {
 async function loadRepoAndSheet(
   argv: GlobalArgs & { sheet: string },
 ): Promise<{ repo: Awaited<ReturnType<typeof openRepo>>; sheet: Sheet }> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openCliRepo(argv);
   const sheetOpts: { root?: string; prefix?: string } = {};
   if (argv.root) sheetOpts.root = argv.root;
   if (argv.prefix) sheetOpts.prefix = argv.prefix;
@@ -454,6 +475,84 @@ async function runQuery(argv: QueryArgs): Promise<void> {
   }
 }
 
+/**
+ * Parse one `--agg <name>=<form>[:<field>]` clause: `count`, or `sum` / `min`
+ * / `max` / `avg` / `distinct` with a field. `reduce` is library-only.
+ *
+ * @see specs/api/cli.md § `git sheet aggregate`
+ */
+export function parseAggClause(item: string): [string, AggregateSpec] {
+  const eq = item.indexOf('=');
+  const name = eq > 0 ? item.slice(0, eq) : '';
+  const rhs = eq > 0 ? item.slice(eq + 1) : '';
+  const colon = rhs.indexOf(':');
+  const form = colon === -1 ? rhs : rhs.slice(0, colon);
+  const field = colon === -1 ? undefined : rhs.slice(colon + 1);
+  if (!name) {
+    throw new Error(`--agg expects <name>=<form>[:<field>], got ${item}`);
+  }
+  if (form === 'count') {
+    if (field !== undefined) throw new Error(`--agg ${name}: count takes no field, got ${item}`);
+    return [name, { count: true }];
+  }
+  if (form === 'sum' || form === 'min' || form === 'max' || form === 'avg' || form === 'distinct') {
+    if (!field) throw new Error(`--agg ${name}: ${form} needs a field (${name}=${form}:<field>)`);
+    return [name, { [form]: field } as unknown as AggregateSpec];
+  }
+  throw new Error(
+    `--agg ${name}: unknown form ${JSON.stringify(form)} — use count, sum, min, max, avg, or distinct (reduce is library-only)`,
+  );
+}
+
+async function runAggregate(argv: AggregateArgs): Promise<void> {
+  const { sheet } = await loadRepoAndSheet(argv);
+  const format = argv.format ?? 'json';
+  if (format !== 'json' && format !== 'toml') {
+    throw new Error(`--format must be one of: json, toml (got "${format}")`);
+  }
+  // Null-prototype so names like `toString` aren't mistaken for duplicates.
+  const aggregates = Object.create(null) as Record<string, AggregateSpec>;
+  for (const [name, spec] of argv.agg) {
+    if (Object.hasOwn(aggregates, name)) throw new Error(`--agg ${name} given twice`);
+    aggregates[name] = argv.groupBy !== undefined ? { ...spec, groupBy: argv.groupBy } : spec;
+  }
+  const filter = (argv.filter as RecordLike | undefined) ?? {};
+  const result = await sheet.aggregate(filter, aggregates);
+  process.stdout.write(stringifyRecord_text(result, format));
+}
+
+// `git sheet rollup <sheet> [--check]` — specs/api/cli.md, specs/behaviors/rollups.md
+// "Materializing explicitly".
+async function runRollup(argv: RollupArgs): Promise<void> {
+  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const sheetOpts: { root?: string; prefix?: string; ref?: string } = {};
+  if (argv.root) sheetOpts.root = argv.root;
+  if (argv.prefix) sheetOpts.prefix = argv.prefix;
+  if (argv.check) {
+    // --check reads (at --ref when given) and writes nothing.
+    if (argv.ref) sheetOpts.ref = argv.ref;
+    const sheet = await repo.openSheet(argv.sheet, sheetOpts);
+    const entries = await sheet.rollupStatus();
+    for (const e of entries) process.stdout.write(`${e.status} ${e.path}\n`);
+    if (entries.length > 0) {
+      throw new Error(
+        `rollup --check: ${entries.length} partition(s) of ${argv.sheet} are not fresh — run \`git sheet rollup ${argv.sheet}\` to repair`,
+      );
+    }
+    return;
+  }
+  const sheet = await repo.openSheet(argv.sheet, sheetOpts);
+  await sheet.rollupStatus(); // a non-rollup sheet fails here, before a transaction opens
+  const txOpts = buildTxOpts(argv, `${argv.sheet} rollup`);
+  const txSheetOpts: { prefix?: string } = argv.prefix ? { prefix: argv.prefix } : {};
+  let out: { recomputed: string[]; deleted: string[] } = { recomputed: [], deleted: [] };
+  await repo.transact(txOpts, async (tx) => {
+    out = await tx.sheet(argv.sheet, txSheetOpts).materialize();
+  });
+  for (const p of out.recomputed) process.stdout.write(`recomputed ${p}\n`);
+  for (const p of out.deleted) process.stdout.write(`deleted ${p}\n`);
+}
+
 async function runRead(argv: ReadArgs): Promise<void> {
   const { sheet } = await loadRepoAndSheet(argv);
   const format: OutputFormat = validateOutputFormat(argv.format) ?? 'json';
@@ -580,7 +679,7 @@ async function runInfer(argv: InferArgs): Promise<void> {
   ].sort();
 
   // Read existing config and merge schema into it (preserving root / path / fields).
-  const ref = argv.ref ?? 'HEAD';
+  const ref = readRef(argv, repo);
   const configText = await readSheetConfigText(repo.gitDir, ref, configPath);
   const parsed = parseToml(configText) as RecordLike;
   const gitsheet = (parsed['gitsheet'] ?? {}) as RecordLike;
@@ -600,11 +699,14 @@ async function runInfer(argv: InferArgs): Promise<void> {
 }
 
 async function runInit(argv: InitArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  if (argv.commit === false) {
+    throw new Error('init --no-commit is not supported: init always commits the config (--commit is the explicit spelling)');
+  }
+  const repo = await openCliRepo(argv);
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
 
   // Refuse to overwrite an existing config (unless --force).
-  const ref = argv.ref ?? 'HEAD';
+  const ref = readRef(argv, repo);
   if (!argv.force) {
     try {
       await readSheetConfigText(repo.gitDir, ref, configPath);
@@ -651,18 +753,50 @@ async function runInit(argv: InitArgs): Promise<void> {
     );
   }
 
-  const txOpts = buildTxOpts(argv, `${argv.sheet} init sheet config`);
+  const txOpts: import('../transaction.js').TransactionOptions = await bootstrapTxOpts(
+    repo,
+    buildTxOpts(argv, `${argv.sheet} init sheet config`),
+  );
   await repo.transact(txOpts, async (tx) => {
     tx.writeFile(configPath, newText);
   });
   process.stdout.write(`created .gitsheets/${argv.sheet}.toml\n`);
 }
 
+/**
+ * `init` onto a `--ref` branch that does not exist yet: start it with a root
+ * commit (an orphan transaction creating that branch) rather than failing to
+ * resolve the parent. The default-branch case needs nothing here —
+ * `repo.transact` bootstraps an unborn default branch itself.
+ * See specs/behaviors/default-branch.md#bootstrapping.
+ */
+async function bootstrapTxOpts(
+  repo: Awaited<ReturnType<typeof openRepo>>,
+  txOpts: ReturnType<typeof buildTxOpts>,
+): Promise<import('../transaction.js').TransactionOptions> {
+  const parent = txOpts.parent;
+  if (parent === undefined || (await repo.resolveRef(parent)) !== null) return txOpts;
+  // Only a plain branch name is bootstrapped (specs/api/cli.md `init`):
+  // anything else keeps the transaction's own ref_not_found.
+  if (parent === 'HEAD' || (parent.startsWith('refs/') && !parent.startsWith('refs/heads/'))) return txOpts;
+  const name = parent.replace(/^refs\/heads\//, '');
+  try {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(execFile)('git', ['check-ref-format', '--branch', name], { cwd: repo.gitDir });
+  } catch {
+    return txOpts;
+  }
+  if (name.startsWith('@') || name === 'HEAD') return txOpts;
+  await assertNotRemoteOnly(repo.gitDir, name, '--ref');
+  return { ...txOpts, parent: null, branch: txOpts.branch ?? `refs/heads/${name}` };
+}
+
 async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openCliRepo(argv);
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
 
-  const ref = argv.ref ?? 'HEAD';
+  const ref = readRef(argv, repo);
   const configText = await readSheetConfigText(repo.gitDir, ref, configPath);
   const parsed = parseToml(configText) as RecordLike;
   const gitsheet = (parsed['gitsheet'] ?? {}) as RecordLike;
@@ -735,7 +869,7 @@ async function runMigrateConfig(argv: MigrateConfigArgs): Promise<void> {
  * idempotent and never committed.
  */
 async function runInstallDriver(argv: MergeArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openCliRepo(argv);
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const exec = promisify(execFile);
@@ -748,7 +882,7 @@ async function runInstallDriver(argv: MergeArgs): Promise<void> {
   process.stdout.write('set: merge.gitsheets.driver = "git sheet merge-driver %O %A %B %P"\n');
 
   const root = argv.root && argv.root !== '/' ? argv.root : '.';
-  const sheets = await repo.openSheets(root === '.' ? {} : { root });
+  const sheets = await sheetsAtHead(repo, root);
   const wanted: string[] = [];
   for (const name of Object.keys(sheets).sort()) {
     const config = await sheets[name]!.readConfig();
@@ -792,7 +926,7 @@ async function runInstallDriver(argv: MergeArgs): Promise<void> {
 
 async function runMerge(argv: MergeArgs): Promise<void> {
   if (argv.installDriver) return runInstallDriver(argv);
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openCliRepo(argv);
   const opts: import('../repository.js').MergeOptions = {
     theirs: argv.theirs!,
     commit: !argv.dryRun,
@@ -825,6 +959,22 @@ async function runMerge(argv: MergeArgs): Promise<void> {
   }
 }
 
+/**
+ * Sheets declared at git's `HEAD` — the merge driver works on the checked-out
+ * branch's merge, whatever the repository's default branch is (an explicit
+ * ref, specs/behaviors/default-branch.md). Empty when HEAD is unborn.
+ */
+async function sheetsAtHead(
+  repo: Awaited<ReturnType<typeof openRepo>>,
+  root: string,
+): Promise<Record<string, Sheet>> {
+  try {
+    return await repo.openSheets(root === '.' ? { ref: 'HEAD' } : { root, ref: 'HEAD' });
+  } catch {
+    return {};
+  }
+}
+
 /** Extension for a sheet's format type. */
 function extensionFor(type: string): string {
   return type === 'markdown' ? '.md' : type === 'mdx' ? '.mdx' : '.toml';
@@ -838,14 +988,14 @@ function extensionFor(type: string): string {
  * `git merge-file`, leaving git's markers, and exits 1.
  */
 async function runMergeDriver(argv: MergeDriverArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openCliRepo(argv);
   const root = argv.root && argv.root !== '/' ? argv.root : '.';
   const [baseText, oursText, theirsText] = await Promise.all([
     readFile(argv.base, 'utf8').catch(() => ''),
     readFile(argv.ours, 'utf8'),
     readFile(argv.theirs, 'utf8'),
   ]);
-  const sheets = await repo.openSheets(root === '.' ? {} : { root });
+  const sheets = await sheetsAtHead(repo, root);
   let owner: { name: string; configPath: string } | undefined;
   for (const [name, sheet] of Object.entries(sheets)) {
     const config = await sheet.readConfig();
@@ -1068,7 +1218,17 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       describe:
         'Sub-prefix under each sheet\'s config root — scopes records to a sub-tree (multi-tenant)',
     })
-    .option('ref', { type: 'string', describe: "Parent ref/commit; default HEAD's branch" })
+    .option('branch', {
+      type: 'string',
+      describe:
+        "The repository's default branch (reads, commits, sync); default: $GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch",
+    })
+    .option('submodule', {
+      type: 'string',
+      describe:
+        "Submodule mode: read and write the data submodule at this path (its HEAD is the superproject's pointer); default: $GITSHEETS_SUBMODULE, gitsheets.submodule git config",
+    })
+    .option('ref', { type: 'string', describe: 'Ref/commit to read from or transact against; default: the default branch' })
     .option('commit-to', { type: 'string', describe: 'Branch to update on commit' })
     .option('message', { type: 'string', describe: 'Commit message (mutating commands)' })
     .option('author-name', { type: 'string', describe: 'Commit author name' })
@@ -1173,6 +1333,52 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           }),
       runQuery,
     )
+    .command<AggregateArgs>(
+      'aggregate <sheet>',
+      'Compute ad-hoc aggregates over the records matching --filter (output: one JSON or TOML object)',
+      (y) =>
+        y
+          .positional('sheet', { type: 'string', demandOption: true })
+          .option('filter', {
+            type: 'string',
+            array: true,
+            describe:
+              'Filter clause (repeatable), as on query: field=value equality, or field>=value / field<=value / field>value / field<value range bounds',
+            coerce: parseCliFilters,
+          })
+          .option('agg', {
+            type: 'string',
+            array: true,
+            demandOption: true,
+            describe:
+              'Aggregate (repeatable): <name>=count, or <name>=sum|min|max|avg|distinct:<field>',
+            coerce: (raw: string[] | string): Array<[string, AggregateSpec]> =>
+              (Array.isArray(raw) ? raw : [raw]).map(parseAggClause),
+          })
+          .option('group-by', {
+            type: 'string',
+            describe: 'Apply groupBy to every aggregate: each result becomes a table keyed by this field',
+          })
+          .option('format', {
+            type: 'string',
+            choices: ['json', 'toml'] as const,
+            describe: 'Output format (default: json)',
+          }),
+      runAggregate,
+    )
+    .command<RollupArgs>(
+      'rollup <sheet>',
+      'Materialize a rollup sheet: recompute stale/missing rollup records and delete orphans in one commit (--check: list them, write nothing, exit 1 if any)',
+      (y) =>
+        y
+          .positional('sheet', { type: 'string', demandOption: true })
+          .option('check', {
+            type: 'boolean',
+            default: false,
+            describe: 'List each stale / missing / orphaned partition, write nothing, and exit 1 if there are any',
+          }),
+      runRollup,
+    )
     .command<ReadArgs>(
       'read <sheet> <path>',
       'Read a single record by its rendered path',
@@ -1219,7 +1425,7 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
     )
     .command<InitArgs>(
       'init <sheet>',
-      "Scaffold .gitsheets/<sheet>.toml with sensible defaults",
+      'Commit a starter .gitsheets/<sheet>.toml with sensible defaults',
       (y) =>
         y
           .positional('sheet', { type: 'string', demandOption: true })
@@ -1235,6 +1441,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             type: 'boolean',
             default: false,
             describe: 'Overwrite an existing .gitsheets/<sheet>.toml',
+          })
+          .option('commit', {
+            type: 'boolean',
+            describe:
+              'Commit the config to the target ref (what init always does); an absent branch is created with a root commit',
           }),
       runInit,
     )
@@ -1287,6 +1498,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       'contracts',
       'Manage schema contracts: adopt, verify, test, sync, export, prune (see specs/behaviors/contracts.md)',
       (y) => registerContractsCommands(y),
+    )
+    .command(
+      'submodule',
+      'Data submodule setup: init (see specs/behaviors/default-branch.md "Submodule mode")',
+      (y) => registerSubmoduleCommands(y),
     )
     .fail((msg, err) => {
       if (err) {

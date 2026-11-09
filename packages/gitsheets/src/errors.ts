@@ -25,10 +25,12 @@ const STATUS_BY_CODE = {
   transaction_required: 409,
   parent_moved: 409,
   commit_failed: 500,
+  pointer_stage_failed: 500,
   index_unique_conflict: 409,
   index_not_defined: 500,
   push_daemon_running: 409,
   transaction_closed: 409,
+  sheet_derived: 409,
   lock_held: 409,
   ref_not_found: 404,
   not_an_ancestor: 409,
@@ -38,6 +40,7 @@ const STATUS_BY_CODE = {
   contract_missing: 500,
   contract_invalid: 500,
   contract_unsatisfied: 422,
+  aggregation_failed: 422,
 } as const satisfies Record<string, number>;
 
 export type GitsheetsErrorCode = keyof typeof STATUS_BY_CODE;
@@ -88,13 +91,24 @@ export type TransactionErrorCode =
   | 'transaction_required'
   | 'parent_moved'
   | 'commit_failed'
+  | 'pointer_stage_failed'
   | 'push_daemon_running'
   | 'transaction_closed'
+  | 'sheet_derived'
   | 'lock_held';
 
+interface TransactionErrorOptions extends GitsheetsErrorOptions {
+  /** `pointer_stage_failed`: the data commit that landed. */
+  readonly commitHash?: string;
+}
+
 export class TransactionError extends GitsheetsError {
-  constructor(code: TransactionErrorCode, message: string, options?: GitsheetsErrorOptions) {
-    super(code, message, options);
+  /** `pointer_stage_failed`: the data commit that landed before staging failed. */
+  readonly commitHash?: string;
+
+  constructor(code: TransactionErrorCode, message: string, options?: TransactionErrorOptions) {
+    super(code, message, options?.cause === undefined ? undefined : { cause: options.cause });
+    if (options?.commitHash !== undefined) this.commitHash = options.commitHash;
   }
 }
 
@@ -156,5 +170,34 @@ export class ContractError extends GitsheetsError {
     super(code, message, options?.cause === undefined ? undefined : { cause: options.cause });
     if (options?.contract !== undefined) this.contract = options.contract;
     if (options?.issues !== undefined) this.issues = options.issues;
+  }
+}
+
+export type AggregationErrorCode = 'aggregation_failed';
+
+interface AggregationErrorOptions extends GitsheetsErrorOptions {
+  /** The sheet aggregated. */
+  readonly sheet: string;
+  /** The aggregate's name in the aggregates table. */
+  readonly aggregate: string;
+  /** The partition, when the aggregate is a persisted rollup. */
+  readonly partition?: string;
+}
+
+/**
+ * An aggregate could not be computed — mixed value kinds under
+ * `min`/`max`/`distinct`, a `reduce` that threw or returned a non-TOML value,
+ * an integer `sum` overflow. See specs/behaviors/aggregation.md.
+ */
+export class AggregationError extends GitsheetsError {
+  readonly sheet: string;
+  readonly aggregate: string;
+  readonly partition?: string;
+
+  constructor(code: AggregationErrorCode, message: string, options: AggregationErrorOptions) {
+    super(code, message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.sheet = options.sheet;
+    this.aggregate = options.aggregate;
+    if (options.partition !== undefined) this.partition = options.partition;
   }
 }

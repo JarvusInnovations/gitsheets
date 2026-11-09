@@ -7,11 +7,14 @@
 - [Global flags](#global-flags)
 - [upsert](#upsert) — insert or update records
 - [query](#query) — read records
+- [aggregate](#aggregate) — count / sum / min / max / avg / distinct
+- [rollup](#rollup) — materialize / check a rollup sheet
 - [read](#read) — read a single record
 - [edit](#edit) — open a record in $EDITOR
 - [check](#check) — validate + optionally fix a working-tree file
 - [normalize](#normalize) — re-canonicalize every record
 - [init](#init) — scaffold a sheet config
+- [submodule init](#submodule-init) — set up a data submodule with no record checkout
 - [infer](#infer) — scan records → starter JSON Schema
 - [migrate-config](#migrate-config) — pre-v1.0 fields → v1.0 schema
 - [merge](#merge-v28)
@@ -25,7 +28,9 @@
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
-| `--ref <ref>` | `HEAD` | `GITSHEETS_REF` |
+| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
+| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
+| `--ref <ref>` | the default branch | `GITSHEETS_REF` |
 | `--commit-to <ref>` | derived from `--ref` | — |
 | `--message <msg>` | auto-generated | — |
 | `--author-name <name>`, `--author-email <email>` | git config | — |
@@ -35,7 +40,9 @@
 
 A `--working` flag (read/write the working tree's state) is documented but deferred — see issue #165.
 
-> **Working-tree gotcha.** Every mutating command commits to the git **ref** via plumbing and does **not** update your checked-out files. After a write (especially a bulk `upsert`), `git status` shows the new records as *deleted* on disk — the ref has them, the working tree doesn't. Run `git checkout HEAD -- .` to materialize them. This is expected, not data loss, and is what #165's `--working` mode will eventually smooth over.
+`--branch` binds the repository's **default branch** (what commands read and commit to); `--submodule` binds a **data submodule** instead (its `HEAD` is the superproject's pointer; combine with `--branch` for a branch of the submodule). Both resolve flag → env → git config, so one `git config gitsheets.branch data` or `git config gitsheets.submodule data` per clone binds the CLI, `gitsheets-axi`, and the application alike.
+
+> **Working-tree gotcha.** Every mutating command commits to the git **ref** via plumbing and never updates checked-out files. If the records live on the branch you check out, `git status` shows them *deleted* or *modified* after each write — not data loss. **Fix the layout:** keep records on a data branch (`gitsheets init <sheet> --commit --branch data`, then `git config gitsheets.branch data`) or in a data submodule ([submodule init](#submodule-init), then `git config gitsheets.submodule data`) — no working tree of records exists to fall behind. Only when records must stay on the code branch, run `git checkout HEAD -- .` after writes to refresh the files.
 
 ## upsert
 
@@ -90,6 +97,30 @@ gitsheets query posts --filter 'publishedAt>=2026-01-01' --filter 'publishedAt<2
 - `--body` / `--no-body` — for content-typed (markdown/mdx) sheets, include or suppress the body field. Default `true`. No effect on TOML sheets.
 
 TOML output emits a `[[records]]` array round-trippable through `upsert --format=toml`.
+
+## aggregate
+
+```bash
+gitsheets aggregate transactions --agg count=count --agg total=sum:amountCents
+gitsheets aggregate transactions --filter 'postedAt>=2026-01-01' --agg total=sum:amountCents --group-by status
+gitsheets aggregate repos --agg teams=distinct:targetTeam --format toml
+```
+
+- `--agg <name>=<form>[:<field>]` (repeatable, at least one) — `count`, or `sum` / `min` / `max` / `avg` / `distinct` with a field
+- `--filter` — as on `query`
+- `--group-by <field>` — groups every aggregate; each result becomes an object keyed by the field's string form
+- `--format <json|toml>` — default `json`: one object with a key per `--agg` name
+
+Computed in the core, body-less, canonical path order. Empty aggregates are omitted except `count` / `sum` (`0`). `reduce` is library-only.
+
+## rollup
+
+```bash
+gitsheets rollup transactions-monthly           # recompute stale/missing, delete orphans — one commit (none if fresh)
+gitsheets rollup transactions-monthly --check   # list stale / missing / orphaned, write nothing, exit 1 if any
+```
+
+Prints `<status> <partition>` per line (`recomputed` / `deleted`, or with `--check` `stale` / `missing` / `orphaned`). Honors the transaction flags and `--prefix`. Use `--check` as the CI gate on data branches other tools write to; writes to a rollup sheet fail with exit `69` (`sheet_derived`).
 
 ## read
 
@@ -194,6 +225,19 @@ Flags:
 - `--path <tpl>` — override the path template
 - `--schema <file>` — embed a JSON Schema file under `[gitsheet.schema]`
 - `--force` — overwrite an existing config
+
+## submodule init
+
+`gitsheets submodule init <path> [--url <url>] [--branch <b>]` — set up a data submodule with **no record checkout**. With `--url`: adds the `.gitmodules` entry, clones into `.git/modules/<path>` without a checkout, puts the submodule `HEAD` on the branch (default: the remote's default branch; an empty remote needs `--branch`), sets `submodule.<name>.ignore = dirty`, stages `.gitmodules` + the pointer. Without `--url` (fresh clone of the superproject): fetches and puts `HEAD` on the `.gitmodules` branch at the pinned commit. Idempotent; never commits.
+
+```bash
+gitsheets submodule init data --url git@github.com:org/app-data.git --branch main
+git commit -m "Add data submodule" && git config gitsheets.submodule data
+gitsheets upsert users '{"slug":"jane"}'   # superproject: modified: data (new commits)
+git add data && git commit -m "Add jane"   # pin the data snapshot with the code
+```
+
+Set `push.recurseSubmodules = check` (or `on-demand`) in the superproject so a pointer never reaches the remote before its data commit.
 
 ## infer
 

@@ -73,6 +73,12 @@ export function translateError(error: unknown): AxiError {
     return new AxiError(error.message, 'REF_ERROR', []);
   }
 
+  if (error instanceof TransactionError && error.code === 'sheet_derived') {
+    return new AxiError(error.message, 'SHEET_DERIVED', [
+      'Rollup records are regenerated from their source sheet — write the source, or run `gitsheets-axi rollup <sheet>` to repair stale ones',
+    ]);
+  }
+
   if (error instanceof TransactionError) {
     return new AxiError(error.message, 'TRANSACTION_ERROR', []);
   }

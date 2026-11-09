@@ -47,6 +47,7 @@ use crate::index::{MultiIndex, UniqueIndex};
 use crate::path_template::Template;
 use crate::query::{self, Filter};
 use crate::record::{self};
+use crate::rollup::{RollupDef, Stale};
 use crate::validation::CompiledSchema;
 use crate::value::Value;
 
@@ -117,12 +118,12 @@ enum SortKind {
 /// [`Transaction`](crate::transaction::Transaction)); the Sheet itself never
 /// owns a tree.
 pub struct Sheet {
-    name: String,
-    config: SheetConfig,
+    pub(crate) name: String,
+    pub(crate) config: SheetConfig,
     /// Effective data base: `join(open_root, config.root, prefix)`.
-    base: String,
-    template: Template,
-    schema: Option<CompiledSchema>,
+    pub(crate) base: String,
+    pub(crate) template: Template,
+    pub(crate) schema: Option<CompiledSchema>,
     /// Per-field array-sort plan, in config-field order. `All(false)` rules have
     /// no entry (a no-op). Declarative `sort = true` ([`SortKind::Locale`]) is the
     /// **native ICU collator** ([`crate::collator`]) — it does NOT route through
@@ -131,7 +132,10 @@ pub struct Sheet {
     sort_plan: Vec<(String, SortKind)>,
     indexes: Vec<IndexDef>,
     index_cache: Option<IndexCache>,
-    engine: Engine,
+    pub(crate) engine: Engine,
+    /// The resolved `[gitsheet.rollup]`, for a rollup sheet
+    /// (`specs/behaviors/rollups.md`).
+    pub(crate) rollup: Option<RollupDef>,
 }
 
 impl Sheet {
@@ -215,6 +219,22 @@ impl Sheet {
         }
         let schema = effective.map(|e| e.compiled);
 
+        // A rollup sheet resolves its source here, so every rollup config
+        // problem is reported at open (specs/behaviors/rollups.md).
+        let rollup = match &config.rollup {
+            Some(_) => Some(RollupDef::resolve(
+                ctx,
+                tree,
+                config_blob_path,
+                &config,
+                &template,
+                open_root,
+                prefix,
+                &mut engine,
+            )?),
+            None => None,
+        };
+
         // Build the array-field sort plan once, in config-field order. `sort =
         // true` is native ICU collation (no engine snippet); raw-JS and relational
         // directives compile to a boa comparator; `sort = false` is a no-op.
@@ -244,6 +264,7 @@ impl Sheet {
             indexes: Vec::new(),
             index_cache: None,
             engine,
+            rollup,
         })
     }
 
@@ -330,6 +351,7 @@ impl Sheet {
         previous_path: Option<String>,
         allow_missing_body: bool,
     ) -> Result<UpsertCandidate> {
+        self.ensure_writable()?;
         // Body-presence guard (markdown/mdx only): an upsert is a full-record
         // replace, so a record that omits the body field would silently erase
         // the on-disk body. Require explicit opt-in. Mirrors `Sheet.#prepareUpsert`
@@ -389,6 +411,7 @@ impl Sheet {
         tree: &mut MutableTree,
         candidate: &UpsertCandidate,
     ) -> Result<StageOutcome> {
+        self.ensure_writable()?;
         if let Some(prev) = &candidate.previous_path {
             if prev != &candidate.record_path {
                 // Rename: the attachment directory moves with the record
@@ -449,6 +472,7 @@ impl Sheet {
         tree: &mut MutableTree,
         record_path: &str,
     ) -> Result<()> {
+        self.ensure_writable()?;
         let full = join_record_path(&self.base, record_path, self.extension());
         let existed = tree
             .read_blob(ctx, &full)
@@ -470,6 +494,7 @@ impl Sheet {
     /// `O(1)` clear of the sheet's data subtree *(mutating)*. Matches
     /// `Sheet.clear`.
     pub fn clear(&mut self, ctx: &Context<'_>, tree: &mut MutableTree) -> Result<()> {
+        self.ensure_writable()?;
         let base_arg = if self.base.is_empty() { "." } else { &self.base };
         tree.clear_children(ctx, base_arg).map_err(record::map_ht)?;
         self.index_cache = None;
@@ -583,6 +608,7 @@ impl Sheet {
         record_path: &str,
         attachments: &[(String, String)],
     ) -> Result<()> {
+        self.ensure_writable()?;
         for (name, blob_hash) in attachments {
             let full = self.attachment_path(record_path, name);
             // Place the already-written blob at `full` by hash — holo-tree's
@@ -649,6 +675,7 @@ impl Sheet {
         record_path: &str,
         name: &str,
     ) -> Result<()> {
+        self.ensure_writable()?;
         let full = self.attachment_path(record_path, name);
         let is_blob = matches!(
             tree.get_child(ctx, &full).map_err(record::map_ht)?,
@@ -679,6 +706,7 @@ impl Sheet {
         tree: &mut MutableTree,
         record_path: &str,
     ) -> Result<bool> {
+        self.ensure_writable()?;
         let full = self.attachment_dir(record_path);
         let is_tree = matches!(
             tree.get_child(ctx, &full).map_err(record::map_ht)?,
@@ -718,6 +746,23 @@ impl Sheet {
         filter: &Filter,
         with_body: bool,
     ) -> Result<Vec<(String, Value)>> {
+        self.query_stale(ctx, tree, filter, with_body, Stale::Recompute)
+    }
+
+    /// [`Sheet::query`] with the rollup read mode (`opts.stale`): a rollup
+    /// sheet reads through its source ([`Sheet::rollup_query`]); `stale` is
+    /// ignored on any other sheet.
+    pub fn query_stale(
+        &mut self,
+        ctx: &Context<'_>,
+        tree: &mut MutableTree,
+        filter: &Filter,
+        with_body: bool,
+        stale: Stale,
+    ) -> Result<Vec<(String, Value)>> {
+        if self.rollup.is_some() {
+            return self.rollup_query(ctx, tree, filter, stale);
+        }
         let extension = self.extension();
         query::query_records_format(
             ctx,
@@ -756,6 +801,36 @@ impl Sheet {
             codec::parse_header_only(&text, &self.config.format)?
         };
         Ok(Some(record))
+    }
+
+    /// [`Sheet::read_one`] for every sheet kind: a rollup sheet's record is
+    /// read through its source ([`Sheet::rollup_get`], honoring `stale`).
+    pub fn read_record(
+        &mut self,
+        ctx: &Context<'_>,
+        tree: &mut MutableTree,
+        record_path: &str,
+        with_body: bool,
+        stale: Stale,
+    ) -> Result<Option<Value>> {
+        if self.rollup.is_some() {
+            return self.rollup_get(ctx, tree, record_path, stale);
+        }
+        self.read_one(ctx, tree, record_path, with_body)
+    }
+
+    /// [`Sheet::list`] for every sheet kind: a rollup sheet lists through its
+    /// source ([`Sheet::rollup_query`]).
+    pub fn list_records(
+        &mut self,
+        ctx: &Context<'_>,
+        tree: &mut MutableTree,
+        with_body: bool,
+    ) -> Result<Vec<(String, Value)>> {
+        if self.rollup.is_some() {
+            return self.rollup_query(ctx, tree, &Filter::new(), Stale::Recompute);
+        }
+        self.list(ctx, tree, with_body)
     }
 
     /// The sheet's embedded engine — bindings parse a [`Sheet::query`] filter
@@ -830,7 +905,11 @@ impl Sheet {
         // identifier): a keyFn referencing the body field sees it absent and the
         // record degenerates out of the index. Matches the JS contract in
         // specs/behaviors/content-types.md#indexes.
-        let records = self.read_all(ctx, tree, false)?;
+        let records = if self.rollup.is_some() {
+            self.rollup_query(ctx, tree, &Filter::new(), Stale::Recompute)?
+        } else {
+            self.read_all(ctx, tree, false)?
+        };
         let mut unique = HashMap::new();
         let mut multi = HashMap::new();
         for def in &self.indexes {

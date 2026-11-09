@@ -62,6 +62,7 @@ pub enum ErrorClass {
     PathTemplateError,
     NotFoundError,
     ContractError,
+    AggregationError,
 }
 
 impl ErrorClass {
@@ -75,6 +76,7 @@ impl ErrorClass {
             ErrorClass::PathTemplateError => "PathTemplateError",
             ErrorClass::NotFoundError => "NotFoundError",
             ErrorClass::ContractError => "ContractError",
+            ErrorClass::AggregationError => "AggregationError",
         }
     }
 }
@@ -111,6 +113,10 @@ pub enum Error {
     PushDaemonRunning { message: String },
     /// `transaction_closed` — `tx.sheet(...)` after finalize/discard.
     TransactionClosed { message: String },
+    /// `sheet_derived` — a write to a rollup sheet, whose records are
+    /// regenerated from the source and never written by consumers
+    /// (`specs/behaviors/rollups.md`).
+    SheetDerived { message: String },
 
     // ── IndexError ───────────────────────────────────────────────────────
     /// `index_unique_conflict` — a unique index would be violated.
@@ -156,6 +162,22 @@ pub enum Error {
         contract: String,
         issues: Vec<ValidationIssue>,
     },
+
+    // ── AggregationError ─────────────────────────────────────────────────
+    /// `aggregation_failed` — an aggregate could not be computed (mixed value
+    /// kinds under `min`/`max`/`distinct`, a `reduce` that threw or returned a
+    /// non-TOML value, an integer `sum` overflow). Spec:
+    /// `behaviors/aggregation.md`.
+    AggregationFailed {
+        message: String,
+        /// The sheet aggregated.
+        sheet: String,
+        /// The aggregate's name in the aggregates table.
+        aggregate: String,
+        /// The partition, when the aggregate is a persisted rollup (`None`
+        /// for ad-hoc aggregation).
+        partition: Option<String>,
+    },
 }
 
 impl Error {
@@ -172,6 +194,7 @@ impl Error {
             Error::CommitFailed { .. } => "commit_failed",
             Error::PushDaemonRunning { .. } => "push_daemon_running",
             Error::TransactionClosed { .. } => "transaction_closed",
+            Error::SheetDerived { .. } => "sheet_derived",
             Error::IndexUniqueConflict { .. } => "index_unique_conflict",
             Error::IndexNotDefined { .. } => "index_not_defined",
             Error::RefNotFound { .. } => "ref_not_found",
@@ -182,6 +205,7 @@ impl Error {
             Error::ContractMissing { .. } => "contract_missing",
             Error::ContractInvalid { .. } => "contract_invalid",
             Error::ContractUnsatisfied { .. } => "contract_unsatisfied",
+            Error::AggregationFailed { .. } => "aggregation_failed",
         }
     }
 
@@ -195,7 +219,8 @@ impl Error {
             | Error::ParentMoved { .. }
             | Error::CommitFailed { .. }
             | Error::PushDaemonRunning { .. }
-            | Error::TransactionClosed { .. } => ErrorClass::TransactionError,
+            | Error::TransactionClosed { .. }
+            | Error::SheetDerived { .. } => ErrorClass::TransactionError,
             Error::IndexUniqueConflict { .. } | Error::IndexNotDefined { .. } => {
                 ErrorClass::IndexError
             }
@@ -207,6 +232,7 @@ impl Error {
             Error::ContractMissing { .. }
             | Error::ContractInvalid { .. }
             | Error::ContractUnsatisfied { .. } => ErrorClass::ContractError,
+            Error::AggregationFailed { .. } => ErrorClass::AggregationError,
         }
     }
 
@@ -222,12 +248,14 @@ impl Error {
             Error::ValidationFailed { .. }
             | Error::PathRenderFailed { .. }
             | Error::PathInvalidChars { .. }
-            | Error::ContractUnsatisfied { .. } => 422,
+            | Error::ContractUnsatisfied { .. }
+            | Error::AggregationFailed { .. } => 422,
             Error::TransactionInProgress { .. }
             | Error::TransactionRequired { .. }
             | Error::ParentMoved { .. }
             | Error::PushDaemonRunning { .. }
             | Error::TransactionClosed { .. }
+            | Error::SheetDerived { .. }
             | Error::IndexUniqueConflict { .. }
             | Error::NotAnAncestor { .. } => 409,
             Error::RefNotFound { .. } | Error::RecordNotFound { .. } => 404,
@@ -246,6 +274,7 @@ impl Error {
             | Error::CommitFailed { message }
             | Error::PushDaemonRunning { message }
             | Error::TransactionClosed { message }
+            | Error::SheetDerived { message }
             | Error::IndexUniqueConflict { message, .. }
             | Error::IndexNotDefined { message }
             | Error::RefNotFound { message }
@@ -255,7 +284,8 @@ impl Error {
             | Error::RecordNotFound { message }
             | Error::ContractMissing { message, .. }
             | Error::ContractInvalid { message, .. }
-            | Error::ContractUnsatisfied { message, .. } => message,
+            | Error::ContractUnsatisfied { message, .. }
+            | Error::AggregationFailed { message, .. } => message,
         }
     }
 
@@ -277,6 +307,20 @@ impl Error {
             Error::ContractMissing { contract, .. }
             | Error::ContractInvalid { contract, .. }
             | Error::ContractUnsatisfied { contract, .. } => Some(contract),
+            _ => None,
+        }
+    }
+
+    /// The `(sheet, aggregate, partition)` an [`Error::AggregationFailed`]
+    /// names; `None` for every other variant.
+    pub fn aggregation(&self) -> Option<(&str, &str, Option<&str>)> {
+        match self {
+            Error::AggregationFailed {
+                sheet,
+                aggregate,
+                partition,
+                ..
+            } => Some((sheet, aggregate, partition.as_deref())),
             _ => None,
         }
     }
@@ -386,6 +430,17 @@ mod tests {
                 ErrorClass::ContractError,
                 422,
             ),
+            (
+                Error::AggregationFailed {
+                    message: "x".into(),
+                    sheet: "tx".into(),
+                    aggregate: "total".into(),
+                    partition: None,
+                },
+                "aggregation_failed",
+                ErrorClass::AggregationError,
+                422,
+            ),
         ];
         for (err, code, class, status) in cases {
             assert_eq!(err.code(), *code);
@@ -439,5 +494,17 @@ mod tests {
         };
         assert_eq!(err.issues().len(), 1);
         assert_eq!(err.issues()[0].contract.as_deref(), Some("example.com/c/v1"));
+    }
+
+    #[test]
+    fn aggregation_error_carries_sheet_and_aggregate() {
+        let err = Error::AggregationFailed {
+            message: "x".into(),
+            sheet: "tx".into(),
+            aggregate: "total".into(),
+            partition: None,
+        };
+        assert_eq!(err.aggregation(), Some(("tx", "total", None)));
+        assert_eq!(Error::RecordNotFound { message: "x".into() }.aggregation(), None);
     }
 }

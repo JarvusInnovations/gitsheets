@@ -89,7 +89,7 @@ List records.
 | `"k in (a,b,c)"` | value is one of the listed strings |
 | `k:present` / `k:empty` | field exists and is non-empty / is absent, null, `""`, or `[]` |
 
-`--group-by <field>` aggregates over the **filtered** set (ignores `--limit`), biggest bucket first: `groups[K]{value,count}:`.
+`--group-by <field>` aggregates over the **filtered** set (ignores `--limit`), biggest bucket first: `groups[K]{value,count}:`. Any value kind groups (Dates as ISO strings); records missing the field count under the empty value. For sums, extremes, or averages per group, use `aggregate … --group-by`.
 
 **Default schema is format-aware:**
 
@@ -117,6 +117,47 @@ Record count. With no `--filter`, counts candidate tree paths **without parsing*
 ### `gitsheets-axi distinct <sheet> <field> [--filter expr ...]`
 
 Unique values of `<field>` with counts, sorted alphabetically (`values[K]{value,count}:`). `query --group-by <field>` is the same facets ordered by count. Kills the `--ndjson-out | jq 'group_by'` loop for "what values does this field take?".
+
+### `gitsheets-axi aggregate <sheet> --agg <name>=<form>[:<field>] ... [flags]`
+
+Named aggregates computed in the gitsheets core — the same fold as the library's `sheet.aggregate` — over the filtered records (body-less, canonical path order). One call answers "how many / how much / what range / which values".
+
+| Flag | Notes |
+| --- | --- |
+| `--agg <name>=<form>[:<field>]` | Repeatable, at least one: `n=count`, `total=sum:amountCents`, `lo=min:f`, `hi=max:f`, `mean=avg:f`, `vals=distinct:f` |
+| `--group-by <field>` | Group every aggregate: each result becomes a table keyed by the field's string form |
+| `--filter <expr>` | Same DSL as `query` (the clauses pick the records, date-bucket ranges also prune; the core folds over the picked records). A body-field clause on a markdown sheet → `VALIDATION_ERROR` |
+| `--prefix <p>` | Tenant sub-tree scope |
+
+```
+$ gitsheets-axi aggregate tx --agg n=count --agg total=sum:amountCents --group-by status
+sheet: tx
+results:
+  n:
+    pending: 12
+    posted: 1390
+  total:
+    pending: -500
+    posted: 98231600
+```
+
+`sum` stays an integer when every value is one (store money as integer cents). An aggregate with nothing to fold is omitted, except `count` and `sum` (`0`). Mixed kinds in one field under `min`/`max`/`distinct` → `AGGREGATION_FAILED`. Custom folds (`reduce`) are library-only.
+
+### `gitsheets-axi rollup <sheet> [--check] [--prefix p] [--message m]`
+
+Maintains a rollup sheet (`[gitsheet.rollup]` — stored per-partition aggregates). Reads of a rollup sheet are always correct (stale partitions recompute on read); this persists the repair after a plain `git merge` or an outside writer.
+
+```text
+$ gitsheets-axi rollup transactions-monthly --check
+error: 1 partition(s) of transactions-monthly are not fresh: stale 2026/03
+code: ROLLUP_STALE
+$ gitsheets-axi rollup transactions-monthly
+result: committed
+partitions[1]{path,status}:
+  2026/03,recomputed
+```
+
+Fresh → `result: no-op`, no commit. Writing a rollup sheet → `SHEET_DERIVED`; a non-rollup sheet → `VALIDATION_ERROR`.
 
 ### `gitsheets-axi read <sheet> <path> [--full]`
 
@@ -158,7 +199,7 @@ sheet: users
 path: jane
 hash: 4d3f...
 commit: a1b2c3...
-help[1]: gitsheets committed to the git ref, not your working tree — run `git checkout HEAD -- .` to materialize the record files on disk
+help[1]: records live on the checked-out branch, so your working tree now lags the commit — keep them off it with `--branch data` or `--submodule data` (docs/recipes/headless-data.md), or run `git checkout HEAD -- .` to refresh the files
 ```
 
 Batch output:
@@ -169,14 +210,14 @@ sheet: repos
 upserted: 5
 unchanged: 458
 commit: a1b2c3...
-help[1]: gitsheets committed to the git ref, not your working tree — run `git checkout HEAD -- .` to materialize the record files on disk
+help[1]: records live on the checked-out branch, so your working tree now lags the commit — keep them off it with `--branch data` or `--submodule data` (docs/recipes/headless-data.md), or run `git checkout HEAD -- .` to refresh the files
 ```
 
 Output on no-op mirrors the shape with `result: no-op` and no `commit`.
 
 **`--delete-missing`** makes the sheet exactly match the input set (upsert the batch, delete anything else) — the primitive for a periodic re-sync from a source. **`--dry-run`** validates a whole batch up front and reports `willChange` / `noOp` / `invalid` (with the offending rows) / `willDelete` without committing — use it before a big import instead of finding out about a bad row mid-batch.
 
-> **Working-tree gotcha.** gitsheets writes to the git **ref** via plumbing; it does **not** touch your working tree. Right after a commit, `git status` shows the new records as *deleted* on disk (the ref has them, the working tree doesn't). Run `git checkout HEAD -- .` to materialize them. This surprises every first-time user — it's not data loss.
+> **Working-tree gotcha.** gitsheets writes to the git **ref** via plumbing; it never touches your working tree. When records live on the checked-out branch, `git status` shows them *deleted* or *modified* right after a commit — not data loss. The `help` line above appears only in that case. **Prefer a headless layout** so there is no working tree of records to lag: a data branch (`--branch data`, `GITSHEETS_BRANCH`, or `git config gitsheets.branch data`) or a data submodule (`--submodule data`, `GITSHEETS_SUBMODULE`, or `git config gitsheets.submodule data`; set up with `git sheet submodule init data --url …`). Writes there print no hint. Only if records must stay on the code branch, run `git checkout HEAD -- .` to refresh the files.
 
 ### `gitsheets-axi patch <sheet> [<query-json>] [flags]`
 
@@ -312,7 +353,7 @@ Manage binary blobs colocated with records. Subcommands:
 
 ### `gitsheets-axi push [--remote r] [--branch b]`
 
-One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, current HEAD branch. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
+One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, the repo's default branch (`--branch` is the global flag every command accepts: `GITSHEETS_BRANCH`, `gitsheets.branch` git config, else HEAD's branch). With `--submodule <path>` (also global: `GITSHEETS_SUBMODULE`, `gitsheets.submodule`) every command — `push` included — acts on the data submodule's repository; a detached submodule `HEAD` has no branch to push. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
 
 Errors map to:
 
@@ -338,7 +379,7 @@ Populating a sheet from an external source (a GitHub API dump, a CSV, another sy
      | gitsheets-axi upsert repos --message "seed repos from GitHub"
    ```
 
-4. **Materialize the working tree** if you want the files on disk: `git checkout HEAD -- .` (gitsheets committed to the ref, not the working tree — see the gotcha under `upsert`).
+4. **Keep records off the checked-out branch** for a large databank: bind a data branch (`--branch data`) or data submodule (`--submodule data`) from step 1 so no working tree of records goes stale. If they must live on the code branch, `git checkout HEAD -- .` refreshes the files after the import (see the gotcha under `upsert`).
 5. **Round-trip to reshape:** `gitsheets-axi query <sheet> --ndjson-out` → transform the file with `jq` → pipe back into `upsert`. Exported JSON/NDJSON is verbatim, so re-import is clean and idempotent.
 
 **Incrementally classifying / updating records** (adding `target_team`, `status`, etc. to records that already exist) is a **bulk `patch`** job, not upsert:

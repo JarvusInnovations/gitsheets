@@ -79,6 +79,16 @@ class ContractError extends GitsheetsError {
   }
 }
 
+class AggregationError extends GitsheetsError {
+  constructor(message, opts = {}) {
+    super(message, opts);
+    this.name = 'AggregationError';
+    if (opts.sheet !== undefined) this.sheet = opts.sheet;
+    if (opts.aggregate !== undefined) this.aggregate = opts.aggregate;
+    if (opts.partition !== undefined) this.partition = opts.partition;
+  }
+}
+
 const CLASS_BY_NAME = {
   ConfigError,
   ValidationError,
@@ -88,6 +98,7 @@ const CLASS_BY_NAME = {
   PathTemplateError,
   NotFoundError,
   ContractError,
+  AggregationError,
 };
 
 // Map a structured error raised by the addon onto its typed class. The mapping
@@ -98,6 +109,9 @@ function mapCoreError(raw) {
   if (raw.issues !== undefined) opts.issues = raw.issues;
   if (raw.conflictingPaths !== undefined) opts.conflictingPaths = raw.conflictingPaths;
   if (raw.contract !== undefined) opts.contract = raw.contract;
+  if (raw.sheet !== undefined) opts.sheet = raw.sheet;
+  if (raw.aggregate !== undefined) opts.aggregate = raw.aggregate;
+  if (raw.partition !== undefined) opts.partition = raw.partition;
   return new Cls(raw.message, opts);
 }
 
@@ -149,6 +163,15 @@ module.exports = {
   // the filter (equality / nested / `$pred` engine snippets) runs in the core.
   recordQuery: wrap(addon.recordQuery),
   recordQueryCandidates: wrap(addon.recordQueryCandidates),
+  // Ad-hoc aggregation (behaviors/aggregation.md): a malformed spec throws a
+  // plain TypeError; a data-dependent failure an AggregationError.
+  recordAggregate: wrap(addon.recordAggregate),
+  // Rollup sheets (behaviors/rollups.md): the stamped read-through and the
+  // non-fresh survey, opening the rollup sheet from the tree each call.
+  rollupQuery: wrap(addon.rollupQuery),
+  rollupGet: wrap(addon.rollupGet),
+  rollupStatus: wrap(addon.rollupStatus),
+  rollupAggregate: wrap(addon.rollupAggregate),
   treeReadBlob: wrap(addon.treeReadBlob),
   treeEntryHash: wrap(addon.treeEntryHash),
   blobRead: wrap(addon.blobRead),
@@ -207,4 +230,5 @@ module.exports = {
   PathTemplateError,
   NotFoundError,
   ContractError,
+  AggregationError,
 };

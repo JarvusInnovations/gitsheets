@@ -7,7 +7,7 @@ import { joinBlocks, renderHelp, renderObject } from '../output/render.js';
 import { readStdin } from '../util/stdin.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { parseRecordsInput, recordLabel } from '../util/parse-records.js';
-import { MATERIALIZE_HINT } from '../util/hints.js';
+import { materializeHints } from '../util/hints.js';
 import { renderDryRun, type InvalidRow } from './upsert.js';
 
 const PATH_KEY = Symbol.for('gitsheets-path');
@@ -341,7 +341,7 @@ async function batchPatch(
       ...(flags.deleteMissing ? { deleted: deletions.length } : {}),
       commit: commitHash,
     }),
-    renderHelp([MATERIALIZE_HINT]),
+    renderHelp(await materializeHints(repo)),
   );
 }
 

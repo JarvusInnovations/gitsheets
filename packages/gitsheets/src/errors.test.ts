@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AggregationError,
   ConfigError,
   ContractError,
   GitsheetsError,
@@ -24,6 +25,7 @@ describe('GitsheetsError hierarchy', () => {
       new PathTemplateError('path_render_failed', 'x'),
       new NotFoundError('record_not_found', 'x'),
       new ContractError('contract_missing', 'x'),
+      new AggregationError('aggregation_failed', 'x', { sheet: 's', aggregate: 'a' }),
     ];
 
     for (const err of instances) {
@@ -83,6 +85,7 @@ describe('code → status mapping', () => {
     ],
     ['parent_moved', 409, () => new TransactionError('parent_moved', 'x')],
     ['commit_failed', 500, () => new TransactionError('commit_failed', 'x')],
+    ['pointer_stage_failed', 500, () => new TransactionError('pointer_stage_failed', 'x', { commitHash: 'abc' })],
     [
       'index_unique_conflict',
       409,
@@ -105,6 +108,11 @@ describe('code → status mapping', () => {
     ['contract_missing', 500, () => new ContractError('contract_missing', 'x')],
     ['contract_invalid', 500, () => new ContractError('contract_invalid', 'x')],
     ['contract_unsatisfied', 422, () => new ContractError('contract_unsatisfied', 'x')],
+    [
+      'aggregation_failed',
+      422,
+      () => new AggregationError('aggregation_failed', 'x', { sheet: 's', aggregate: 'a' }),
+    ],
   ])('%s → %i', (code, expectedStatus, build) => {
     const err = build();
     expect(err.code).toBe(code);

@@ -15,10 +15,12 @@ These apply to every command unless noted otherwise:
 | `--git-dir <path>` | discovered | `GIT_DIR` env var |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` env var |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` env var |
-| `--ref <ref>` | `HEAD` | `GITSHEETS_REF` env var |
+| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` env var |
+| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` env var |
+| `--ref <ref>` | the resolved default branch | `GITSHEETS_REF` env var |
 | `--commit-to <ref>` | derived from `--ref` (if ref is a branch) | none |
 
-`--ref` selects which commit/branch to read from or transact against. `--commit-to` overrides which branch a write-transaction advances.
+`--ref` selects which commit/branch to read from or transact against. `--branch` and `--submodule` select the repository's binding (branch mode / submodule mode: flag → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` → `gitsheets.branch` / `gitsheets.submodule` git config → `HEAD`'s branch); `--ref`'s default is the resolved default branch, so a project that exports `GITSHEETS_BRANCH=data` or `GITSHEETS_SUBMODULE=data`, or a clone with the matching git config set, needs no flags ([behaviors/default-branch.md](../behaviors/default-branch.md)). `--commit-to` overrides which branch a write-transaction advances.
 
 A `--working` flag — read/write the working tree state instead of a committed tree — is documented but not yet implemented; it's tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165) and listed in [`deferred.md`](../deferred.md).
 
@@ -71,6 +73,25 @@ Flags:
 - `--format <json|csv|tsv|toml>` (default: `json`)
 - `--headers` (CSV/TSV only; default: true)
 - `--no-body` — for content-typed (markdown/mdx) sheets, suppress the body field in the output. No effect on TOML sheets. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
+
+### `git sheet aggregate <sheet>`
+
+Compute ad-hoc aggregates over the records matching `--filter` ([behaviors/aggregation.md § Ad-hoc aggregation](../behaviors/aggregation.md#ad-hoc-aggregation-query-time)).
+
+```bash
+git sheet aggregate transactions --agg count=count --agg total=sum:amountCents
+git sheet aggregate transactions --filter 'postedAt>=2026-01-01' --agg total=sum:amountCents --group-by status
+git sheet aggregate repos --agg teams=distinct:targetTeam
+```
+
+Flags:
+
+- `--filter` — as on `query`.
+- `--agg <name>=<form>[:<field>]` (repeatable, at least one) — `count`, or `sum` / `min` / `max` / `avg` / `distinct` with a field.
+- `--group-by <field>` — applies `groupBy` to every aggregate.
+- `--format <json|toml>` (default `json`) — one object with a key per `--agg` name.
+
+`reduce` snippets are library-only.
 
 ### `git sheet read <sheet> <path>`
 
@@ -150,19 +171,40 @@ See [#130](https://github.com/JarvusInnovations/gitsheets/issues/130).
 
 ### `git sheet init <sheet>`
 
-Scaffold `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '${{ id }}'`. Flags:
+Commit a starter `.gitsheets/<sheet>.toml` with defaults `root = <sheet>` and `path = '${{ id }}'` to the target ref (`--ref` / `--commit-to`, default the default branch) through a transaction. The working tree is not written. Flags:
 
 - `--path <tpl>` — override the path template.
 - `--schema <file>` — embed a JSON Schema file at `[gitsheet.schema]`.
 - `--force` — overwrite an existing config.
+- `--commit` — the explicit spelling of what `init` does: commit the config to the target ref. When that branch does not exist yet, it is created with a root commit holding only the config ([behaviors/default-branch.md](../behaviors/default-branch.md#bootstrapping)). `--no-commit` is rejected — `init` always commits.
+
+Only a plain branch name is bootstrapped: a `--ref` that does not resolve and is `HEAD`, a `refs/*` name outside `refs/heads/`, a name failing `git check-ref-format --branch`, or a branch that exists only as a remote-tracking ref keeps the usual error (`RefError` `ref_not_found`, or `ConfigError` `config_invalid` for the remote-only case) instead of creating a ref.
 
 ```bash
 git sheet init users --path='${{ slug }}' --schema=./schemas/user.schema.json
 ```
 
+### `git sheet submodule init <path> [--url <url>] [--branch <b>]`
+
+Set up a data submodule with no record checkout ([behaviors/default-branch.md](../behaviors/default-branch.md)#bootstrapping): with `--url`, adds the `.gitmodules` entry, clones into the superproject's `modules/<path>` without a checkout, writes the gitdir pointer, puts the submodule `HEAD` on the branch, sets `submodule.<name>.ignore = dirty`, and stages `.gitmodules` plus the gitlink; without `--url`, initializes an existing entry the same way (fetch, `HEAD` on the `.gitmodules` branch at the gitlinked commit, `ignore`). Idempotent; never commits in the superproject.
+
+```bash
+git sheet submodule init data --url git@github.com:org/app-data.git --branch main
+git sheet submodule init data        # fresh clone of the superproject
+```
+
+### `git sheet rollup <sheet>`
+
+Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert`. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`). `--check` writes nothing (reading at `--ref` when given), prints one `<status> <partition>` line per partition that is not fresh (`stale` / `missing` / `orphaned`), and exits **1** if there are any. A non-rollup `<sheet>` exits 1.
+
+```bash
+git sheet rollup transactions-monthly
+git sheet rollup transactions-monthly --check    # list stale/missing/orphaned, write nothing, exit 1 if any
+```
+
 ### `git sheet merge <theirs> [--into <ours>] [--prefer ours|theirs] [--message <m>] [--dry-run]`
 
-Sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)): record files changed on both sides are field-merged and written canonically. `--into` defaults to `HEAD`'s branch. Without `--prefer`, any conflict lists every conflicting path (and field) on stderr and exits **1** with nothing written; `--prefer ours|theirs` resolves them. `--dry-run` reports the merged tree hash and moves nothing. Prints the outcome and the merge commit on success.
+Sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)): record files changed on both sides are field-merged and written canonically. `--into` defaults to the default branch ([behaviors/default-branch.md](../behaviors/default-branch.md)). Without `--prefer`, any conflict lists every conflicting path (and field) on stderr and exits **1** with nothing written; `--prefer ours|theirs` resolves them. `--dry-run` reports the merged tree hash and moves nothing. Prints the outcome and the merge commit on success.
 
 ### `git sheet merge --install-driver`
 

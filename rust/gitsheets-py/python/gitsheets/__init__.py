@@ -34,6 +34,7 @@ RefError = _core.RefError
 PathTemplateError = _core.PathTemplateError
 NotFoundError = _core.NotFoundError
 ContractError = _core.ContractError
+AggregationError = _core.AggregationError
 
 # Stateful classes.
 CompiledDefinition = _core.CompiledDefinition
@@ -60,6 +61,8 @@ apply_merge_patch = _core.apply_merge_patch
 diff_records = _core.diff_records
 record_query = _core.record_query
 record_query_candidates = _core.record_query_candidates
+record_aggregate = _core.record_aggregate
+rollup_status = _core.rollup_status
 tree_read_blob = _core.tree_read_blob
 tree_entry_hash = _core.tree_entry_hash
 blob_read = _core.blob_read
@@ -90,6 +93,7 @@ __all__ = [
     "PathTemplateError",
     "NotFoundError",
     "ContractError",
+    "AggregationError",
     "CompiledDefinition",
     "CoreTransaction",
     "Transaction",
@@ -115,6 +119,8 @@ __all__ = [
     "diff_records",
     "record_query",
     "record_query_candidates",
+    "record_aggregate",
+    "rollup_status",
     "tree_read_blob",
     "tree_entry_hash",
     "blob_read",
@@ -236,6 +242,18 @@ class Transaction:
     def delete_attachments(self, sheet: str, record_path: str) -> bool:
         """Remove all attachments for a record (no-op when none). Returns removed?"""
         return self._inner.delete_attachments(sheet, record_path)
+
+    def materialize_rollups(self, sheet: str) -> dict:
+        """Materialize the rollup sheet ``sheet`` (opened with
+        :meth:`open_sheet` first) into this transaction: recompute every stale
+        or missing rollup record and delete orphaned ones. Returns
+        ``{"recomputed": [...], "deleted": [...]}`` of partition paths; nothing
+        is committed when everything was fresh. ``TypeError`` on a non-rollup
+        sheet. See specs/behaviors/rollups.md "Materializing explicitly".
+
+        The commit-time rollup pass needs no call: every commit this binding
+        produces regenerates the rollups of the partitions it touched."""
+        return self._inner.materialize_rollups(sheet)
 
     @property
     def parent_commit_hash(self) -> Optional[str]:

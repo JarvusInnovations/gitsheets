@@ -10,17 +10,14 @@
 // git-config author resolution, and post-commit hooks.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 
 import { CoreTransaction, callCore } from './core.js';
+import { gitExec } from './git-exec.js';
 import { RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
 import { makeBlobHandle, type BlobHandle } from './working-tree.js';
-
-const exec = promisify(execFile);
 
 export interface Author {
   readonly name: string;
@@ -29,14 +26,16 @@ export interface Author {
 
 export interface TransactionOptions {
   /**
-   * Ref name or commit hash to parent the commit on; defaults to current HEAD.
+   * Ref name or commit hash to parent the commit on; defaults to the
+   * repository's default branch (specs/behaviors/default-branch.md).
    * `null` opens an **orphan** root commit: the tree starts empty, the commit
    * has no parents and always lands, and `branch` (if set) is created — it
    * must not already exist. See specs/api/transaction.md "Parent ref handling".
    */
   readonly parent?: string | null;
   /**
-   * Ref name to update on commit; default: parent if it's a branch, null if a
+   * Ref name to update on commit; default: parent if it's a branch (so the
+   * default branch when `parent` is omitted), null if a
    * hash. A branch that does not exist yet is created.
    */
   readonly branch?: string;
@@ -299,8 +298,8 @@ export async function resolveAuthor(
   if (explicit) return explicit;
   try {
     const [name, email] = await Promise.all([
-      exec('git', ['config', 'user.name'], { cwd: gitDir }).then((r) => r.stdout.trim()),
-      exec('git', ['config', 'user.email'], { cwd: gitDir }).then((r) => r.stdout.trim()),
+      gitExec(gitDir, ['config', 'user.name']).then((r) => r.stdout.trim()),
+      gitExec(gitDir, ['config', 'user.email']).then((r) => r.stdout.trim()),
     ]);
     if (name && email) {
       return { name, email };

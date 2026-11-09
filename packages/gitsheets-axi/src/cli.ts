@@ -3,12 +3,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runAxiCli } from 'axi-sdk-js';
 
-import { createContext, type GitsheetsContext } from './context.js';
+import { createContext, parseGlobalFlags, type GitsheetsContext } from './context.js';
 import { homeCommand } from './commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from './commands/sheets.js';
 import { queryCommand, QUERY_HELP } from './commands/query.js';
 import { countCommand, COUNT_HELP } from './commands/count.js';
 import { distinctCommand, DISTINCT_HELP } from './commands/distinct.js';
+import { aggregateCommand, AGGREGATE_HELP } from './commands/aggregate.js';
 import { readCommand, READ_HELP } from './commands/read.js';
 import { upsertCommand, UPSERT_HELP } from './commands/upsert.js';
 import { patchCommand, PATCH_HELP } from './commands/patch.js';
@@ -24,6 +25,7 @@ import { attachmentCommand, ATTACHMENT_HELP } from './commands/attachment.js';
 import { contractsCommand, CONTRACTS_HELP } from './commands/contracts.js';
 import { pushCommand, PUSH_HELP } from './commands/push.js';
 import { setupCommand, SETUP_HELP } from './commands/setup.js';
+import { rollupCommand, ROLLUP_HELP } from './commands/rollup.js';
 
 const DESCRIPTION =
   'gitsheets — agent-facing interface for the git-backed document store. ' +
@@ -32,20 +34,26 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[20]:
+commands[22]:
   (none)=home, sheets, query, count,
-  distinct, read, upsert, patch, rename,
+  distinct, aggregate, read, upsert, patch, rename,
   delete, check, diff, normalize,
   init, infer, migrate-config,
-  attachment, contracts, push, setup
-flags[2]:
+  attachment, contracts, push, setup, rollup
+flags[4]:
   --help, -v/-V/--version
+  --branch <name>  Default branch every command reads/writes (any command;
+                   default: $GITSHEETS_BRANCH, gitsheets.branch, HEAD's branch)
+  --submodule <p>  Data submodule every command reads/writes; writes advance
+                   its HEAD (the superproject's pointer). Any command;
+                   default: $GITSHEETS_SUBMODULE, gitsheets.submodule
 examples:
   gitsheets-axi
   gitsheets-axi query repos --filter status=unclassified --sort pushed_at
   gitsheets-axi count repos --filter archived=true
   gitsheets-axi query repos --group-by target_team
   gitsheets-axi distinct repos disposition
+  gitsheets-axi aggregate tx --agg total=sum:amountCents --group-by status
   gitsheets-axi upsert users --data '{"slug":"jane","email":"jane@x.org"}'
   gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane"}'
   gitsheets-axi check users users/jane.toml --fix
@@ -53,6 +61,7 @@ examples:
   gitsheets-axi attachment list users jane
   gitsheets-axi contracts verify
   gitsheets-axi setup hooks
+  gitsheets-axi rollup transactions-monthly --check
 `;
 
 const COMMAND_HELP: Record<string, string> = {
@@ -60,6 +69,7 @@ const COMMAND_HELP: Record<string, string> = {
   query: QUERY_HELP,
   count: COUNT_HELP,
   distinct: DISTINCT_HELP,
+  aggregate: AGGREGATE_HELP,
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
@@ -75,6 +85,7 @@ const COMMAND_HELP: Record<string, string> = {
   contracts: CONTRACTS_HELP,
   push: PUSH_HELP,
   setup: SETUP_HELP,
+  rollup: ROLLUP_HELP,
 };
 
 type CommandFn = (args: string[], ctx: GitsheetsContext) => Promise<string | Record<string, unknown>>;
@@ -84,6 +95,7 @@ const COMMANDS: Record<string, CommandFn> = {
   query: queryCommand,
   count: countCommand,
   distinct: distinctCommand,
+  aggregate: aggregateCommand,
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,
@@ -99,14 +111,25 @@ const COMMANDS: Record<string, CommandFn> = {
   contracts: contractsCommand,
   push: pushCommand,
   setup: setupCommand,
+  rollup: rollupCommand,
 };
 
 export async function main(): Promise<void> {
+  // Global flags, accepted on any command (specs/behaviors/default-branch.md "CLI").
+  let globals: ReturnType<typeof parseGlobalFlags>;
+  try {
+    globals = parseGlobalFlags(process.argv.slice(2));
+  } catch (error) {
+    process.stdout.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
   await runAxiCli<GitsheetsContext>({
     description: DESCRIPTION,
     version: VERSION,
+    argv: globals.rest,
     topLevelHelp: TOP_HELP,
-    resolveContext: () => createContext(),
+    resolveContext: () => createContext(globals.flags),
     home: (_args, ctx) => homeCommand(ctx as GitsheetsContext),
     commands: COMMANDS as Record<
       string,

@@ -11,12 +11,19 @@ The **specops** skill carries the full methodology — invoke it (the skill trig
 
 - **Specs lead.** Before changing behavior, change the spec; bring code into conformance
   after. Spec↔code drift is a bug, not debt. If the spec doesn't cover what you're about
-  to do, update the spec first.
+  to do, update the spec first. Specs merge implemented-or-planned; a spec still being
+  designed rides a draft planning PR, not `develop`.
+- **Never a spec-only PR.** Open the branch and PR for the *feature*, start it with the
+  `docs(specs):` commits and the plan (draft PR is fine), add the implementation on the same
+  branch, and merge only when the plan is complete. The one exception is a draft planning PR
+  for a whole design arc, which merges with its plan set and is then drained promptly.
 - **`plans/` is the planning system — not your built-in plan mode.** Every chunk of work
   lands as a file in `plans/` that freezes to `done` as the durable record of what got
-  built. Don't let an ephemeral plan substitute for it, and don't skip it for "small"
-  changes. (Classic trap: an ad-hoc plan of "write spec X, then build it" that ends with
-  neither a reviewed spec nor a plan file — split those into the two real artifacts.)
+  built. One feature branch carries spec → plan → code → closeout and merges with the plan
+  complete; the issue tracker, not `plans/`, is the backlog. Don't let an ephemeral plan
+  substitute for a plan file, and don't skip it for "small" changes. (Classic trap: an
+  ad-hoc plan of "write spec X, then build it" that ends with neither a reviewed spec nor a
+  plan file — split those into the two real artifacts.)
 - **When to author a plan depends on intent:** mapping out a batch of specs → finish the
   batch first, then propose a *set* of plans; speccing one bounded feature in a mature
   project → draft the spec change and its plan in tandem; intent unclear → ask. The skill
@@ -35,7 +42,7 @@ Start at [specs/README.md](specs/README.md). The spec index:
 - [specs/concepts.md](specs/concepts.md) — vocabulary: Repository, Sheet, Record, Transaction, Store, Index
 - [specs/deferred.md](specs/deferred.md) — features intentionally out of scope for v1.0 (do NOT silently implement these)
 - [specs/api/](specs/api/) — per-symbol API contracts (Repository, Sheet, Transaction, Store, Errors, CLI)
-- [specs/behaviors/](specs/behaviors/) — cross-cutting rules (path templates, validation, normalization, transactions, indexing, push sync, attachments, patch semantics)
+- [specs/behaviors/](specs/behaviors/) — cross-cutting rules (path templates, validation, normalization, transactions, freshness, default branch / submodule mode, indexing, aggregation, rollups, merge, push sync, attachments, patch semantics)
 
 Plans live in [plans/](plans/) — see [plans/README.md](plans/README.md).
 
@@ -155,6 +162,10 @@ git sheet edit <sheet> <path>
 git sheet normalize <sheet>
 git sheet infer <sheet>
 git sheet migrate-config <sheet>
+git sheet aggregate <sheet> --agg <name>=<form>[:<field>] [--group-by <field>]
+git sheet rollup <sheet> [--check]
+git sheet submodule init <path> [--url <url>] [--branch <b>]
+# global: --branch <name> / --submodule <path> (or GITSHEETS_BRANCH / GITSHEETS_SUBMODULE, or gitsheets.* git config)
 ```
 
 See [specs/api/cli.md](specs/api/cli.md).

@@ -40,6 +40,8 @@ With `O` = ours (the branch being merged into), `T` = theirs, `B` = their merge 
 
 Records are never left with conflict markers: a conflict either resolves by policy or stops the merge before any commit.
 
+Rollup records ([rollups.md](rollups.md)) are not merged at all: whatever the tree merge produced for a rollup path is discarded, and the rollup pass regenerates every partition changed on either side since the base into the merge tree, so a merge commit carries rollups that match its records. The merge driver, working one file at a time, cannot do this — rollup files it merges carry stale stamps that reads self-heal and `git sheet rollup` repairs.
+
 ### Which paths are records
 
 A path is a record path when it lies under a discovered sheet's root (`<openRoot>/<config.root>/…`) and ends with that sheet's format extension (`.toml`, `.md`, `.mdx`). An attachment that happens to carry the extension is parsed as a record; if it does not parse, the tree merge's result stands and the path is reported as a `blob` conflict only if git could not merge it either.

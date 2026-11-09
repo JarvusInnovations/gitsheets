@@ -24,7 +24,13 @@ When agents or developers implement features, they make hundreds of micro-decisi
 4. Verify       →  compare running software to spec
 ```
 
-Code without a corresponding spec is unspecified behavior — it may exist for practical reasons, but nothing guarantees it. Spec without corresponding code is a known gap — track it.
+Code without a corresponding spec is unspecified behavior — it may exist for practical reasons, but nothing guarantees it. Spec without corresponding code is a known gap — and on the main branch, a known gap **carries a committed plan**. A spec that has neither implementation nor plan isn't a gap, it's an undeveloped draft, and it lives on a draft planning PR until it's real (see [Where in-development specs live](#where-in-development-specs-live-the-draft-planning-pr)).
+
+### The branch and PR are framed around the implementation — never spec-only
+
+**Do not open a spec-only or plan-only PR.** When work starts, open **one branch and one PR named for the feature that will ship**, and *start* it with the `docs(specs):` commit(s) and the plan file so the contract can be reviewed early (a draft PR is fine). Then the implementation commits land on the same branch, the closeout commit lands last, and the PR merges **only when the plan is complete**. The reviewer sees the contract, the conformance evidence, and the plan's validation in one place, ordered so the spec still leads.
+
+This is the default for every chunk of work in a specops project. The only standalone spec PRs are a [draft planning PR](#where-in-development-specs-live-the-draft-planning-pr) for a *batch* of specs whose design is still being negotiated (and even that merges together with its plan set), a [proposal plan](references/plans-protocol.md#proposal-plans) gated on an external party, and a spec diff so large it would drown the implementation diff. If none of those applies and you are about to open a PR with no implementation in its future, stop: you are about to create a second backlog. Full lifecycle: [references/plans-protocol.md § The feature branch](references/plans-protocol.md#the-feature-branch).
 
 ## How to write specs
 
@@ -232,11 +238,37 @@ When implementing a feature or fixing a bug:
 
 First decide what *kind* of work this is — it changes whether a plan comes now, later, or in tandem with the spec (see [When (and when not) to author a plan](#when-and-when-not-to-author-a-plan)). The steps below are the default path for the common case: **one bounded feature in a project whose surrounding specs are stable.**
 
-1. Write or update the spec files first
-2. Get the spec reviewed and accepted
-3. Author the plan that brings code to the spec — scope, the specs it implements, dependencies, validation criteria (for this one-bounded-feature case, draft the spec change and its plan in tandem and present both)
-4. Implement to match the spec
-5. Verify the running software matches the spec, then close the plan out — it freezes as the record of what got built
+All of it happens on **one branch and one PR framed around the feature that will ship**, opened at the start and merged once, with the plan complete (the full lifecycle is in [references/plans-protocol.md § The feature branch](references/plans-protocol.md#the-feature-branch)):
+
+1. Branch off the integration branch, named for the feature — not for the spec
+2. Write or update the spec files first, as `docs(specs):` commit(s) at the head of the branch
+3. Author the plan that brings code to the spec — scope, the specs it implements, dependencies, validation criteria (for this one-bounded-feature case, draft the spec change and its plan in tandem and present both for acceptance before building)
+4. Open the PR now, as a draft, titled for the feature. It holds only the spec and plan so far; that is the point — the contract gets reviewed before the code exists, on the PR that will carry the code
+5. Implement to match the spec, on the same branch
+6. Verify the running software matches the spec, then close the plan out in the last commit — it freezes as the record of what got built
+7. Mark the PR ready. The reviewer reads the spec diff as the contract, then the implementation against it, then the plan's validation evidence — one review, one merge
+
+Never open a PR whose only contents will ever be specs and plans (see [The branch and PR are framed around the implementation](#the-branch-and-pr-are-framed-around-the-implementation--never-spec-only)). The exceptions — a [draft planning PR](#where-in-development-specs-live-the-draft-planning-pr) for a batch still being designed, a proposal plan, a spec diff that would drown the implementation diff — are named there.
+
+### Where in-development specs live: the draft planning PR
+
+The invariant that keeps a `specs/` tree auditable: **every spec on the main branch is either implemented or carries a committed plan.** Under that invariant, spec auditing stays meaningful — a Table-1 "specified but not implemented" finding is always either expected motion (a plan exists; cite it) or a genuine violation. Without it, the auditor can't tell a gap the team is driving toward from a sketch someone parked, and its gap tables decay into noise.
+
+So a spec whose desired state is **still being negotiated** doesn't merge. It lives on a **draft planning PR** — a branch holding the in-development spec (and eventually its plan set) that converts from draft and merges only when the finalized spec(s) and the plan(s) to implement them ride together. The PR body carries the countdown: design questions still open, companion specs to amend, plans to author.
+
+Why a draft PR beats a `status: draft` marker on the main branch:
+
+- **Absence is the only unambiguous marker.** A draft on main still pollutes grep results and reading context, and an implementer (or agent) diving into `specs/` has no reliable reflex to check a status field before building against it.
+- **Every tool would need to know the marker** — the drift auditor, `grep`-based spec references, plan `specs:` fields. Absence requires nothing from anyone.
+- **The review conversation happens where review lives anyway** — on the PR, threaded against the diff, instead of as edits to a half-real file on main.
+
+In practice the invariant is satisfied almost entirely by *implemented* specs, because plans merge complete (see [references/plans-protocol.md § The feature branch](references/plans-protocol.md#the-feature-branch)). A `planned` plan on the main branch is reserved for two cases: a bootstrap batch about to be drained, and a proposal plan. If `plans/` is accumulating `planned` files outside those cases, that work belongs in the issue tracker instead.
+
+Don't confuse the draft planning PR with the ordinary feature PR, which is *also* opened early with only specs and a plan aboard. The feature PR is framed around one implementation and will carry it; the draft planning PR holds a *batch* of specs whose design is still churning and has no plan set yet. When a single feature's spec is settled enough to plan, it doesn't need a draft planning PR at all — open the feature PR.
+
+Hygiene: rebase a long-lived spec branch onto main periodically so the eventual merge is clean, and keep one draft PR per design arc (a batch of related specs shares one PR; unrelated arcs don't).
+
+**Distinguish this from a [proposal plan](references/plans-protocol.md#proposal-plans)**, which handles the *next* stage: a contract that's already agreed but can't be built until an external party acts. A proposal plan **merges** — spec plus a `blocked` plan with `awaits:` — because the design is settled and the record needs to be versioned and shareable; the invariant holds because the plan rides along. The draft planning PR is upstream of agreement: design still churning, no plan yet, nothing to hold the invariant with — so it stays off main entirely. One converts to the other: when a draft's design settles but its build is externally gated, land it as a proposal plan.
 
 ### When fixing a bug
 
@@ -288,7 +320,9 @@ pr: 42                   # set at closeout
 
 A plan's body has a fixed template: **Scope**, **Implements**, **Approach**, **Validation** (load-bearing checkbox list — converts "in-progress" to "done"), **Risks / unknowns**, **Notes** (populated at closeout), **Follow-ups** (populated at closeout).
 
-The full protocol — frontmatter schema, body template, status lifecycle, the closeout-commit ritual, the Follow-ups taxonomy (Issue / Deferred to plan / Tracked as / None), and the deferral-absorption rule — is in [references/plans-protocol.md](references/plans-protocol.md). Read it before authoring or closing out a plan.
+The full protocol — frontmatter schema, body template, status lifecycle, branch updates, the closeout-commit ritual, the Follow-ups taxonomy (Issue / Deferred to plan / Tracked as / None), and the deferral-absorption rule — is in [references/plans-protocol.md](references/plans-protocol.md). Read it before authoring, implementing, or closing out a plan.
+
+**Keep implementation branches linear:** rebase onto the integration branch instead of merging it in, rerun affected validation, and keep closeout last. Follow the [branch-update rule](references/plans-protocol.md#updating-implementation-branches) for repository-policy precedence, shared-branch coordination, preserving semantic resolutions, and publishing rewritten history.
 
 ### When (and when not) to author a plan
 
@@ -296,13 +330,19 @@ The full protocol — frontmatter schema, body template, status lifecycle, the c
 
 **When the plan gets authored depends on what the user is doing:**
 
-- **Mapping out a batch of specs** — sketching desired state across several specs, not building yet. **Don't author plans as you go.** Plans are motion; while the desired state is still settling, a plan-per-spec churns and rarely partitions the work well. Wait until the batch is complete, then step back and **propose a *set* of plans** that carves the work into sensible, dependency-ordered chunks. The good partition usually doesn't map one-to-one onto the spec files.
+- **Mapping out a batch of specs** — sketching desired state across several specs, not building yet. **Don't author plans as you go.** Plans are motion; while the desired state is still settling, a plan-per-spec churns and rarely partitions the work well. Wait until the batch is complete, then step back and **propose a *set* of plans** that carves the work into sensible, dependency-ordered chunks. The good partition usually doesn't map one-to-one onto the spec files. While it settles, the batch accumulates on a **draft planning PR**, not on the main branch — see [Where in-development specs live](#where-in-development-specs-live-the-draft-planning-pr); the PR converts and merges when the batch and its plan set are finalized together.
 
 - **Speccing and building one bounded feature in a mature project** — surrounding specs are stable, scope is small. **Build the spec change and its plan in tandem:** write the spec update and the plan to execute it together, present both, and proceed once they're accepted.
 
 - **Intent unclear** — if it isn't obvious whether the user is building up a batch of specs or writing one to execute right now, **ask** before defaulting: "Are we mapping out specs first and planning the build after, or is this one thing to build now?" The answer picks the mode above.
 
-**Even quick one-off work leaves a plan behind.** The urge to skip a plan because a change is "small" is exactly what hollows out the DAG. A bounded change still gets a plan file that freezes to `done` — that frozen record (merged PR + checked validation) is the project's working memory of what got built. Skipping it trades a few seconds now for an undocumented change later.
+**Even quick one-off work leaves a plan behind.** The urge to skip a plan because a change is "small" is exactly what hollows out the DAG. A bounded change still gets a plan file that freezes to `done` — that frozen record (merged PR + checked validation) is the project's working memory of what got built. Skipping it trades a few seconds now for an undocumented change later. (A small change that's already verified by the time you write it up may author its plan directly at `status: done` in the closeout commit — the file still ships in the same PR.)
+
+### Executing a plan DAG
+
+Once a batch of plans is authored, reviewed, and `planned`, building them out is a **separate, explicitly-triggered step** — not something to fold into the same turn. *Finishing the plans is not consent to build them.* **Offer** to execute the DAG and wait for the human to trigger it — the trigger phrase is **"drain the DAG"** (or any equivalent explicit go-ahead); never start dispatching implementation work on your own.
+
+When triggered, the way to execute a multi-plan DAG at scale is **dependency-gated waves of isolated worktree subagents (on a builder-tier model passed explicitly on every dispatch, never inherited from the orchestrator) with a review/merge gate between them**: the orchestrator computes the ready set (`specops next`), creates a worktree per ready plan off the latest integration branch, dispatches a subagent into each to implement → push → open a PR (**never merge**), then **reviews every PR, fixes directly, confirms CI, and merges** — each merge unlocking the next wave. The full protocol — the agent brief, the review/merge gate, parallel-conflict resolution, per-agent live-dependency isolation, and which plans (operational or cross-repo) must *not* be auto-executed — is in [references/parallel-execution-protocol.md](references/parallel-execution-protocol.md). Read it before driving an execution run.
 
 ### When a spec changes, revisit the plans it touches
 
@@ -355,7 +395,7 @@ Then:
 4. Write `specs/principles.md` capturing the principles you already hold — your project philosophy written down as decisive "always favor X over Y" trade-offs that should steer every implementer. Seed it with what you know now; it grows as decisions get resolved (see [keeping specs alive](#keeping-specs-alive))
 5. For each feature area, create the relevant spec files before coding
 6. Add the specops hook to the project's CLAUDE.md (see [The CLAUDE.md hook](#the-claudemd-hook) below) — this is the always-loaded steer that gets agents to the skill and the plan protocol
-7. Establish the convention: PRs that add features should include spec updates
+7. Establish the convention: a PR that changes behavior carries its `docs(specs):` commits first, then the plan, then the implementation, then the closeout — one branch, merged with the plan complete (see [references/plans-protocol.md § The feature branch](references/plans-protocol.md#the-feature-branch))
 8. Set up the spec drift auditor (see below)
 9. Set up the plans protocol (see below)
 
@@ -374,12 +414,18 @@ The **specops** skill carries the full methodology — invoke it (the skill trig
 "spec", "plan", starting a feature, etc.) before writing specs, planning, or building.
 
 - **Specs lead.** Before changing behavior, change the spec; bring code into conformance
-  after. Spec↔code drift is a bug, not debt.
+  after. Spec↔code drift is a bug, not debt. Specs merge implemented-or-planned; a spec
+  still being designed rides a draft planning PR, not the main branch.
+- **Never a spec-only PR.** Open the branch and PR for the *feature*, start it with the
+  `docs(specs):` commits and the plan (draft PR is fine), add the implementation on the same
+  branch, and merge only when the plan is complete.
 - **`plans/` is the planning system — not your built-in plan mode.** Every chunk of work
   lands as a file in `plans/` that freezes to `done` as the durable record of what got
-  built. Don't let an ephemeral plan substitute for it, and don't skip it for "small"
-  changes. (Classic trap: an ad-hoc plan of "write spec X, then build it" that ends with
-  neither a reviewed spec nor a plan file — split those into the two real artifacts.)
+  built. One feature branch carries spec → plan → code → closeout and merges with the plan
+  complete; the issue tracker, not `plans/`, is the backlog. Don't let an ephemeral plan
+  substitute for a plan file, and don't skip it for "small" changes. (Classic trap: an
+  ad-hoc plan of "write spec X, then build it" that ends with neither a reviewed spec nor a
+  plan file — split those into the two real artifacts.)
 - **When to author a plan depends on intent:** mapping out a batch of specs → finish the
   batch first, then propose a *set* of plans; speccing one bounded feature in a mature
   project → draft the spec change and its plan in tandem; intent unclear → ask. The skill
@@ -417,7 +463,7 @@ The plans protocol gives a project a structured way to track work-in-flight with
 2. **Write `plans/README.md`** that briefly states what plans are (motion vs state) and points at [references/plans-protocol.md](references/plans-protocol.md) for the full spec. Resist the urge to maintain a DAG drawing or status table inside it — both rot. The `specops` CLI regenerates that view on demand.
 3. **Document the protocol in the project's CLAUDE.md** — covered by [The CLAUDE.md hook](#the-claudemd-hook) block, which already states the plans-are-the-planning-system rule and points at the skill for the full protocol (statuses, closeout commit, Follow-ups taxonomy). Don't restate the protocol in CLAUDE.md — keep it lean and let the skill carry the detail.
 4. **Use the `specops` CLI in-place from the skill.** `scripts/specops` is the self-contained bundle shipped with this skill; run it from the skill's install directory against the project's `plans/` — there's nothing to copy, symlink, or vendor, and no `npm install` (it runs on `node ≥ 20`). Claude resolves the skill path automatically when specops triggers; from the project root the invocation is `<specops-skill-path>/scripts/specops next` (or `dag`). Optionally run `<specops-skill-path>/scripts/specops hook install` once so every session in the repo opens with the plans dashboard.
-5. **Establish the convention** in the team: a new chunk of work starts with a plan file; the last commit before merge flips it to `done`. Quick-reference checklist for closeout is in [references/plans-protocol.md](references/plans-protocol.md#quick-checklist-for-a-closeout-pr).
+5. **Establish the convention** in the team: a new chunk of work starts with a plan file; the last commit before merge flips it to `done`; the plan merges complete, and the issue tracker stays the backlog. Quick-reference checklist for closeout is in [references/plans-protocol.md](references/plans-protocol.md#quick-checklist-for-a-closeout-pr).
 
 ## Keeping specs alive
 

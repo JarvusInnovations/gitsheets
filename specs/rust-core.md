@@ -63,6 +63,10 @@ Owns everything bytes-determining or consistency-critical:
   repository discovery) and for `Repository.readBlobStream`, whose contract is
   a true streaming read that never buffers the blob.
 - Diff + patch semantics (RFC 7396 / RFC 6902).
+- **Aggregation** — the declarative fold ([behaviors/aggregation.md](behaviors/aggregation.md));
+  its results can be committed, so it is bytes-authority work.
+- **Rollups** — the per-partition materialization of that fold, its tree-id
+  stamp, and the commit-time rollup pass ([behaviors/rollups.md](behaviors/rollups.md)).
 - The `Sheet` / `Transaction` / `Store` state machine.
 
 ### Language binding (thin: `node`, `python`, …)
@@ -132,8 +136,9 @@ kind for faithful re-serialization.
 ## Embedded code execution
 
 Some behavior is **embedded in the sheet definition** itself — today, raw-JS sort
-comparators (`Sheet.<field>.sort` string rules, run via `node:vm`); plausibly
-later, partition-path derivations and custom validation expressions. Embedded
+comparators (`Sheet.<field>.sort` string rules, run via `node:vm`) and aggregate
+`reduce` / `finalize` snippets ([behaviors/aggregation.md](behaviors/aggregation.md));
+plausibly later, partition-path derivations and custom validation expressions. Embedded
 code is the one thing that does **not** portability-flatten the way TOML bytes do:
 a definition-embedded snippet must produce identical results under every binding.
 
