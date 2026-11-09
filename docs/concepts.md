@@ -4,7 +4,7 @@ The vocabulary every consumer needs. Read this before the API reference or recip
 
 ## Repository
 
-A git repository that contains gitsheets-managed data. Opened with `openRepo({ gitDir? })`. The library reads and writes git objects through the underlying `git` CLI (via hologit).
+A git repository that contains gitsheets-managed data. Opened with `openRepo({ gitDir? })`. The library reads and writes git objects through its Rust core (gitoxide), shelling out to `git` only for push, fetch, and a few porcelain operations.
 
 A repository can contain ordinary code, docs, or anything else — gitsheets only cares about paths under `.gitsheets/` (sheet configs) and the data paths each sheet declares.
 
@@ -16,6 +16,15 @@ const repo = await openRepo({ gitDir: '/path/to/.git' }); // explicit
 ```
 
 Fresh repositories (no commits yet) are supported.
+
+Every repository is bound to a **default branch** — the branch its sheets read, its transactions commit to, and `sync` / the push daemon / `merge` target. By default that is `HEAD`'s branch. Two bindings keep records **off the branch you check out**, so no working tree of records can drift from the ref:
+
+```typescript
+const repo = await openRepo({ branch: 'data' });      // an orphan data branch, or a bare data clone's branch
+const repo = await openRepo({ submodule: 'data' });   // a data submodule: its HEAD is the superproject's managed pointer
+```
+
+Both resolve like any git setting — option, then `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE`, then `gitsheets.branch` / `gitsheets.submodule` in git config — and the CLIs take `--branch` / `--submodule`. See the [headless data recipe](recipes/headless-data.md).
 
 ## Sheet
 
@@ -316,3 +325,5 @@ This isn't a feature gitsheets builds — it's the *substrate* gitsheets sits on
 - [API reference](api.md)
 - [CLI reference](cli.md)
 - The [recipes](README.md#recipes) for concrete consumer-level examples
+- [Headless data](recipes/headless-data.md) — default branch and submodule mode in practice
+- [Rollups](recipes/rollups.md) — stored per-partition aggregates

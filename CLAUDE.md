@@ -42,7 +42,7 @@ Start at [specs/README.md](specs/README.md). The spec index:
 - [specs/concepts.md](specs/concepts.md) — vocabulary: Repository, Sheet, Record, Transaction, Store, Index
 - [specs/deferred.md](specs/deferred.md) — features intentionally out of scope for v1.0 (do NOT silently implement these)
 - [specs/api/](specs/api/) — per-symbol API contracts (Repository, Sheet, Transaction, Store, Errors, CLI)
-- [specs/behaviors/](specs/behaviors/) — cross-cutting rules (path templates, validation, normalization, transactions, indexing, push sync, attachments, patch semantics)
+- [specs/behaviors/](specs/behaviors/) — cross-cutting rules (path templates, validation, normalization, transactions, freshness, default branch / submodule mode, indexing, aggregation, rollups, merge, push sync, attachments, patch semantics)
 
 Plans live in [plans/](plans/) — see [plans/README.md](plans/README.md).
 
@@ -162,6 +162,10 @@ git sheet edit <sheet> <path>
 git sheet normalize <sheet>
 git sheet infer <sheet>
 git sheet migrate-config <sheet>
+git sheet aggregate <sheet> --agg <name>=<form>[:<field>] [--group-by <field>]
+git sheet rollup <sheet> [--check]
+git sheet submodule init <path> [--url <url>] [--branch <b>]
+# global: --branch <name> / --submodule <path> (or GITSHEETS_BRANCH / GITSHEETS_SUBMODULE, or gitsheets.* git config)
 ```
 
 See [specs/api/cli.md](specs/api/cli.md).

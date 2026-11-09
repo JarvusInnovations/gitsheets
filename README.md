@@ -35,6 +35,14 @@ gitsheets knows the files are records: two branches of a data repo merge
 field by field with canonical output, and a service can take in commits that
 other writers pushed without stopping.
 
+The records do not have to live on the branch you check out: bind a project
+to a data branch (`--branch data`) or to a data submodule whose pointer each
+code commit pins, and no working tree of records ever drifts from the ref.
+Partitioned sheets (`${{ postedAt: YYYY/MM }}`) can carry committed
+**rollups** — per-partition aggregates regenerated in the same commit as the
+records that changed them, stamped with the partition's tree id so a stale one
+is one hash compare away.
+
 ## What people run on it
 
 - **An application datastore.** [codeforphilly.org's rebuild](https://github.com/CodeForPhilly/codeforphilly-ng)
@@ -89,6 +97,9 @@ Works in any repo with a `.gitsheets/` config, no install required:
 npx -y gitsheets query contacts --filter name='Ada Lovelace'
 npx -y gitsheets read contacts ada
 npx -y gitsheets normalize contacts
+npx -y gitsheets aggregate contacts --agg n=count --group-by name
+npx -y gitsheets --branch data query contacts     # records on a branch you never check out
+npx -y gitsheets rollup ledger-monthly --check    # are the committed rollups fresh?
 ```
 
 Installed globally it also mounts as a git subcommand: `git sheet query …`.
