@@ -143,6 +143,9 @@ pub enum PartitionKind {
         /// The bucket token this segment belongs to (0-based, source order).
         token: usize,
     },
+    /// A dotted reference (`${{ meta.cat }}`) — an expression to the renderer,
+    /// named separately so a partition error can say why it is refused.
+    Dotted(String),
     Other,
 }
 
@@ -202,9 +205,23 @@ impl Template {
                     unit: *unit,
                     token: *token,
                 },
+                [Part::Expression { source, .. }]
+                    if source.trim().contains('.')
+                        && source.trim().split('.').all(|seg| {
+                            !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+                        }) =>
+                {
+                    PartitionKind::Dotted(source.trim().to_string())
+                }
                 _ => PartitionKind::Other,
             })
             .collect()
+    }
+
+    /// Whether any component is recursive (`field/**`) — such a template
+    /// renders a variable number of path segments.
+    pub fn has_recursive(&self) -> bool {
+        self.components.iter().any(|c| c.recursive)
     }
 
     /// Render the template against a full record into a slash-joined path

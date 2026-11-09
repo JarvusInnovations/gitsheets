@@ -517,8 +517,14 @@ pub fn merge_sheets(repo: &gix::Repository, opts: &MergeOptions) -> Result<Merge
     let tree_id = rollup::run_pass_on_tree(
         repo,
         tree_id,
-        &[(Some(base_tree), ours_tree), (Some(base_tree), theirs_tree), (Some(base_tree), tree_id)],
-        &[(opts.open_root.clone(), String::new())],
+        &[
+            (Some(base_tree), ours_tree),
+            (Some(base_tree), theirs_tree),
+            (Some(ours_tree), tree_id),
+            (Some(theirs_tree), tree_id),
+        ],
+        &opts.open_root,
+        true,
     )?;
 
     // 5. Commit.

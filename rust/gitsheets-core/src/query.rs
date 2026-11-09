@@ -282,6 +282,24 @@ impl Filter {
 /// Does `record` satisfy every clause of `filter`? A behavior-preserving port
 /// of the host `queryMatches`. A predicate snippet that throws surfaces as an
 /// error (the host lets such throws propagate, too).
+/// Equality against a **local-date** field also accepts that day as an ISO
+/// date string (`"2026-03-01"`) or as a datetime at midnight UTC (a host
+/// `Date` of that day) — the coercion ranges already apply
+/// (`specs/api/sheet.md` § query).
+fn local_date_equals(field: Option<&Value>, expected: &Value) -> bool {
+    let Some(Value::Datetime(dt)) = field else { return false };
+    if dt.kind() != crate::value::DatetimeKind::LocalDate {
+        return false;
+    }
+    let Some(day) = datetime_instant(dt) else { return false };
+    let wanted = match expected {
+        Value::String(s) if s.len() == 10 => s.parse::<chrono::NaiveDate>().ok().and_then(|d| d.and_hms_opt(0, 0, 0)),
+        Value::Datetime(other) if other.kind() == crate::value::DatetimeKind::OffsetDatetime => datetime_instant(other),
+        _ => None,
+    };
+    wanted == Some(day)
+}
+
 pub fn matches(filter: &Filter, record: &Value, engine: &mut Engine) -> Result<bool> {
     let table = match record {
         Value::Table(map) => map,
@@ -293,7 +311,7 @@ pub fn matches(filter: &Filter, record: &Value, engine: &mut Engine) -> Result<b
         let rval = table.get(key);
         match pred {
             FilterPred::Equals(expected) => {
-                if rval != Some(expected) {
+                if rval != Some(expected) && !local_date_equals(rval, expected) {
                     return Ok(false);
                 }
             }

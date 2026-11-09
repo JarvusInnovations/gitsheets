@@ -193,8 +193,9 @@ fn replay(
         let merged_tree = rollup::run_pass_on_tree(
             repo,
             merged_tree,
-            &[(Some(tip_tree), merged_tree), (Some(parent_tree), commit_tree)],
-            &[(".".to_string(), String::new())],
+            &[(Some(tip_tree), merged_tree), (Some(parent_tree), commit_tree), (Some(commit_tree), merged_tree)],
+            ".",
+            true,
         )?;
 
         let author = commit

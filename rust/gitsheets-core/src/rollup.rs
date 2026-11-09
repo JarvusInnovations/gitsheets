@@ -40,8 +40,10 @@ use crate::sheet::{join_path, Sheet};
 use crate::store::discover_sheets;
 use crate::value::{Datetime, Value};
 
-/// The stamp field every rollup record carries.
+/// The stamp field naming the partition's source tree.
 pub const SOURCE_TREE_FIELD: &str = "sourceTree";
+/// The stamp field naming the `.gitsheets/` tree the record was computed under.
+pub const CONFIG_TREE_FIELD: &str = "configTree";
 
 /// How a read of a rollup sheet treats a stored record whose stamp no longer
 /// matches its partition (`opts.stale`).
@@ -131,6 +133,13 @@ pub struct RollupDef {
     pub config_path: String,
     /// The source's effective data base (`open_root/source.root/prefix`).
     source_base: String,
+    /// The `.gitsheets/` directory both configs live in (the `configTree`).
+    config_dir: String,
+    /// The number of path segments a source record path has (`None` when the
+    /// source template is recursive): what lies beyond it is the prefix.
+    source_segments: Option<usize>,
+    /// The number of path segments a rollup record path has.
+    rollup_segments: usize,
     /// The source's path template, compiled into the owning sheet's engine.
     source_template: Template,
     source_format: FormatConfig,
@@ -162,6 +171,7 @@ fn describe(kind: &PartitionKind) -> String {
         PartitionKind::Literal(t) => format!("literal {t:?}"),
         PartitionKind::Field(f) => format!("${{{{ {f} }}}}"),
         PartitionKind::Bucket { field, .. } => format!("a date bucket on {:?}", field.join(".")),
+        PartitionKind::Dotted(f) => format!("the dotted field reference ${{{{ {f} }}}} — only a top-level field can be a partition key"),
         PartitionKind::Other => "an expression / multi-reference / recursive component".into(),
     }
 }
@@ -214,18 +224,40 @@ impl RollupDef {
             ));
         }
 
-        // Disjoint data subtrees: a rollup record under the source root would
-        // change the very partition it summarizes.
+        // Disjoint data subtrees: a rollup record under a source root would
+        // change the very partition some rollup stamps; under any other sheet
+        // it would read as that sheet's data. Checked against every sheet in
+        // the same `.gitsheets/` directory (specs/behaviors/rollups.md).
         let r = join_path(&[&config.root]);
-        let s = join_path(&[&source.root]);
-        if r.is_empty() || s.is_empty() || r == s || r.starts_with(&format!("{s}/")) || s.starts_with(&format!("{r}/")) {
-            return Err(invalid(
-                config_path,
-                format!(
-                    "root {:?} overlaps the source's root {:?} — a rollup's records must live outside its source's data subtree (and vice versa)",
-                    config.root, source.root
-                ),
-            ));
+        let overlaps = |other: &str| {
+            r.is_empty() || other.is_empty() || r == other || r.starts_with(&format!("{other}/")) || other.starts_with(&format!("{r}/"))
+        };
+        let own = config_path.rsplit('/').next().unwrap_or(config_path).trim_end_matches(".toml").to_string();
+        for name in discover_sheets(ctx, tree, open_root)? {
+            if name == own {
+                continue;
+            }
+            let other_path = join_path(&[&dir, &format!("{name}.toml")]);
+            let other_root = if name == rollup.from {
+                source.root.clone()
+            } else {
+                let Some((_, bytes)) = record::read_blob_entry(ctx, tree, &other_path)? else { continue };
+                let Ok(text) = String::from_utf8(bytes) else { continue };
+                let Ok(raw) = canonical::parse(&text) else { continue };
+                match config::parse_config(&raw, &other_path) {
+                    Ok(c) => c.root,
+                    Err(_) => continue,
+                }
+            };
+            if overlaps(&join_path(&[&other_root])) {
+                return Err(invalid(
+                    config_path,
+                    format!(
+                        "root {:?} overlaps sheet {name:?}'s root {:?} — a rollup's records must live outside every other sheet's data subtree (and vice versa)",
+                        config.root, other_root
+                    ),
+                ));
+            }
         }
 
         let source_template = Template::compile(&source.path, engine)?;
@@ -256,7 +288,7 @@ impl RollupDef {
                 ));
             }
             for (i, (r, s)) in rk.iter().zip(&sk).enumerate() {
-                if matches!(r, PartitionKind::Other) {
+                if matches!(r, PartitionKind::Other | PartitionKind::Dotted(_)) {
                     return Err(invalid(
                         config_path,
                         format!(
@@ -295,7 +327,7 @@ impl RollupDef {
                         unit: *unit,
                         token: *token,
                     },
-                    PartitionKind::Other => unreachable!(),
+                    PartitionKind::Other | PartitionKind::Dotted(_) => unreachable!(),
                 });
             }
             // Each bucket token in the partition must stop at an allowed run.
@@ -342,13 +374,14 @@ impl RollupDef {
         }
         let top_keys: Vec<&str> = keys.iter().map(|k| k.split('.').next().unwrap_or(k)).collect();
         for spec in &rollup.aggregates.specs {
-            if spec.name == SOURCE_TREE_FIELD || top_keys.contains(&spec.name.as_str()) {
+            let stamp = spec.name == SOURCE_TREE_FIELD || spec.name == CONFIG_TREE_FIELD;
+            if stamp || top_keys.contains(&spec.name.as_str()) {
                 return Err(invalid(
                     config_path,
                     format!(
-                        "aggregate {:?} collides with {} — rollup records carry the partition's key fields and `{SOURCE_TREE_FIELD}`",
+                        "aggregate {:?} collides with {} — rollup records carry the partition's key fields and the `{SOURCE_TREE_FIELD}` / `{CONFIG_TREE_FIELD}` stamp",
                         spec.name,
-                        if spec.name == SOURCE_TREE_FIELD { "the stamp field".to_string() } else { format!("the key field {:?}", spec.name) }
+                        if stamp { "a stamp field".to_string() } else { format!("the key field {:?}", spec.name) }
                     ),
                 ));
             }
@@ -370,6 +403,9 @@ impl RollupDef {
             source_config_path,
             config_path: config_path.to_string(),
             source_base: join_path(&[open_root, &source.root, prefix]),
+            config_dir: dir.clone(),
+            source_segments: (!source_template.has_recursive()).then(|| source_template.component_count()),
+            rollup_segments: rollup_template.component_count(),
             source_template,
             source_format: source.format.clone(),
             whole,
@@ -458,13 +494,23 @@ fn local_date(date: chrono::NaiveDate) -> Value {
     }))
 }
 
-fn stamp_of(text: &str) -> Option<String> {
+/// A stored record's `(sourceTree, configTree)` stamp.
+fn stamp_of(text: &str) -> Option<(String, String)> {
     match canonical::parse(text).ok()? {
-        Value::Table(t) => match t.get(SOURCE_TREE_FIELD) {
-            Some(Value::String(s)) => Some(s.clone()),
+        Value::Table(t) => match (t.get(SOURCE_TREE_FIELD), t.get(CONFIG_TREE_FIELD)) {
+            (Some(Value::String(s)), Some(Value::String(c))) => Some((s.clone(), c.clone())),
             _ => None,
         },
         _ => None,
+    }
+}
+
+/// The id of the subtree at `path` in `tree` (written when dirty); the empty
+/// tree when absent.
+fn dir_tree_id(ctx: &Context<'_>, tree: &mut MutableTree, path: &str) -> Result<ObjectId> {
+    match tree.get_subtree(ctx, &record::base_arg(path)).map_err(record::map_ht)? {
+        Some(sub) => query::subtree_id(ctx, sub),
+        None => Ok(holo_tree::tree::empty_tree_id()),
     }
 }
 
@@ -539,6 +585,11 @@ impl Sheet {
                 ),
             }),
         }
+    }
+
+    /// The current `configTree`: the `.gitsheets/` directory's tree id.
+    fn config_tree_id(&self, ctx: &Context<'_>, tree: &mut MutableTree) -> Result<ObjectId> {
+        dir_tree_id(ctx, tree, &self.rollup.as_ref().expect("rollup sheet").config_dir)
     }
 
     fn rollup_full_path(&self, record_path: &str) -> String {
@@ -645,16 +696,26 @@ impl Sheet {
         if def.whole.is_none() {
             let segs: Vec<&str> = partition.split('/').collect();
             let mut tokens: BTreeMap<usize, TokenSegments> = BTreeMap::new();
-            let first = match &rows[0].1 {
-                Value::Table(t) => Some(t),
-                _ => None,
-            };
             for (seg, part) in segs.iter().zip(&def.parts) {
                 match part {
                     KeyPart::Literal(_) => {}
                     KeyPart::Field(f) => {
-                        let Some(v) = first.and_then(|t| t.get(f)) else {
-                            return Ok(None);
+                        // The first record (canonical order) that carries the
+                        // field is authoritative.
+                        let found = rows.iter().find_map(|(_, r)| match r {
+                            Value::Table(t) => t.get(f),
+                            _ => None,
+                        });
+                        let Some(v) = found else {
+                            return Err(Error::AggregationFailed {
+                                message: format!(
+                                    "rollup {:?} partition {record_path:?}: no record carries the key field {f:?}",
+                                    self.name
+                                ),
+                                sheet: self.name.clone(),
+                                aggregate: f.clone(),
+                                partition: Some(record_path.clone()),
+                            });
                         };
                         rec.insert(f.clone(), v.clone());
                     }
@@ -675,6 +736,8 @@ impl Sheet {
             }
         }
         rec.insert(SOURCE_TREE_FIELD.to_string(), Value::String(id.to_string()));
+        let config_tree = self.config_tree_id(ctx, tree)?;
+        rec.insert(CONFIG_TREE_FIELD.to_string(), Value::String(config_tree.to_string()));
         if let Value::Table(t) = aggs {
             for (k, v) in t {
                 rec.insert(k, v);
@@ -741,7 +804,8 @@ impl Sheet {
     ) -> Result<Option<(String, Value)>> {
         let record_path = self.rollup.as_ref().expect("rollup sheet").record_path_of(partition);
         if let Some(text) = self.stored_rollup_text(ctx, tree, &record_path)? {
-            if stamp_of(&text).as_deref() == Some(id.to_string().as_str()) {
+            let config_tree = self.config_tree_id(ctx, tree)?.to_string();
+            if stamp_of(&text) == Some((id.to_string(), config_tree)) {
                 return Ok(Some((record_path, canonical::parse(&text)?)));
             }
         }
@@ -895,68 +959,6 @@ impl Sheet {
 
 // ── the commit-time pass ───────────────────────────────────────────────────────
 
-/// The `(name, tree id)` of each direct subtree of `tree`.
-fn child_trees(ctx: &Context<'_>, tree: &mut MutableTree) -> Result<BTreeMap<String, ObjectId>> {
-    tree.ensure_children(ctx).map_err(record::map_ht)?;
-    let mut out = BTreeMap::new();
-    for (name, child) in tree.children.as_mut().expect("children loaded").iter_mut() {
-        if let Child::Tree(t) = child {
-            let id = if t.dirty { t.write(ctx).map_err(record::map_ht)? } else { t.hash };
-            out.insert(name.clone(), id);
-        }
-    }
-    Ok(out)
-}
-
-/// The partition paths (at `depth`) whose subtree differs between `old` and
-/// `new` — descending only into children whose ids differ.
-fn diff_partitions(
-    ctx: &Context<'_>,
-    old: Option<&mut MutableTree>,
-    new: Option<&mut MutableTree>,
-    level: usize,
-    depth: usize,
-    prefix: &str,
-    out: &mut BTreeSet<String>,
-) -> Result<()> {
-    if level == depth {
-        out.insert(prefix.to_string());
-        return Ok(());
-    }
-    let (mut old, mut new) = (old, new);
-    let old_children = match old.as_deref_mut() {
-        Some(t) => child_trees(ctx, t)?,
-        None => BTreeMap::new(),
-    };
-    let new_children = match new.as_deref_mut() {
-        Some(t) => child_trees(ctx, t)?,
-        None => BTreeMap::new(),
-    };
-    let names: BTreeSet<&String> = old_children.keys().chain(new_children.keys()).collect();
-    for name in names {
-        if old_children.get(name) == new_children.get(name) {
-            continue;
-        }
-        let child_prefix = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
-        let o = match old.as_deref_mut() {
-            Some(t) => match t.children.as_mut().and_then(|c| c.get_mut(name)) {
-                Some(Child::Tree(sub)) => Some(sub),
-                _ => None,
-            },
-            None => None,
-        };
-        let n = match new.as_deref_mut() {
-            Some(t) => match t.children.as_mut().and_then(|c| c.get_mut(name)) {
-                Some(Child::Tree(sub)) => Some(sub),
-                _ => None,
-            },
-            None => None,
-        };
-        diff_partitions(ctx, o, n, level + 1, depth, &child_prefix, out)?;
-    }
-    Ok(())
-}
-
 /// The id of the subtree at `path` in the tree `root` (`None` when absent).
 fn subtree_at(ctx: &Context<'_>, root: ObjectId, path: &str) -> Result<Option<ObjectId>> {
     let mut tree = MutableTree::new(root);
@@ -967,85 +969,311 @@ fn subtree_at(ctx: &Context<'_>, root: ObjectId, path: &str) -> Result<Option<Ob
     }
 }
 
+/// A child entry's hash and whether it is a tree.
+type Entry = (ObjectId, bool);
+
+/// The hash of a child entry, and whether it is a tree.
+fn entry_of(child: &Child) -> Entry {
+    match child {
+        Child::Tree(t) => (t.hash, true),
+        Child::Blob { hash, .. } => (*hash, false),
+        Child::Commit { hash } => (*hash, false),
+    }
+}
+
+/// Every blob path (relative) that differs between two clean trees,
+/// descending only into subtrees whose ids differ.
+fn changed_blobs(
+    ctx: &Context<'_>,
+    old: Option<&mut MutableTree>,
+    new: Option<&mut MutableTree>,
+    prefix: &str,
+    out: &mut BTreeSet<String>,
+) -> Result<()> {
+    let (mut old, mut new) = (old, new);
+    let mut entries: BTreeMap<String, (Option<Entry>, Option<Entry>)> = BTreeMap::new();
+    if let Some(t) = old.as_deref_mut() {
+        t.ensure_children(ctx).map_err(record::map_ht)?;
+        for (name, c) in t.children.as_ref().expect("loaded") {
+            entries.entry(name.clone()).or_default().0 = Some(entry_of(c));
+        }
+    }
+    if let Some(t) = new.as_deref_mut() {
+        t.ensure_children(ctx).map_err(record::map_ht)?;
+        for (name, c) in t.children.as_ref().expect("loaded") {
+            entries.entry(name.clone()).or_default().1 = Some(entry_of(c));
+        }
+    }
+    for (name, (o, n)) in entries {
+        if o == n {
+            continue;
+        }
+        let path = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+        let blob_side = matches!(o, Some((_, false))) || matches!(n, Some((_, false)));
+        if blob_side {
+            out.insert(path.clone());
+        }
+        let tree_side = matches!(o, Some((_, true))) || matches!(n, Some((_, true)));
+        if tree_side {
+            let o_sub = match old.as_deref_mut().and_then(|t| t.children.as_mut()).and_then(|c| c.get_mut(&name)) {
+                Some(Child::Tree(sub)) => Some(sub),
+                _ => None,
+            };
+            let n_sub = match new.as_deref_mut().and_then(|t| t.children.as_mut()).and_then(|c| c.get_mut(&name)) {
+                Some(Child::Tree(sub)) => Some(sub),
+                _ => None,
+            };
+            changed_blobs(ctx, o_sub, n_sub, &path, out)?;
+        }
+    }
+    Ok(())
+}
+
+/// Changed blob paths under `base` between the trees `old` and `new`.
+fn changed_under(ctx: &Context<'_>, old: ObjectId, new: ObjectId, base: &str) -> Result<BTreeSet<String>> {
+    let mut out = BTreeSet::new();
+    let (o, n) = (subtree_at(ctx, old, base)?, subtree_at(ctx, new, base)?);
+    if o != n {
+        let mut ot = o.map(MutableTree::new);
+        let mut nt = n.map(MutableTree::new);
+        changed_blobs(ctx, ot.as_mut(), nt.as_mut(), "", &mut out)?;
+    }
+    Ok(out)
+}
+
+/// What the pass needs to map paths for one rollup sheet (from its prefix-less
+/// resolution).
+struct PassShape {
+    /// `open_root/source.root` and `open_root/rollup.root` — no prefix.
+    source_base: String,
+    rollup_base: String,
+    source_segments: Option<usize>,
+    rollup_segments: usize,
+    depth: usize,
+    whole: Option<String>,
+    ext: String,
+}
+
+impl PassShape {
+    /// The `(prefix, partition)` a changed source path (relative to the
+    /// source root) belongs to. A record file's prefix is the leading
+    /// segments beyond what the template renders; any other file maps
+    /// through the record whose attachment directory holds it (`exists`
+    /// says whether a record file is present at a relative path).
+    fn map_source(&self, rel: &str, mut exists: impl FnMut(&str) -> bool) -> Option<(String, String)> {
+        let segs: Vec<&str> = rel.split('/').collect();
+        let k = match self.source_segments {
+            None => 0,
+            Some(t) if rel.ends_with(&self.ext) && segs.len() >= t => segs.len() - t,
+            Some(t) => (0..segs.len().saturating_sub(t)).find(|&k| {
+                let candidate = format!("{}{}", segs[..k + t].join("/"), self.ext);
+                exists(&candidate)
+            })?,
+        };
+        (segs.len() >= k + self.depth).then(|| (segs[..k].join("/"), segs[k..k + self.depth].join("/")))
+    }
+
+    /// The `(prefix, partition)` a changed rollup path (relative to the
+    /// rollup root) names — `partition = None` when it can name none (a
+    /// stray file to delete).
+    fn map_rollup(&self, rel: &str) -> Option<(String, Option<String>)> {
+        let record = rel.strip_suffix(ROLLUP_EXTENSION)?;
+        let segs: Vec<&str> = record.split('/').collect();
+        if segs.len() < self.rollup_segments {
+            return None;
+        }
+        let k = segs.len() - self.rollup_segments;
+        let path = segs[k..].join("/");
+        let partition = match &self.whole {
+            Some(w) => (&path == w).then(String::new),
+            None => Some(path),
+        };
+        Some((segs[..k].join("/"), partition))
+    }
+}
+
 /// Run the rollup pass (`specs/behaviors/rollups.md` "Maintenance at commit")
-/// over `tree`, the tree about to be committed. `compare` lists the
-/// `(old, new)` tree-id pairs whose source differences mark partitions
-/// touched (`old = None`: no parent — everything is touched); `scopes` the
-/// `(open_root, prefix)` pairs to discover rollup sheets in. A rollup or
-/// source config that differs across a pair regenerates the whole rollup
-/// sheet. Errors (an `AggregationError`, a `ValidationError` against a rollup
-/// schema, a rollup config problem) abort the caller's commit.
+/// over `tree`, the tree about to be committed, for every rollup sheet
+/// declared in `<open_root>/.gitsheets/`. `compare` lists the `(old, new)`
+/// tree-id pairs whose differences mark work (`old = None`: no parent —
+/// everything is touched): each changed source path regenerates its
+/// `(prefix, partition)`; with `heal`, each changed rollup path does too (a
+/// merge or a sync replay: no unresolved or stale rollup blob survives). A
+/// change to the `.gitsheets/` directory regenerates every `(prefix,
+/// partition)`. A rollup sheet is resolved only when it has work, so an
+/// invalid rollup config fails only the commits that touch it. Errors abort
+/// the caller's commit.
 pub fn run_pass(
     ctx: &Context<'_>,
     tree: &mut MutableTree,
     compare: &[(Option<ObjectId>, ObjectId)],
-    scopes: &[(String, String)],
+    open_root: &str,
+    heal: bool,
 ) -> Result<()> {
-    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
-    for (open_root, prefix) in scopes {
-        let key = (join_path(&[open_root]), join_path(&[prefix]));
-        if !seen.insert(key) {
+    let config_dir = join_path(&[open_root, ".gitsheets"]);
+    let mut config_changed = false;
+    for (old, new) in compare {
+        match old {
+            None => config_changed = true,
+            Some(old) => {
+                if subtree_at(ctx, *old, &config_dir)? != subtree_at(ctx, *new, &config_dir)? {
+                    config_changed = true;
+                }
+            }
+        }
+    }
+    for name in rollup_sheet_names(ctx, tree, open_root)? {
+        let config_path = join_path(&[open_root, ".gitsheets", &format!("{name}.toml")]);
+        let mut work = config_changed;
+        if !work {
+            // Cheap: the two roots from the parsed configs, no resolution.
+            let Some((source_base, rollup_base)) = light_bases(ctx, tree, open_root, &config_path)? else {
+                continue;
+            };
+            for (old, new) in compare {
+                let Some(old) = old else { continue };
+                if subtree_at(ctx, *old, &source_base)? != subtree_at(ctx, *new, &source_base)?
+                    || (heal && subtree_at(ctx, *old, &rollup_base)? != subtree_at(ctx, *new, &rollup_base)?)
+                {
+                    work = true;
+                    break;
+                }
+            }
+        }
+        if !work {
             continue;
         }
-        for name in rollup_sheet_names(ctx, tree, open_root)? {
-            let config_path = join_path(&[open_root, ".gitsheets", &format!("{name}.toml")]);
-            let (key, mut sheet) = open_cached(ctx, tree, &name, &config_path, open_root, prefix)?;
-            let def = sheet.rollup.as_ref().expect("rollup sheet");
-            let configs = [def.config_path.clone(), def.source_config_path.clone()];
-            let source_base = def.source_base.clone();
-            let depth = def.depth();
-            let whole = def.whole.is_some();
 
-            let mut full = false;
-            let mut touched: BTreeSet<String> = BTreeSet::new();
+        let (key, sheet) = open_cached(ctx, tree, &name, &config_path, open_root, "")?;
+        let shape = {
+            let def = sheet.rollup.as_ref().expect("rollup sheet");
+            PassShape {
+                source_base: def.source_base.clone(),
+                rollup_base: sheet.base.clone(),
+                source_segments: def.source_segments,
+                rollup_segments: def.rollup_segments,
+                depth: def.depth(),
+                whole: def.whole.clone(),
+                ext: def.source_format.extension().to_string(),
+            }
+        };
+        cache_put(key, sheet);
+
+        // prefix → touched partitions (None = everything) + stray rollup paths.
+        let mut touched: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
+        let mut strays: BTreeSet<String> = BTreeSet::new();
+        if config_changed {
+            touched.insert(String::new(), None);
+            for prefix in enumerate_prefixes(ctx, tree, &shape)? {
+                touched.insert(prefix, None);
+            }
+        } else {
             for (old, new) in compare {
-                let Some(old) = old else {
-                    full = true;
-                    break;
-                };
+                let Some(old) = old else { continue };
                 let mut old_tree = MutableTree::new(*old);
                 let mut new_tree = MutableTree::new(*new);
-                for path in &configs {
-                    if record::tree_entry_hash(ctx, &mut old_tree, path)? != record::tree_entry_hash(ctx, &mut new_tree, path)? {
-                        full = true;
+                for rel in changed_under(ctx, *old, *new, &shape.source_base)? {
+                    let mapped = shape.map_source(&rel, |candidate| {
+                        let full = join_path(&[&shape.source_base, candidate]);
+                        matches!(record::tree_entry_hash(ctx, &mut new_tree, &full), Ok(Some(_)))
+                            || matches!(record::tree_entry_hash(ctx, &mut old_tree, &full), Ok(Some(_)))
+                    });
+                    if let Some((prefix, partition)) = mapped {
+                        if let Some(set) = touched.entry(prefix).or_insert_with(|| Some(BTreeSet::new())) {
+                            set.insert(partition);
+                        }
                     }
                 }
-                if full {
-                    break;
+                if heal {
+                    for rel in changed_under(ctx, *old, *new, &shape.rollup_base)? {
+                        match shape.map_rollup(&rel) {
+                            Some((prefix, Some(partition))) => {
+                                if let Some(set) = touched.entry(prefix).or_insert_with(|| Some(BTreeSet::new())) {
+                                    set.insert(partition);
+                                }
+                            }
+                            _ if rel.ends_with(ROLLUP_EXTENSION) => {
+                                strays.insert(join_path(&[&shape.rollup_base, &rel]));
+                            }
+                            _ => {}
+                        }
+                    }
                 }
-                let old_base = subtree_at(ctx, *old, &source_base)?;
-                let new_base = subtree_at(ctx, *new, &source_base)?;
-                if old_base == new_base {
-                    continue;
-                }
-                if whole {
-                    touched.insert(String::new());
-                    continue;
-                }
-                let mut o = old_base.map(MutableTree::new);
-                let mut n = new_base.map(MutableTree::new);
-                diff_partitions(ctx, o.as_mut(), n.as_mut(), 0, depth, "", &mut touched)?;
             }
-            let result = if full {
-                sheet.materialize(ctx, tree).map(|_| ())
-            } else if !touched.is_empty() {
-                sheet.regenerate(ctx, tree, &touched)
-            } else {
-                Ok(())
+        }
+
+        for (prefix, partitions) in touched {
+            let (key, mut sheet) = open_cached(ctx, tree, &name, &config_path, open_root, &prefix)?;
+            let result = match &partitions {
+                None => sheet.materialize(ctx, tree).map(|_| ()),
+                Some(set) => sheet.regenerate(ctx, tree, set),
             };
-            if let Some(key) = key {
-                PASS_SHEETS.with(|c| {
-                    let mut c = c.borrow_mut();
-                    if c.len() >= PASS_SHEETS_CAP {
-                        c.clear();
-                    }
-                    c.insert(key, sheet);
-                });
-            }
+            cache_put(key, sheet);
             result?;
+        }
+        for path in strays {
+            if record::tree_entry_hash(ctx, tree, &path)?.is_some() {
+                tree.delete_child_deep(ctx, &path).map_err(record::map_ht)?;
+            }
         }
     }
     Ok(())
+}
+
+/// Every prefix the source and rollup roots hold records under (for a full
+/// regenerate). A recursive source template has no prefixes.
+fn enumerate_prefixes(ctx: &Context<'_>, tree: &mut MutableTree, shape: &PassShape) -> Result<BTreeSet<String>> {
+    let mut out = BTreeSet::new();
+    let Some(t) = shape.source_segments else {
+        return Ok(out);
+    };
+    for (base, ext, n) in [
+        (&shape.source_base, shape.ext.as_str(), t),
+        (&shape.rollup_base, ROLLUP_EXTENSION, shape.rollup_segments),
+    ] {
+        let Some(sub) = tree.get_subtree(ctx, &record::base_arg(base)).map_err(record::map_ht)? else {
+            continue;
+        };
+        for (path, _) in sub.get_blob_map(ctx).map_err(record::map_ht)? {
+            let Some(stem) = path.strip_suffix(ext) else { continue };
+            let segs: Vec<&str> = stem.split('/').collect();
+            if segs.len() > n {
+                out.insert(segs[..segs.len() - n].join("/"));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The (prefix-less) source and rollup data bases of a rollup config, from
+/// the parsed configs alone — `None` when either does not parse (nothing to
+/// do unless the configs changed, which resolves the sheet properly).
+fn light_bases(ctx: &Context<'_>, tree: &mut MutableTree, open_root: &str, config_path: &str) -> Result<Option<(String, String)>> {
+    let parse = |tree: &mut MutableTree, path: &str| -> Result<Option<SheetConfig>> {
+        let Some((_, bytes)) = record::read_blob_entry(ctx, tree, path)? else { return Ok(None) };
+        let Ok(text) = String::from_utf8(bytes) else { return Ok(None) };
+        let Ok(raw) = canonical::parse(&text) else { return Ok(None) };
+        Ok(config::parse_config(&raw, path).ok())
+    };
+    let Some(cfg) = parse(tree, config_path)? else { return Ok(None) };
+    let Some(rollup) = cfg.rollup.as_ref() else { return Ok(None) };
+    let dir = config_path.rsplit_once('/').map(|(d, _)| d).unwrap_or(".");
+    let Some(source) = parse(tree, &join_path(&[dir, &format!("{}.toml", rollup.from)]))? else {
+        return Ok(None);
+    };
+    Ok(Some((join_path(&[open_root, &source.root]), join_path(&[open_root, &cfg.root]))))
+}
+
+fn cache_put(key: Option<PassKey>, sheet: Sheet) {
+    if let Some(key) = key {
+        PASS_SHEETS.with(|c| {
+            let mut c = c.borrow_mut();
+            if c.len() >= PASS_SHEETS_CAP {
+                c.clear();
+            }
+            c.insert(key, sheet);
+        });
+    }
 }
 
 /// What a compiled rollup [`Sheet`] depends on: its scope and the exact
@@ -1059,7 +1287,7 @@ thread_local! {
     static PASS_SHEETS: std::cell::RefCell<std::collections::HashMap<PassKey, Sheet>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
-const PASS_SHEETS_CAP: usize = 64;
+const PASS_SHEETS_CAP: usize = 256;
 
 /// Open a rollup sheet for the pass, reusing a compiled one when its configs
 /// are unchanged. A sheet that declares contracts (whose documents could
@@ -1160,12 +1388,13 @@ pub fn run_pass_on_tree(
     repo: &gix::Repository,
     tree_id: ObjectId,
     compare: &[(Option<ObjectId>, ObjectId)],
-    scopes: &[(String, String)],
+    open_root: &str,
+    heal: bool,
 ) -> Result<ObjectId> {
     let cache = holo_tree::TreeCache::new();
     let ctx = Context::new(repo, &cache);
     let mut tree = MutableTree::new(tree_id);
-    run_pass(&ctx, &mut tree, compare, scopes)?;
+    run_pass(&ctx, &mut tree, compare, open_root, heal)?;
     tree.write(&ctx).map_err(record::map_ht)
 }
 

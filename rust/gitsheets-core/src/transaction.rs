@@ -115,10 +115,6 @@ pub struct Transaction {
     offset_minutes: i32,
     any_mutation: bool,
     closed: bool,
-    /// The `(open_root, prefix)` scopes this transaction's sheets were opened
-    /// in — where the commit-time rollup pass discovers rollup sheets
-    /// (`specs/behaviors/rollups.md` "Maintenance at commit").
-    scopes: Vec<(String, String)>,
 }
 
 impl Transaction {
@@ -196,7 +192,6 @@ impl Transaction {
                 offset_minutes: opts.offset_minutes,
                 any_mutation: false,
                 closed: false,
-                scopes: Vec::new(),
             })
         })();
 
@@ -222,9 +217,8 @@ impl Transaction {
         &self.repo
     }
 
-    /// Open a sheet against this transaction's private tree, recording its
-    /// `(open_root, prefix)` scope for the commit-time rollup pass. Bindings
-    /// open every transaction-bound sheet through here.
+    /// Open a sheet against this transaction's private tree (config read +
+    /// template / schema / comparators compiled once).
     pub fn open_sheet(
         &mut self,
         name: &str,
@@ -232,20 +226,8 @@ impl Transaction {
         open_root: &str,
         prefix: &str,
     ) -> Result<crate::sheet::Sheet> {
-        let sheet = {
-            let (ctx, tree) = self.split();
-            crate::sheet::Sheet::open(&ctx, tree, name, config_path, open_root, prefix)?
-        };
-        self.note_scope(open_root, prefix);
-        Ok(sheet)
-    }
-
-    /// Record a `(open_root, prefix)` scope for the rollup pass.
-    pub fn note_scope(&mut self, open_root: &str, prefix: &str) {
-        let scope = (open_root.to_string(), prefix.to_string());
-        if !self.scopes.contains(&scope) {
-            self.scopes.push(scope);
-        }
+        let (ctx, tree) = self.split();
+        crate::sheet::Sheet::open(&ctx, tree, name, config_path, open_root, prefix)
     }
 
     pub fn parent_commit_hash(&self) -> Option<String> {
@@ -415,12 +397,7 @@ impl Transaction {
             ),
             None => None,
         };
-        let scopes = if self.scopes.is_empty() {
-            vec![(".".to_string(), String::new())]
-        } else {
-            self.scopes.clone()
-        };
-        crate::rollup::run_pass(&ctx, &mut self.root, &[(parent_tree, current)], &scopes)
+        crate::rollup::run_pass(&ctx, &mut self.root, &[(parent_tree, current)], ".", false)
     }
 
     /// Discard the transaction without committing (handler threw). Releases the

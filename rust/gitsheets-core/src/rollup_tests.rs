@@ -187,10 +187,11 @@ fn the_rollup_record_is_the_canonical_fold_with_key_and_stamp() {
     let c = head(&repo);
     let march = blob_at(&repo, c, "transactions-monthly/2026/03.toml").unwrap();
     let stamp = tree_id_at(&repo, c, "transactions/2026/03");
+    let cfg = tree_id_at(&repo, c, ".gitsheets");
     assert_eq!(
         march,
         format!(
-            "count = 2\nlargest = 240000\nposted = 241200\npostedAt = 2026-03-01\nsourceTree = \"{stamp}\"\ntotal = 241200\n\n[byCategory]\ngroceries = 1200\nrent = 240000\n"
+            "configTree = \"{cfg}\"\ncount = 2\nlargest = 240000\nposted = 241200\npostedAt = 2026-03-01\nsourceTree = \"{stamp}\"\ntotal = 241200\n\n[byCategory]\ngroceries = 1200\nrent = 240000\n"
         )
     );
     // An aggregate with no contributing record is omitted; sum is 0.
@@ -482,12 +483,17 @@ fn whole_sheet_iso_week_and_plain_field_partitions() {
     let c = head(&repo);
     assert_eq!(
         blob_at(&repo, c, "totals/all.toml").unwrap(),
-        format!("n = 2\nsourceTree = \"{}\"\n", tree_id_at(&repo, c, "transactions"))
+        format!(
+            "configTree = \"{}\"\nn = 2\nsourceTree = \"{}\"\n",
+            tree_id_at(&repo, c, ".gitsheets"),
+            tree_id_at(&repo, c, "transactions")
+        )
     );
     let week = blob_at(&repo, c, "events-weekly/2026/53.toml").unwrap();
-    assert!(week.starts_with("at = 2026-12-28\nn = 1\n"), "{week}");
+    assert!(week.starts_with("at = 2026-12-28\nconfigTree = "), "{week}");
+    assert!(week.contains("\nn = 1\n"), "{week}");
     let dom = blob_at(&repo, c, "pages-by-domain/example.com.toml").unwrap();
-    assert!(dom.starts_with("domain = \"example.com\"\nn = 2\n"), "{dom}");
+    assert!(dom.contains("\ndomain = \"example.com\"\nn = 2\n"), "{dom}");
     assert!(dom.contains("slugs = [\"a\", \"b\"]"), "{dom}");
 }
 
@@ -686,6 +692,251 @@ fn a_merge_driver_merge_is_healed_by_materialize() {
     assert_eq!(survey[0].status, RollupStatus::Stale);
     let out = sheet.materialize(&ctx, &mut tree).unwrap();
     assert_eq!(out.recomputed, vec!["2026/02"]);
+}
+
+/// One transaction on `parent` (a branch) applying upserts with sheets
+/// opened at `prefix`.
+fn transact_on(git_dir: &str, parent: &str, prefix: &str, ops: &[Op<'_>]) -> Result<Option<String>> {
+    let mut o = opts();
+    o.parent = Some(parent.into());
+    let mut tx = Transaction::begin(git_dir, o)?;
+    let mut sheets: BTreeMap<String, Sheet> = BTreeMap::new();
+    for op in ops {
+        if let Op::Upsert(n, _) = op {
+            if !sheets.contains_key(*n) {
+                let s = tx.open_sheet(n, &format!(".gitsheets/{n}.toml"), ".", prefix)?;
+                sheets.insert(n.to_string(), s);
+            }
+        }
+    }
+    for op in ops {
+        let (ctx, tree) = tx.split();
+        match op {
+            Op::Upsert(n, text) => {
+                let sheet = sheets.get_mut(*n).unwrap();
+                let c = sheet.prepare_upsert(&ctx, tree, &canonical::parse(text)?, None, false)?;
+                sheet.stage_upsert(&ctx, tree, &c)?;
+            }
+            Op::RawWrite(path, text) => {
+                tree.write_child(&ctx, path, text).map_err(record::map_ht)?;
+            }
+            Op::Delete(..) => unreachable!(),
+        }
+    }
+    tx.mark_mutated();
+    Ok(tx.finalize()?.commit_hash)
+}
+
+fn merge(repo: &gix::Repository, commit: bool) -> crate::merge::MergeResult {
+    merge_sheets(
+        repo,
+        &MergeOptions {
+            ours: "main".into(),
+            theirs: "import".into(),
+            open_root: ".".into(),
+            prefer: Prefer::Fail,
+            commit,
+            message: None,
+            author: Some(Author { name: "M".into(), email: "m@x.org".into() }),
+            committer: None,
+            time_seconds: 1_700_000_000,
+            offset_minutes: 0,
+        },
+    )
+    .unwrap()
+}
+
+fn blob_in_tree(repo: &gix::Repository, tree: &str, path: &str) -> Option<String> {
+    let ctx = tctx(repo);
+    let mut t = MutableTree::new(ObjectId::from_hex(tree.as_bytes()).unwrap());
+    t.read_blob(&ctx, path).unwrap().map(|b| String::from_utf8(b).unwrap())
+}
+
+fn subtree_in_tree(repo: &gix::Repository, tree: &str, path: &str) -> String {
+    let ctx = tctx(repo);
+    let mut t = MutableTree::new(ObjectId::from_hex(tree.as_bytes()).unwrap());
+    t.get_subtree(&ctx, path).unwrap().unwrap().write(&ctx).unwrap().to_string()
+}
+
+#[test]
+fn a_multi_tenant_merge_regenerates_prefixed_rollups_without_conflict_markers() {
+    let (_d, git_dir, repo) = base_fixture();
+    transact(&git_dir, "acme", &[Op::Upsert("transactions", txn("a", "2026-03-01T00:00:00Z", 1, "posted", "fun"))]).unwrap();
+    holo_repo::update_ref(&repo, "refs/heads/import", head(&repo), None).unwrap();
+    transact_on(&git_dir, "main", "acme", &[Op::Upsert("transactions", txn("x", "2026-03-11T00:00:00Z", 2, "posted", "fun"))]).unwrap();
+    transact_on(&git_dir, "import", "acme", &[Op::Upsert("transactions", txn("y", "2026-03-12T00:00:00Z", 4, "posted", "fun"))]).unwrap();
+    for commit in [false, true] {
+        let r = merge(&repo, commit);
+        assert!(r.conflicts.is_empty(), "{:?}", r.conflicts);
+        let tree = r.tree.unwrap();
+        let march = blob_in_tree(&repo, &tree, "transactions-monthly/acme/2026/03.toml").unwrap();
+        assert!(!march.contains("<<<<<<<"), "{march}");
+        assert!(march.contains("count = 3\n"), "{march}");
+        assert!(march.contains(&subtree_in_tree(&repo, &tree, "transactions/acme/2026/03")), "{march}");
+    }
+}
+
+#[test]
+fn a_both_sides_edited_rollup_in_an_untouched_partition_is_regenerated_on_merge() {
+    let (_d, git_dir, repo) = base_fixture();
+    seed_three_months(&git_dir);
+    let base = head(&repo);
+    let jan = blob_at(&repo, base, "transactions-monthly/2026/01.toml").unwrap();
+    let ours = raw_commit(&repo, Some(base), &[("transactions-monthly/2026/01.toml", Some(&jan.replace("count = 1", "count = 7")))]);
+    let theirs = raw_commit(&repo, Some(base), &[("transactions-monthly/2026/01.toml", Some(&jan.replace("count = 1", "count = 8")))]);
+    holo_repo::update_ref(&repo, "refs/heads/main", ours, Some(base)).unwrap();
+    holo_repo::update_ref(&repo, "refs/heads/import", theirs, None).unwrap();
+    let r = merge(&repo, true);
+    assert!(r.conflicts.is_empty(), "{:?}", r.conflicts);
+    let merged = blob_in_tree(&repo, &r.tree.unwrap(), "transactions-monthly/2026/01.toml").unwrap();
+    assert_eq!(merged, jan, "regenerated from its partition");
+}
+
+#[test]
+fn a_multi_tenant_sync_replay_carries_prefixed_rollups_over_both_sides() {
+    let (_d, git_dir, repo) = base_fixture();
+    transact(&git_dir, "acme", &[Op::Upsert("transactions", txn("a", "2026-03-01T00:00:00Z", 1, "posted", "fun"))]).unwrap();
+    let base = head(&repo);
+    transact(&git_dir, "acme", &[Op::Upsert("transactions", txn("r", "2026-03-13T00:00:00Z", 3, "posted", "fun"))]).unwrap();
+    let remote = head(&repo);
+    holo_repo::update_ref(&repo, "refs/remotes/origin/main", remote, None).unwrap();
+    holo_repo::update_ref(&repo, "refs/heads/main", base, Some(remote)).unwrap();
+    transact(&git_dir, "acme", &[Op::Upsert("transactions", txn("l", "2026-03-14T00:00:00Z", 4, "posted", "fun"))]).unwrap();
+    let r = sync_branch(
+        &repo,
+        &SyncOptions {
+            branch: "main".into(),
+            remote_ref: "refs/remotes/origin/main".into(),
+            on_conflict: ConflictPolicy::Fail,
+            committer: None,
+            time_seconds: 1_700_000_100,
+            offset_minutes: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(r.outcome, SyncOutcome::Rebased, "{r:?}");
+    let tip = head(&repo);
+    let march = blob_at(&repo, tip, "transactions-monthly/acme/2026/03.toml").unwrap();
+    assert!(!march.contains("<<<<<<<"), "{march}");
+    assert!(march.contains("count = 3\n"), "{march}");
+    assert!(march.contains(&tree_id_at(&repo, tip, "transactions/acme/2026/03")));
+}
+
+#[test]
+fn a_config_change_regenerates_every_prefix() {
+    let (_d, git_dir, repo) = base_fixture();
+    transact(&git_dir, "acme", &[Op::Upsert("transactions", txn("a", "2026-03-01T00:00:00Z", 1, "posted", "fun"))]).unwrap();
+    transact(&git_dir, "globex", &[Op::Upsert("transactions", txn("g", "2026-04-01T00:00:00Z", 5, "posted", "fun"))]).unwrap();
+    // A transaction scoped to acme changes the config: globex is regenerated too.
+    let more = MONTHLY.replace("count = { count = true }", "count = { count = true }\nlo = { min = 'amountCents' }");
+    transact(&git_dir, "acme", &[Op::RawWrite(".gitsheets/transactions-monthly.toml", &more)]).unwrap();
+    let c = head(&repo);
+    let cfg = tree_id_at(&repo, c, ".gitsheets");
+    for path in ["transactions-monthly/acme/2026/03.toml", "transactions-monthly/globex/2026/04.toml"] {
+        let text = blob_at(&repo, c, path).unwrap();
+        assert!(text.contains("\nlo = "), "{path}: {text}");
+        assert!(text.contains(&cfg), "{path}: {text}");
+    }
+    // A root-scope raw write removing aggregates: both tenants lose them.
+    let fewer = MONTHLY
+        .replace("total = { sum = 'amountCents' }\n", "")
+        .replace("largest = { max = 'amountCents' }\n", "");
+    transact(&git_dir, "", &[Op::RawWrite(".gitsheets/transactions-monthly.toml", &fewer)]).unwrap();
+    let c = head(&repo);
+    for path in ["transactions-monthly/acme/2026/03.toml", "transactions-monthly/globex/2026/04.toml"] {
+        let text = blob_at(&repo, c, path).unwrap();
+        assert!(!text.contains("total =") && !text.contains("largest ="), "{path}: {text}");
+    }
+}
+
+#[test]
+fn a_plain_git_config_change_is_caught_on_read() {
+    let (_d, git_dir, repo) = base_fixture();
+    transact(&git_dir, "acme", &[Op::Upsert("transactions", txn("a", "2026-03-01T00:00:00Z", 1, "posted", "fun"))]).unwrap();
+    let more = MONTHLY.replace("count = { count = true }", "count = { count = true }\nlo = { min = 'amountCents' }");
+    let c = raw_commit(&repo, Some(head(&repo)), &[(".gitsheets/transactions-monthly.toml", Some(&more))]);
+    holo_repo::update_ref(&repo, "refs/heads/main", c, None).unwrap();
+    let ctx = tctx(&repo);
+    let (mut sheet, mut tree) = open_at(&repo, c, "transactions-monthly", "acme");
+    let rows = sheet.rollup_query(&ctx, &mut tree, &Filter::new(), Stale::Recompute).unwrap();
+    let Value::Table(m) = &rows[0].1 else { panic!() };
+    assert_eq!(m.get("lo"), Some(&Value::Integer(1)));
+    assert_eq!(m.get(CONFIG_TREE_FIELD), Some(&Value::String(tree_id_at(&repo, c, ".gitsheets"))));
+    let served = sheet.rollup_query(&ctx, &mut tree, &Filter::new(), Stale::Serve).unwrap();
+    let Value::Table(m) = &served[0].1 else { panic!() };
+    assert_eq!(m.get("lo"), None);
+}
+
+#[test]
+fn an_invalid_rollup_config_fails_only_the_commits_that_touch_it() {
+    let people = "[gitsheet]\nroot = 'people'\npath = '${{ slug }}'\n";
+    let bad = "[gitsheet]\nroot = 'bad'\npath = '${{ meta.cat }}'\n\n[gitsheet.rollup]\nfrom = 'transactions'\n\n[gitsheet.rollup.aggregates]\nn = { count = true }\n";
+    let (_d, git_dir, _repo) = setup(&[
+        (".gitsheets/transactions.toml", TX_CONFIG),
+        (".gitsheets/people.toml", people),
+        (".gitsheets/bad.toml", bad),
+    ]);
+    transact(&git_dir, "", &[Op::Upsert("people", "slug = 'jane'\n".to_string())]).unwrap().unwrap();
+    let err = transact(&git_dir, "", &[Op::Upsert("transactions", txn("a", "2026-03-01T00:00:00Z", 1, "posted", "fun"))]).unwrap_err();
+    assert_eq!(err.code(), "config_invalid");
+    assert!(err.message().contains("dotted field"), "{}", err.message());
+}
+
+#[test]
+fn equality_on_a_date_key_field_accepts_an_iso_date_or_a_midnight_utc_datetime() {
+    let (_d, git_dir, repo) = base_fixture();
+    seed_three_months(&git_dir);
+    let ctx = tctx(&repo);
+    let (mut sheet, mut tree) = open_at(&repo, head(&repo), "transactions-monthly", "");
+    for v in [Value::String("2026-03-01".into()), date("2026-03-01T00:00:00Z"), date("2026-03-01")] {
+        let mut f = Filter::new();
+        f.push("postedAt", query::FilterPred::Equals(v.clone()));
+        let rows = sheet.rollup_query(&ctx, &mut tree, &f, Stale::Recompute).unwrap();
+        assert_eq!(rows.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), vec!["2026/03"], "{v:?}");
+    }
+    let mut f = Filter::new();
+    f.push("postedAt", query::FilterPred::Equals(date("2026-03-01T05:00:00Z")));
+    assert!(sheet.rollup_query(&ctx, &mut tree, &f, Stale::Recompute).unwrap().is_empty());
+}
+
+#[test]
+fn a_rollup_root_inside_any_other_sheet_is_config_invalid() {
+    let notes = "[gitsheet]\nroot = 'notes'\npath = '${{ slug }}'\n";
+    let all = "[gitsheet]\nroot = 'notes-all'\npath = 'all'\n\n[gitsheet.rollup]\nfrom = 'notes'\n\n[gitsheet.rollup.aggregates]\nn = { count = true }\n";
+    let mon = "[gitsheet]\nroot = 'notes/monthly'\npath = '${{ postedAt: YYYY/MM }}'\n\n[gitsheet.rollup]\nfrom = 'transactions'\n\n[gitsheet.rollup.aggregates]\nn = { count = true }\n";
+    let err = open_err(
+        &[(".gitsheets/transactions.toml", TX_CONFIG), (".gitsheets/notes.toml", notes), (".gitsheets/notes-all.toml", all), (".gitsheets/mon.toml", mon)],
+        "mon",
+    );
+    assert_eq!(err.code(), "config_invalid");
+    assert!(err.message().contains("overlaps sheet \"notes\""), "{}", err.message());
+}
+
+#[test]
+fn a_plain_field_key_comes_from_the_first_record_that_carries_it() {
+    let src = "[gitsheet]\nroot = 'pages'\npath = '${{ domain }}/${{ slug }}'\n";
+    let roll = "[gitsheet]\nroot = 'pages-by-domain'\npath = '${{ domain }}'\n\n[gitsheet.rollup]\nfrom = 'pages'\n\n[gitsheet.rollup.aggregates]\nn = { count = true }\n";
+    let (_d, _g, repo) = setup(&[
+        (".gitsheets/pages.toml", src),
+        (".gitsheets/pages-by-domain.toml", roll),
+        ("pages/example.com/a.toml", "slug = \"a\"\n"),
+        ("pages/example.com/b.toml", "domain = \"example.com\"\nslug = \"b\"\n"),
+        ("pages/other.com/c.toml", "slug = \"c\"\n"),
+    ]);
+    let ctx = tctx(&repo);
+    let (mut sheet, mut tree) = open_at(&repo, head(&repo), "pages-by-domain", "");
+    let got = sheet.rollup_get(&ctx, &mut tree, "example.com", Stale::Recompute).unwrap().unwrap();
+    let Value::Table(m) = got else { panic!() };
+    assert_eq!(m.get("domain"), Some(&Value::String("example.com".into())));
+    assert_eq!(m.get("n"), Some(&Value::Integer(2)));
+    let err = sheet.rollup_get(&ctx, &mut tree, "other.com", Stale::Recompute).unwrap_err();
+    match err {
+        Error::AggregationFailed { aggregate, partition, .. } => {
+            assert_eq!(aggregate, "domain");
+            assert_eq!(partition.as_deref(), Some("other.com"));
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 /// The 10k-record partitioned fixture (plan Validation): a single-record
