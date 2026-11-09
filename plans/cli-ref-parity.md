@@ -30,6 +30,17 @@ Close the CLI gaps a post-v2.12.0 spec-drift audit found:
    `AggregationError` has no exit code row.
 5. `merge --into` help text says "HEAD's branch" instead of the default
    branch.
+6. Found while specifying `specs/api/axi.md` (#369): `docs/axi.md` has
+   drifted from the code (a nonexistent `--format=json` opt-out,
+   `VALIDATION_FAILED` named as the usage-error code, an incomplete
+   error-code list, missing `count` / `distinct` / `rename` / `contracts`);
+   `gitsheets-axi check --help` lists exit codes 22 / 64 it never uses; a
+   malformed axi global flag exits 1 with a bare `error:` line instead of
+   `VALIDATION_ERROR` / exit 2; `Repository.writeBlob` and
+   `Sheet.rollupStatus` still carry `@internal` though the specs make them
+   public. Also link `cli.md`'s `rollup --check` / `--attachment` to those
+   APIs, and state `TransactionResult.ref === 'HEAD'` after a detached
+   advance in `default-branch.md`.
 
 Out of scope: a `gitsheets.root` / `gitsheets.prefix` config tier
 (grandfathered in `specs/principles.md`); `--working` (#165, deferred);
@@ -101,6 +112,13 @@ Out of scope: a `gitsheets.root` / `gitsheets.prefix` config tier
 - [ ] Malformed `--agg`, `--trailer`, `--attachment`, `--filter` exit 2; an
       `AggregationError` exits 23 with `sheet:` / `aggregate:` lines (tests).
 - [ ] `merge --help` says the default branch.
+- [ ] A malformed axi global flag (`--at` with no value, `--branch`,
+      `--submodule=`, `--stage-pointer=yes`) exits 2 with
+      `VALIDATION_ERROR` (test).
+- [ ] `gitsheets-axi check --help` lists only exit codes 0 / 1 / 2.
+- [ ] `docs/axi.md` matches the code: no `--format`, the full error-code
+      list, all commands, links `specs/api/axi.md`.
+- [ ] `writeBlob` / `rollupStatus` carry no `@internal`.
 - [ ] `npm run build`, `npm run type-check`, `npm test` green.
 
 ## Risks / unknowns
