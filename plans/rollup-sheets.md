@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: [aggregate-core]
 specs:
   - specs/behaviors/rollups.md
@@ -11,7 +11,8 @@ specs:
   - specs/behaviors/merge.md
   - specs/behaviors/push-sync.md
   - specs/api/python-binding.md
-issues: [342, 240]
+issues: [342, 240, 354, 360]
+pr: 349
 ---
 
 # Plan: rollup sheets — config, commit-time pass, stamped read-through
@@ -106,12 +107,43 @@ driver that regenerates rollups (it cannot — one file at a time).
 
 ## Validation
 
-- [ ] `cargo test` + vitest cover every bullet of step 10.
-- [ ] A 10k-record partitioned fixture: a single-record upsert's commit time
-  is within 2× the pre-rollup baseline (the pass touches one partition).
+- [x] `cargo test` + vitest cover every bullet of step 10, plus the review
+  round. Core: `rust/gitsheets-core/src/rollup_tests.rs` (canonical record
+  bytes with both stamps; exactly-touched partitions; delete → rollup
+  deleted; raw `writeFile`; stale stamp → read-through / `serve` / survey /
+  materialize; tx-bound reads; range + equality pruning, ISO-string and
+  midnight-UTC equality on the date key; prefix scoping; schema validation;
+  `AggregationError` partition + abort; read-only; whole-sheet / ISO week /
+  plain-field partitions, plain-field key from the first record carrying it;
+  every `config_invalid` case incl. overlap with a rollup source, a
+  coexisting `root = '.'` ordinary sheet allowed, a source at `.` refused,
+  and dotted fields; an invalid rollup config failing only the commits that touch it;
+  the deterministic reduce realm; config-over-existing-data backfill; a
+  config change regenerating every prefix; a plain-git config change caught
+  on read; merge (commit + dry run), multi-tenant merge, a both-sides-edited
+  rollup in an untouched partition; sync replay, multi-tenant sync replay;
+  merge-driver heal). Node: `sheet-rollup.test.ts` (incl. aggregate over a
+  stale rollup, multi-tenant `repo.merge`), `cli/cli-rollup.test.ts`, axi
+  `test/rollup.test.ts`, napi `test/rollups.mjs`. Python:
+  `tests/test_rollups.py`.
+- [x] Warm steady state: a single-record upsert's commit time on the
+  10k-record partitioned fixture (120 monthly partitions of ~83 records) is
+  within 2× the pre-rollup baseline — after the review round, baseline
+  median 7.44 / 5.19 ms vs 9.69 / 8.68 ms with a monthly rollup (ratio 1.30
+  / 1.67; earlier runs 1.37–1.91) on a heavily loaded host (load average
+  ~20). `cargo test --release -p gitsheets-core rollup_commit_timing --
+  --ignored --nocapture` (asserts ≤ 2×; `#[ignore]` because it is a timing
+  test).
+- [x] Cold first commit recorded, not bounded: the first commit in a process
+  (empty decode cache, rollup sheet not yet compiled) took 24–57 ms vs 6–15
+  ms baseline across runs. The one-shot CLI (`git sheet upsert`) always pays
+  this cold cost; long-lived processes pay it once.
 - [ ] Node and Python writes to the fixture produce byte-identical rollup
-  blobs (`rust-core.yml` parity gate).
-- [ ] `npm run type-check` clean; docs and skill references cover rollup
+  blobs (`rust-core.yml` parity gate). Verified locally
+  (`test_rollup_commit_bytes_identical_across_bindings`: identical rollup
+  blobs, tree, and commit, plus identical read-through rows); the CI job
+  runs on the PR.
+- [x] `npm run type-check` clean; docs and skill references cover rollup
   config, `materialize`, and `git sheet rollup`.
 
 ## Risks / unknowns
@@ -125,4 +157,59 @@ driver that regenerates rollups (it cannot — one file at a time).
 
 ## Notes
 
+- **Release ordering:** this plan changes `rust/gitsheets-core` (rollups,
+  engine hardening, transaction / merge / sync) — a `core-napi-v*` release
+  must ship before the next JS (`v*`) release (CLAUDE.md "Releases").
+- **Prefix-aware pass (review round 1, closes #360).** The first cut ran the
+  pass in "the scopes the transaction opened", which missed prefixed data in
+  merge and sync (a multi-tenant merge committed a rollup full of conflict
+  markers). Now, for each rollup sheet in the root `.gitsheets/`, every
+  changed path under the source root maps to `(prefix, partition)`: a record
+  file's prefix is the leading segments beyond the source template's fixed
+  segment count (a recursive template has no prefixes); any other file maps
+  through the record whose attachment directory holds it. Changed paths come
+  from a tree diff that only descends into differing subtree ids. Merge and
+  each sync replay also heal every rollup path that differs from either
+  parent — regenerated from its partition, or deleted — so no unresolved
+  rollup blob survives; a transaction's pass does not (forged stamps via raw
+  writes are caught by `--check` / `materialize`, by spec).
+- **`configTree` stamp.** Rollup records carry the `.gitsheets/` tree id
+  beside `sourceTree`; fresh = both match, so any config change (even by
+  plain git, even from another tenant's scope) recomputes on read, and a
+  gitsheets commit that changes `.gitsheets/` regenerates every `(prefix,
+  partition)` (prefixes enumerated from the source and rollup roots). The
+  cost: editing an unrelated sheet's config also regenerates every rollup in
+  that commit.
+- **Lazy resolution.** A rollup sheet is resolved only when the pass has
+  work for it (source or rollup subtree changed, or `.gitsheets/` changed),
+  from a cheap two-config parse; an invalid rollup config fails only those
+  commits.
+- **Disjointness** (narrowed at review): a rollup's root may not overlap
+  any rollup's source or any other rollup in the directory; ordinary sheets
+  may overlap as before. A source rooted at `.` cannot have a rollup
+  (`config_invalid`, asking for a root).
+- **#354 closed here.** The `reduce` / `finalize` realm denies
+  `Math.random`, `Date.now`, and the argument-less `Date`; boa's host hooks
+  pin the local offset to UTC and the clock to the epoch (boa's default
+  local-offset hook reads the process time zone only when single-threaded —
+  a real Node/Python divergence). The path-template / comparator engines are
+  untouched (#362).
+- **Performance.** Decoded source records are memoized by blob id
+  (immutable; cleared at 200k entries) and compiled rollup sheets per thread
+  by `(config path, open root, prefix, config blobs)` (cap 256; not cached
+  when the sheet declares contracts). The fold itself is always the plain
+  fold.
+- **Reads.** Node standing reads open a core sheet per call (`rollupQuery` /
+  `rollupGet` / `rollupStatus` / `rollupAggregate`); `sheet.aggregate` on a
+  rollup sheet folds the read-through. Equality on a local-date field
+  accepts an ISO date string or a midnight-UTC datetime, in the core and in
+  Node's host-side re-check. Python reads stay batch functions:
+  `record_query(..., sheet=, stale=)`; without `sheet=` a rollup root reads
+  stored bytes (spec'd).
+- **Rebases.** Onto #346 (default-branch binding: fixtures name branches
+  with `parent`) and #347 (submodule mode: conflicts in api/cli.md and the
+  axi TOP_HELP, both sides kept).
+
 ## Follow-ups
+
+- Issue [#362](https://github.com/JarvusInnovations/gitsheets/issues/362) — harden the path-template and comparator engines (no clock, randomness, or host time zone) the way the aggregate realm was.
