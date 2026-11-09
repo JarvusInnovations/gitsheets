@@ -985,6 +985,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#data-submodule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data submodule
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data submodule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#set-it-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Set it up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#write-then-commit-the-pointer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write, then commit the pointer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read-the-data-a-release-shipped-with" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read the data a release shipped with
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fresh-clones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fresh clones
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#push-the-data-before-the-pointer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Push the data before the pointer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#editing-configs-on-a-branch-you-never-check-out" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1187,6 +1259,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#data-submodule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data submodule
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data submodule">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#set-it-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Set it up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#write-then-commit-the-pointer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write, then commit the pointer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read-the-data-a-release-shipped-with" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read the data a release shipped with
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fresh-clones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fresh clones
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#push-the-data-before-the-pointer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Push the data before the pointer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#editing-configs-on-a-branch-you-never-check-out" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1240,7 +1384,7 @@ the same branch you check out, every gitsheets write moves the ref out from
 under that checkout, and <code>git status</code> starts reporting your records as
 deleted or modified. Nothing is lost. The checkout is just behind the ref.</p>
 <p>The fix is the layout, not a sync step: keep the records on a branch you never
-check out. Then there is no working tree of records to fall behind, nothing
+check out, or in a data submodule you never materialize. Then there is no working tree of records to fall behind, nothing
 for <code>git status</code> to report, and no checkout cost that grows with the record
 count.</p>
 <p>Every repository is bound to one <strong>default branch</strong>. That is the branch live
@@ -1275,6 +1419,12 @@ can bind it to any other branch.</p>
 <td><code>--git-dir</code> / <code>gitDir</code></td>
 <td>none</td>
 <td>separate repo</td>
+</tr>
+<tr>
+<td><a href="#data-submodule">Data submodule</a></td>
+<td><code>gitsheets.submodule</code> (or <code>--submodule</code> / <code>submodule:</code>); <code>git sheet submodule init</code> to set up</td>
+<td>none</td>
+<td>separate repo; <strong>each code commit pins a data snapshot</strong></td>
 </tr>
 </tbody>
 </table>
@@ -1419,6 +1569,117 @@ git<span class="w"> </span>sheet<span class="w"> </span>--git-dir<span class="w"
 branch, add <code>branch</code> (or <code>git -C /srv/app-data.git config gitsheets.branch data</code>).
 <code>repo.sync()</code> and <code>repo.fetch()</code> use explicit refspecs, so they work in a bare
 clone without a configured fetch refspec.</p>
+<h2 id="data-submodule">Data submodule<a class="headerlink" href="#data-submodule" title="Permanent link"> ¶</a></h2>
+<p>The records live in their own repository, attached to the code repository as
+a git submodule whose files are never checked out. The submodule&rsquo;s <code>HEAD</code> is
+the code repository&rsquo;s <strong>pointer</strong> to a data snapshot. Each gitsheets write
+advances it, so <code>git status</code> in the code repository reports
+<code>modified: data (new commits)</code>, and you commit the pointer along with your
+code. Every code commit then records exactly which data it was built against.</p>
+<h3 id="set-it-up">Set it up<a class="headerlink" href="#set-it-up" title="Permanent link"> ¶</a></h3>
+<p><code>git sheet submodule init</code> adds the submodule without a checkout of the
+records:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>sheet<span class="w"> </span>submodule<span class="w"> </span>init<span class="w"> </span>data<span class="w"> </span>--url<span class="w"> </span>git@example.com:acme/app-data.git<span class="w"> </span>--branch<span class="w"> </span>main
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"Add data submodule"</span>
+git<span class="w"> </span>config<span class="w"> </span>gitsheets.submodule<span class="w"> </span>data
+</code></pre></div>
+<p>It writes the <code>.gitmodules</code> entry (<code>path</code>, <code>url</code>, <code>branch</code>), clones into
+<code>.git/modules/data</code> with no checkout, leaves only the <code>data/.git</code> pointer
+file on disk, puts the submodule&rsquo;s <code>HEAD</code> on <code>main</code>, sets
+<code>submodule.data.ignore = dirty</code>, and stages <code>.gitmodules</code> plus the pointer.
+It never commits. Without <code>--branch</code> it uses the remote&rsquo;s default branch; an
+empty data repository needs <code>--branch</code>, and the branch is created by the
+first write.</p>
+<h3 id="write-then-commit-the-pointer">Write, then commit the pointer<a class="headerlink" href="#write-then-commit-the-pointer" title="Permanent link"> ¶</a></h3>
+<p>With <code>gitsheets.submodule</code> set, <code>git sheet</code> and <code>gitsheets-axi</code> read and
+write the submodule with no flags (or pass <code>--submodule data</code>, or export
+<code>GITSHEETS_SUBMODULE=data</code>):</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>sheet<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane","email":"jane@x.org"}'</span>
+git<span class="w"> </span>status<span class="w"> </span>--short<span class="w">        </span><span class="c1"># " M data": the pointer moved, nothing else</span>
+git<span class="w"> </span>add<span class="w"> </span>data
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"Add jane"</span><span class="w">  </span><span class="c1"># or commit the pointer together with your code change</span>
+</code></pre></div>
+<p>gitsheets stages nothing in the code repository unless you ask it to. In
+code, <code>stagePointer: true</code> updates the index entry for the pointer after each
+write (and after a <code>merge</code> or <code>sync</code> that moves it), so <code>git commit -a</code>
+carries it. If the index is locked when it tries, the write has still landed:
+the error is <code>TransactionError</code> <code>pointer_stage_failed</code> with the commit on
+<code>err.commitHash</code>, and the fix is <code>git add data</code>, not another write:</p>
+<div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">submodule</span><span class="o">:</span><span class="w"> </span><span class="s1">'data'</span><span class="w"> </span><span class="p">});</span><span class="w"> </span><span class="c1">// or gitsheets.submodule / GITSHEETS_SUBMODULE</span>
+<span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">repo</span><span class="p">.</span><span class="nx">submodule</span><span class="p">,</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">branch</span><span class="p">);</span><span class="w">           </span><span class="c1">// 'data' 'main'</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">users</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">'users'</span><span class="p">);</span>
+<span class="k">await</span><span class="w"> </span><span class="nx">users</span><span class="p">.</span><span class="nx">upsert</span><span class="p">({</span><span class="w"> </span><span class="nx">slug</span><span class="o">:</span><span class="w"> </span><span class="s1">'ada'</span><span class="p">,</span><span class="w"> </span><span class="nx">email</span><span class="o">:</span><span class="w"> </span><span class="s1">'ada@x.org'</span><span class="w"> </span><span class="p">});</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">staging</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">submodule</span><span class="o">:</span><span class="w"> </span><span class="s1">'data'</span><span class="p">,</span><span class="w"> </span><span class="nx">stagePointer</span><span class="o">:</span><span class="w"> </span><span class="kt">true</span><span class="w"> </span><span class="p">});</span>
+</code></pre></div>
+<p><code>{ submodule: 'data', branch: 'drafts' }</code> writes to another branch of the data
+repository. That does not move the pointer, so the code repository sees
+nothing.</p>
+<h3 id="read-the-data-a-release-shipped-with">Read the data a release shipped with<a class="headerlink" href="#read-the-data-a-release-shipped-with" title="Permanent link"> ¶</a></h3>
+<p><code>at</code> takes any commit-ish of the code repository and pins every sheet,
+read-only, to the data commit it points at:</p>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">shipped</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">submodule</span><span class="o">:</span><span class="w"> </span><span class="s1">'data'</span><span class="p">,</span><span class="w"> </span><span class="nx">at</span><span class="o">:</span><span class="w"> </span><span class="s1">'v1.2.0'</span><span class="w"> </span><span class="p">});</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">users</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">shipped</span><span class="p">.</span><span class="nx">openSheet</span><span class="p">(</span><span class="s1">'users'</span><span class="p">);</span><span class="w"> </span><span class="c1">// the users as of v1.2.0</span>
+</code></pre></div>
+<p>Writes through <code>shipped</code> throw <code>TransactionError</code> (<code>transaction_required</code>).
+A commit-ish with no <code>data</code> pointer throws <code>RefError</code> (<code>ref_not_found</code>).</p>
+<h3 id="fresh-clones">Fresh clones<a class="headerlink" href="#fresh-clones" title="Permanent link"> ¶</a></h3>
+<p>A fresh clone of the code repository has an empty <code>data/</code> directory. Run
+<code>submodule init</code> with no <code>--url</code>. It fetches the data repository and puts
+<code>HEAD</code> on the <code>.gitmodules</code> branch at the commit your checkout pins, still
+without checking out any records:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>git@example.com:acme/app.git<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>app
+git<span class="w"> </span>sheet<span class="w"> </span>submodule<span class="w"> </span>init<span class="w"> </span>data
+git<span class="w"> </span>config<span class="w"> </span>gitsheets.submodule<span class="w"> </span>data
+git<span class="w"> </span>sheet<span class="w"> </span>query<span class="w"> </span>users
+</code></pre></div>
+<p>Re-running it is safe: a data branch that already exists is left where it is.
+Plain <code>git submodule update --init</code> works too, but it checks the records out
+and leaves <code>HEAD</code> detached. On a detached <code>HEAD</code>, gitsheets advances <code>HEAD</code>
+itself, so the pointer still moves, but <code>sync</code>, <code>fetch</code>, and the push daemon
+need a branch and refuse until <code>HEAD</code> is on one. <code>git sheet submodule init
+data</code> puts it back on the <code>.gitmodules</code> branch, fast-forwarding the branch
+over any writes made on the detached <code>HEAD</code> first. If the branch has moved on
+separately, it refuses and names both commits rather than drop either.</p>
+<div class="admonition warning">
+<p class="admonition-title">Writes on a detached <code>HEAD</code> hang off <code>HEAD</code> alone</p>
+<p>Until you commit the pointer in the code repository (<code>git add data</code>), a
+write made on a detached <code>HEAD</code> is referenced only by that <code>HEAD</code>. A
+<code>git submodule update</code>, <code>git checkout</code>, or <code>git switch</code> in <code>data/</code>
+moves <code>HEAD</code> and leaves the write reachable only from the reflog. Put
+the submodule on a branch (<code>git sheet submodule init data</code>) before
+writing, or pin each write promptly.</p>
+<p>gitsheets also resolves the binding once, when the repository is
+opened. A long-running process does not notice a later
+<code>git submodule update</code> detaching <code>HEAD</code>, or a checkout attaching it,
+and keeps writing the way it started. Reopen the repository after
+changing what <code>data/</code> has checked out.</p>
+</div>
+<h3 id="push-the-data-before-the-pointer">Push the data before the pointer<a class="headerlink" href="#push-the-data-before-the-pointer" title="Permanent link"> ¶</a></h3>
+<p>The push daemon (or <code>git -C data push origin main</code>) pushes the data
+repository. A code commit must not reach the remote before the data commit it
+points at, or other clones cannot fetch what it pins. Have git enforce the
+order in the code repository:</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>config<span class="w"> </span>push.recurseSubmodules<span class="w"> </span>check<span class="w">      </span><span class="c1"># refuse to push a pointer whose data isn't pushed</span>
+<span class="c1"># or</span>
+git<span class="w"> </span>config<span class="w"> </span>push.recurseSubmodules<span class="w"> </span>on-demand<span class="w">  </span><span class="c1"># push the data repository first, then the code</span>
+</code></pre></div>
+<p>gitsheets does not push the code repository for you. That stays your
+<code>git push</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title"><code>ignore = dirty</code> hides edits under <code>data/</code></p>
+<p>The submodule&rsquo;s working tree is empty on purpose, which plain git
+would report as <code>modified content</code> on every <code>git status</code>.
+<code>submodule.data.ignore = dirty</code> silences that, so only pointer
+movement shows. It also hides any files you edit by hand under
+<code>data/</code>. If you want the files, <code>git -C data checkout HEAD -- .</code>
+writes them out, but they are then a stale view like
+<a href="#records-on-the-code-branch">records on the code branch</a>: gitsheets
+moves the ref and the files stay put until the next checkout. Edit
+records through gitsheets, not in <code>data/</code>.</p>
+</div>
 <h2 id="editing-configs-on-a-branch-you-never-check-out">Editing configs on a branch you never check out<a class="headerlink" href="#editing-configs-on-a-branch-you-never-check-out" title="Permanent link"> ¶</a></h2>
 <p>Every config-writing command commits through a transaction, so it works the
 same on a data branch: <code>git sheet init</code>, <code>infer</code>, <code>migrate-config</code>, and the
@@ -1427,8 +1688,10 @@ existing config from the default branch and commit the new one there.</p>
 <h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link"> ¶</a></h2>
 <p>The Python binding&rsquo;s batch functions take an explicit <code>tree_ref</code> on every
 call (<code>record_query(git_dir, tree_ref, …)</code>). <code>gitsheets.branch</code> and
-<code>GITSHEETS_BRANCH</code> do not apply there. Pass <code>'refs/heads/data'</code> (or the tree
-it resolves to) yourself.</p>
+<code>GITSHEETS_BRANCH</code> do not apply there, and neither do <code>gitsheets.submodule</code> and
+<code>GITSHEETS_SUBMODULE</code>. Pass <code>'refs/heads/data'</code> (or the tree it resolves to)
+yourself, with the submodule&rsquo;s git dir (<code>.git/modules/data</code>) as <code>git_dir</code> in
+submodule mode.</p>
 
 
 

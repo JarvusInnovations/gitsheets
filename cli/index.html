@@ -824,6 +824,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gitsheets-submodule-init-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets submodule init &lt;path&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1413,6 +1424,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gitsheets-submodule-init-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets submodule init &lt;path&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1501,6 +1523,11 @@ operation on a <code>Repository</code> (or <code>Sheet</code>/<code>Transaction<
 <td><code>GITSHEETS_BRANCH</code></td>
 </tr>
 <tr>
+<td><code>--submodule &lt;path&gt;</code></td>
+<td><code>gitsheets.submodule</code> git config, else none</td>
+<td><code>GITSHEETS_SUBMODULE</code></td>
+</tr>
+<tr>
 <td><code>--ref &lt;ref&gt;</code></td>
 <td>the default branch</td>
 <td><code>GITSHEETS_REF</code></td>
@@ -1544,6 +1571,18 @@ and leave <code>git status</code> clean — see <a href="../recipes/headless-dat
 gitsheets<span class="w"> </span>query<span class="w"> </span>users<span class="w">                </span><span class="c1"># reads the data branch</span>
 <span class="nv">GITSHEETS_BRANCH</span><span class="o">=</span>data<span class="w"> </span>gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane"}'</span>
 gitsheets<span class="w"> </span>--branch<span class="w"> </span>data<span class="w"> </span><span class="nb">read</span><span class="w"> </span>users<span class="w"> </span>jane
+</code></pre></div>
+<p><code>--submodule &lt;path&gt;</code> selects <strong>submodule mode</strong>: commands read and write the
+data submodule at that path, whose <code>HEAD</code> is the superproject&rsquo;s pointer to a
+data snapshot. A write advances it, so <code>git status</code> in the superproject
+reports <code>modified: data (new commits)</code> and nothing else; commit the pointer
+with your code. It resolves flag → <code>GITSHEETS_SUBMODULE</code> →
+<code>gitsheets.submodule</code> git config, and combines with <code>--branch</code> (a branch <em>of
+the submodule</em>). Set the submodule up with
+<a href="#gitsheets-submodule-init-path"><code>submodule init</code></a>.</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>config<span class="w"> </span>gitsheets.submodule<span class="w"> </span>data<span class="w">  </span><span class="c1"># once per clone</span>
+gitsheets<span class="w"> </span>upsert<span class="w"> </span>users<span class="w"> </span><span class="s1">'{"slug":"jane"}'</span>
+git<span class="w"> </span>add<span class="w"> </span>data<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"Add jane"</span>
 </code></pre></div>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link"> ¶</a></h2>
 <h3 id="gitsheets-upsert-sheet-input"><code>gitsheets upsert &lt;sheet&gt; [input]</code><a class="headerlink" href="#gitsheets-upsert-sheet-input" title="Permanent link"> ¶</a></h3>
@@ -1748,6 +1787,32 @@ gitsheets<span class="w"> </span>contracts<span class="w"> </span><span class="n
 gitsheets<span class="w"> </span>contracts<span class="w"> </span>prune<span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span><span class="w"> </span><span class="o">[</span>--yes<span class="o">]</span><span class="w">              </span><span class="c1"># remove vendored documents no sheet declares</span>
 </code></pre></div>
 <p><code>adopt --sheet</code> validates every existing record of the named sheet(s) against the would-be effective schema and refuses (tree untouched) until the data conforms. <code>verify</code> additionally warns when a declaring sheet&rsquo;s local schema sets <code>additionalProperties: false</code> (which can reject contract-conforming records under <code>allOf</code> composition). See the <a href="../contracts/">contracts guide</a> for the full workflow.</p>
+<h3 id="gitsheets-submodule-init-path"><code>gitsheets submodule init &lt;path&gt;</code><a class="headerlink" href="#gitsheets-submodule-init-path" title="Permanent link"> ¶</a></h3>
+<p>Set up a data submodule with <strong>no record checkout</strong>, so its records never
+sit in a working tree. Stages; never commits.</p>
+<ul>
+<li>With <code>--url &lt;url&gt;</code> (a new submodule): adds the <code>.gitmodules</code> entry (<code>path</code>,
+  <code>url</code>, <code>branch</code>), clones into <code>.git/modules/&lt;path&gt;</code> without a checkout,
+  writes the <code>&lt;path&gt;/.git</code> pointer file, puts the submodule&rsquo;s <code>HEAD</code> on the
+  branch, sets <code>submodule.&lt;name&gt;.ignore = dirty</code>, and stages <code>.gitmodules</code>
+  plus the pointer. The branch is <code>--branch</code>, else the remote&rsquo;s default
+  branch; an empty remote needs <code>--branch</code> and the first write creates it.</li>
+<li>Without <code>--url</code> (an existing entry, e.g. a fresh clone of the
+  superproject): fetches, puts <code>HEAD</code> on the <code>.gitmodules</code> branch at the
+  commit the superproject pins, and sets <code>ignore</code>. Re-running is safe — an
+  existing data branch is left where it is; a detached <code>HEAD</code> holding
+  gitsheets writes (after <code>git submodule update</code>) is fast-forwarded onto the
+  branch first, and a branch that diverged from it is refused, naming both
+  commits.</li>
+</ul>
+<p><code>--url</code> reaches the remote before writing anything, so a failed clone leaves
+<code>.gitmodules</code> and the git config untouched; re-run with a working URL.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>submodule<span class="w"> </span>init<span class="w"> </span>data<span class="w"> </span>--url<span class="w"> </span>git@github.com:org/app-data.git<span class="w"> </span>--branch<span class="w"> </span>main
+gitsheets<span class="w"> </span>submodule<span class="w"> </span>init<span class="w"> </span>data<span class="w">        </span><span class="c1"># fresh clone of the superproject</span>
+</code></pre></div>
+<p><code>ignore = dirty</code> keeps the empty working tree from showing as
+<code>modified content</code>; it also hides hand edits under <code>&lt;path&gt;/</code>. See
+<a href="../recipes/headless-data/#data-submodule">Headless data</a>.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link"> ¶</a></h2>
 <table>
 <thead>

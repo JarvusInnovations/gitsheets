@@ -1444,6 +1444,17 @@ the clone&rsquo;s <code>gitsheets.branch</code> git config, else the branch <cod
 <code>push</code> pushes that branch. A tag or malformed name is <code>CONFIG_INVALID</code>. See
 <a href="../recipes/headless-data/">Headless data</a> for keeping records on a branch
 you never check out.</p>
+<p><code>--submodule &lt;path&gt;</code> (any command, any position; else <code>GITSHEETS_SUBMODULE</code>,
+else <code>gitsheets.submodule</code>) reads and writes a data submodule instead. Each
+write advances the submodule&rsquo;s <code>HEAD</code>, so the superproject&rsquo;s <code>git status</code>
+shows <code>modified: data (new commits)</code> and nothing else. A submodule that is
+not set up yet is <code>CONFIG_MISSING</code>, with <code>git sheet submodule init &lt;path&gt;</code>
+as the fix.</p>
+<p>After a write, the materialize hint (<code>git checkout HEAD -- .</code>) appears only
+when the records live on the checked-out branch, where the working tree now
+lags the commit. It leads with the lasting fix, a headless layout
+(<code>--branch data</code> or <code>--submodule data</code>). Writes to a bound data branch or a
+data submodule show no hint: they touched no checked-out branch.</p>
 <p><code>query</code>, <code>count</code>, and <code>distinct</code> share a <code>--filter</code> mini-DSL (<code>k=v</code>, <code>k!=v</code>,
 <code>k&lt;v</code>, <code>k&gt;v</code>, <code>k&lt;=v</code>, <code>k&gt;=v</code>, <code>k~regex</code>, <code>k in (a,b)</code>, <code>k:present</code>,
 <code>k:empty</code>). Ordered comparisons on a <strong>date-bucket path field</strong> (a sheet
