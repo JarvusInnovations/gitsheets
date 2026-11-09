@@ -1772,6 +1772,7 @@ use std::collections::HashMap;
 use gitsheets_core::sheet::Sheet as CoreSheet;
 use gitsheets_core::sheet::UpsertCandidate;
 use gitsheets_core::store;
+use gitsheets_core::rollup::{RollupStatus, Stale};
 use gitsheets_core::transaction::{Author as CoreAuthor, Transaction, TransactionOptions};
 
 /// Commit identity for the JS surface.
@@ -1897,8 +1898,9 @@ impl CoreTransaction {
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
-        let (ctx, tree) = tx.split();
-        match CoreSheet::open(&ctx, tree, &name, &config_path, &open_root, &prefix) {
+        // Through the transaction, so the commit-time rollup pass runs in
+        // this sheet's (open_root, prefix) scope.
+        match tx.open_sheet(&name, &config_path, &open_root, &prefix) {
             Ok(sheet) => {
                 sheets.insert(name, sheet);
                 Ok(())
@@ -2297,9 +2299,9 @@ impl CoreTransaction {
         })?;
         let (ctx, tree) = tx.split();
         let sheet = sheets
-            .get(&name)
+            .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        match sheet.list(&ctx, tree, with_body) {
+        match sheet.list_records(&ctx, tree, with_body) {
             Ok(rows) => Ok(rows
                 .into_iter()
                 .map(|(path, record)| JsRecordEntry {
@@ -2324,7 +2326,9 @@ impl CoreTransaction {
         name: String,
         filter: JsObject,
         with_body: bool,
+        stale: Option<String>,
     ) -> Result<Vec<JsRecordEntry>> {
+        let stale = parse_stale(stale.as_deref())?;
         let Self { inner, sheets, .. } = self;
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
@@ -2334,7 +2338,7 @@ impl CoreTransaction {
             .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
         let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
-        match sheet.query(&ctx, tree, &parsed, with_body) {
+        match sheet.query_stale(&ctx, tree, &parsed, with_body, stale) {
             Ok(rows) => Ok(rows
                 .into_iter()
                 .map(|(path, record)| JsRecordEntry {
@@ -2394,16 +2398,18 @@ impl CoreTransaction {
         name: String,
         record_path: String,
         with_body: bool,
+        stale: Option<String>,
     ) -> Result<Option<JsValue>> {
+        let stale = parse_stale(stale.as_deref())?;
         let Self { inner, sheets, .. } = self;
         let tx = inner.as_mut().ok_or_else(|| {
             Error::new(Status::GenericFailure, "transaction is already finalized")
         })?;
         let (ctx, tree) = tx.split();
         let sheet = sheets
-            .get(&name)
+            .get_mut(&name)
             .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
-        match sheet.read_one(&ctx, tree, &record_path, with_body) {
+        match sheet.read_record(&ctx, tree, &record_path, with_body, stale) {
             Ok(record) => Ok(record.map(JsValue)),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
@@ -2424,6 +2430,49 @@ impl CoreTransaction {
             Ok(entry) => Ok(entry.map(|(hash, bytes)| JsBlobEntry { hash, content: Buffer::from(bytes) })),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
+    }
+
+    /// `rollupSheet.materialize()` into this transaction's private tree
+    /// (spec: `behaviors/rollups.md` "Materializing explicitly"): recompute
+    /// every stale or missing rollup record and delete orphaned ones. Marks
+    /// the transaction mutated only when something changed. `TypeError` on a
+    /// non-rollup sheet.
+    #[napi]
+    pub fn materialize(&mut self, env: Env, name: String) -> Result<JsMaterializeOutcome> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let out = {
+            let (ctx, tree) = tx.split();
+            let sheet = sheets
+                .get_mut(&name)
+                .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+            if !sheet.is_rollup() {
+                return Err(throw_type_error(&env, &format!("materialize: sheet {name:?} is not a rollup sheet")));
+            }
+            sheet.materialize(&ctx, tree).map_err(|err| raise_core_error(&env, &err))?
+        };
+        if !out.is_empty() {
+            tx.mark_mutated();
+        }
+        Ok(JsMaterializeOutcome { recomputed: out.recomputed, deleted: out.deleted })
+    }
+
+    /// The non-fresh partitions of a rollup sheet in this transaction's tree
+    /// (`stale` / `missing` / `orphaned`), writing nothing. `TypeError` on a
+    /// non-rollup sheet.
+    #[napi]
+    pub fn rollup_status(&mut self, env: Env, name: String) -> Result<Vec<JsRollupEntry>> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (ctx, tree) = tx.split();
+        let sheet = sheets
+            .get_mut(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        survey_entries(&env, sheet, &ctx, tree, &name)
     }
 
     /// The parent commit hash captured at open (null on a fresh repo).
@@ -2464,6 +2513,140 @@ impl CoreTransaction {
             tx.discard();
         }
     }
+}
+
+// ── rollup sheets (specs/behaviors/rollups.md) ─────────────────────────────────
+
+/// `materialize()`'s result: the rollup record paths written and deleted.
+#[napi(object)]
+pub struct JsMaterializeOutcome {
+    pub recomputed: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
+/// One non-fresh rollup partition: its rollup record path and status
+/// (`stale` / `missing` / `orphaned`).
+#[napi(object)]
+pub struct JsRollupEntry {
+    pub path: String,
+    pub status: String,
+}
+
+/// Parse the wire `stale` read mode (`recompute`, the default, or `serve`).
+fn parse_stale(s: Option<&str>) -> Result<Stale> {
+    match s {
+        None => Ok(Stale::Recompute),
+        Some(v) => Stale::parse(v).ok_or_else(|| {
+            napi::Error::new(Status::InvalidArg, format!("unknown stale mode {v:?} — expected 'recompute' or 'serve'"))
+        }),
+    }
+}
+
+fn survey_entries(
+    env: &Env,
+    sheet: &mut CoreSheet,
+    ctx: &Context<'_>,
+    tree: &mut gitsheets_core::record::MutableTree,
+    name: &str,
+) -> Result<Vec<JsRollupEntry>> {
+    if !sheet.is_rollup() {
+        return Err(throw_type_error(env, &format!("sheet {name:?} is not a rollup sheet")));
+    }
+    let entries = sheet.rollup_survey(ctx, tree).map_err(|err| raise_core_error(env, &err))?;
+    Ok(entries
+        .into_iter()
+        .filter(|e| e.status != RollupStatus::Fresh)
+        .map(|e| JsRollupEntry { path: e.path, status: e.status.as_str().to_string() })
+        .collect())
+}
+
+/// Open the sheet `name` (config at `configPath`) against the tree `treeRef`
+/// — the full open-time validation, rollup resolution included.
+fn open_core_sheet(
+    env: &Env,
+    ctx: &Context<'_>,
+    tree: &mut gitsheets_core::record::MutableTree,
+    name: &str,
+    config_path: &str,
+    open_root: &str,
+    prefix: &str,
+) -> Result<CoreSheet> {
+    CoreSheet::open(ctx, tree, name, config_path, open_root, prefix).map_err(|err| raise_core_error(env, &err))
+}
+
+/// Read a rollup sheet through its source (spec: `behaviors/rollups.md`
+/// "Reads"): partitions pruned by `filter` (the `recordQuery` forms), each
+/// served from its stored record when its `sourceTree` stamp matches and
+/// recomputed transiently otherwise; orphans are not yielded. `stale:
+/// 'serve'` returns the stored records as committed. Sorted by path.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn rollup_query(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    name: String,
+    config_path: String,
+    open_root: String,
+    prefix: String,
+    filter: JsObject,
+    stale: Option<String>,
+) -> Result<Vec<JsRecordEntry>> {
+    let stale = parse_stale(stale.as_deref())?;
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut sheet = open_core_sheet(&env, &ctx, &mut tree, &name, &config_path, &open_root, &prefix)?;
+    let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
+    sheet
+        .query_stale(&ctx, &mut tree, &parsed, true, stale)
+        .map(|rows| rows.into_iter().map(|(path, record)| JsRecordEntry { path, record: JsValue(record) }).collect())
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// One rollup record by path, read through its source (`stale` as on
+/// `rollupQuery`). `null` when no partition is there.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn rollup_get(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    name: String,
+    config_path: String,
+    open_root: String,
+    prefix: String,
+    path: String,
+    stale: Option<String>,
+) -> Result<Option<JsValue>> {
+    let stale = parse_stale(stale.as_deref())?;
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut sheet = open_core_sheet(&env, &ctx, &mut tree, &name, &config_path, &open_root, &prefix)?;
+    sheet
+        .read_record(&ctx, &mut tree, &path, true, stale)
+        .map(|r| r.map(JsValue))
+        .map_err(|err| raise_core_error(&env, &err))
+}
+
+/// The non-fresh partitions of a rollup sheet at `treeRef` — `git sheet
+/// rollup --check`. Writes nothing.
+#[napi]
+pub fn rollup_status(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    name: String,
+    config_path: String,
+    open_root: String,
+    prefix: String,
+) -> Result<Vec<JsRollupEntry>> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let mut sheet = open_core_sheet(&env, &ctx, &mut tree, &name, &config_path, &open_root, &prefix)?;
+    survey_entries(&env, &mut sheet, &ctx, &mut tree, &name)
 }
 
 // ── repo.sync() — the object-database half (specs/behaviors/push-sync.md) ──────

@@ -166,6 +166,11 @@ module.exports = {
   // Ad-hoc aggregation (behaviors/aggregation.md): a malformed spec throws a
   // plain TypeError; a data-dependent failure an AggregationError.
   recordAggregate: wrap(addon.recordAggregate),
+  // Rollup sheets (behaviors/rollups.md): the stamped read-through and the
+  // non-fresh survey, opening the rollup sheet from the tree each call.
+  rollupQuery: wrap(addon.rollupQuery),
+  rollupGet: wrap(addon.rollupGet),
+  rollupStatus: wrap(addon.rollupStatus),
   treeReadBlob: wrap(addon.treeReadBlob),
   treeEntryHash: wrap(addon.treeEntryHash),
   blobRead: wrap(addon.blobRead),
