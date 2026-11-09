@@ -44,6 +44,7 @@ for await (const user of sheet.query({ accountLevel: 'staff' })) {
 - Order of results: filesystem order within each tree level. Not guaranteed stable across implementation changes — sort in consumer code if order matters.
 - `opts.signal?: AbortSignal` — cancel a streaming query. The query checks the signal before iteration starts and again before each yield. If aborted, the next iteration throws `signal.reason` (a `DOMException` with name `'AbortError'` by default, or whatever value the consumer passed to `controller.abort(reason)`). See [api/conventions.md](conventions.md#cancellation).
 - `opts.withBody?: boolean` — for content-typed (markdown/mdx) sheets, whether to load the body field. Default `true`. Setting `false` reads only the frontmatter; the body field is `undefined` on yielded records. No effect on TOML sheets. Filters that reference the body field throw `TypeError` under `withBody: false`. See [behaviors/content-types.md](../behaviors/content-types.md#lazy-body-loading).
+- `opts.stale?: 'recompute' | 'serve'` — [rollup sheets](#rollup-sheets) only (ignored elsewhere): `'recompute'` (default) recomputes a partition whose stored record's stamp no longer matches; `'serve'` yields the stored records exactly as committed. Also honored by `queryFirst`, `queryAll`, and `get`. See [behaviors/rollups.md § Reads](../behaviors/rollups.md#reads-always-correct-stamps-as-the-cache).
 
 ### `sheet.queryFirst(filter?, opts?)`
 

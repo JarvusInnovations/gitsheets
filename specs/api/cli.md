@@ -195,7 +195,7 @@ git sheet submodule init data        # fresh clone of the superproject
 
 ### `git sheet rollup <sheet>`
 
-Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert`. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`).
+Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert`. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`). `--check` writes nothing (reading at `--ref` when given), prints one `<status> <partition>` line per partition that is not fresh (`stale` / `missing` / `orphaned`), and exits **1** if there are any. A non-rollup `<sheet>` exits 1.
 
 ```bash
 git sheet rollup transactions-monthly

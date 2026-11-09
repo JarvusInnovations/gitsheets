@@ -71,11 +71,14 @@ path = '${{ postedAt: YYYY/MM }}/${{ id }}'
 - **`from`** names a sheet in the same `.gitsheets/` directory (resolved from
   the same tree the rollup config was read from). It must not itself be a
   rollup sheet — no chains.
-- **`path` is the partition.** It must be a **prefix of the source's path
-  template**: the same leading components, in order, where the last may be a
-  date bucket cut at a shorter format (`YYYY` or `YYYY/MM` of a `YYYY/MM/DD`
-  source). The rollup for the **whole sheet** is declared with a single
-  literal component (`path = 'all'`), which yields exactly one record.
+- **`path` is the partition.** It must be a **proper prefix of the source's
+  path template**: the same leading components, in order, where the last may
+  be a date bucket cut at a shorter format (`YYYY` or `YYYY/MM` of a
+  `YYYY/MM/DD` source), and at least one source component left below it — a
+  partition is a subtree, so a `path` as long as the source's whole template
+  is `config_invalid`. The rollup for the **whole sheet** is declared with
+  literal components only (typically one, `path = 'all'`), which yields
+  exactly one record; its literals need not match the source's.
 - Only **literal**, **plain field** (`${{ field }}`), and **date-bucket**
   components may appear in a partition: the rollup record has to carry the
   partition's key fields, and these are the component kinds whose key value is
@@ -83,6 +86,10 @@ path = '${{ postedAt: YYYY/MM }}/${{ id }}'
   components are `ConfigError` (`config_invalid`). A `YYYY/WW` bucket may only
   be partitioned at `YYYY/WW` itself (its `YYYY` is the ISO week-year, which
   the rollup's own `YYYY` bucket would render differently).
+- The rollup's data subtree and the source's must be disjoint: a rollup
+  `root` equal to, inside, or containing the source's `root` is
+  `config_invalid` (a rollup record under the source root would change the
+  very partition it summarizes, so its stamp could never match).
 - `root`, `[gitsheet.schema]`, `implements`, `[gitsheet.fields.*]`, and
   `[gitsheet.format]` (TOML only — a content-typed rollup is `config_invalid`)
   behave as for any sheet. A schema is optional; when present, generated
@@ -118,7 +125,9 @@ rent = 240000
   path order is authoritative). A date-bucket component carries the bucket
   field as a TOML **local-date, the first day of the period** (`2026-03-01`
   for `2026/03`; the Monday of the ISO week for `YYYY/WW`). A range filter on
-  that field prunes a rollup query exactly as it prunes the source.
+  that field prunes a rollup query exactly as it prunes the source. A dotted
+  bucket reference (`${{ meta.postedAt: YYYY }}`) carries the key at that
+  nested path.
 - **`sourceTree`** — the hex id of the partition's tree object in the source
   (for the whole-sheet rollup, the source root's tree; under a `prefix`, the
   prefix-scoped root). This is the stamp.
@@ -126,6 +135,17 @@ rent = 240000
   **omitted** (TOML has no null) except `count` (`0`) and `sum` (`0`).
 - Canonical normalization applies; the file is byte-identical across bindings
   for the same partition contents.
+
+A **partition** is a subtree of the source root at the partition depth whose
+names the partition components could have rendered — a literal component's
+exact name, a bucket segment that reads as its unit (`2026`, `03`, `W`-less
+`09` for a week) — and whose rollup record renders back, through the rollup's
+own `path`, to that same partition path. Anything else at that depth (a stray
+directory, another prefix's tenant root) is not a partition: it is never read,
+rolled up, or reported. A partition is identified everywhere (the
+`AggregationError`'s `partition`, `materialize()`'s lists, `git sheet rollup`'s
+output) by its **rollup record path** — the partition's path under the source
+root, or the rollup's literal `path` for a whole-sheet rollup.
 
 ### Aggregates
 
@@ -135,7 +155,8 @@ grammar in [behaviors/aggregation.md](aggregation.md#aggregate-forms) —
 `finalize`, each with optional `where` and `groupBy` — spelled in TOML. The
 `reduce` escape hatch produces committed bytes here, which is why the grammar
 runs in the core's embedded engine. A data-dependent failure is
-`AggregationError` with `partition` set.
+`AggregationError` naming the rollup sheet (`sheet`), the aggregate, and the
+`partition`.
 
 ### Canonical computation
 
@@ -173,6 +194,19 @@ permissive-mode auto-transaction, `repo.merge`'s merge commit, each commit
    rollup's depth; the whole-sheet rollup is touched by any change).
 3. Recompute each touched partition's rollup record from the new tree and
    stage it (or its deletion) into the same tree.
+
+When the rollup's config or its source's config differs between the parent
+and the new tree (including a rollup config added over existing data, and an
+orphan commit, which has no parent), every partition is touched: the pass
+regenerates the whole rollup sheet and deletes its orphans in that commit.
+
+**Scope.** Rollup sheets are discovered from the `.gitsheets/` directory of
+each `(root, prefix)` scope the pass runs in, and opened with that prefix (so
+both the source and the rollup roots are prefix-scoped). A transaction runs it
+in every scope its sheets were opened in — the repository root without a
+prefix when it opened none (a raw-writes-only transaction); `repo.merge` in its
+`root` without a prefix; a `repo.sync` replay at the repository root without a
+prefix.
 
 One commit carries the records and their rollups, and `git diff` shows the
 total move alongside the transactions that moved it. Untouched partitions are
@@ -218,20 +252,30 @@ gitsheets keeps hot on its own write path**, never a second source of truth.
 The freshness check costs one tree lookup per partition; fresh partitions read
 one small blob, which is the whole point. `opts.stale: 'serve'` on a read
 yields stored records as committed even when stale (for auditing what a
-commit claimed); the default is `'recompute'`.
+commit claimed) — exactly what a plain sheet read of the rollup root would
+return, orphans included; the default is `'recompute'`. The stamp covers the
+partition's records, not the rollup config: a config edit committed by a
+gitsheets commit regenerates everything (above), one committed by plain git
+is caught by `materialize()` / `git sheet rollup --check`, below.
 
 ### Materializing explicitly
 
 `rollupSheet.materialize()` recomputes every stale or missing rollup record
 and deletes orphaned ones, in one transaction (or into the current one on a
 transaction-bound sheet), returning `{ recomputed: string[], deleted: string[] }`
-of partition paths. A no-op when everything is fresh (no commit). This is the
+of partition paths. A no-op when everything is fresh (no commit). Here
+**stale** means the stored bytes differ from the recomputed record — a stamp
+mismatch, or an edited config or hand-edited value under a matching stamp —
+so materializing recomputes every partition (it is the explicit repair, not
+the hot path). **Orphaned** is a stored rollup record with no partition, or
+whose partition holds no records. This is the
 repair after a plain `git merge` or an external import, and the backfill
 after adding a rollup config to a sheet with history.
 
-`git sheet rollup <sheet>` is the CLI form; `--check` writes nothing, lists
-each stale / missing / orphaned partition, and exits 1 if there are any — the
-CI gate for data branches other tools write to.
+`git sheet rollup <sheet>` is the CLI form; `--check` writes nothing, prints
+one `<status> <partition>` line (`stale` / `missing` / `orphaned`) per
+partition that is not fresh, and exits 1 if there are any — the CI gate for
+data branches other tools write to.
 
 ### Merge and sync
 
@@ -244,7 +288,10 @@ CI gate for data branches other tools write to.
   self-heal and `git sheet rollup` repairs.
 - **`repo.sync` replay** — each replayed commit gets the rollup pass against
   its new parent, so a local March commit replayed over a remote March commit
-  carries a rollup over both sets of records.
+  carries a rollup over both sets of records. A rollup file both sides changed
+  is not a replay conflict: the pass regenerates it (the partitions the
+  replayed commit touched, and any whose rollup file the tree merge could not
+  resolve).
 
 ### Why the stamp lives in the record
 
