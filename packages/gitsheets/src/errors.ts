@@ -30,6 +30,7 @@ const STATUS_BY_CODE = {
   index_not_defined: 500,
   push_daemon_running: 409,
   transaction_closed: 409,
+  sheet_derived: 409,
   lock_held: 409,
   ref_not_found: 404,
   not_an_ancestor: 409,
@@ -93,6 +94,7 @@ export type TransactionErrorCode =
   | 'pointer_stage_failed'
   | 'push_daemon_running'
   | 'transaction_closed'
+  | 'sheet_derived'
   | 'lock_held';
 
 interface TransactionErrorOptions extends GitsheetsErrorOptions {

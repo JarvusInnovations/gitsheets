@@ -31,6 +31,7 @@ import { attachmentCommand, ATTACHMENT_HELP } from '../src/commands/attachment.j
 import { contractsCommand, CONTRACTS_HELP } from '../src/commands/contracts.js';
 import { pushCommand, PUSH_HELP } from '../src/commands/push.js';
 import { setupCommand, SETUP_HELP } from '../src/commands/setup.js';
+import { rollupCommand, ROLLUP_HELP } from '../src/commands/rollup.js';
 
 const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
@@ -53,6 +54,7 @@ const COMMAND_HELP: Record<string, string> = {
   contracts: CONTRACTS_HELP,
   push: PUSH_HELP,
   setup: SETUP_HELP,
+  rollup: ROLLUP_HELP,
 };
 
 const COMMANDS = {
@@ -76,6 +78,7 @@ const COMMANDS = {
   contracts: contractsCommand,
   push: pushCommand,
   setup: setupCommand,
+  rollup: rollupCommand,
 } as Record<
   string,
   (args: string[], ctx: GitsheetsContext | undefined) => Promise<string | Record<string, unknown>>

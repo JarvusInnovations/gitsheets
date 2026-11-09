@@ -91,19 +91,23 @@ Edge rules the table above leaves implicit:
 `reduce` is the body of `(acc, record) => { … }`, called once per
 contributing record in canonical path order with `acc` starting at `initial`
 (required; any TOML value). `finalize`, optional, is the body of
-`(acc) => { … }` run once at the end. The snippet must be pure: no clock, no
-randomness, no I/O. Purity is **required but not enforced** today:
-`Math.random()` and `Date.now()` are reachable and make the result
-nondeterministic, which is the consumer's problem, not a contract the core
-keeps. What the core does enforce: each `reduce` aggregate evaluates each
-group (or its single ungrouped fold) in a fresh engine realm, so
-`globalThis` state cannot leak between calls, aggregates, or groups, and
-that engine runs under runtime limits on loop
-iterations, recursion depth, and stack size — a snippet that exceeds them
-(an infinite loop) is `AggregationError`, not a hang. Hardening the engine
-before rollups persist `reduce` results (frozen `Math.random` / `Date.now`,
-a deterministic realm) is tracked in
-[#354](https://github.com/JarvusInnovations/gitsheets/issues/354). It runs in the core's embedded engine, so a Python caller
+`(acc) => { … }` run once at the end. The snippet must be pure — no clock,
+no randomness, no I/O — and the core **enforces** it for the sources it can
+reach: the realm a `reduce` / `finalize` runs in has no `Math.random`, no
+`Date.now`, and no argument-less `Date` (`new Date()` and `Date()` alike);
+calling any of them throws, which surfaces as `AggregationError`. `new
+Date(ms)`, `new Date(isoString)`, `Date.UTC`, and `Date.parse` remain, since
+they are functions of their arguments. The engine has no `Intl`, no timers,
+and no host I/O, so locale and time-zone defaults cannot leak in either; every
+`Date` method a snippet can reach reads UTC or its own argument. Each `reduce`
+aggregate evaluates each group (or its single ungrouped fold) in a fresh
+engine realm, so `globalThis` state cannot leak between calls, aggregates, or
+groups, and that engine runs under runtime limits on loop iterations,
+recursion depth, and stack size — a snippet that exceeds them (an infinite
+loop) is `AggregationError`, not a hang. Together these make a `reduce` result
+a function of its records alone, which persisted rollups
+([rollups.md](rollups.md)) rely on to commit it.
+It runs in the core's embedded engine, so a Python caller
 and a Node caller get identical results — required because aggregate results
 can be committed (as persisted rollups) and must be byte-identical across
 bindings, which is why this escape hatch cannot run in the host runtime the

@@ -138,6 +138,37 @@ records), `'structural'` (duck-typing any sheet, contract-aware or not).
 A failed verification raises `ContractError` (code `contract_unsatisfied`)
 carrying per-record issues.
 
+## Rollup sheets
+
+A [rollup sheet](https://jarvusinnovations.github.io/gitsheets/recipes/rollups/)
+holds per-partition aggregates over a source sheet — a monthly total, a
+yearly count — regenerated in every commit gitsheets produces and stamped
+with the source partition's tree id. The pass runs in the shared core, so a
+Python transaction maintains rollups byte-identically to Node with no extra
+call. The explicit surface:
+
+```python
+# Read through the stamp: stale or missing partitions are recomputed on read.
+rows = gitsheets.record_query(
+    git_dir, "HEAD", "", "", {"postedAt": {"$gte": "2026-01-01"}},
+    sheet="transactions-monthly",          # opens the sheet; a rollup reads through
+    stale="recompute",                     # or "serve": the records as committed
+)
+
+# What a plain `git merge` or an outside writer left stale (writes nothing).
+gitsheets.rollup_status(git_dir, "HEAD", "transactions-monthly")
+# [{'path': '2026/03', 'status': 'stale'}]
+
+# Repair: recompute stale/missing, delete orphans, in one commit.
+with gitsheets.transact(git_dir, "rollup: materialize", int(time.time()), branch="refs/heads/main") as tx:
+    tx.open_sheet("transactions-monthly", ".gitsheets/transactions-monthly.toml")
+    tx.materialize_rollups("transactions-monthly")   # {'recomputed': [...], 'deleted': [...]}
+```
+
+Writes to a rollup sheet raise `TransactionError` (code `sheet_derived`); a
+failed aggregate raises `AggregationError` with `sheet`, `aggregate`, and
+`partition` set, and aborts the commit.
+
 ## What 0.x is (and isn't)
 
 The 0.x releases are honestly scoped as a **transactional writer with

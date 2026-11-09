@@ -14,6 +14,7 @@ use gix::merge::tree::TreatAsUnresolved;
 use holo_tree::{repo as holo_repo, ObjectId};
 
 use crate::error::{Error, Result};
+use crate::rollup;
 use crate::transaction::{build_signature, qualify_ref, resolve_author, Author};
 
 /// What to do when a local commit cannot be replayed cleanly onto the remote tip.
@@ -175,10 +176,27 @@ fn replay(
         let mut outcome = repo
             .merge_trees(parent_tree, tip_tree, commit_tree, labels, options)
             .map_err(commit_failed("merge trees"))?;
-        if outcome.has_unresolved_conflicts(TreatAsUnresolved::default()) {
+        // A rollup file both sides changed is not a conflict: the rollup pass
+        // below regenerates it (specs/behaviors/rollups.md "Merge and sync").
+        let mut rollup_roots = rollup::rollup_bases(repo, tip_tree, ".")?;
+        rollup_roots.extend(rollup::rollup_bases(repo, commit_tree, ".")?);
+        let blocking = outcome.conflicts.iter().any(|c| {
+            c.is_unresolved(TreatAsUnresolved::default())
+                && !rollup::under_any(&c.changes_in_resolution().0.location().to_string(), &rollup_roots)
+        });
+        if blocking {
             return Ok(Err(commit_id));
         }
         let merged_tree = outcome.tree.write().map_err(commit_failed("write merged tree"))?.detach();
+        // The rollup pass against the new parent: the partitions the replayed
+        // commit touched, regenerated over the remote's records too.
+        let merged_tree = rollup::run_pass_on_tree(
+            repo,
+            merged_tree,
+            &[(Some(tip_tree), merged_tree), (Some(parent_tree), commit_tree), (Some(commit_tree), merged_tree)],
+            ".",
+            true,
+        )?;
 
         let author = commit
             .author()

@@ -152,6 +152,21 @@ Flags:
 
 The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except `count` and `sum` (`0`). `reduce` snippets are library-only ([`sheet.aggregate`](api.md#aggregation)). A field holding mixed kinds under `min`/`max`/`distinct` fails with `AggregationError` (exit `1`).
 
+### `gitsheets rollup <sheet>`
+
+Materialize a [rollup sheet](recipes/rollups.md): recompute every stale or missing rollup record and delete orphaned ones, in one commit — none when everything is fresh. Honors the transaction flags (`--message`, `--author-*`, `--trailer`, `--ref`, `--commit-to`, `--prefix`). Prints one `<status> <partition>` line per partition touched.
+
+```bash
+gitsheets rollup transactions-monthly
+# recomputed 2026/03
+# deleted 2025/11
+gitsheets rollup transactions-monthly --check
+# stale 2026/03
+# (exit 1 — nothing written)
+```
+
+`--check` writes nothing, prints one `stale` / `missing` / `orphaned` line per partition that is not fresh, and exits `1` if there are any — the CI gate for a data branch other tools write to. Writing to a rollup sheet (`upsert`, `edit`, …) fails with `TransactionError` (`sheet_derived`, exit `69`).
+
 ### `gitsheets read <sheet> <path>`
 
 Read a single record by its rendered path.

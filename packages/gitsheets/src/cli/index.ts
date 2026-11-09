@@ -70,6 +70,11 @@ interface AggregateArgs extends GlobalArgs {
   format?: string;
 }
 
+interface RollupArgs extends GlobalArgs {
+  sheet: string;
+  check: boolean;
+}
+
 interface ReadArgs extends GlobalArgs {
   sheet: string;
   path: string;
@@ -158,6 +163,7 @@ function reportError(err: unknown): void {
     }
     if (err instanceof AggregationError) {
       out.write(`  sheet:  ${err.sheet}\n  aggregate: ${err.aggregate}\n`);
+      if (err.partition !== undefined) out.write(`  partition: ${err.partition}\n`);
     }
     if (err.cause !== undefined) {
       out.write(`  cause:  ${err.cause instanceof Error ? err.cause.message : String(err.cause)}\n`);
@@ -513,6 +519,38 @@ async function runAggregate(argv: AggregateArgs): Promise<void> {
   const filter = (argv.filter as RecordLike | undefined) ?? {};
   const result = await sheet.aggregate(filter, aggregates);
   process.stdout.write(stringifyRecord_text(result, format));
+}
+
+// `git sheet rollup <sheet> [--check]` — specs/api/cli.md, specs/behaviors/rollups.md
+// "Materializing explicitly".
+async function runRollup(argv: RollupArgs): Promise<void> {
+  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const sheetOpts: { root?: string; prefix?: string; ref?: string } = {};
+  if (argv.root) sheetOpts.root = argv.root;
+  if (argv.prefix) sheetOpts.prefix = argv.prefix;
+  if (argv.check) {
+    // --check reads (at --ref when given) and writes nothing.
+    if (argv.ref) sheetOpts.ref = argv.ref;
+    const sheet = await repo.openSheet(argv.sheet, sheetOpts);
+    const entries = await sheet.rollupStatus();
+    for (const e of entries) process.stdout.write(`${e.status} ${e.path}\n`);
+    if (entries.length > 0) {
+      throw new Error(
+        `rollup --check: ${entries.length} partition(s) of ${argv.sheet} are not fresh — run \`git sheet rollup ${argv.sheet}\` to repair`,
+      );
+    }
+    return;
+  }
+  const sheet = await repo.openSheet(argv.sheet, sheetOpts);
+  await sheet.rollupStatus(); // a non-rollup sheet fails here, before a transaction opens
+  const txOpts = buildTxOpts(argv, `${argv.sheet} rollup`);
+  const txSheetOpts: { prefix?: string } = argv.prefix ? { prefix: argv.prefix } : {};
+  let out: { recomputed: string[]; deleted: string[] } = { recomputed: [], deleted: [] };
+  await repo.transact(txOpts, async (tx) => {
+    out = await tx.sheet(argv.sheet, txSheetOpts).materialize();
+  });
+  for (const p of out.recomputed) process.stdout.write(`recomputed ${p}\n`);
+  for (const p of out.deleted) process.stdout.write(`deleted ${p}\n`);
 }
 
 async function runRead(argv: ReadArgs): Promise<void> {
@@ -1327,6 +1365,19 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
             describe: 'Output format (default: json)',
           }),
       runAggregate,
+    )
+    .command<RollupArgs>(
+      'rollup <sheet>',
+      'Materialize a rollup sheet: recompute stale/missing rollup records and delete orphans in one commit (--check: list them, write nothing, exit 1 if any)',
+      (y) =>
+        y
+          .positional('sheet', { type: 'string', demandOption: true })
+          .option('check', {
+            type: 'boolean',
+            default: false,
+            describe: 'List each stale / missing / orphaned partition, write nothing, and exit 1 if there are any',
+          }),
+      runRollup,
     )
     .command<ReadArgs>(
       'read <sheet> <path>',

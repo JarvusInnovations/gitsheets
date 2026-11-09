@@ -113,6 +113,10 @@ pub enum Error {
     PushDaemonRunning { message: String },
     /// `transaction_closed` — `tx.sheet(...)` after finalize/discard.
     TransactionClosed { message: String },
+    /// `sheet_derived` — a write to a rollup sheet, whose records are
+    /// regenerated from the source and never written by consumers
+    /// (`specs/behaviors/rollups.md`).
+    SheetDerived { message: String },
 
     // ── IndexError ───────────────────────────────────────────────────────
     /// `index_unique_conflict` — a unique index would be violated.
@@ -190,6 +194,7 @@ impl Error {
             Error::CommitFailed { .. } => "commit_failed",
             Error::PushDaemonRunning { .. } => "push_daemon_running",
             Error::TransactionClosed { .. } => "transaction_closed",
+            Error::SheetDerived { .. } => "sheet_derived",
             Error::IndexUniqueConflict { .. } => "index_unique_conflict",
             Error::IndexNotDefined { .. } => "index_not_defined",
             Error::RefNotFound { .. } => "ref_not_found",
@@ -214,7 +219,8 @@ impl Error {
             | Error::ParentMoved { .. }
             | Error::CommitFailed { .. }
             | Error::PushDaemonRunning { .. }
-            | Error::TransactionClosed { .. } => ErrorClass::TransactionError,
+            | Error::TransactionClosed { .. }
+            | Error::SheetDerived { .. } => ErrorClass::TransactionError,
             Error::IndexUniqueConflict { .. } | Error::IndexNotDefined { .. } => {
                 ErrorClass::IndexError
             }
@@ -249,6 +255,7 @@ impl Error {
             | Error::ParentMoved { .. }
             | Error::PushDaemonRunning { .. }
             | Error::TransactionClosed { .. }
+            | Error::SheetDerived { .. }
             | Error::IndexUniqueConflict { .. }
             | Error::NotAnAncestor { .. } => 409,
             Error::RefNotFound { .. } | Error::RecordNotFound { .. } => 404,
@@ -267,6 +274,7 @@ impl Error {
             | Error::CommitFailed { message }
             | Error::PushDaemonRunning { message }
             | Error::TransactionClosed { message }
+            | Error::SheetDerived { message }
             | Error::IndexUniqueConflict { message, .. }
             | Error::IndexNotDefined { message }
             | Error::RefNotFound { message }

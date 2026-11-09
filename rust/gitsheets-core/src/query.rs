@@ -282,6 +282,24 @@ impl Filter {
 /// Does `record` satisfy every clause of `filter`? A behavior-preserving port
 /// of the host `queryMatches`. A predicate snippet that throws surfaces as an
 /// error (the host lets such throws propagate, too).
+/// Equality against a **local-date** field also accepts that day as an ISO
+/// date string (`"2026-03-01"`) or as a datetime at midnight UTC (a host
+/// `Date` of that day) — the coercion ranges already apply
+/// (`specs/api/sheet.md` § query).
+fn local_date_equals(field: Option<&Value>, expected: &Value) -> bool {
+    let Some(Value::Datetime(dt)) = field else { return false };
+    if dt.kind() != crate::value::DatetimeKind::LocalDate {
+        return false;
+    }
+    let Some(day) = datetime_instant(dt) else { return false };
+    let wanted = match expected {
+        Value::String(s) if s.len() == 10 => s.parse::<chrono::NaiveDate>().ok().and_then(|d| d.and_hms_opt(0, 0, 0)),
+        Value::Datetime(other) if other.kind() == crate::value::DatetimeKind::OffsetDatetime => datetime_instant(other),
+        _ => None,
+    };
+    wanted == Some(day)
+}
+
 pub fn matches(filter: &Filter, record: &Value, engine: &mut Engine) -> Result<bool> {
     let table = match record {
         Value::Table(map) => map,
@@ -293,7 +311,7 @@ pub fn matches(filter: &Filter, record: &Value, engine: &mut Engine) -> Result<b
         let rval = table.get(key);
         match pred {
             FilterPred::Equals(expected) => {
-                if rval != Some(expected) {
+                if rval != Some(expected) && !local_date_equals(rval, expected) {
                     return Ok(false);
                 }
             }
@@ -481,6 +499,100 @@ pub fn query_candidate_paths(
     let mut paths: Vec<String> = candidates.into_iter().map(|(p, _)| p).collect();
     paths.sort();
     Ok(paths)
+}
+
+/// The record candidates under one subtree of a sheet, starting the template
+/// walk at component `depth` with `prefix` as the subtree's path — a rollup
+/// partition's records (`specs/behaviors/rollups.md`). Unsorted.
+pub(crate) fn candidates_in(
+    ctx: &Context<'_>,
+    subtree: &mut MutableTree,
+    plan: &[QueryComponentPlan],
+    depth: usize,
+    prefix: &str,
+    extension: &str,
+) -> Result<Vec<(String, ObjectId)>> {
+    let mut out = Vec::new();
+    walk_query(ctx, subtree, plan, depth, prefix, extension, &mut out)?;
+    Ok(out)
+}
+
+/// The id of a (possibly dirty) subtree — written to the object database
+/// when dirty, so a transaction's private tree yields real tree ids.
+pub(crate) fn subtree_id(ctx: &Context<'_>, tree: &mut MutableTree) -> Result<ObjectId> {
+    tree.write(ctx).map_err(map_ht)
+}
+
+/// Every subtree at component depth `depth` under `tree` the first `depth`
+/// components of `plan` admit — the rollup partition walk
+/// (`specs/behaviors/rollups.md` "Reads"): a rendered component descends into
+/// that one subtree, a range-bounded bucket into the admitted span, anything
+/// else into every subtree. Returns `(path, tree id)` in sorted path order;
+/// empty subtrees are skipped. `depth == 0` yields `tree` itself at `""`.
+pub(crate) fn walk_partitions(
+    ctx: &Context<'_>,
+    tree: &mut MutableTree,
+    plan: &[QueryComponentPlan],
+    depth: usize,
+) -> Result<Vec<(String, ObjectId)>> {
+    let mut out = Vec::new();
+    walk_partitions_tracked(ctx, tree, plan, 0, depth, "", &mut out, BoundTrack::FRESH)?;
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_partitions_tracked(
+    ctx: &Context<'_>,
+    tree: &mut MutableTree,
+    plan: &[QueryComponentPlan],
+    level: usize,
+    depth: usize,
+    prefix: &str,
+    out: &mut Vec<(String, ObjectId)>,
+    track: BoundTrack,
+) -> Result<()> {
+    if level == depth {
+        let id = subtree_id(ctx, tree)?;
+        if id != holo_tree::tree::empty_tree_id() {
+            out.push((prefix.to_string(), id));
+        }
+        return Ok(());
+    }
+    let comp = &plan[level];
+    if let Some(rendered) = &comp.rendered {
+        if let Some(next) = tree.get_subtree(ctx, rendered).map_err(map_ht)? {
+            let child_prefix = join_path(prefix, rendered);
+            return walk_partitions_tracked(ctx, next, plan, level + 1, depth, &child_prefix, out, track);
+        }
+        return Ok(());
+    }
+    let track = match &comp.bounds {
+        Some(bounds) => track.entering(bounds),
+        None => track,
+    };
+    tree.ensure_children(ctx).map_err(map_ht)?;
+    let names: Vec<String> = tree
+        .children
+        .as_ref()
+        .expect("children loaded")
+        .iter()
+        .filter(|(n, c)| {
+            matches!(c, Child::Tree(_)) && comp.bounds.as_ref().is_none_or(|b| track.admits(b, n))
+        })
+        .map(|(n, _)| n.clone())
+        .collect();
+    for name in names {
+        if let Some(Child::Tree(sub)) = tree.children.as_mut().expect("children loaded").get_mut(&name) {
+            let child_prefix = join_path(prefix, &name);
+            let child_track = match &comp.bounds {
+                Some(bounds) => track.descend(bounds, &name),
+                None => track,
+            };
+            walk_partitions_tracked(ctx, sub, plan, level + 1, depth, &child_prefix, out, child_track)?;
+        }
+    }
+    Ok(())
 }
 
 fn join_path(prefix: &str, name: &str) -> String {

@@ -217,6 +217,19 @@ impl Transaction {
         &self.repo
     }
 
+    /// Open a sheet against this transaction's private tree (config read +
+    /// template / schema / comparators compiled once).
+    pub fn open_sheet(
+        &mut self,
+        name: &str,
+        config_path: &str,
+        open_root: &str,
+        prefix: &str,
+    ) -> Result<crate::sheet::Sheet> {
+        let (ctx, tree) = self.split();
+        crate::sheet::Sheet::open(&ctx, tree, name, config_path, open_root, prefix)
+    }
+
     pub fn parent_commit_hash(&self) -> Option<String> {
         self.parent_commit_hash.map(|h| h.to_string())
     }
@@ -269,6 +282,14 @@ impl Transaction {
                     ),
                 });
             }
+        }
+
+        // The rollup pass: regenerate the rollups of every partition this
+        // transaction touched, into the same tree (specs/behaviors/rollups.md
+        // "Maintenance at commit"). An error aborts the commit.
+        if let Err(e) = self.rollup_pass() {
+            self.release();
+            return Err(e);
         }
 
         let tree_hash = match self.root.write(&Context::new(&self.repo, &self.cache)) {
@@ -361,6 +382,22 @@ impl Transaction {
             ref_name,
             parent_commit_hash: parent_str,
         })
+    }
+
+    /// The commit-time rollup pass over the private tree, against the parent
+    /// commit's tree (none for an orphan or a fresh repo: every partition).
+    fn rollup_pass(&mut self) -> Result<()> {
+        let ctx = Context::new(&self.repo, &self.cache);
+        let current = self.root.write(&ctx).map_err(record::map_ht)?;
+        let parent_tree = match self.parent_commit_hash {
+            Some(parent) => Some(
+                holo_repo::create_tree_from_ref(&self.repo, &parent.to_string())
+                    .map_err(record::map_ht)?
+                    .hash,
+            ),
+            None => None,
+        };
+        crate::rollup::run_pass(&ctx, &mut self.root, &[(parent_tree, current)], ".", false)
     }
 
     /// Discard the transaction without committing (handler threw). Releases the

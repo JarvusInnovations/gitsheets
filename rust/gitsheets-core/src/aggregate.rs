@@ -1206,6 +1206,27 @@ mod tests {
     }
 
     #[test]
+    fn the_reduce_realm_has_no_clock_entropy_or_local_time_zone() {
+        for body in ["return Math.random();", "return Date.now();", "return new Date().getTime();", "return Date();", "return new (Object.getPrototypeOf(new Date(0)).constructor)().getTime();"] {
+            let err = run(&[t(&[])], t(&[("x", t(&[("reduce", s(body)), ("initial", i(0))]))])).unwrap_err();
+            assert_eq!(err.code(), "aggregation_failed", "{body}");
+            assert!(err.message().contains("not available"), "{body}: {}", err.message());
+        }
+        let r = run(
+            &[t(&[])],
+            t(&[("x", t(&[
+                ("reduce", s("return [new Date(0).getHours(), new Date(0).getTimezoneOffset(), Date.UTC(2026, 0, 1), Date.parse('2026-01-01T00:00:00Z'), new Date('2026-01-01T00:00:00Z').getTime(), new Date(0) instanceof Date];")),
+                ("initial", i(0)),
+            ]))]),
+        )
+        .unwrap();
+        assert_eq!(
+            get(&r, "x"),
+            Some(&Value::Array(vec![i(0), i(0), i(1_767_225_600_000), i(1_767_225_600_000), i(1_767_225_600_000), Value::Boolean(true)]))
+        );
+    }
+
+    #[test]
     fn global_state_does_not_leak_between_groups_aggregates_or_calls() {
         let body = "globalThis.seen = (globalThis.seen || 0) + 1; return globalThis.seen;";
         let recs = vec![t(&[("g", s("a"))]), t(&[("g", s("a"))]), t(&[("g", s("b"))])];

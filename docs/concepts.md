@@ -151,6 +151,10 @@ Indices are **not persisted** — they live in process memory, invalidate on `up
 
 Use indices for "find by email" / "find all memberships for this person" — access paths the path template can't serve in the dominant direction.
 
+## Rollup sheet
+
+A **derived, read-only** sheet declared with `[gitsheet.rollup]`: one record per partition of a source sheet (a year, a month, a domain, or the whole sheet) holding aggregates — counts, sums, extremes, distinct values, or a deterministic `reduce`. gitsheets commits them in the same commit as the record changes that move them and stamps each with the source partition's git tree id, so a stale one is a single hash comparison away and reads recompute it on the fly. Unlike an [index](#index), a rollup is persisted. See the [rollups recipe](recipes/rollups.md).
+
 ## Push Daemon
 
 An optional, library-side background task that pushes new commits to a configured git remote with retry and exponential backoff. **Push-only — never pulls.**

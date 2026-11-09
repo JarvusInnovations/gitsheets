@@ -156,6 +156,22 @@ def test_runaway_reduce_is_aggregation_error(ledger):
         _agg(*ledger, {"x": {"reduce": "while (true) {}", "initial": 0}})
 
 
+@pytest.mark.parametrize(
+    "body",
+    ["return Math.random();", "return Date.now();", "return new Date().getTime();", "return Date();"],
+)
+def test_reduce_cannot_read_the_clock_or_entropy(ledger, body):
+    # specs/behaviors/aggregation.md: purity is enforced in the engine realm.
+    with pytest.raises(gitsheets.AggregationError) as e:
+        _agg(*ledger, {"x": {"reduce": body, "initial": 0}})
+    assert "not available" in str(e.value)
+
+
+def test_reduce_dates_are_functions_of_their_arguments(ledger):
+    body = "return [new Date(0).getHours(), new Date(0).getTimezoneOffset(), Date.UTC(2026, 0, 1), new Date(0) instanceof Date];"
+    assert _agg(*ledger, {"x": {"reduce": body, "initial": 0}}) == {"x": [0, 0, 1767225600000, True]}
+
+
 def test_integral_float_initial_comes_back_as_integer(ledger):
     # The engine has one number type (spec: the reduce-result engine rule).
     r = _agg(*ledger, {"x": {"reduce": "return acc;", "initial": 1.0}})
