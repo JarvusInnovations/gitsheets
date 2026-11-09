@@ -292,14 +292,14 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | Class | Code | When |
 | --- | --- | --- |
 | `RefError` | `ref_not_found` | `parent` ref doesn't exist; `openRepo({ submodule, at })` superproject ref has no gitlink; `readBlob` / `readBlobStream` ref doesn't resolve; `openSheet` / `openSheets` / `openStore` `opts.ref` doesn't resolve to a tree |
-| `TransactionError` | `transaction_required` | A permissive-mode write on a ref-pinned (read-only) sheet |
+| `TransactionError` | `transaction_required` | A permissive-mode write on a ref-pinned (read-only) sheet; any ref-moving operation (`transact`, `sync`, `merge`, `tag`, `startPushDaemon`) on an `openRepo({ submodule, at })` repository |
 | `NotFoundError` | `record_not_found` | `readBlob` / `readBlobStream` path absent under the ref, or not a blob |
 | `TransactionError` | `transaction_in_progress` | Another transaction is open on this repo |
 | `TransactionError` | `lock_held` | `withLock` / `transact` / `sync` attempted while the caller's own async context already holds the write lock (not reentrant) |
 | `RefError` | `not_an_ancestor` | `sync`: the local branch and the remote-tracking branch share no history |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed |
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit |
-| `ConfigError` | `config_missing` | `.gitsheets/<name>.toml` not found in `openSheet` |
+| `ConfigError` | `config_missing` | `.gitsheets/<name>.toml` not found in `openSheet`; `openRepo({ submodule })` finds neither `<path>/.git` nor `modules/<path>` (message names `git sheet submodule init <path>`) |
 | `ConfigError` | `config_invalid` | Sheet config TOML is malformed |
 | `ContractError` | `contract_missing` | `implements` names a contract with no vendored document in the committed tree |
 | `ContractError` | `contract_invalid` | Vendored contract violates document requirements (compile, `$id`/path, canonical form, openness, self-containment) |

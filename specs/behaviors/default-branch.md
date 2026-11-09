@@ -64,7 +64,11 @@ Binding is resolved once, at `openRepo`, from the first source that applies:
 - `submodule` is the submodule's path relative to the superproject root, as
   in `.gitmodules`. The two may combine: `{ submodule: 'data', branch: 'x' }`
   binds to branch `x` *of the submodule* (see "Submodule mode" for what that
-  does to the pointer).
+  does to the pointer). `gitsheets.submodule` is read from the
+  superproject's config; in submodule mode the branch tiers (`branch`,
+  `GITSHEETS_BRANCH`, `gitsheets.branch`) then resolve **inside the
+  submodule** — `gitsheets.branch` from the submodule's own config — and,
+  with none set, fall through to the submodule's `HEAD`.
 - Git config is the lowest tier because it is per clone and unversioned: an
   operator binds a deployed clone without changing code, the way
   `remote.pushDefault` works. Code that knows its layout passes the option.
@@ -153,9 +157,13 @@ in its index. In submodule mode the default branch is therefore:
 commits the pointer with their code (or `git add data` on its own). Each
 superproject commit thereby records exactly which data snapshot it was built
 against. `openRepo({ …, stagePointer: true })` additionally updates the
-superproject's index entry for the gitlink (`160000 <new commit>`) after
-every commit — for consumers that want `git commit -a` to carry the pointer
-without a separate `git add`. It never commits in the superproject.
+superproject's index entry for the gitlink (`160000 <new commit>`) after every
+commit that moves the pointer (a write to a side branch moves nothing, so
+stages nothing) — for consumers that want `git commit -a` to carry the
+pointer without a separate `git add`. It never commits in the superproject.
+If the index update fails (a held `index.lock`), the data commit has already
+landed: the transaction throws `TransactionError` (`commit_failed`) naming
+the commit and the `git add <path>` that stages it by hand.
 
 **No record files on disk.** gitsheets does not materialize the submodule's
 working tree. An initialized submodule whose working tree is empty (or
@@ -170,9 +178,13 @@ stay put until the next reset.
 binds read-only (every sheet ref-pinned) to the commit the superproject's
 `v1.2.0` gitlinks for `data` — the data a given code revision shipped with.
 `at` accepts any superproject commit-ish; `RefError` (`ref_not_found`) when
-it has no gitlink at that path. Live sheets and transactions are refused on
-an `at`-bound repository exactly as on ref-pinned sheets
-(`TransactionError` `transaction_required`).
+it has no gitlink at that path (or the gitlinked commit is not in the
+submodule's object store — fetch it first). Live sheets and transactions are
+refused on an `at`-bound repository exactly as on ref-pinned sheets
+(`TransactionError` `transaction_required`): `openSheet` / `openSheets` /
+`openStore` without `ref` return sheets pinned at the gitlinked commit, and
+every operation that would move a ref — `transact` (and so permissive-mode
+writes), `sync`, `merge`, `tag`, `startPushDaemon` — throws.
 
 **Pushing.** The push daemon pushes the submodule's branch as usual. The
 superproject's pointer commit must not reach a remote before the data commit
@@ -232,7 +244,16 @@ sets up a submodule with **no record checkout**:
 - Existing entry (a fresh clone of the superproject): does what
   `git submodule update --init` does minus the checkout — fetches, puts
   `HEAD` on the `.gitmodules` branch at the gitlinked commit, sets `ignore`.
-  Idempotent.
+  Idempotent: a local branch that already exists is left where it is (it may
+  hold data commits not yet pinned), and `HEAD` is only re-pointed at it.
+
+The branch is, for a new entry, `--branch`, else the remote's `HEAD`
+branch; for an existing entry, its `.gitmodules` `branch`, else `--branch`,
+else the remote's `HEAD` branch. A remote with no `HEAD` (an empty repository)
+needs `--branch`, and the branch then starts unborn — the first write
+creates it, and only `.gitmodules` is staged until then. `--url` on a path
+that already has a `.gitmodules` entry with a different URL is
+`ConfigError` (`config_invalid`); the same URL is the existing-entry form.
 
 Plain `git submodule update --init` also works (gitsheets reads the git dir
 either way); it just leaves a checkout of the records behind.
