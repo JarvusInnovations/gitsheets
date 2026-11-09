@@ -909,7 +909,20 @@ fn a_rollup_root_inside_any_other_sheet_is_config_invalid() {
         "mon",
     );
     assert_eq!(err.code(), "config_invalid");
-    assert!(err.message().contains("overlaps sheet \"notes\""), "{}", err.message());
+    assert!(err.message().contains("overlaps rollup source \"notes\""), "{}", err.message());
+
+    // An ordinary sheet nobody rolls up may overlap, even at `root = '.'`.
+    let everything = "[gitsheet]\nroot = '.'\npath = '${{ slug }}'\n";
+    let monthly = "[gitsheet]\nroot = 'monthly'\npath = '${{ postedAt: YYYY/MM }}'\n\n[gitsheet.rollup]\nfrom = 'transactions'\n\n[gitsheet.rollup.aggregates]\nn = { count = true }\n";
+    let (_d, _g, repo) = setup(&[(".gitsheets/transactions.toml", TX_CONFIG), (".gitsheets/everything.toml", everything), (".gitsheets/monthly.toml", monthly)]);
+    let (s, _) = open_at(&repo, head(&repo), "monthly", "");
+    assert!(s.is_rollup());
+
+    // A source rooted at '.' cannot have a rollup.
+    let src = "[gitsheet]\npath = '${{ postedAt: YYYY/MM }}/${{ id }}'\n";
+    let err = open_err(&[(".gitsheets/transactions.toml", src), (".gitsheets/monthly.toml", monthly)], "monthly");
+    assert_eq!(err.code(), "config_invalid");
+    assert!(err.message().contains("give the source sheet a `root`"), "{}", err.message());
 }
 
 #[test]

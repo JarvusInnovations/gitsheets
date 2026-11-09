@@ -224,37 +224,56 @@ impl RollupDef {
             ));
         }
 
-        // Disjoint data subtrees: a rollup record under a source root would
-        // change the very partition some rollup stamps; under any other sheet
-        // it would read as that sheet's data. Checked against every sheet in
-        // the same `.gitsheets/` directory (specs/behaviors/rollups.md).
+        // Disjoint data subtrees, against what rollups depend on: every
+        // rollup's source and every other rollup in the same `.gitsheets/`
+        // directory (specs/behaviors/rollups.md). Ordinary sheets may overlap.
         let r = join_path(&[&config.root]);
+        if join_path(&[&source.root]).is_empty() {
+            return Err(invalid(
+                config_path,
+                format!(
+                    "from = {:?}: the source sheet is rooted at '.', so every rollup root would sit inside the partition it stamps — give the source sheet a `root`",
+                    rollup.from
+                ),
+            ));
+        }
         let overlaps = |other: &str| {
             r.is_empty() || other.is_empty() || r == other || r.starts_with(&format!("{other}/")) || other.starts_with(&format!("{r}/"))
         };
         let own = config_path.rsplit('/').next().unwrap_or(config_path).trim_end_matches(".toml").to_string();
+        let mut configs: BTreeMap<String, SheetConfig> = BTreeMap::new();
         for name in discover_sheets(ctx, tree, open_root)? {
             if name == own {
                 continue;
             }
             let other_path = join_path(&[&dir, &format!("{name}.toml")]);
-            let other_root = if name == rollup.from {
-                source.root.clone()
+            let Some((_, bytes)) = record::read_blob_entry(ctx, tree, &other_path)? else { continue };
+            let Ok(text) = String::from_utf8(bytes) else { continue };
+            let Ok(raw) = canonical::parse(&text) else { continue };
+            if let Ok(c) = config::parse_config(&raw, &other_path) {
+                configs.insert(name, c);
+            }
+        }
+        let mut sources: BTreeSet<String> = BTreeSet::from([rollup.from.clone()]);
+        for c in configs.values() {
+            if let Some(other) = &c.rollup {
+                sources.insert(other.from.clone());
+            }
+        }
+        for (name, c) in &configs {
+            let role = if c.rollup.is_some() {
+                "rollup sheet"
+            } else if sources.contains(name) {
+                "rollup source"
             } else {
-                let Some((_, bytes)) = record::read_blob_entry(ctx, tree, &other_path)? else { continue };
-                let Ok(text) = String::from_utf8(bytes) else { continue };
-                let Ok(raw) = canonical::parse(&text) else { continue };
-                match config::parse_config(&raw, &other_path) {
-                    Ok(c) => c.root,
-                    Err(_) => continue,
-                }
+                continue;
             };
-            if overlaps(&join_path(&[&other_root])) {
+            if overlaps(&join_path(&[&c.root])) {
                 return Err(invalid(
                     config_path,
                     format!(
-                        "root {:?} overlaps sheet {name:?}'s root {:?} — a rollup's records must live outside every other sheet's data subtree (and vice versa)",
-                        config.root, other_root
+                        "root {:?} overlaps {role} {name:?}'s root {:?} — a rollup's records must live outside every rollup source's and every other rollup's data subtree (and vice versa)",
+                        config.root, c.root
                     ),
                 ));
             }
