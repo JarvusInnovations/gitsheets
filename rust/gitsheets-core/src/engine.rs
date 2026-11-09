@@ -95,6 +95,10 @@ const DENY_NONDETERMINISM: &str = r#"(() => {
   SafeDate.now = deny('Date.now()');
   Object.defineProperty(globalThis, 'Date', { value: SafeDate, writable: true, configurable: true, enumerable: false });
   Math.random = deny('Math.random()');
+  // Shared memory has no use in a snippet, and the Node host realm drops it
+  // too (it also drops the V8-only globals boa never had: Intl, console, …).
+  delete globalThis.SharedArrayBuffer;
+  delete globalThis.Atomics;
   for (const m of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) {
     Object.defineProperty(D.prototype, m, {
       value: function () {
@@ -133,17 +137,31 @@ pub struct Engine {
     /// a snippet like `publishedAt.getUTCFullYear()` sees a `Date`, matching the
     /// host where the record's datetime is a JS `Date` of the same epoch ms.
     make_date: BoaValue,
-    /// Compiled snippet callables, indexed by [`SnippetHandle`].
-    snippets: Vec<BoaValue>,
+    /// Compiled snippets, indexed by [`SnippetHandle`].
+    snippets: Vec<Slot>,
+    /// The **query-time** realm ([`Engine::compile_query`]), built on first
+    /// use: a nested engine with the UTC offset pinned but neither the deny
+    /// bootstrap nor a fixed clock. Kept out of this realm entirely, so a
+    /// query snippet can never hand the clock to a definition snippet.
+    query: Option<Box<Engine>>,
+}
+
+/// Where a compiled snippet lives.
+#[derive(Clone)]
+enum Slot {
+    /// A definition snippet in this engine's own (deterministic) realm.
+    Local(BoaValue),
+    /// A query-time snippet: its handle in the nested query realm.
+    Query(SnippetHandle),
 }
 
 impl Engine {
-    /// Build a fresh **deterministic** engine — the realm path-template
-    /// expressions, raw-JS sort comparators, index `keyFn`s, and query filter
-    /// predicates run in (spec: `rust-core.md` "Embedded code execution",
-    /// determinism rule). Their results decide committed bytes (where a record
-    /// lives, the order of an array in canonical TOML), so they must be a
-    /// function of their inputs alone:
+    /// Build a fresh **deterministic** engine — the realm definition
+    /// snippets (path-template expressions, raw-JS sort comparators) run in
+    /// (spec: `rust-core.md` "Determinism rule for definition snippets").
+    /// Their results decide committed bytes (where a record lives, the order
+    /// of an array in canonical TOML), so they must be a function of their
+    /// inputs alone:
     ///
     /// - **No clock, no entropy**: `Math.random`, `Date.now`, and the
     ///   argument-less `Date` (`new Date()` / `Date()`) throw a `TypeError`;
@@ -156,11 +174,15 @@ impl Engine {
     ///   consults the process's local offset, which differs between hosts and
     ///   between a Python host and Node.
     ///
+    /// Query-time snippets (filter predicates, index key snippets) compile
+    /// with [`Engine::compile_query`] into a separate realm that keeps the
+    /// clock.
+    ///
     /// **No runtime limits** here, unlike [`Engine::new_limited`]: this engine
-    /// is long-lived (held on the sheet handle for its lifetime) and also runs
-    /// caller-supplied query filters and index `keyFn`s, where a loop or
-    /// recursion cap would be a new, unspecced failure mode. The limits are a
-    /// fold-scoped guarantee of the aggregate realm (`behaviors/aggregation.md`).
+    /// is long-lived (held on the sheet handle for its lifetime), where a loop
+    /// or recursion cap would be a new, unspecced failure mode. The limits are
+    /// a fold-scoped guarantee of the aggregate realm
+    /// (`behaviors/aggregation.md`).
     pub fn new() -> Result<Self> {
         Engine::deterministic()
     }
@@ -197,7 +219,22 @@ impl Engine {
             context,
             make_date,
             snippets: Vec::new(),
+            query: None,
         })
+    }
+
+    /// The query-time realm: the local offset pinned to UTC (so `getHours()`
+    /// in a predicate agrees across hosts and bindings), but the real clock and
+    /// no deny bootstrap — `value < Date.now()` is a legitimate query (spec:
+    /// `rust-core.md` "Query-time snippets").
+    fn query_realm() -> Result<Self> {
+        let context = Context::builder()
+            .host_hooks(std::rc::Rc::new(DeterministicHooks))
+            .build()
+            .map_err(|e| Error::ConfigInvalid {
+                message: format!("embedded engine bootstrap failed: {e}"),
+            })?;
+        Engine::with_context(context)
     }
 
     /// A fresh deterministic engine (exactly [`Engine::new`]'s realm) under
@@ -238,8 +275,35 @@ impl Engine {
                 ),
             });
         }
-        self.snippets.push(value);
+        self.snippets.push(Slot::Local(value));
         Ok(self.snippets.len() - 1)
+    }
+
+    /// Compile a **query-time** snippet — a filter predicate or an index key
+    /// snippet, whose result is never committed — into the query realm (see
+    /// [`Engine::query_realm`]). The handle is used exactly like one from
+    /// [`Engine::compile`]; [`Engine::call`], [`Engine::call_filter`], and
+    /// [`Engine::call_index_key`] dispatch to the right realm.
+    pub fn compile_query(&mut self, source: &str) -> Result<SnippetHandle> {
+        if self.query.is_none() {
+            self.query = Some(Box::new(Engine::query_realm()?));
+        }
+        let inner = self.query.as_mut().expect("query realm").compile(source)?;
+        self.snippets.push(Slot::Query(inner));
+        Ok(self.snippets.len() - 1)
+    }
+
+    /// Resolve `handle` to its local callable, or to the query realm and its
+    /// handle there.
+    fn slot(&self, handle: SnippetHandle) -> std::result::Result<Slot, SnippetError> {
+        self.snippets
+            .get(handle)
+            .cloned()
+            .ok_or_else(|| SnippetError::Other(format!("unknown snippet handle {handle}")))
+    }
+
+    fn query_mut(&mut self) -> &mut Engine {
+        self.query.as_mut().expect("a Query slot implies the query realm")
     }
 
     /// How many snippets have been compiled into this engine. Bindings expose
@@ -257,11 +321,10 @@ impl Engine {
         handle: SnippetHandle,
         args: &[Value],
     ) -> std::result::Result<BoaValue, SnippetError> {
-        let func = self
-            .snippets
-            .get(handle)
-            .cloned()
-            .ok_or_else(|| SnippetError::Other(format!("unknown snippet handle {handle}")))?;
+        let func = match self.slot(handle)? {
+            Slot::Local(f) => f,
+            Slot::Query(inner) => return self.query_mut().call(inner, args),
+        };
         let callable = func
             .as_callable()
             .ok_or_else(|| SnippetError::Other("snippet is not callable".into()))?;
@@ -323,11 +386,10 @@ impl Engine {
         value: Option<&Value>,
         record: &Value,
     ) -> std::result::Result<bool, SnippetError> {
-        let func = self
-            .snippets
-            .get(handle)
-            .cloned()
-            .ok_or_else(|| SnippetError::Other(format!("unknown snippet handle {handle}")))?;
+        let func = match self.slot(handle)? {
+            Slot::Local(f) => f,
+            Slot::Query(inner) => return self.query_mut().call_filter(inner, value, record),
+        };
         let callable = func
             .as_callable()
             .ok_or_else(|| SnippetError::Other("snippet is not callable".into()))?;
@@ -370,6 +432,9 @@ impl Engine {
         handle: SnippetHandle,
         record: &Value,
     ) -> std::result::Result<Option<String>, SnippetError> {
+        if let Slot::Query(inner) = self.slot(handle)? {
+            return self.query_mut().call_index_key(inner, record);
+        }
         let raw = self.call(handle, std::slice::from_ref(record))?;
         if raw.is_null_or_undefined() {
             return Ok(None);
@@ -409,11 +474,9 @@ impl Engine {
         handle: SnippetHandle,
         args: &[BoaValue],
     ) -> std::result::Result<BoaValue, SnippetError> {
-        let func = self
-            .snippets
-            .get(handle)
-            .cloned()
-            .ok_or_else(|| SnippetError::Other(format!("unknown snippet handle {handle}")))?;
+        let Slot::Local(func) = self.slot(handle)? else {
+            return Err(SnippetError::Other("query snippets take core values, not engine values".into()));
+        };
         let callable = func
             .as_callable()
             .ok_or_else(|| SnippetError::Other("snippet is not callable".into()))?;
@@ -689,6 +752,34 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
+/// Running a test under a non-UTC `TZ`: setting `TZ` from a parallel test
+/// thread races with `localtime_r` and glibc's cached zone, so the check
+/// runs in a child process of the test binary with `TZ` in its environment.
+#[cfg(test)]
+pub(crate) mod tz_test {
+    /// Zones far from UTC on either side (one with a half-hour offset).
+    pub const ZONES: [&str; 2] = ["America/New_York", "Asia/Kolkata"];
+
+    /// Run the `#[ignore]`d test `path` (e.g. `engine::tests::foo_inner`) in
+    /// a child process once per zone in [`ZONES`], asserting it passed.
+    pub fn run_under_zones(path: &str) {
+        let exe = std::env::current_exe().expect("test binary");
+        for tz in ZONES {
+            let out = std::process::Command::new(&exe)
+                .args([path, "--exact", "--ignored", "--test-threads=1"])
+                .env("TZ", tz)
+                .output()
+                .expect("spawn test binary");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success() && stdout.contains("1 passed"),
+                "{path} under TZ={tz} failed:\n{stdout}\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -775,12 +866,6 @@ mod tests {
     // ── determinism rule (spec: rust-core.md "Determinism rule for
     //    definition snippets"; #362) ─────────────────────────────────────────
 
-    /// Point the process at a non-UTC zone, so a realm that consulted the host
-    /// offset would visibly read local time. Every test that sets it sets the
-    /// same value, so parallel tests can't race to different zones.
-    fn set_new_york_tz() {
-        std::env::set_var("TZ", "America/New_York");
-    }
 
     fn eval_on(eng: &mut Engine, src: &str, arg: Value) -> std::result::Result<BoaValue, SnippetError> {
         let h = eng.compile(src).expect("compile");
@@ -812,7 +897,12 @@ mod tests {
 
     #[test]
     fn local_time_methods_read_utc_whatever_the_host_zone() {
-        set_new_york_tz();
+        crate::engine::tz_test::run_under_zones("engine::tests::local_time_methods_read_utc_inner");
+    }
+
+    #[test]
+    #[ignore = "run under a non-UTC TZ by local_time_methods_read_utc_whatever_the_host_zone"]
+    fn local_time_methods_read_utc_inner() {
         let mut eng = Engine::new().expect("engine");
         let at = || dt("2026-03-04T05:06:07.089Z");
         let n = |eng: &mut Engine, src: &str| {
@@ -847,5 +937,46 @@ mod tests {
         assert_eq!(n(&mut eng, "() => new Date('2026-01-01T00:00:00Z').getUTCFullYear()"), 2026.0);
         let v = eval_on(&mut eng, "() => new Date(0) instanceof Date", Value::Integer(0)).unwrap();
         assert!(v.to_boolean());
+    }
+
+    #[test]
+    fn the_definition_realm_drops_shared_memory_globals() {
+        let mut eng = Engine::new().expect("engine");
+        for g in ["SharedArrayBuffer", "Atomics", "Intl", "WebAssembly", "console"] {
+            let v = eval_on(&mut eng, &format!("() => typeof {g}"), Value::Integer(0)).unwrap();
+            assert_eq!(eng.to_path_string(&v).as_deref(), Some("undefined"), "{g}");
+        }
+    }
+
+    #[test]
+    fn query_snippets_keep_the_clock_in_a_separate_realm() {
+        let mut eng = Engine::new().expect("engine");
+        let now = eng.compile_query("(value, record) => value < Date.now() && Math.random() < 1").unwrap();
+        assert_eq!(eng.call_filter(now, Some(&Value::Integer(1)), &Value::Table(IndexMap::new())), Ok(true));
+        // A key snippet in the query realm.
+        let key = eng.compile_query("(r) => String(Date.now() > 0)").unwrap();
+        assert_eq!(eng.call_index_key(key, &Value::Table(IndexMap::new())), Ok(Some("true".into())));
+        // The query realm cannot leak the clock to a definition snippet.
+        let leak = eng.compile_query("(r) => { globalThis.leakedDate = Date; return 'x'; }").unwrap();
+        eng.call_index_key(leak, &Value::Table(IndexMap::new())).unwrap();
+        let v = eval_on(&mut eng, "() => typeof leakedDate", Value::Integer(0)).unwrap();
+        assert_eq!(eng.to_path_string(&v).as_deref(), Some("undefined"));
+        // And definition snippets compiled alongside stay denied.
+        let err = eval_on(&mut eng, "() => Date.now()", Value::Integer(0)).unwrap_err();
+        assert!(matches!(err, SnippetError::Other(m) if m.contains("not available")));
+    }
+
+    #[test]
+    fn query_snippets_read_local_time_at_utc() {
+        crate::engine::tz_test::run_under_zones("engine::tests::query_snippets_read_local_time_at_utc_inner");
+    }
+
+    #[test]
+    #[ignore = "run under a non-UTC TZ by query_snippets_read_local_time_at_utc"]
+    fn query_snippets_read_local_time_at_utc_inner() {
+        let mut eng = Engine::new().expect("engine");
+        let h = eng.compile_query("(value, record) => value.getHours() === 5").unwrap();
+        let at = dt("2026-03-04T05:06:07Z");
+        assert_eq!(eng.call_filter(h, Some(&at), &Value::Table(IndexMap::new())), Ok(true));
     }
 }

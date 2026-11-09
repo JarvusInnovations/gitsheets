@@ -1219,7 +1219,7 @@ fn parse_filter_pred(val: &Bound<'_, PyAny>, engine: &mut Engine) -> PyResult<Fi
                 let src = s.extract::<String>()?;
                 let wrapped = format!("(value, record) => ( {src} )");
                 let handle = engine
-                    .compile(&wrapped)
+                    .compile_query(&wrapped)
                     .map_err(|e| raise_core_error(val.py(), &e))?;
                 return Ok(FilterPred::Predicate(handle));
             }
@@ -1511,7 +1511,7 @@ fn record_index_unique<'py>(
     let records = record::list_records_at_ref(&git_dir, &tree_ref, &base, &ext)
         .map_err(|e| raise_core_error(py, &e))?;
     let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
-    let handle = engine.compile(&key_snippet).map_err(|e| raise_core_error(py, &e))?;
+    let handle = engine.compile_query(&key_snippet).map_err(|e| raise_core_error(py, &e))?;
     let index =
         UniqueIndex::build(&records, handle, &mut engine).map_err(|e| raise_core_error(py, &e))?;
     let out = PyList::empty(py);
@@ -1538,7 +1538,7 @@ fn record_index_multi<'py>(
     let records = record::list_records_at_ref(&git_dir, &tree_ref, &base, &ext)
         .map_err(|e| raise_core_error(py, &e))?;
     let mut engine = Engine::new().map_err(|e| raise_core_error(py, &e))?;
-    let handle = engine.compile(&key_snippet).map_err(|e| raise_core_error(py, &e))?;
+    let handle = engine.compile_query(&key_snippet).map_err(|e| raise_core_error(py, &e))?;
     let index =
         MultiIndex::build(&records, handle, &mut engine).map_err(|e| raise_core_error(py, &e))?;
     let out = PyList::empty(py);

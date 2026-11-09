@@ -1532,7 +1532,14 @@ mod tests {
 
     #[test]
     fn a_local_time_expression_renders_at_utc_whatever_the_host_zone() {
-        std::env::set_var("TZ", "America/New_York");
+        crate::engine::tz_test::run_under_zones(
+            "path_template::tests::a_local_time_expression_renders_at_utc_inner",
+        );
+    }
+
+    #[test]
+    #[ignore = "run under a non-UTC TZ by a_local_time_expression_renders_at_utc_whatever_the_host_zone"]
+    fn a_local_time_expression_renders_at_utc_inner() {
         let at: Value = Value::Datetime("2026-03-04T02:06:07Z".parse().unwrap());
         let r = table(&[("at", at), ("slug", Value::String("x".into()))]);
         // New York local time would be 21:06 on Mar 03.

@@ -247,7 +247,12 @@ impl Sheet {
                 Some(SortRule::All(false)) | None => {}
                 Some(rule) => {
                     if let Some(src) = comparator_source(rule) {
-                        let handle = engine.compile(&src)?;
+                        let handle = engine.compile(&src).map_err(|e| Error::ConfigInvalid {
+                            message: format!(
+                                "array-field sort comparator for field {field:?} {}",
+                                e.message().trim_start_matches("embedded snippet ")
+                            ),
+                        })?;
                         sort_plan.push((field.clone(), SortKind::Engine(handle)));
                     }
                 }
@@ -845,7 +850,7 @@ impl Sheet {
     /// Declare a secondary index. `key_snippet` is the full keyFn source
     /// (e.g. `(r) => r.email.toLowerCase()`), compiled once into the engine.
     pub fn define_index(&mut self, name: &str, unique: bool, key_snippet: &str) -> Result<()> {
-        let key_handle = self.engine.compile(key_snippet)?;
+        let key_handle = self.engine.compile_query(key_snippet)?;
         self.indexes.push(IndexDef {
             name: name.to_string(),
             unique,
@@ -2246,7 +2251,14 @@ mod tests {
 
     #[test]
     fn a_local_time_comparator_reads_utc_whatever_the_host_zone() {
-        std::env::set_var("TZ", "America/New_York");
+        crate::engine::tz_test::run_under_zones(
+            "sheet::tests::a_local_time_comparator_reads_utc_inner",
+        );
+    }
+
+    #[test]
+    #[ignore = "run under a non-UTC TZ by a_local_time_comparator_reads_utc_whatever_the_host_zone"]
+    fn a_local_time_comparator_reads_utc_inner() {
         let (_d, repo) = temp_repo();
         // Sort by local hour-of-day. At UTC: 23:00 → 23, 01:00 → 1, so the
         // 01:00 entry sorts first; in New York they'd be 18 and 20, reversed.
