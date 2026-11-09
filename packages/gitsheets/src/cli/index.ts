@@ -1213,6 +1213,14 @@ async function runNormalize(argv: NormalizeArgs): Promise<void> {
 
 // --- Entry ---
 
+/**
+ * A repeated or paired binding flag (`--submodule x --no-submodule`) reaches
+ * yargs as an array; the last one given wins, as in git. `--no-*` is `false`.
+ */
+function lastFlagValue(v: string | false | (string | false)[]): string | false {
+  return Array.isArray(v) ? v[v.length - 1]! : v;
+}
+
 export async function main(args: string[] = hideBin(process.argv)): Promise<number> {
   const end = args.indexOf('--');
   const stagePointerOnCommandLine = (end === -1 ? args : args.slice(0, end)).some((a) =>
@@ -1237,12 +1245,14 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
     .option('branch', {
       type: 'string',
       describe:
-        "The repository's default branch (reads, commits, sync); default: $GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch",
+        "The repository's default branch (reads, commits, sync); default: $GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch. --no-branch binds HEAD's branch, ignoring env and config",
+      coerce: lastFlagValue,
     })
     .option('submodule', {
       type: 'string',
       describe:
-        "Submodule mode: read and write the data submodule at this path (its HEAD is the superproject's pointer); default: $GITSHEETS_SUBMODULE, gitsheets.submodule git config",
+        "Submodule mode: read and write the data submodule at this path (its HEAD is the superproject's pointer); default: $GITSHEETS_SUBMODULE, gitsheets.submodule git config. --no-submodule opens the superproject, ignoring env and config",
+      coerce: lastFlagValue,
     })
     .option('stage-pointer', {
       type: 'boolean',

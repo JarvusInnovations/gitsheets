@@ -343,6 +343,80 @@ describe('gitsheets.submodule git config', () => {
   });
 });
 
+describe('--no-submodule / --no-branch (explicit opt-out)', () => {
+  /** A data submodule (jane) under a superproject whose own users sheet holds `root`. */
+  async function bothSheets(): Promise<SubmoduleFixture> {
+    const fx = await fixture();
+    expect((await initNew(fx)).code).toBe(0);
+    const superRepo = await openRepo({ gitDir: fx.superproject.gitDir, submodule: null });
+    await superRepo.transact({ message: 'superproject users' }, async (tx) => {
+      tx.writeFile('.gitsheets/users.toml', "[gitsheet]\nroot = 'users'\npath = '${{ slug }}'\n");
+      await tx.sheet('users').upsert({ slug: 'root', email: 'root@x.org' });
+    });
+    return fx;
+  }
+
+  it('GITSHEETS_SUBMODULE=data git sheet --no-submodule query users reads the superproject, in any position', async () => {
+    const fx = await bothSheets();
+    const g = ['--git-dir', fx.superproject.gitDir];
+    process.env['GITSHEETS_SUBMODULE'] = 'data';
+    const bound = await run([...g, 'query', 'users']);
+    expect(bound.code).toBe(0);
+    expect(bound.out).toContain('"slug":"jane"');
+    for (const args of [
+      [...g, '--no-submodule', 'query', 'users'],
+      [...g, 'query', 'users', '--no-submodule'],
+      [...g, '--submodule', 'data', 'query', 'users', '--no-submodule'],
+    ]) {
+      const q = await run(args);
+      expect(q.code, args.join(' ')).toBe(0);
+      expect(q.out, args.join(' ')).toContain('"slug":"root"');
+      expect(q.out, args.join(' ')).not.toContain('"slug":"jane"');
+    }
+    // The last of a flag and its --no- form wins.
+    const last = await run([...g, '--no-submodule', '--submodule', 'data', 'query', 'users']);
+    expect(last.out).toContain('"slug":"jane"');
+  });
+
+  it('--no-submodule beats gitsheets.submodule git config', async () => {
+    const fx = await bothSheets();
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.submodule', 'data');
+    const q = await run(['--git-dir', fx.superproject.gitDir, '--no-submodule', 'query', 'users']);
+    expect(q.code).toBe(0);
+    expect(q.out).toContain('"slug":"root"');
+  });
+
+  it('an empty GITSHEETS_SUBMODULE is unset: git config still binds', async () => {
+    const fx = await bothSheets();
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.submodule', 'data');
+    process.env['GITSHEETS_SUBMODULE'] = '';
+    const q = await run(['--git-dir', fx.superproject.gitDir, 'query', 'users']);
+    expect(q.out).toContain('"slug":"jane"');
+  });
+
+  it('--no-branch binds HEAD’s branch, ignoring GITSHEETS_BRANCH and gitsheets.branch', async () => {
+    const fx = await bothSheets();
+    const g = ['--git-dir', fx.superproject.gitDir];
+    process.env['GITSHEETS_BRANCH'] = 'unborn-data';
+    const unborn = await run([...g, 'query', 'users']);
+    expect(unborn.code).not.toBe(0);
+    const q = await run([...g, '--no-branch', 'query', 'users']);
+    expect(q.code).toBe(0);
+    expect(q.out).toContain('"slug":"root"');
+    delete process.env['GITSHEETS_BRANCH'];
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.branch', 'unborn-data');
+    const fromConfig = await run([...g, 'query', 'users', '--no-branch']);
+    expect(fromConfig.code).toBe(0);
+    expect(fromConfig.out).toContain('"slug":"root"');
+  });
+
+  it('submodule init treats --no-branch as no --branch', async () => {
+    const fx = await fixture();
+    expect((await initNew(fx, '--no-branch')).code).toBe(0);
+    expect(await fx.git(fx.superproject.path, 'config', '-f', '.gitmodules', 'submodule.data.branch')).toBe('main');
+  });
+});
+
 describe('--stage-pointer / GITSHEETS_STAGE_POINTER / gitsheets.stagePointer', () => {
   /** initNew + commit, so the superproject's index starts clean. */
   async function ready(): Promise<{ fx: SubmoduleFixture; staged: () => Promise<string>; base: string }> {
