@@ -7,6 +7,7 @@ specs:
   - specs/behaviors/path-templates.md
   - specs/behaviors/normalization.md
   - specs/api/errors.md
+  - specs/api/python-binding.md
 issues: [362]
 ---
 
@@ -76,7 +77,13 @@ Out of scope:
    copies each argument into the realm so a record's host `Date` gets the
    patched prototype. `path-template/index.ts` and `sheet.ts` `buildSorter`
    compile through it and map throws to `PathTemplateError` / `ConfigError`.
-3. **Tests**: core unit tests (engine, path template, sheet comparator)
+3. **Review round 1** (adversarial probe of the shim on #372): close the
+   remaining host-zone reads (`setYear`, ToPrimitive in `new Date`, V8's
+   parser), make the locale methods locale-free in both realms, copy every
+   argument object, move `$pred` / key snippets to a query realm with the
+   clock (`Engine::compile_query`), scope the comparator cache per Sheet, and
+   build the package in the Python CI job.
+4. **Tests**: core unit tests (engine, path template, sheet comparator)
    including `TZ=America/New_York`; a package vitest suite diffing the vm
    realm against the napi core; napi `path-template.mjs` updated (the old
    "getFullYear parity is reported" probe becomes a UTC assertion); a Python
@@ -94,4 +101,15 @@ Out of scope:
 - [ ] napi suite green
 - [ ] `npm run build`, `npm run type-check`, `npm test` green
 - [ ] Python suite green, including the cross-binding `getHours()` parity test
+- [ ] Review round 1: the vm realm matches the addon on the hard cases
+  (setters incl. `setYear`, two-digit years, a DST-boundary instant,
+  `toJSON`/`toISOString`, `String` objects, class-instance records,
+  `Intl`/`localeCompare`/`toLocale*`, legacy and malformed date strings)
+  under at least two host zones
+- [ ] Review round 1: `$pred` filters and index key snippets run in a query
+  realm with the clock (Python and napi tests), specced in `rust-core.md`
+  and `python-binding.md`
+- [ ] Review round 1: Rust TZ tests run in a child process per zone; the
+  `rust-core.yml` Python job builds `packages/gitsheets/dist` so the host
+  leg of the cross-binding test runs
 - [ ] `rust-core.yml` cross-binding parity gate green on the PR
