@@ -75,6 +75,30 @@ export interface SheetConfig {
   readonly schema: JSONSchema | null;
   /** Storage-format config from `[gitsheet.format]` (default: `type = 'toml'`). */
   readonly format: FormatConfig;
+  /**
+   * `[gitsheet.rollup]`, when this is a rollup sheet: the source sheet it
+   * aggregates. The core resolves and validates the rest at open.
+   * @see specs/behaviors/rollups.md
+   */
+  readonly rollup?: RollupConfig;
+}
+
+/** A rollup sheet's `[gitsheet.rollup]` (specs/behaviors/rollups.md). */
+export interface RollupConfig {
+  /** The source sheet's name. */
+  readonly from: string;
+}
+
+/** What {@link Sheet.materialize} recomputed and deleted, as partition paths. */
+export interface MaterializeResult {
+  readonly recomputed: string[];
+  readonly deleted: string[];
+}
+
+/** A rollup partition that is not fresh (`git sheet rollup --check`). */
+export interface RollupStatusEntry {
+  readonly path: string;
+  readonly status: 'stale' | 'missing' | 'orphaned';
 }
 
 // --- Result types ---
@@ -482,6 +506,10 @@ function parseConfigEntry(
   coreCheck();
 
   const config: SheetConfig = { root, path, fields: fieldsClean, schema, format };
+  const rollupRaw = (gitsheet as RecordLike)['rollup'];
+  if (rollupRaw !== null && typeof rollupRaw === 'object' && typeof (rollupRaw as RecordLike)['from'] === 'string') {
+    Object.assign(config, { rollup: { from: (rollupRaw as RecordLike)['from'] as string } });
+  }
   CONFIG_CACHE.set(hash, config);
   return config;
 }
@@ -585,6 +613,15 @@ export interface QueryOptions {
    * @see specs/behaviors/content-types.md#lazy-body-loading
    */
   readonly withBody?: boolean;
+  /**
+   * Rollup sheets only (no effect elsewhere): how a stored rollup record
+   * whose `sourceTree` stamp no longer matches its partition is read.
+   * `'recompute'` (default) recomputes it transiently from the source;
+   * `'serve'` yields the stored records exactly as committed.
+   *
+   * @see specs/behaviors/rollups.md#reads-always-correct-stamps-as-the-cache
+   */
+  readonly stale?: 'recompute' | 'serve';
 }
 
 // --- Aggregation (specs/behaviors/aggregation.md) ---
@@ -1238,7 +1275,11 @@ export class Sheet<T extends RecordLike = RecordLike> {
     const coreFilter = stripFilterFunctions(filter as RecordLike);
 
     let rows: Array<{ path: string; record: RecordLike }>;
-    if (this.#transaction !== undefined) {
+    if (config.rollup !== undefined) {
+      // A rollup sheet reads through its source (specs/behaviors/rollups.md
+      // "Reads"): stamped records served, stale partitions recomputed.
+      rows = this.#rollupRows(coreFilter, opts.stale);
+    } else if (this.#transaction !== undefined) {
       // Tx-bound: query the in-progress private tree through the core —
       // pruned by the path template and format-aware, exactly like the
       // committed-ref path (specs/api/transaction.md "Read isolation"). The
@@ -1310,8 +1351,14 @@ export class Sheet<T extends RecordLike = RecordLike> {
       throw new TypeError('Sheet.count() does not accept a function — pass a filter object');
     }
     // Fast path: no filter at all + not tx-bound → count candidate paths only.
-    if (Object.keys(filter as object).length === 0 && this.#transaction === undefined) {
-      const config = await this.readConfig();
+    // (A rollup sheet always reads through its source.)
+    const countConfig = await this.readConfig();
+    if (
+      Object.keys(filter as object).length === 0 &&
+      this.#transaction === undefined &&
+      countConfig.rollup === undefined
+    ) {
+      const config = countConfig;
       const format = this.#getFormat(config);
       const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
       const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
@@ -1419,11 +1466,38 @@ export class Sheet<T extends RecordLike = RecordLike> {
    *
    * @see specs/api/sheet.md#sheetgetpath-opts
    */
-  async get(path: string, opts: Pick<QueryOptions, 'withBody'> = {}): Promise<T | undefined> {
+  async get(path: string, opts: Pick<QueryOptions, 'withBody' | 'stale'> = {}): Promise<T | undefined> {
     const config = await this.readConfig();
     const withBody = opts.withBody ?? true;
     let record: RecordLike | undefined;
-    if (this.#transaction !== undefined) {
+    if (config.rollup !== undefined) {
+      // Read through the source (specs/behaviors/rollups.md "Reads").
+      const stale = opts.stale ?? 'recompute';
+      let found: RecordLike | null | undefined;
+      if (this.#transaction !== undefined) {
+        this.#ensureCoreSheetOpened();
+        found = callCore(() =>
+          this.#transaction!.coreTx.readRecord(this.#name, path, true, stale),
+        ) as RecordLike | null | undefined;
+      } else {
+        found = callCore(() =>
+          addon.rollupGet(
+            this.#gitDir,
+            this.#readRef ?? EMPTY_TREE_HASH,
+            this.#name,
+            this.#configPath,
+            openRootFromConfigPath(this.#configPath),
+            this.#prefix,
+            path,
+            stale,
+          ),
+        ) as RecordLike | null | undefined;
+      }
+      if (found === null || found === undefined) return undefined;
+      record = found;
+      (record as Record<symbol, unknown>)[RECORD_SHEET_KEY] = this.#name;
+      (record as Record<symbol, unknown>)[RECORD_PATH_KEY] = path;
+    } else if (this.#transaction !== undefined) {
       this.#ensureCoreSheetOpened();
       const found = callCore(() =>
         this.#transaction!.coreTx.readRecord(this.#name, path, withBody),
@@ -1674,6 +1748,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async clear(): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction === undefined) {
       await this.#repo.transact({ message: `${this.#name} clear` }, async (tx) => {
         await tx.sheet(this.#name, this.#txDelegateOpts()).clear();
@@ -1703,6 +1778,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async upsert(record: T, opts: UpsertOptions = {}): Promise<UpsertResult> {
+    await this.#assertWritable();
     if (this.#transaction !== undefined) {
       return this.#upsertInTx(record, opts);
     }
@@ -1745,6 +1821,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
    * Throws NotFoundError if the query matches no record.
    */
   async patch(query: QueryFilter<T>, partial: Partial<T>): Promise<UpsertResult> {
+    await this.#assertWritable();
     const existing = await this.queryFirst(query);
     if (!existing) {
       throw new NotFoundError(
@@ -1811,6 +1888,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   async delete(target: T | string): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction !== undefined) {
       await this.#deleteInTx(target);
       return;
@@ -1989,6 +2067,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     attachments: Record<string, AttachmentContent>,
   ): Promise<void> {
     if (this.#transaction === undefined) {
+    await this.#assertWritable();
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
       if (tx !== undefined) {
@@ -2032,6 +2111,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
    * are left intact. See specs/behaviors/attachments.md.
    */
   async deleteAttachment(record: T | string, name: string): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction === undefined) {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
@@ -2059,6 +2139,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
    * `Sheet.delete`). See specs/behaviors/attachments.md.
    */
   async deleteAttachments(record: T | string): Promise<void> {
+    await this.#assertWritable();
     if (this.#transaction === undefined) {
       this.#checkStrictMode();
       const tx = transactionContext.getStore();
@@ -2078,6 +2159,105 @@ export class Sheet<T extends RecordLike = RecordLike> {
     this.#ensureCoreSheetOpened();
     // No attachment dir → the core removes nothing and leaves the tx unmutated.
     callCore(() => this.#transaction!.coreTx.deleteAttachments(this.#name, recordPath));
+  }
+
+  // --- Rollup sheets (specs/behaviors/rollups.md) ---
+
+  /**
+   * Rollup sheets only: recompute every stale or missing rollup record and
+   * delete orphaned ones, in one transaction (into the current one on a
+   * transaction-bound sheet, or inside an enclosing `repo.transact`).
+   * Resolves to the partition paths touched; no commit when everything was
+   * fresh. Throws `TypeError` on a non-rollup sheet.
+   *
+   * @see specs/api/sheet.md#sheetmaterialize
+   */
+  async materialize(): Promise<MaterializeResult> {
+    const config = await this.readConfig();
+    if (config.rollup === undefined) {
+      throw new TypeError(`Sheet.materialize: sheet ${JSON.stringify(this.#name)} is not a rollup sheet`);
+    }
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      const out = callCore(() => this.#transaction!.coreTx.materialize(this.#name));
+      return { recomputed: out.recomputed, deleted: out.deleted };
+    }
+    this.#checkStrictMode();
+    const tx = transactionContext.getStore();
+    if (tx !== undefined) {
+      return tx.sheet(this.#name, this.#txDelegateOpts()).materialize();
+    }
+    let out: MaterializeResult = { recomputed: [], deleted: [] };
+    await this.#repo.transact({ message: `${this.#name} materialize` }, async (innerTx) => {
+      out = await innerTx.sheet(this.#name, this.#txDelegateOpts()).materialize();
+    });
+    return out;
+  }
+
+  /**
+   * @internal — rollup sheets only: the partitions that are not fresh
+   * (`stale` / `missing` / `orphaned`) against this sheet's read tree,
+   * writing nothing. Backs `git sheet rollup --check`.
+   */
+  async rollupStatus(): Promise<RollupStatusEntry[]> {
+    const config = await this.readConfig();
+    if (config.rollup === undefined) {
+      throw new TypeError(`Sheet.rollupStatus: sheet ${JSON.stringify(this.#name)} is not a rollup sheet`);
+    }
+    const entries =
+      this.#transaction !== undefined
+        ? (this.#ensureCoreSheetOpened(), callCore(() => this.#transaction!.coreTx.rollupStatus(this.#name)))
+        : callCore(() =>
+            addon.rollupStatus(
+              this.#gitDir,
+              this.#readRef ?? EMPTY_TREE_HASH,
+              this.#name,
+              this.#configPath,
+              openRootFromConfigPath(this.#configPath),
+              this.#prefix,
+            ),
+          );
+    return entries.map((e) => ({ path: e.path, status: e.status as RollupStatusEntry['status'] }));
+  }
+
+  /** A rollup sheet's rows, read through its source in the core. */
+  #rollupRows(
+    coreFilter: RecordLike,
+    stale: QueryOptions['stale'],
+  ): Array<{ path: string; record: RecordLike }> {
+    const mode = stale ?? 'recompute';
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      return callCore(() =>
+        this.#transaction!.coreTx.query(this.#name, coreFilter, true, mode),
+      ) as Array<{ path: string; record: RecordLike }>;
+    }
+    return callCore(() =>
+      addon.rollupQuery(
+        this.#gitDir,
+        this.#readRef ?? EMPTY_TREE_HASH,
+        this.#name,
+        this.#configPath,
+        openRootFromConfigPath(this.#configPath),
+        this.#prefix,
+        coreFilter,
+        mode,
+      ),
+    ) as Array<{ path: string; record: RecordLike }>;
+  }
+
+  /**
+   * Refuse a write to a rollup sheet — its records are regenerated from the
+   * source, never written by consumers (`TransactionError` `sheet_derived`).
+   */
+  async #assertWritable(): Promise<void> {
+    const config = await this.readConfig();
+    if (config.rollup !== undefined) {
+      throw new TransactionError(
+        'sheet_derived',
+        `sheet ${JSON.stringify(this.#name)} is a rollup of ${JSON.stringify(config.rollup.from)}: its records are regenerated from the source at every commit gitsheets produces, and are never written directly (specs/behaviors/rollups.md)`,
+      );
+    }
   }
 
   // --- Private helpers ---

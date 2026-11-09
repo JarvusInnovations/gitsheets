@@ -206,6 +206,21 @@ describe('Sheet.aggregate', () => {
     await expect(posts.aggregate({ body: 'x' }, { n: { count: true } })).rejects.toBeInstanceOf(TypeError);
   });
 
+  it('runs reduce in a realm with no clock or entropy (specs/behaviors/aggregation.md)', async () => {
+    const { sheet } = await sheetOf('transactions');
+    for (const body of ['return Math.random();', 'return Date.now();', 'return new Date().getTime();', 'return Date();']) {
+      const err = await sheet
+        .aggregate({}, { x: { reduce: body, initial: 0 } })
+        .then(() => undefined, (e: unknown) => e);
+      expect(err, body).toBeInstanceOf(AggregationError);
+      expect((err as Error).message).toContain('not available');
+    }
+    const r = await sheet.aggregate({}, {
+      x: { reduce: 'return [new Date(0).getHours(), Date.UTC(2026, 0, 1), new Date(0) instanceof Date];', initial: 0 },
+    });
+    expect(r).toEqual({ x: [0, 1767225600000, true] });
+  });
+
   it('honors opts.signal', async () => {
     const { sheet } = await sheetOf('transactions');
     const ac = new AbortController();
