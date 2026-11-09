@@ -4,7 +4,7 @@
 // registration functions (e.g. `registerContractsCommands`) from the modules
 // that need these.
 
-import { ConfigError } from '../errors.js';
+import { ConfigError, type ConfigErrorCode } from '../errors.js';
 import { openRepo, type OpenRepoOptions, type Repository } from '../repository.js';
 
 export interface GlobalArgs {
@@ -13,6 +13,8 @@ export interface GlobalArgs {
   prefix?: string;
   /** The repository's default branch (`--branch` / `GITSHEETS_BRANCH`); see specs/behaviors/default-branch.md. */
   branch?: string;
+  /** Submodule mode: the data submodule's path (`--submodule` / `GITSHEETS_SUBMODULE`); see specs/behaviors/default-branch.md. */
+  submodule?: string;
   ref?: string;
   commitTo?: string;
   message?: string;
@@ -43,11 +45,12 @@ export function buildTxOpts(argv: GlobalArgs, defaultMessage: string): TxOpts {
   return opts;
 }
 
-/** `openRepo` options from the global flags: `--git-dir` and `--branch` (env already folded in by yargs). */
+/** `openRepo` options from the global flags: `--git-dir`, `--branch`, `--submodule` (env already folded in by yargs). */
 export function repoOptions(argv: GlobalArgs): OpenRepoOptions {
-  const opts: { gitDir?: string; branch?: string } = {};
+  const opts: { gitDir?: string; branch?: string; submodule?: string } = {};
   if (argv.gitDir) opts.gitDir = argv.gitDir;
   if (argv.branch) opts.branch = argv.branch;
+  if (argv.submodule) opts.submodule = argv.submodule;
   return opts;
 }
 
@@ -71,6 +74,9 @@ export async function openCliRepo(argv: GlobalArgs): Promise<Repository> {
   } catch (err) {
     if (err instanceof ConfigError && err.code === 'config_invalid' && err.message.startsWith('openRepo({ branch })')) {
       throw new ConfigError('config_invalid', `--branch / GITSHEETS_BRANCH${err.message.slice('openRepo({ branch })'.length)}`, { cause: err });
+    }
+    if (err instanceof ConfigError && err.message.startsWith('openRepo({ submodule })')) {
+      throw new ConfigError(err.code as ConfigErrorCode, `--submodule / GITSHEETS_SUBMODULE${err.message.slice('openRepo({ submodule })'.length)}`, { cause: err });
     }
     throw err;
   }

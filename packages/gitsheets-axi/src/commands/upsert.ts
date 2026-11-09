@@ -8,7 +8,7 @@ import { field } from '../output/schema.js';
 import { readStdin } from '../util/stdin.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { parseRecordsInput, recordLabel } from '../util/parse-records.js';
-import { MATERIALIZE_HINT } from '../util/hints.js';
+import { materializeHints } from '../util/hints.js';
 
 const PATH_KEY = Symbol.for('gitsheets-path');
 
@@ -169,7 +169,7 @@ async function singleUpsert(
         hash: result.value.blob.hash,
         commit: result.commitHash,
       }),
-      renderHelp([MATERIALIZE_HINT]),
+      renderHelp(await materializeHints(repo)),
     );
   } catch (error) {
     throw translateError(error);
@@ -269,7 +269,7 @@ async function batchUpsert(
         ...(flags.deleteMissing ? { deleted: deletions.length } : {}),
         commit: result.commitHash,
       }),
-      renderHelp([MATERIALIZE_HINT]),
+      renderHelp(await materializeHints(repo)),
     );
   } catch (error) {
     throw translateError(error);

@@ -19,6 +19,7 @@ import {
   sheetConfigCheck,
 } from './core.js';
 import type { ConformanceReport, OpenSheetContractOptions } from './contracts.js';
+import { gitEnv } from './git-exec.js';
 import {
   ConfigError,
   ContractError,
@@ -339,6 +340,7 @@ async function lsTreeBlobs(
     // -z NUL-terminates entries; each line: "<mode> <type> <hash>\t<name>".
     const res = await exec('git', ['ls-tree', '-z', `${treeRef}:${dirPath}`], {
       cwd: gitDir,
+      env: gitEnv(gitDir),
       maxBuffer: 64 * 1024 * 1024,
     });
     stdout = res.stdout;
@@ -1578,6 +1580,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     try {
       const result = await exec('git', args, {
         cwd: gitDir,
+        env: gitEnv(gitDir),
         maxBuffer: 64 * 1024 * 1024,
       });
       stdout = result.stdout;
@@ -2081,9 +2084,12 @@ export class Sheet<T extends RecordLike = RecordLike> {
 
   #checkStrictMode(): void {
     if (this.#pinnedRef !== undefined) {
+      const at = this.#repo.pinnedAtCommit();
       throw new TransactionError(
         'transaction_required',
-        `Sheet.${this.#name} is pinned to ${this.#pinnedRef} and read-only — write through repo.transact({ parent: ${JSON.stringify(this.#pinnedRef)} }, …)`,
+        at !== null && this.#pinnedRef === at
+          ? `Sheet.${this.#name} is pinned to ${at} by openRepo({ at }) and read-only — open the repository without at to write`
+          : `Sheet.${this.#name} is pinned to ${this.#pinnedRef} and read-only — write through repo.transact({ parent: ${JSON.stringify(this.#pinnedRef)} }, …)`,
       );
     }
     if (this.#repo.isStrictMode()) {

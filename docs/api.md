@@ -62,9 +62,17 @@ Open a `Repository` against a git directory. Discovers from cwd upward when `git
 const repo = await openRepo();                         // discovered
 const repo = await openRepo({ gitDir: '/.git' });      // explicit
 const repo = await openRepo({ branch: 'data' });       // branch mode: records live on `data`
+const repo = await openRepo({ submodule: 'data' });    // submodule mode: records live in the `data` submodule
 ```
 
 **Default branch.** Every repository is bound to one *default branch*: the branch live sheets read, transactions commit to when given no `parent`, and `refresh` / `sync` / `fetch` / the push daemon / `merge` target when given no ref. It resolves once, at open, from the first of `opts.branch` → `GITSHEETS_BRANCH` → the `gitsheets.branch` git config of the opened repository → the branch `HEAD` points at. `repo.branch` reports it (`'data'`), or `null` when the repository is bound to a detached `HEAD` (every default then follows `HEAD`, as before). A tag, commit, or malformed name throws `ConfigError` (`config_invalid`). The branch may not exist yet: it reads as empty and the first committing transaction creates it with a root commit. Explicit refs — `readBlob('HEAD', …)`, `openSheet(name, { ref: 'HEAD' })`, `transact({ parent: 'main' })` — keep meaning exactly what they name. See [Headless data](recipes/headless-data.md).
+
+**Submodule mode.** `opts.submodule` (else `GITSHEETS_SUBMODULE`, else the superproject's `gitsheets.submodule` git config) opens the git submodule at that path instead — `<path>/.git`, else `.git/modules/<name>`; neither throws `ConfigError` (`config_missing`) naming `git sheet submodule init <path>`. The submodule's `HEAD` is the superproject's pointer to a data snapshot: the default branch is `HEAD`'s branch, or `HEAD` itself when detached (a commit then advances `HEAD` directly, compare-and-swap; `sync` / `fetch` / the push daemon need a branch). `opts.branch` / `GITSHEETS_BRANCH` / `gitsheets.branch` resolve inside the submodule; a branch `HEAD` is not on is written without moving the pointer. After a commit the superproject's `git status` reports `modified: data (new commits)` — commit the pointer with your code; `opts.stagePointer: true` also updates the superproject's index gitlink after each commit, `merge`, or `sync` that moves the pointer (never commits); if that fails after the commit landed, `TransactionError` (`pointer_stage_failed`) carries `err.commitHash` — run `git add <path>`, don't retry. A path with no `.gitmodules` entry is `ConfigError` (`config_invalid`); a linked worktree uses its own `modules/` dir. The binding is resolved at open, so reopen after `git submodule update` changes what `HEAD` is. `opts.at` (a superproject commit-ish) pins every sheet read-only at the data commit it points at: writes, `sync`, `fetch`, `merge`, `tag`, and the push daemon throw `TransactionError` (`transaction_required`); no pointer at that commit throws `RefError` (`ref_not_found`). `repo.submodule` reports the path (`null` in branch mode).
+
+```typescript
+const repo = await openRepo({ submodule: 'data', stagePointer: true });
+const shipped = await openRepo({ submodule: 'data', at: 'v1.2.0' }); // read-only: the data v1.2.0 shipped with
+```
 
 → [`specs/api/repository.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/repository.md)
 
@@ -100,6 +108,7 @@ const store = await openStore(repo, {
 | `repo.merge({ theirs, ours?, prefer?, commit? })` | Sheet-aware merge: record files changed on both sides are field-merged and written canonically; conflicts follow `prefer` (`fail` · `ours` · `theirs`) or are reported in the result, never thrown. Outcomes `up-to-date` · `fast-forward` · `merged` · `conflict` · `dry-run` |
 | `repo.refresh()` | Rebind every live Sheet to the default branch's current tree — for out-of-band ref movement (a successful `transact` and `repo.sync()` auto-refresh) |
 | `repo.branch` | The default branch's short name, or `null` when bound to a detached `HEAD` |
+| `repo.submodule` | Submodule mode: the submodule's path (`'data'`), or `null` |
 | `repo.readBlob(ref, path)` | `Promise<BlobHandle>` — the blob at `<ref>:<path>`, resolved at call time: `hash`, `size` (from the object header), `read()`, `stream()`. Throws `RefError` / `NotFoundError` |
 | `repo.readBlobStream(ref, path)` | `Promise<Readable>` — `readBlob(…).stream()`: in-core up to 1 MiB, piped from `git cat-file blob` above that |
 

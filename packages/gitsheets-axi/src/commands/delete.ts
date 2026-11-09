@@ -7,7 +7,7 @@ import { joinBlocks, renderHelp, renderObject } from '../output/render.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
 import { buildPredicate } from '../util/filter.js';
 import { readStdin } from '../util/stdin.js';
-import { MATERIALIZE_HINT } from '../util/hints.js';
+import { materializeHints } from '../util/hints.js';
 
 export const DELETE_HELP = `usage: gitsheets-axi delete <sheet> <path> [--prefix p] [--message m]
        gitsheets-axi delete <sheet> --filter expr ... [--dry-run]   # bulk by query
@@ -239,7 +239,7 @@ async function bulkDelete(
         deleted: targets.length,
         commit: result.commitHash,
       }),
-      renderHelp([MATERIALIZE_HINT]),
+      renderHelp(await materializeHints(repo)),
     );
   } catch (error) {
     throw translateError(error);

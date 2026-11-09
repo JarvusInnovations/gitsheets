@@ -183,7 +183,7 @@ sheet: users
 path: jane
 hash: 4d3f...
 commit: a1b2c3...
-help[1]: gitsheets committed to the git ref, not your working tree — run `git checkout HEAD -- .` to materialize the record files on disk
+help[1]: records live on the checked-out branch, so your working tree now lags the commit — keep them off it with `--branch data` or `--submodule data` (docs/recipes/headless-data.md), or run `git checkout HEAD -- .` to refresh the files
 ```
 
 Batch output:
@@ -194,14 +194,14 @@ sheet: repos
 upserted: 5
 unchanged: 458
 commit: a1b2c3...
-help[1]: gitsheets committed to the git ref, not your working tree — run `git checkout HEAD -- .` to materialize the record files on disk
+help[1]: records live on the checked-out branch, so your working tree now lags the commit — keep them off it with `--branch data` or `--submodule data` (docs/recipes/headless-data.md), or run `git checkout HEAD -- .` to refresh the files
 ```
 
 Output on no-op mirrors the shape with `result: no-op` and no `commit`.
 
 **`--delete-missing`** makes the sheet exactly match the input set (upsert the batch, delete anything else) — the primitive for a periodic re-sync from a source. **`--dry-run`** validates a whole batch up front and reports `willChange` / `noOp` / `invalid` (with the offending rows) / `willDelete` without committing — use it before a big import instead of finding out about a bad row mid-batch.
 
-> **Working-tree gotcha.** gitsheets writes to the git **ref** via plumbing; it does **not** touch your working tree. Right after a commit, `git status` shows the new records as *deleted* on disk (the ref has them, the working tree doesn't). Run `git checkout HEAD -- .` to materialize them. This surprises every first-time user — it's not data loss.
+> **Working-tree gotcha.** gitsheets writes to the git **ref** via plumbing; it never touches your working tree. When records live on the checked-out branch, `git status` shows them *deleted* or *modified* right after a commit — not data loss. The `help` line above appears only in that case. **Prefer a headless layout** so there is no working tree of records to lag: a data branch (`--branch data`, `GITSHEETS_BRANCH`, or `git config gitsheets.branch data`) or a data submodule (`--submodule data`, `GITSHEETS_SUBMODULE`, or `git config gitsheets.submodule data`; set up with `git sheet submodule init data --url …`). Writes there print no hint. Only if records must stay on the code branch, run `git checkout HEAD -- .` to refresh the files.
 
 ### `gitsheets-axi patch <sheet> [<query-json>] [flags]`
 
@@ -337,7 +337,7 @@ Manage binary blobs colocated with records. Subcommands:
 
 ### `gitsheets-axi push [--remote r] [--branch b]`
 
-One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, the repo's default branch (`--branch` is the global flag every command accepts: `GITSHEETS_BRANCH`, `gitsheets.branch` git config, else HEAD's branch). Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
+One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, the repo's default branch (`--branch` is the global flag every command accepts: `GITSHEETS_BRANCH`, `gitsheets.branch` git config, else HEAD's branch). With `--submodule <path>` (also global: `GITSHEETS_SUBMODULE`, `gitsheets.submodule`) every command — `push` included — acts on the data submodule's repository; a detached submodule `HEAD` has no branch to push. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
 
 Errors map to:
 
@@ -363,7 +363,7 @@ Populating a sheet from an external source (a GitHub API dump, a CSV, another sy
      | gitsheets-axi upsert repos --message "seed repos from GitHub"
    ```
 
-4. **Materialize the working tree** if you want the files on disk: `git checkout HEAD -- .` (gitsheets committed to the ref, not the working tree — see the gotcha under `upsert`).
+4. **Keep records off the checked-out branch** for a large databank: bind a data branch (`--branch data`) or data submodule (`--submodule data`) from step 1 so no working tree of records goes stale. If they must live on the code branch, `git checkout HEAD -- .` refreshes the files after the import (see the gotcha under `upsert`).
 5. **Round-trip to reshape:** `gitsheets-axi query <sheet> --ndjson-out` → transform the file with `jq` → pipe back into `upsert`. Exported JSON/NDJSON is verbatim, so re-import is clean and idempotent.
 
 **Incrementally classifying / updating records** (adding `target_team`, `status`, etc. to records that already exist) is a **bulk `patch`** job, not upsert:

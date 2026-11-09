@@ -25,6 +25,7 @@ const STATUS_BY_CODE = {
   transaction_required: 409,
   parent_moved: 409,
   commit_failed: 500,
+  pointer_stage_failed: 500,
   index_unique_conflict: 409,
   index_not_defined: 500,
   push_daemon_running: 409,
@@ -89,13 +90,23 @@ export type TransactionErrorCode =
   | 'transaction_required'
   | 'parent_moved'
   | 'commit_failed'
+  | 'pointer_stage_failed'
   | 'push_daemon_running'
   | 'transaction_closed'
   | 'lock_held';
 
+interface TransactionErrorOptions extends GitsheetsErrorOptions {
+  /** `pointer_stage_failed`: the data commit that landed. */
+  readonly commitHash?: string;
+}
+
 export class TransactionError extends GitsheetsError {
-  constructor(code: TransactionErrorCode, message: string, options?: GitsheetsErrorOptions) {
-    super(code, message, options);
+  /** `pointer_stage_failed`: the data commit that landed before staging failed. */
+  readonly commitHash?: string;
+
+  constructor(code: TransactionErrorCode, message: string, options?: TransactionErrorOptions) {
+    super(code, message, options?.cause === undefined ? undefined : { cause: options.cause });
+    if (options?.commitHash !== undefined) this.commitHash = options.commitHash;
   }
 }
 

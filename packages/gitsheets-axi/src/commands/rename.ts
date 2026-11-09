@@ -5,7 +5,7 @@ import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { joinBlocks, renderHelp, renderObject } from '../output/render.js';
 import { openSheetForCommand } from '../util/open-sheet.js';
-import { MATERIALIZE_HINT } from '../util/hints.js';
+import { materializeHints } from '../util/hints.js';
 
 export const RENAME_HELP = `usage: gitsheets-axi rename <sheet> <old-path> <new-path> [--prefix p] [--message m]
 flags[2]:
@@ -134,7 +134,7 @@ export async function renameCommand(
         to: flags.newPath,
         commit: result.commitHash,
       }),
-      renderHelp([MATERIALIZE_HINT]),
+      renderHelp(await materializeHints(repo)),
     );
   } catch (error) {
     throw translateError(error);

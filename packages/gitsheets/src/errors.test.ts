@@ -85,6 +85,7 @@ describe('code → status mapping', () => {
     ],
     ['parent_moved', 409, () => new TransactionError('parent_moved', 'x')],
     ['commit_failed', 500, () => new TransactionError('commit_failed', 'x')],
+    ['pointer_stage_failed', 500, () => new TransactionError('pointer_stage_failed', 'x', { commitHash: 'abc' })],
     [
       'index_unique_conflict',
       409,

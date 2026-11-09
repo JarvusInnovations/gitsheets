@@ -125,6 +125,19 @@ the clone's `gitsheets.branch` git config, else the branch `HEAD` points at.
 [Headless data](recipes/headless-data.md) for keeping records on a branch
 you never check out.
 
+`--submodule <path>` (any command, any position; else `GITSHEETS_SUBMODULE`,
+else `gitsheets.submodule`) reads and writes a data submodule instead. Each
+write advances the submodule's `HEAD`, so the superproject's `git status`
+shows `modified: data (new commits)` and nothing else. A submodule that is
+not set up yet is `CONFIG_MISSING`, with `git sheet submodule init <path>`
+as the fix.
+
+After a write, the materialize hint (`git checkout HEAD -- .`) appears only
+when the records live on the checked-out branch, where the working tree now
+lags the commit. It leads with the lasting fix, a headless layout
+(`--branch data` or `--submodule data`). Writes to a bound data branch or a
+data submodule show no hint: they touched no checked-out branch.
+
 `query`, `count`, and `distinct` share a `--filter` mini-DSL (`k=v`, `k!=v`,
 `k<v`, `k>v`, `k<=v`, `k>=v`, `k~regex`, `k in (a,b)`, `k:present`,
 `k:empty`). Ordered comparisons on a **date-bucket path field** (a sheet

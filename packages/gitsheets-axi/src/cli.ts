@@ -39,10 +39,13 @@ commands[21]:
   delete, check, diff, normalize,
   init, infer, migrate-config,
   attachment, contracts, push, setup
-flags[3]:
+flags[4]:
   --help, -v/-V/--version
   --branch <name>  Default branch every command reads/writes (any command;
                    default: $GITSHEETS_BRANCH, gitsheets.branch, HEAD's branch)
+  --submodule <p>  Data submodule every command reads/writes; writes advance
+                   its HEAD (the superproject's pointer). Any command;
+                   default: $GITSHEETS_SUBMODULE, gitsheets.submodule
 examples:
   gitsheets-axi
   gitsheets-axi query repos --filter status=unclassified --sort pushed_at

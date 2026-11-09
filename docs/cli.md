@@ -14,6 +14,7 @@ operation on a `Repository` (or `Sheet`/`Transaction`).
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
 | `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
+| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
 | `--ref <ref>` | the default branch | `GITSHEETS_REF` |
 | `--commit-to <ref>` | derived from `--ref` | — |
 | `--message <msg>` | auto-generated | — |
@@ -40,6 +41,21 @@ git config gitsheets.branch data     # once per clone
 gitsheets query users                # reads the data branch
 GITSHEETS_BRANCH=data gitsheets upsert users '{"slug":"jane"}'
 gitsheets --branch data read users jane
+```
+
+`--submodule <path>` selects **submodule mode**: commands read and write the
+data submodule at that path, whose `HEAD` is the superproject's pointer to a
+data snapshot. A write advances it, so `git status` in the superproject
+reports `modified: data (new commits)` and nothing else; commit the pointer
+with your code. It resolves flag → `GITSHEETS_SUBMODULE` →
+`gitsheets.submodule` git config, and combines with `--branch` (a branch *of
+the submodule*). Set the submodule up with
+[`submodule init`](#gitsheets-submodule-init-path).
+
+```bash
+git config gitsheets.submodule data  # once per clone
+gitsheets upsert users '{"slug":"jane"}'
+git add data && git commit -m "Add jane"
 ```
 
 ## Commands
@@ -303,6 +319,37 @@ gitsheets contracts prune [--dry-run] [--yes]              # remove vendored doc
 ```
 
 `adopt --sheet` validates every existing record of the named sheet(s) against the would-be effective schema and refuses (tree untouched) until the data conforms. `verify` additionally warns when a declaring sheet's local schema sets `additionalProperties: false` (which can reject contract-conforming records under `allOf` composition). See the [contracts guide](contracts.md) for the full workflow.
+
+### `gitsheets submodule init <path>`
+
+Set up a data submodule with **no record checkout**, so its records never
+sit in a working tree. Stages; never commits.
+
+- With `--url <url>` (a new submodule): adds the `.gitmodules` entry (`path`,
+  `url`, `branch`), clones into `.git/modules/<path>` without a checkout,
+  writes the `<path>/.git` pointer file, puts the submodule's `HEAD` on the
+  branch, sets `submodule.<name>.ignore = dirty`, and stages `.gitmodules`
+  plus the pointer. The branch is `--branch`, else the remote's default
+  branch; an empty remote needs `--branch` and the first write creates it.
+- Without `--url` (an existing entry, e.g. a fresh clone of the
+  superproject): fetches, puts `HEAD` on the `.gitmodules` branch at the
+  commit the superproject pins, and sets `ignore`. Re-running is safe — an
+  existing data branch is left where it is; a detached `HEAD` holding
+  gitsheets writes (after `git submodule update`) is fast-forwarded onto the
+  branch first, and a branch that diverged from it is refused, naming both
+  commits.
+
+`--url` reaches the remote before writing anything, so a failed clone leaves
+`.gitmodules` and the git config untouched; re-run with a working URL.
+
+```bash
+gitsheets submodule init data --url git@github.com:org/app-data.git --branch main
+gitsheets submodule init data        # fresh clone of the superproject
+```
+
+`ignore = dirty` keeps the empty working tree from showing as
+`modified content`; it also hides hand edits under `<path>/`. See
+[Headless data](recipes/headless-data.md#data-submodule).
 
 ## Exit codes
 

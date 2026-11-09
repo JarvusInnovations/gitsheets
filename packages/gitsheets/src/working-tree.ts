@@ -10,6 +10,7 @@ import { Readable } from 'node:stream';
 
 import { blobHeader, readBlobBytes } from './core.js';
 import { NotFoundError } from './errors.js';
+import { gitEnv } from './git-exec.js';
 
 /** Git's canonical empty-tree hash. */
 export const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -82,7 +83,7 @@ export function makeBlobHandle(
       if (knownBytes !== undefined) return Readable.from([knownBytes]);
       if (size <= STREAM_INLINE_LIMIT) return Readable.from([readBlobSync(gitDir, hash)]);
       // Large blob: pipe from git without materializing it here.
-      const child = spawn('git', ['cat-file', 'blob', hash], { cwd: gitDir });
+      const child = spawn('git', ['cat-file', 'blob', hash], { cwd: gitDir, env: gitEnv(gitDir) });
       child.stdin.end();
       return child.stdout;
     },
