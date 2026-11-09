@@ -68,7 +68,13 @@ Don't deep-import (`gitsheets/lib/...`). The package-root surface is the only st
 const repo = await openRepo();                          // discover from cwd
 const repo = await openRepo({ gitDir: '/.git' });       // explicit
 const repo = await openRepo({ gitDir, workTree });      // working-tree hint
+const repo = await openRepo({ branch: 'data' });        // branch mode: records on a never-checked-out branch
+const repo = await openRepo({ submodule: 'data' });     // submodule mode: records in the `data` submodule
+const repo = await openRepo({ submodule: 'data', stagePointer: true }); // also stage the moved gitlink
+const repo = await openRepo({ submodule: 'data', at: 'v1.2.0' });       // read-only: the data v1.2.0 pinned
 ```
+
+Binding resolves option → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` → `gitsheets.branch` / `gitsheets.submodule` git config → `HEAD`'s branch; `repo.branch` / `repo.submodule` report it. In submodule mode the submodule's `HEAD` is the superproject's pointer: a write advances it (its branch, or a detached `HEAD` directly), the superproject shows `modified: data (new commits)`, and the user commits the pointer. A submodule with no git dir is `ConfigError(config_missing)` naming `git sheet submodule init <path>`; `at` with no pointer is `RefError(ref_not_found)`, and writes on an `at`-bound repo are `TransactionError(transaction_required)`.
 
 Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized repositories (no commits yet) are supported.
 

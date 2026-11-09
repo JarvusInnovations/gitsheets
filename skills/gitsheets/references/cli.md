@@ -13,6 +13,7 @@
 - [check](#check) — validate + optionally fix a working-tree file
 - [normalize](#normalize) — re-canonicalize every record
 - [init](#init) — scaffold a sheet config
+- [submodule init](#submodule-init) — set up a data submodule with no record checkout
 - [infer](#infer) — scan records → starter JSON Schema
 - [migrate-config](#migrate-config) — pre-v1.0 fields → v1.0 schema
 - [merge](#merge-v28)
@@ -26,7 +27,9 @@
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
-| `--ref <ref>` | `HEAD` | `GITSHEETS_REF` |
+| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
+| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
+| `--ref <ref>` | the default branch | `GITSHEETS_REF` |
 | `--commit-to <ref>` | derived from `--ref` | — |
 | `--message <msg>` | auto-generated | — |
 | `--author-name <name>`, `--author-email <email>` | git config | — |
@@ -36,7 +39,9 @@
 
 A `--working` flag (read/write the working tree's state) is documented but deferred — see issue #165.
 
-> **Working-tree gotcha.** Every mutating command commits to the git **ref** via plumbing and does **not** update your checked-out files. After a write (especially a bulk `upsert`), `git status` shows the new records as *deleted* on disk — the ref has them, the working tree doesn't. Run `git checkout HEAD -- .` to materialize them. This is expected, not data loss, and is what #165's `--working` mode will eventually smooth over.
+`--branch` binds the repository's **default branch** (what commands read and commit to); `--submodule` binds a **data submodule** instead (its `HEAD` is the superproject's pointer; combine with `--branch` for a branch of the submodule). Both resolve flag → env → git config, so one `git config gitsheets.branch data` or `git config gitsheets.submodule data` per clone binds the CLI, `gitsheets-axi`, and the application alike.
+
+> **Working-tree gotcha.** Every mutating command commits to the git **ref** via plumbing and never updates checked-out files. If the records live on the branch you check out, `git status` shows them *deleted* or *modified* after each write — not data loss. **Fix the layout:** keep records on a data branch (`gitsheets init <sheet> --commit --branch data`, then `git config gitsheets.branch data`) or in a data submodule ([submodule init](#submodule-init), then `git config gitsheets.submodule data`) — no working tree of records exists to fall behind. Only when records must stay on the code branch, run `git checkout HEAD -- .` after writes to refresh the files.
 
 ## upsert
 
@@ -210,6 +215,19 @@ Flags:
 - `--path <tpl>` — override the path template
 - `--schema <file>` — embed a JSON Schema file under `[gitsheet.schema]`
 - `--force` — overwrite an existing config
+
+## submodule init
+
+`gitsheets submodule init <path> [--url <url>] [--branch <b>]` — set up a data submodule with **no record checkout**. With `--url`: adds the `.gitmodules` entry, clones into `.git/modules/<path>` without a checkout, puts the submodule `HEAD` on the branch (default: the remote's default branch; an empty remote needs `--branch`), sets `submodule.<name>.ignore = dirty`, stages `.gitmodules` + the pointer. Without `--url` (fresh clone of the superproject): fetches and puts `HEAD` on the `.gitmodules` branch at the pinned commit. Idempotent; never commits.
+
+```bash
+gitsheets submodule init data --url git@github.com:org/app-data.git --branch main
+git commit -m "Add data submodule" && git config gitsheets.submodule data
+gitsheets upsert users '{"slug":"jane"}'   # superproject: modified: data (new commits)
+git add data && git commit -m "Add jane"   # pin the data snapshot with the code
+```
+
+Set `push.recurseSubmodules = check` (or `on-demand`) in the superproject so a pointer never reaches the remote before its data commit.
 
 ## infer
 
