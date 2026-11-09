@@ -216,14 +216,45 @@ rule, for all three:
   `toDateString()`, `toTimeString()`) read **UTC** on every host and thread, and
   the multi-argument constructor (`new Date(y, m, d, …)`) and an offset-less ISO
   date-time string (`new Date('2026-01-01T05:00')`) are taken at UTC. The
-  locale-formatting methods (`toLocaleString()`, `toLocaleDateString()`,
-  `toLocaleTimeString()`) throw like the clock does. The engine has no `Intl`,
-  no timers, and no host I/O.
+  `Date` locale-formatting methods (`toLocaleString()`, `toLocaleDateString()`,
+  `toLocaleTimeString()`) throw like the clock does. The other locale-sensitive
+  methods are **locale-free**: `String#localeCompare` is code-unit order
+  (`'a'.localeCompare('B')` is `1`, no normalization), `toLocaleUpperCase()` /
+  `toLocaleLowerCase()` ignore any locale argument, `Number` / `BigInt`
+  `toLocaleString()` is `String(x)`, and `Array` / typed-array
+  `toLocaleString()` joins the elements' `toLocaleString()` with `', '`
+  (`null` / `undefined` / holes as empty). Locale-aware ordering is the
+  declarative `sort = true` ([normalization.md](behaviors/normalization.md#sort-rule-formats),
+  ICU), never a raw-JS `localeCompare`. The realm has no `Intl`, no
+  `WebAssembly`, no `console`, no `SharedArrayBuffer` / `Atomics`, no timers,
+  and no host I/O.
 - **Argument-taking `Date` forms remain**, since they are functions of their
-  arguments: `new Date(ms)`, `new Date(isoString)`, `new Date(y, m, …)`,
-  `Date.UTC`, `Date.parse`. Strings parse in the ISO 8601 format and the
-  engine's own `toString()` / `toUTCString()` formats; any other string is
-  `NaN` (implementation-defined legacy formats are outside the contract).
+  arguments: `new Date(ms)`, `new Date(dateOrString)` (after `ToPrimitive`,
+  so a `String` object parses like a string), `new Date(y, m, …)`, `Date.UTC`,
+  `Date.parse`, and the setters (`setHours`, Annex B `setYear` with its
+  0–99 → 1900+ rule, all at UTC). Strings parse in exactly three forms, and
+  any other string is `NaN` (implementation-defined legacy formats are outside
+  the contract):
+  - ISO 8601 date-time strings: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, optionally
+    followed by `THH:mm`, `THH:mm:ss`, or `THH:mm:ss.sss` (**exactly three**
+    fraction digits) and `Z` or `±HH:mm`; expanded years `±YYYYYY` except
+    `-000000`; an offset-less form is UTC. `T24:00` (all-zero after it) is the
+    end of the day.
+  - The engine's own `toString()` form, `Www Mmm DD YYYY HH:mm:ss GMT±hhmm`
+    (negative years as `-YYYY`), and `toUTCString()` form,
+    `Www, DD Mmm YYYY HH:mm:ss GMT` — with real day and month names and the
+    fields range-checked (day within the month, `HH` ≤ 23, minutes and
+    seconds ≤ 59, offset minutes ≤ 59), so `String(date)` round-trips.
+
+  *Known divergence:* boa also accepts an hour of `24` with non-zero minutes
+  or milliseconds (`T24:01`, `T24:00:00.001Z`) and rolls it into the next
+  day; the Node host realm returns `NaN`. That is a boa bug, not the contract;
+  do not rely on either.
+- **Arguments are copied in.** A snippet receives a copy of its inputs built
+  from their own enumerable keys (a `Date` as a `Date` of the same instant),
+  as the core marshals a record into the engine, so it cannot mutate the
+  caller's record or array elements — a comparator that assigns to `a.x`
+  changes nothing outside the call.
 
 A violation is detected **when the snippet runs**, not at sheet open: snippets
 are opaque code, and which calls a body makes is not statically decidable. Where
@@ -235,8 +266,18 @@ it surfaces depends on the snippet:
 | Raw-JS sort comparator | `ConfigError` (`config_invalid`), naming the field and the forbidden call — the rule is a definition defect, not a record defect | Normalizing a record with two or more elements in that array field — on write and `normalizeRecord` |
 | Aggregate `reduce` / `finalize` | `AggregationError` (`aggregation_failed`) | Computing the aggregate ([behaviors/aggregation.md](behaviors/aggregation.md)) |
 
-Each binding's index `keyFn`s and query filter predicates compiled into the same
-engine run under the same rule.
+#### Query-time snippets
+
+Query filter predicates (a binding's `{"$pred": "<js expr>"}` filter value)
+and index key snippets (the `keyFn` source behind `record_index_unique` /
+`record_index_multi`, and an index a binding defines on a sheet) are **not** definition
+snippets: their results select or look up records and are never committed. They
+run in a separate **query realm** of the same engine: the local offset is still
+pinned to UTC (so `getHours()` in a predicate agrees across hosts and
+bindings), but the clock and `Math.random` are available and none of the
+denials above apply — `value < Date.now()` is a legitimate query. The query
+realm never shares globals with the definition realm, so a predicate cannot
+hand the clock to a template or comparator.
 
 **Behavior change (v2.13).** Before this rule covered path expressions and
 comparators, their realm had the clock, randomness, and the host time zone: a
@@ -255,11 +296,16 @@ form](behaviors/path-templates.md#date-bucket-references) — see
 the exported `Template` (and so `Sheet.pathForRecord`) and `Sheet.normalizeRecord`'s
 comparators still run in a host `node:vm` context (see *Shipped status* above).
 That context must apply this same rule with the same results: the same denials
-with the same messages, local-time `Date` methods reading UTC, the same string
-parsing and `toString()` form, a record's `Date` values rebuilt inside the
-context so they carry its patched `Date.prototype`, and the same error mapping
-(`PathTemplateError` / `ConfigError`). The core engine is the reference; any
-divergence is a bug in the host shim.
+with the same messages, the same global names (V8-only globals removed),
+local-time `Date` methods and setters reading and writing UTC, the same string
+parsing and `toString()` form, the locale-free methods above, arguments copied
+in so a record's `Date` values carry the context's patched `Date.prototype`, and
+the same error mapping (`PathTemplateError` / `ConfigError`). The core engine
+is the reference; any divergence is a bug in the host shim, apart from the boa
+bug noted above. (boa also exposes two non-standard globals, `TypedArray` and,
+ahead of Node 22, `Float16Array`, which the host realm lacks; a snippet should
+not name them.) Routing these through the core and deleting the shim is
+[#373](https://github.com/JarvusInnovations/gitsheets/issues/373).
 
 **Two constraints this creates:**
 

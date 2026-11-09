@@ -202,6 +202,8 @@ Expressions are evaluated in the core's embedded engine (the Node `Template` exp
 
 The realm is **deterministic** — no clock, no randomness, local time is UTC — under the one rule every definition snippet follows: [rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets). Any other throw from an expression, including calling a forbidden `Date.now()` / `Math.random()` / argument-less `new Date()`, fails the render with `PathTemplateError` (`path_render_failed`) naming the `${{ … }}` expression and the error — on write and at query time alike, since an expression's calls cannot be checked at sheet open.
 
+Because local-time `Date` methods now read UTC (v2.13), an expression such as `${{ at.getHours() }}` or `${{ publishedAt.getFullYear() }}` that ran on a non-UTC host before v2.13 may have stored records at a path the template **no longer renders**. Until they move, everything that locates a record by rendering its path misses them: a keyed query prunes to the new subtree, `delete(record)` and `patch` look at the new path, and attachments are resolved under it. `git sheet normalize <sheet>` moves them — it re-upserts every loaded record, and an upsert of a loaded record whose rendered path changed is a rename (verified: the commit shows `people/{jane.toml => x-jane.toml}`). See [docs/migration-guide.md](../../docs/migration-guide.md).
+
 This mirrors the pre-v1.0 behavior (apart from the determinism rule, v2.13); documented here so the v1.0 TS rewrite preserves it.
 
 ### Multi-variable per segment
