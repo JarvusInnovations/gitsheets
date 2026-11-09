@@ -49,7 +49,7 @@ Flags:
 - `--format <json|toml|csv>` — input format. Default: inferred from extension (`*.toml` → TOML, `*.csv` → CSV), otherwise JSON.
 - `--encoding <enc>` — encoding for file/stdin input. Default `utf8`.
 - `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted in the same transaction.
-- `--attachment <name>=<source>` (repeatable) — attach a file alongside the (single) upserted record. `<source>` is a file path (relative to the input file's directory, or cwd for stdin input) or `-` for stdin. Requires a single-record input set.
+- `--attachment <name>=<source>` (repeatable) — attach a file alongside the (single) upserted record. `<source>` is a file path (relative to the input file's directory, or cwd for stdin input) or `-` for stdin. Requires a single-record input set. Each source's bytes are hashed verbatim through [`repo.writeBlob`](repository.md#repowriteblobcontent) and placed with `sheet.setAttachments`.
 - `--patch` — treat each input record as an [RFC 7396 JSON Merge Patch](https://datatracker.ietf.org/doc/html/rfc7396). Path-template fields auto-derive the query; remaining fields are merged into the matched record. Cannot be combined with `--delete-missing` or `--attachment`. See [`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md).
 - `--message <msg>`, `--author-name`, `--author-email`, `--trailer Key=Value` (repeatable) — transaction metadata
 
@@ -201,7 +201,7 @@ git sheet submodule init data        # fresh clone of the superproject
 
 ### `git sheet rollup <sheet>`
 
-Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert` and the binding flags (`--branch`, `--submodule`, `--at`, `--stage-pointer`) like every other command. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`). `--check` writes nothing (reading at `--ref` when given), prints one `<status> <partition>` line per partition that is not fresh (`stale` / `missing` / `orphaned`), and exits **1** if there are any. A non-rollup `<sheet>` exits 1.
+Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert` and the binding flags (`--branch`, `--submodule`, `--at`, `--stage-pointer`) like every other command. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`). `--check` writes nothing (reading at `--ref` when given), reports [`sheet.rollupStatus()`](sheet.md#sheetrollupstatus), prints one `<status> <partition>` line per partition that is not fresh (`stale` / `missing` / `orphaned`), and exits **1** if there are any. A non-rollup `<sheet>` exits 1.
 
 ```bash
 git sheet rollup transactions-monthly

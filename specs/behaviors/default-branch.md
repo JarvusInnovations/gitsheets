@@ -198,7 +198,10 @@ pointer — until it reopens the repository.
 `git status` there reports `modified: data (new commits)`, and the user
 commits the pointer with their code (or `git add data` on its own). Each
 superproject commit thereby records exactly which data snapshot it was built
-against. `openRepo({ …, stagePointer: true })` additionally updates the
+against. A commit that advanced a detached `HEAD` reports
+`TransactionResult.ref` as the string `'HEAD'`
+([api/repository.md](../api/repository.md#transactionresult)); one that
+advanced a branch reports that branch's ref. `openRepo({ …, stagePointer: true })` additionally updates the
 superproject's index entry for the gitlink (`160000 <new commit>`) after every
 commit that moves the pointer — a `transact`, or a `merge` / `sync` that
 advances `HEAD`'s branch (a write to a side branch moves nothing, so stages
