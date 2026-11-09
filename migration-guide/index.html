@@ -1410,6 +1410,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v29-v212" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.9 → v2.12
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v2.9 → v2.12">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-default-branch-binding-and-submodule-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Default-branch binding and submodule mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-rollup-sheets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Rollup sheets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1821,6 +1871,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v29-v212" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.9 → v2.12
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v2.9 → v2.12">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-default-branch-binding-and-submodule-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Default-branch binding and submodule mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-rollup-sheets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Rollup sheets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2179,6 +2279,15 @@ for the full contract.</p>
 <li><strong>Markdown sheets accept an explicit <code>null</code> body</strong> without <code>allowMissingBody</code> (absent/<code>undefined</code> still throws).</li>
 <li>Python binding (<code>gitsheets</code> 0.4.0 / 0.5.0 on PyPI): <code>transact(orphan=)</code>, <code>write_file</code> / <code>delete_file</code>, <code>blob_header</code>, <code>sync_branch</code> / <code>is_ancestor</code>, <code>merge_sheets</code> / <code>merge_record_texts</code>.</li>
 </ul>
+<h2 id="v29-v212">v2.9 → v2.12<a class="headerlink" href="#v29-v212" title="Permanent link"> ¶</a></h2>
+<p>Everything in 2.12.0 is additive; nothing stops a sheet from opening. Three new capabilities and the knobs that come with them:</p>
+<h3 id="1-default-branch-binding-and-submodule-mode">1. Default-branch binding and submodule mode<a class="headerlink" href="#1-default-branch-binding-and-submodule-mode" title="Permanent link"> ¶</a></h3>
+<p><code>openRepo({ branch })</code>, <code>GITSHEETS_BRANCH</code>, or <code>git config gitsheets.branch</code> binds a repository to a branch other than <code>HEAD</code>&rsquo;s: live sheets read it, transactions commit to it, <code>refresh</code> / <code>sync</code> / the push daemon / <code>merge</code> / <code>tag</code> default to it. <code>openRepo({ submodule })</code> (<code>GITSHEETS_SUBMODULE</code>, <code>gitsheets.submodule</code>) opens a data submodule whose <code>HEAD</code> is the superproject&rsquo;s pointer; <code>git sheet submodule init</code> sets one up with no record checkout. The CLIs take <code>--branch</code> / <code>--submodule</code>; <code>--ref</code> now defaults to the resolved binding, which is <code>HEAD</code> when nothing is configured, so existing invocations behave as before. <code>git sheet init</code> accepts <code>--commit</code> (the explicit spelling of what it always did). New error codes: <code>TransactionError</code> <code>sheet_derived</code> and <code>pointer_stage_failed</code>; a tag, commit, or remote-only name as the binding is <code>ConfigError</code> <code>config_invalid</code>. Recipe: <a href="../recipes/headless-data/">headless data</a>.</p>
+<h3 id="2-aggregation">2. Aggregation<a class="headerlink" href="#2-aggregation" title="Permanent link"> ¶</a></h3>
+<p><code>sheet.aggregate(filter, aggregates)</code>, <code>git sheet aggregate --agg name=form[:field] [--group-by f]</code>, <code>gitsheets-axi aggregate</code>, and Python <code>record_aggregate</code>: <code>count</code> / <code>sum</code> / <code>min</code> / <code>max</code> / <code>avg</code> / <code>distinct</code> with <code>where</code> and <code>groupBy</code>, plus a <code>reduce</code> escape hatch that runs in the core&rsquo;s deterministic engine. Failures are <code>AggregationError</code> (<code>aggregation_failed</code>). <code>gitsheets-axi query --group-by</code> is unchanged.</p>
+<h3 id="3-rollup-sheets">3. Rollup sheets<a class="headerlink" href="#3-rollup-sheets" title="Permanent link"> ¶</a></h3>
+<p>A sheet config with <code>[gitsheet.rollup] from = '&lt;source&gt;'</code> and a <code>path</code> that is a prefix of the source&rsquo;s template is a derived, read-only sheet: one record per partition, regenerated by every gitsheets commit that touches the partition (transactions, <code>merge</code>, <code>sync</code> replays) and stamped with <code>sourceTree</code> and <code>configTree</code> so a stale record is recomputed on read. <code>sheet.materialize()</code> / <code>git sheet rollup [--check]</code> repair after plain-git writes; writes to a rollup sheet are <code>sheet_derived</code>. Recipe: <a href="../recipes/rollups/">rollups</a>.</p>
+<p>Python binding (<code>gitsheets</code> 0.7.0 on PyPI): <code>record_aggregate</code>, <code>record_query(sheet=, stale=)</code>, <code>rollup_status</code>, <code>Transaction.materialize_rollups</code>; the commit-time rollup pass runs inside <code>transact</code> with no Python-side work.</p>
 <h2 id="going-forward">Going forward<a class="headerlink" href="#going-forward" title="Permanent link"> ¶</a></h2>
 <p>Once migrated, the recipes are the fastest path to common patterns:</p>
 <ul>
@@ -2186,6 +2295,8 @@ for the full contract.</p>
 <li><a href="../recipes/request-bound-transactions/">Request-bound transactions in Fastify</a></li>
 <li><a href="../recipes/secondary-indices/">Secondary indices</a></li>
 <li><a href="../recipes/production-push-daemon/">Production push daemon</a></li>
+<li><a href="../recipes/headless-data/">Headless data</a></li>
+<li><a href="../recipes/rollups/">Rollups</a></li>
 </ul>
 <p>If you hit something the migration guide doesn&rsquo;t cover, open an issue — likely a missing migration note, possibly an actual gap.</p>
 

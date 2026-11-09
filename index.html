@@ -1243,7 +1243,7 @@
 <h2 id="get-started">Get started<a class="headerlink" href="#get-started" title="Permanent link"> ¶</a></h2>
 <ul>
 <li><strong><a href="quick-start/">Quick start</a></strong> — <code>npm install gitsheets</code>, declare a sheet, write a record, read it back. ≤ 5 minutes.</li>
-<li><strong><a href="concepts/">Concepts</a></strong> — Repository, Sheet, Path Template, Transaction, Store, Index, Push Daemon. The vocabulary every consumer needs.</li>
+<li><strong><a href="concepts/">Concepts</a></strong> — Repository (and its default branch or data submodule), Sheet, Path Template, Transaction, Store, Index, Rollup sheet, Push Daemon. The vocabulary every consumer needs.</li>
 </ul>
 <h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link"> ¶</a></h2>
 <ul>
@@ -1253,12 +1253,16 @@
 <li><strong><a href="path-templates/">Path templates</a></strong> — syntax, recursive fields, query pruning, invalid-char handling.</li>
 <li><strong><a href="validation/">Validation</a></strong> — JSON Schema in <code>.gitsheets/&lt;sheet&gt;.toml</code>, optional Standard Schema layering.</li>
 <li><strong>Sync and merge</strong> — <a href="recipes/production-push-daemon/#taking-in-other-writers-commits-reposync"><code>repo.sync()</code></a> takes in other writers&rsquo; commits under the write lock; <a href="cli/#gitsheets-merge-theirs"><code>repo.merge()</code> / <code>git sheet merge</code></a> merges two branches record-by-record with canonical output, and <code>git sheet merge --install-driver</code> makes plain <code>git merge</code> do the same.</li>
+<li><strong>Headless data</strong> — <a href="recipes/headless-data/">records off the checked-out branch</a>: <code>openRepo({ branch })</code> / <code>--branch</code> / <code>GITSHEETS_BRANCH</code> / <code>gitsheets.branch</code>, or <code>openRepo({ submodule })</code> with <code>git sheet submodule init</code> for a data submodule whose pointer each code commit pins.</li>
+<li><strong>Aggregation and rollups</strong> — <a href="api/#aggregation"><code>sheet.aggregate()</code> / <code>git sheet aggregate</code></a> for ad-hoc counts, sums and folds; <a href="recipes/rollups/">rollup sheets</a> for committed per-partition aggregates kept fresh by every gitsheets commit (<code>git sheet rollup --check</code>).</li>
 </ul>
 <h2 id="recipes">Recipes<a class="headerlink" href="#recipes" title="Permanent link"> ¶</a></h2>
 <ul>
 <li><strong><a href="recipes/typed-sheet-with-zod/">Typed sheet with Zod</a></strong> — Standard Schema validator threading, type-safe upsert/query.</li>
 <li><strong><a href="recipes/request-bound-transactions/">Request-bound transactions in Fastify</a></strong> — one commit per HTTP request, with structured trailers.</li>
 <li><strong><a href="recipes/secondary-indices/">Secondary indices</a></strong> — in-memory <code>findByEmail</code> / <code>findByForeignKey</code> patterns.</li>
+<li><strong><a href="recipes/rollups/">Rollups (stored aggregates)</a></strong> — a ledger partitioned by month with committed monthly totals; stamps, <code>materialize</code>, <code>--check</code> in CI.</li>
+<li><strong><a href="recipes/headless-data/">Headless data</a></strong> — the four layouts for keeping records off the branch you check out, and the git-config / env / flag layering that selects them.</li>
 <li><strong><a href="recipes/production-push-daemon/">Production push daemon</a></strong> — backoff config, auth strategies, monitoring.</li>
 <li><strong><a href="recipes/markdown-cms/">Markdown CMS pattern</a></strong> — content-typed sheets: records as <code>.md</code> with TOML frontmatter; lazy body loading.</li>
 <li><strong><a href="recipes/migrating-config/">Migrating a <code>[gitsheet.fields]</code> config</a></strong> — pre-v1.0 → v1.0 schema migration.</li>

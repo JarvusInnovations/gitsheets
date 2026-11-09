@@ -1481,7 +1481,7 @@
 <h1 id="concepts">Concepts<a class="headerlink" href="#concepts" title="Permanent link"> ¶</a></h1>
 <p>The vocabulary every consumer needs. Read this before the API reference or recipes.</p>
 <h2 id="repository">Repository<a class="headerlink" href="#repository" title="Permanent link"> ¶</a></h2>
-<p>A git repository that contains gitsheets-managed data. Opened with <code>openRepo({ gitDir? })</code>. The library reads and writes git objects through the underlying <code>git</code> CLI (via hologit).</p>
+<p>A git repository that contains gitsheets-managed data. Opened with <code>openRepo({ gitDir? })</code>. The library reads and writes git objects through its Rust core (gitoxide), shelling out to <code>git</code> only for push, fetch, and a few porcelain operations.</p>
 <p>A repository can contain ordinary code, docs, or anything else — gitsheets only cares about paths under <code>.gitsheets/</code> (sheet configs) and the data paths each sheet declares.</p>
 <div class="highlight"><pre><span></span><code><span class="k">import</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">openRepo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s1">'gitsheets'</span><span class="p">;</span>
 
@@ -1489,6 +1489,11 @@
 <span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">gitDir</span><span class="o">:</span><span class="w"> </span><span class="s1">'/path/to/.git'</span><span class="w"> </span><span class="p">});</span><span class="w"> </span><span class="c1">// explicit</span>
 </code></pre></div>
 <p>Fresh repositories (no commits yet) are supported.</p>
+<p>Every repository is bound to a <strong>default branch</strong> — the branch its sheets read, its transactions commit to, and <code>sync</code> / the push daemon / <code>merge</code> target. By default that is <code>HEAD</code>&rsquo;s branch. Two bindings keep records <strong>off the branch you check out</strong>, so no working tree of records can drift from the ref:</p>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">branch</span><span class="o">:</span><span class="w"> </span><span class="s1">'data'</span><span class="w"> </span><span class="p">});</span><span class="w">      </span><span class="c1">// an orphan data branch, or a bare data clone's branch</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">openRepo</span><span class="p">({</span><span class="w"> </span><span class="nx">submodule</span><span class="o">:</span><span class="w"> </span><span class="s1">'data'</span><span class="w"> </span><span class="p">});</span><span class="w">   </span><span class="c1">// a data submodule: its HEAD is the superproject's managed pointer</span>
+</code></pre></div>
+<p>Both resolve like any git setting — option, then <code>GITSHEETS_BRANCH</code> / <code>GITSHEETS_SUBMODULE</code>, then <code>gitsheets.branch</code> / <code>gitsheets.submodule</code> in git config — and the CLIs take <code>--branch</code> / <code>--submodule</code>. See the <a href="../recipes/headless-data/">headless data recipe</a>.</p>
 <h2 id="sheet">Sheet<a class="headerlink" href="#sheet" title="Permanent link"> ¶</a></h2>
 <p>A typed collection of records, declared by a TOML file at <code>.gitsheets/&lt;name&gt;.toml</code>. Each sheet has:</p>
 <ul>
@@ -1712,6 +1717,8 @@ git<span class="w"> </span>log<span class="w"> </span>--author<span class="o">=<
 <li><a href="../api/">API reference</a></li>
 <li><a href="../cli/">CLI reference</a></li>
 <li>The <a href="../#recipes">recipes</a> for concrete consumer-level examples</li>
+<li><a href="../recipes/headless-data/">Headless data</a> — default branch and submodule mode in practice</li>
+<li><a href="../recipes/rollups/">Rollups</a> — stored per-partition aggregates</li>
 </ul>
 
 

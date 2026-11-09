@@ -1287,6 +1287,11 @@ git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </sp
 <li><code>store.transact</code> committed the staged tree with your message, author, and
    trailers, and advanced <code>main</code> to the new commit.</li>
 </ol>
+<p>That commit landed on <code>main</code>, the branch you have checked out, so <code>git status</code>
+will now show the new record file as missing from your working tree until you
+<code>git checkout HEAD -- .</code> — gitsheets writes refs, not files. To keep records off
+the code branch entirely, bind the repository to a data branch or a data
+submodule: see the <a href="../recipes/headless-data/">headless data recipe</a>.</p>
 <p>See <a href="../cli/"><code>docs/cli.md</code></a> for the shell-side surface or the
 <a href="https://github.com/JarvusInnovations/gitsheets/tree/develop/specs"><code>specs/</code></a>
 directory for the full contract.</p>
