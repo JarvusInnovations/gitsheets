@@ -2,7 +2,6 @@
 // See specs/api/sheet.md and specs/concepts.md.
 
 import { execFile } from 'node:child_process';
-import { runInNewContext } from 'node:vm';
 import { promisify } from 'node:util';
 import { Readable } from 'node:stream';
 
@@ -33,6 +32,7 @@ import {
 import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
+import { compileSnippet, thrownMessage } from './sandbox.js';
 import {
   EMPTY_TREE_HASH,
   makeBlobHandle,
@@ -147,7 +147,18 @@ function joinTreePath(...parts: string[]): string {
     .join('/');
 }
 
-function buildSorter(rule: SortRule): (a: unknown, b: unknown) => number {
+// Compiled comparators, keyed by rule (a sheet's rules are fixed per config,
+// so each compiles into its own realm once rather than per normalizeRecord).
+const SORTER_CACHE = new Map<string, (a: unknown, b: unknown) => number>();
+
+/**
+ * Build the comparator for an array-field sort rule. Raw-JS and directive
+ * rules run in the deterministic snippet realm (specs/rust-core.md
+ * "Determinism rule for definition snippets"); a throw — including a call the
+ * realm forbids — is `ConfigError('config_invalid')` naming the field, as in
+ * the core.
+ */
+function buildSorter(field: string, rule: SortRule): (a: unknown, b: unknown) => number {
   if (rule === true) {
     return (a, b) =>
       String(a).localeCompare(String(b), undefined, {
@@ -159,29 +170,45 @@ function buildSorter(rule: SortRule): (a: unknown, b: unknown) => number {
   if (rule === false) {
     return () => 0;
   }
+  let body: string;
   if (typeof rule === 'string') {
-    return runInNewContext(`(a, b) => { ${rule} }`) as (a: unknown, b: unknown) => number;
-  }
-  // Array of field names → ASC for each
-  let directives: Array<[string, 'ASC' | 'DESC']>;
-  if (Array.isArray(rule)) {
-    directives = rule.map((f) => [f, 'ASC' as const]);
+    body = rule;
   } else {
-    directives = Object.entries(rule) as Array<[string, 'ASC' | 'DESC']>;
+    // Array of field names → ASC for each
+    let directives: Array<[string, 'ASC' | 'DESC']>;
+    if (Array.isArray(rule)) {
+      directives = rule.map((f) => [f, 'ASC' as const]);
+    } else {
+      directives = Object.entries(rule) as Array<[string, 'ASC' | 'DESC']>;
+    }
+    const exprLines: string[] = [];
+    for (const [f, dir] of directives) {
+      const sign = dir === 'ASC' ? 1 : -1;
+      exprLines.push(
+        `if ((a[${JSON.stringify(f)}]) < (b[${JSON.stringify(f)}])) return ${-1 * sign};`,
+        `if ((a[${JSON.stringify(f)}]) > (b[${JSON.stringify(f)}])) return ${1 * sign};`,
+      );
+    }
+    exprLines.push('return 0;');
+    body = exprLines.join('\n');
   }
-  const exprLines: string[] = [];
-  for (const [field, dir] of directives) {
-    const sign = dir === 'ASC' ? 1 : -1;
-    exprLines.push(
-      `if ((a[${JSON.stringify(field)}]) < (b[${JSON.stringify(field)}])) return ${-1 * sign};`,
-      `if ((a[${JSON.stringify(field)}]) > (b[${JSON.stringify(field)}])) return ${1 * sign};`,
-    );
+  let compiled = SORTER_CACHE.get(body);
+  if (compiled === undefined) {
+    compiled = compileSnippet(`(a, b) => { ${body} }`) as (a: unknown, b: unknown) => number;
+    SORTER_CACHE.set(body, compiled);
   }
-  exprLines.push('return 0;');
-  return runInNewContext(`(a, b) => { ${exprLines.join('\n')} }`) as (
-    a: unknown,
-    b: unknown,
-  ) => number;
+  const comparator = compiled;
+  return (a, b) => {
+    try {
+      return comparator(a, b);
+    } catch (err) {
+      throw new ConfigError(
+        'config_invalid',
+        `array-field sort comparator for field ${JSON.stringify(field)} failed: ${thrownMessage(err)}`,
+        { cause: err },
+      );
+    }
+  };
 }
 
 /**
@@ -1761,7 +1788,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     for (const [field, fcfg] of Object.entries(config.fields)) {
       const value = out[field];
       if (fcfg.sort !== undefined && Array.isArray(value)) {
-        const sorter = buildSorter(fcfg.sort);
+        const sorter = buildSorter(field, fcfg.sort);
         out[field] = [...value].sort(sorter);
       }
     }

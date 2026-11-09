@@ -1,9 +1,8 @@
 // Path template parser + renderer + query-tree traversal.
 // See specs/behaviors/path-templates.md for the contract.
 
-import { runInNewContext } from 'node:vm';
-
 import { ConfigError, PathTemplateError } from '../errors.js';
+import { compileSnippet, thrownMessage } from '../sandbox.js';
 
 // --- Public types ---
 
@@ -99,12 +98,14 @@ function rejectInvalidChars(
 
 const NOT_DEFINED_RE = / is not defined$/;
 
-function compileExpression(source: string): (record: RecordLike) => unknown {
+function compileExpression(source: string, template: string): (record: RecordLike) => unknown {
+  // Compiled in the deterministic realm (specs/rust-core.md "Determinism rule
+  // for definition snippets"), held to the core engine's results.
   let compiled: (record: RecordLike) => unknown;
   try {
-    compiled = runInNewContext(
-      `(record) => { with (record) { return (${source}) } }`,
-    ) as (record: RecordLike) => unknown;
+    compiled = compileSnippet(`(record) => { with (record) { return (${source}) } }`) as (
+      record: RecordLike,
+    ) => unknown;
   } catch (err) {
     throw new PathTemplateError(
       'path_render_failed',
@@ -120,11 +121,23 @@ function compileExpression(source: string): (record: RecordLike) => unknown {
       return compiled(record);
     } catch (err) {
       // Per spec: missing identifiers are "un-renderable", not fatal —
-      // that lets queries with partial fields walk the tree fully.
-      if (err instanceof ReferenceError && NOT_DEFINED_RE.test(err.message)) {
+      // that lets queries with partial fields walk the tree fully. The error
+      // comes from the snippet's realm, so match by name, not instanceof.
+      if (
+        err !== null &&
+        typeof err === 'object' &&
+        (err as { name?: unknown }).name === 'ReferenceError' &&
+        NOT_DEFINED_RE.test(String((err as { message?: unknown }).message))
+      ) {
         return undefined;
       }
-      throw err;
+      // Any other throw — including a call the realm forbids (Date.now(),
+      // Math.random(), argument-less new Date()) — fails the render.
+      throw new PathTemplateError(
+        'path_render_failed',
+        `expression \${{ ${source.trim()} }} in ${JSON.stringify(template)} failed: ${thrownMessage(err)}`,
+        { cause: err },
+      );
     }
   };
 }
@@ -456,7 +469,7 @@ function parseTemplateString(source: string): readonly Component[] {
         segments[segments.length - 1]!.push({
           kind: 'expression',
           source: exprSource,
-          evaluate: compileExpression(exprSource),
+          evaluate: compileExpression(exprSource, source),
         });
       }
     } else if (normalized[i] === '/') {
