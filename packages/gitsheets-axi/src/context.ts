@@ -20,13 +20,17 @@ export interface GitsheetsContext {
 export interface GlobalFlags {
   /** `--branch <name>`: the repository's default branch (specs/behaviors/default-branch.md). */
   branch?: string;
+  /** `--submodule <path>`: submodule mode — the data submodule every command reads/writes. */
+  submodule?: string;
 }
 
 /**
- * Pull the global flags (`--branch <name>` / `--branch=<name>`) out of
+ * Pull the global flags (`--branch <name>` / `--branch=<name>`, and
+ * `--submodule <path>` / `--submodule=<path>`) out of
  * `argv`, wherever they appear — after the command per AXI convention, or
  * before it — and return the rest for the command parser.
- * `GITSHEETS_BRANCH` and `gitsheets.branch` are read by `openRepo` itself.
+ * `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` and `gitsheets.branch` /
+ * `gitsheets.submodule` are read by `openRepo` itself.
  * See specs/behaviors/default-branch.md "CLI".
  */
 export function parseGlobalFlags(argv: readonly string[]): { flags: GlobalFlags; rest: string[] } {
@@ -49,6 +53,21 @@ export function parseGlobalFlags(argv: readonly string[]): { flags: GlobalFlags;
       flags.branch = arg.slice('--branch='.length);
       continue;
     }
+    if (arg === '--submodule') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new AxiError('--submodule expects a submodule path', 'VALIDATION_ERROR', [
+          'Example: gitsheets-axi query users --submodule data',
+        ]);
+      }
+      flags.submodule = value;
+      i++;
+      continue;
+    }
+    if (arg.startsWith('--submodule=')) {
+      flags.submodule = arg.slice('--submodule='.length);
+      continue;
+    }
     rest.push(arg);
   }
   return { flags, rest };
@@ -62,7 +81,10 @@ export function createContext(globals: GlobalFlags = {}): GitsheetsContext {
     if (cached !== undefined) return cached;
     if (cachedError !== undefined) throw cachedError;
     try {
-      cached = await openRepo(globals.branch !== undefined ? { branch: globals.branch } : {});
+      cached = await openRepo({
+        ...(globals.branch !== undefined ? { branch: globals.branch } : {}),
+        ...(globals.submodule !== undefined ? { submodule: globals.submodule } : {}),
+      });
       return cached;
     } catch (error) {
       cached = null;
@@ -85,6 +107,12 @@ export function createContext(globals: GlobalFlags = {}): GitsheetsContext {
         return result;
       } catch (error) {
         if (error instanceof AxiError) throw error;
+        // Submodule mode: a bad path, or a submodule that isn't set up yet.
+        if (error instanceof ConfigError && error.message.startsWith('openRepo({ submodule })')) {
+          throw new AxiError(error.message, error.code === 'config_missing' ? 'CONFIG_MISSING' : 'CONFIG_INVALID', [
+            'Set the submodule up with no record checkout: git sheet submodule init <path> [--url <url>]',
+          ]);
+        }
         // A bad default-branch binding (--branch / GITSHEETS_BRANCH /
         // gitsheets.branch naming a tag, commit, or malformed name).
         if (error instanceof ConfigError && error.code === 'config_invalid') {
