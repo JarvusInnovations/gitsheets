@@ -151,8 +151,10 @@ prefix of the source's path are rejected when the sheet is opened.
   rollup any more; delete the directory in the same commit if they should go.
 - **A bad rollup config only blocks commits that touch it** — its source's
   records, or the configs — with the `ConfigError` opening it would raise.
-- **Rollup roots stay clear of every other sheet's root** (`config_invalid`
-  otherwise), so a rollup never lands inside data another sheet reads.
+- **Rollup roots stay clear of every rollup source's root and every other
+  rollup's** (`config_invalid` otherwise), so a rollup never lands inside a
+  partition it stamps. A source sheet needs its own `root` (not `.`) to have
+  a rollup; ordinary sheets may overlap as usual.
 - **Raw writes can forge a stamp.** A `tx.writeFile` under a rollup root is
   served as-is while its stamps match; `git sheet rollup --check` compares
   bytes and catches it.
