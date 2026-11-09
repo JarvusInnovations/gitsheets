@@ -13,6 +13,7 @@ ESM-only. `import { … } from 'gitsheets'`. Targets Node ≥ 20 / Bun ≥ 1, `s
   - [Attachments](#attachments) — get / set / delete / iterator
   - [Indexing](#indexing) — defineIndex / findByIndex
   - [Diff](#diff) — diffFrom
+  - [Aggregation](#aggregation) — aggregate
 - [Transaction](#transaction) — the handler arg of `repo.transact`
 - [openStore + Store](#openstore--store) — typed multi-sheet wrapper
 - [PushDaemon](#pushdaemon) — async push to remote
@@ -34,6 +35,7 @@ import {
   // error classes
   GitsheetsError, ConfigError, ValidationError, TransactionError,
   IndexError, RefError, PathTemplateError, NotFoundError,
+  AggregationError,
 
   // utilities
   mergePatch, validateRecord,
@@ -48,6 +50,7 @@ import type {
   SheetConfig, SheetFieldConfig, SortRule, UpsertResult, UpsertOptions,
   IndexKeyFn, DefineIndexOptions,
   QueryFilter, RangeFilter, QueryOptions, DiffStatus, DiffOptions, DiffChange,
+  AggregateSpec, AggregatesSpec, AggregateModifiers, AggregateOptions,
   AttachmentBlobHandle, AttachmentEntry,
   Format, FormatConfig,
   OpenStoreOptions, Store, StoreTx, StoreTransactFn, ValidatorMap, InferRecord,
@@ -255,6 +258,31 @@ Scope: matches the sheet's storage format (`.toml` for TOML sheets, `.md` for ma
 
 Throws `RefError(ref_not_found)` if `srcCommitHash` doesn't resolve.
 
+### Aggregation
+
+`sheet.aggregate(filter, aggregates, opts?)` → `Promise<Record<string, unknown>>`. Reach for it instead of `queryAll` + a JS reduce: the fold runs in the core (identical across Node and Python), reads body-less, and folds in canonical path order.
+
+```typescript
+const r = await sheet.aggregate(
+  { postedAt: { $gte: '2026-01-01' } },               // any query filter (functions allowed); undefined or {} = all
+  {
+    n: { count: true },
+    total: { sum: 'amountCents' },                     // integer when every value is; else the float fold
+    mean: { avg: 'amountCents' },                      // float
+    range: { min: 'postedAt' },                        // number / string / datetime, one kind per field
+    teams: { distinct: 'team' },                       // sorted unique scalars
+    byStatus: { count: true, groupBy: 'status' },      // → { posted: 1390, pending: 12 }
+    refunds: { sum: 'amountCents', where: { kind: 'refund' } },
+    ids: { reduce: 'acc.push(record.id); return acc;', initial: [], finalize: 'return acc.length;' },
+  },
+);
+```
+
+- `where` takes values and ranges only (no functions). `groupBy` keys by the field's string form (string / integer / boolean values only); a grouped result is always an object.
+- Nothing to fold → the aggregate is omitted, except `count` / `sum` (`0`).
+- `reduce` / `finalize` are JS **bodies** (use `return`), run in the core's embedded engine — keep them pure: no clock, randomness, or I/O (required but not yet enforced, see #354; runaway loops hit runtime limits → `AggregationError`). `acc` starts at `initial` (required). Integral numbers come back as integers (`1.0` → `1`).
+- Throws `TypeError` for a malformed spec or a body-field reference (markdown sheets); `AggregationError` (`aggregation_failed`, `.sheet`, `.aggregate`) for mixed kinds under `min`/`max`/`distinct`, a throwing `reduce`, or a non-TOML result.
+
 ## Transaction
 
 The handler argument of `repo.transact`. Don't construct directly.
@@ -380,6 +408,7 @@ Subclasses + codes:
 | `RefError` | `ref_not_found`, `not_an_ancestor` |
 | `PathTemplateError` | `path_render_failed`, `path_invalid_chars` |
 | `NotFoundError` | `record_not_found` |
+| `AggregationError` | `aggregation_failed` (carries `sheet`, `aggregate`, `partition?`) |
 
 Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 

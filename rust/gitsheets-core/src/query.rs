@@ -191,14 +191,45 @@ pub fn compare_values(field: &Value, bound: &Value) -> Option<Ordering> {
     match (field, bound) {
         (Value::Integer(a), Value::Integer(b)) => Some(a.cmp(b)),
         (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
-        (Value::Integer(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
-        (Value::Float(a), Value::Integer(b)) => a.partial_cmp(&(*b as f64)),
+        (Value::Integer(a), Value::Float(b)) => cmp_int_float(*a, *b),
+        (Value::Float(a), Value::Integer(b)) => cmp_int_float(*b, *a).map(Ordering::reverse),
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
         (Value::Datetime(a), Value::Datetime(b)) => {
             Some(datetime_instant(a)?.cmp(&datetime_instant(b)?))
         }
         (Value::Datetime(a), Value::String(b)) => Some(datetime_instant(a)?.cmp(&iso_instant(b)?)),
         _ => None,
+    }
+}
+
+/// Exact ordering of an integer against a float — no `as f64` rounding, so
+/// `2^53 + 1` is greater than `2^53` as a float rather than equal to it. NaN is
+/// incomparable.
+fn cmp_int_float(i: i64, f: f64) -> Option<Ordering> {
+    if f.is_nan() {
+        return None;
+    }
+    // 2^63 is exactly representable; every i64 is below it.
+    const TWO_63: f64 = 9_223_372_036_854_775_808.0;
+    if f >= TWO_63 {
+        return Some(Ordering::Less);
+    }
+    if f < -TWO_63 {
+        return Some(Ordering::Greater);
+    }
+    let t = f.trunc();
+    // |t| < 2^63 (or t == -2^63), so the conversion is exact.
+    match i.cmp(&(t as i64)) {
+        Ordering::Equal => {
+            if f > t {
+                Some(Ordering::Less)
+            } else if f < t {
+                Some(Ordering::Greater)
+            } else {
+                Some(Ordering::Equal)
+            }
+        }
+        other => Some(other),
     }
 }
 
@@ -216,6 +247,35 @@ impl Filter {
     }
     pub fn push(&mut self, field: impl Into<String>, pred: FilterPred) {
         self.0.push((field.into(), pred));
+    }
+}
+
+impl Filter {
+    /// Parse a declarative filter table — the binding-neutral `Value` form
+    /// of the query grammar without predicate snippets: a literal is an
+    /// equality clause, a `$`-keyed table a range ([`Range::from_table`]
+    /// validates the vocabulary), any other table a nested-table filter. This
+    /// is the shape an aggregate's `where` takes (spec:
+    /// `behaviors/aggregation.md` "Modifiers"), in a sheet config and at a
+    /// call site alike. A malformed range is `ConfigInvalid`.
+    pub fn from_table(map: &indexmap::IndexMap<String, Value>) -> Result<Filter> {
+        let mut filter = Filter::new();
+        for (key, value) in map {
+            let pred = match value {
+                Value::Table(sub) if sub.keys().any(|k| k.starts_with('$')) => {
+                    FilterPred::Range(Range::from_table(sub)?)
+                }
+                Value::Table(sub) => FilterPred::Nested(Filter::from_table(sub)?),
+                other => FilterPred::Equals(other.clone()),
+            };
+            filter.push(key.clone(), pred);
+        }
+        Ok(filter)
+    }
+
+    /// The top-level field names this filter constrains.
+    pub fn fields(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|(k, _)| k.as_str())
     }
 }
 
@@ -862,6 +922,18 @@ mod tests {
         assert_eq!(compare_values(&Value::Integer(3), &Value::Integer(5)), Some(Less));
         assert_eq!(compare_values(&Value::Integer(30), &Value::Float(30.0)), Some(Equal));
         assert_eq!(compare_values(&Value::Float(2.5), &Value::Integer(2)), Some(Greater));
+        // Exact int/float comparison: 2^53 + 1 is not the float 2^53.
+        let big = (1i64 << 53) + 1;
+        assert_eq!(compare_values(&Value::Integer(big), &Value::Float((1i64 << 53) as f64)), Some(Greater));
+        assert_eq!(compare_values(&Value::Float((1i64 << 53) as f64), &Value::Integer(big)), Some(Less));
+        assert_eq!(compare_values(&Value::Integer(-3), &Value::Float(-2.5)), Some(Less));
+        assert_eq!(compare_values(&Value::Integer(-2), &Value::Float(-2.5)), Some(Greater));
+        assert_eq!(compare_values(&Value::Integer(i64::MAX), &Value::Float(9.3e18)), Some(Less));
+        assert_eq!(compare_values(&Value::Integer(i64::MIN), &Value::Float(-1e19)), Some(Greater));
+        assert_eq!(compare_values(&Value::Integer(1), &Value::Float(f64::NAN)), None);
+        // …which tightens range filters too.
+        let r = Range::from_table(&range_table(&[("$gt", Value::Float((1i64 << 53) as f64))])).unwrap();
+        assert!(r.matches(Some(&Value::Integer(big))));
         assert_eq!(compare_values(&s("b"), &s("a")), Some(Greater));
         assert_eq!(
             compare_values(&dt("2026-01-01T00:00:00Z"), &dt("2025-12-31T19:00:00-05:00")),

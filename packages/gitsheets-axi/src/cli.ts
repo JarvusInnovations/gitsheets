@@ -9,6 +9,7 @@ import { sheetsCommand, SHEETS_HELP } from './commands/sheets.js';
 import { queryCommand, QUERY_HELP } from './commands/query.js';
 import { countCommand, COUNT_HELP } from './commands/count.js';
 import { distinctCommand, DISTINCT_HELP } from './commands/distinct.js';
+import { aggregateCommand, AGGREGATE_HELP } from './commands/aggregate.js';
 import { readCommand, READ_HELP } from './commands/read.js';
 import { upsertCommand, UPSERT_HELP } from './commands/upsert.js';
 import { patchCommand, PATCH_HELP } from './commands/patch.js';
@@ -32,9 +33,9 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[20]:
+commands[21]:
   (none)=home, sheets, query, count,
-  distinct, read, upsert, patch, rename,
+  distinct, aggregate, read, upsert, patch, rename,
   delete, check, diff, normalize,
   init, infer, migrate-config,
   attachment, contracts, push, setup
@@ -46,6 +47,7 @@ examples:
   gitsheets-axi count repos --filter archived=true
   gitsheets-axi query repos --group-by target_team
   gitsheets-axi distinct repos disposition
+  gitsheets-axi aggregate tx --agg total=sum:amountCents --group-by status
   gitsheets-axi upsert users --data '{"slug":"jane","email":"jane@x.org"}'
   gitsheets-axi patch users '{"slug":"jane"}' --patch '{"name":"Jane"}'
   gitsheets-axi check users users/jane.toml --fix
@@ -60,6 +62,7 @@ const COMMAND_HELP: Record<string, string> = {
   query: QUERY_HELP,
   count: COUNT_HELP,
   distinct: DISTINCT_HELP,
+  aggregate: AGGREGATE_HELP,
   read: READ_HELP,
   upsert: UPSERT_HELP,
   patch: PATCH_HELP,
@@ -84,6 +87,7 @@ const COMMANDS: Record<string, CommandFn> = {
   query: queryCommand,
   count: countCommand,
   distinct: distinctCommand,
+  aggregate: aggregateCommand,
   read: readCommand,
   upsert: upsertCommand,
   patch: patchCommand,

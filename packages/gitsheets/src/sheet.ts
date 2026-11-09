@@ -585,6 +585,66 @@ export interface QueryOptions {
   readonly withBody?: boolean;
 }
 
+// --- Aggregation (specs/behaviors/aggregation.md) ---
+
+/** Modifiers allowed on every aggregate form. */
+export interface AggregateModifiers {
+  /**
+   * An equality / range filter in the `query` grammar (values and ranges; no
+   * functions), applied before aggregating.
+   */
+  readonly where?: Record<string, unknown>;
+  /** Group by this field's string form; the result becomes a table keyed by group. */
+  readonly groupBy?: string;
+}
+
+/**
+ * One aggregate in the grammar of specs/behaviors/aggregation.md § "Aggregate
+ * forms": a declarative form (`count` / `sum` / `avg` / `min` / `max` /
+ * `distinct`) or the `reduce` escape hatch, whose snippets run in the core's
+ * embedded engine (never host-side), so every binding gets the same answer.
+ */
+export type AggregateSpec = AggregateModifiers &
+  (
+    | { readonly count: true }
+    | { readonly sum: string }
+    | { readonly avg: string }
+    | { readonly min: string }
+    | { readonly max: string }
+    | { readonly distinct: string }
+    | {
+        /** Body of `(acc, record) => { … }`, called per record in canonical path order. */
+        readonly reduce: string;
+        /** The starting accumulator — any TOML value. */
+        readonly initial: unknown;
+        /** Optional body of `(acc) => { … }`, run once at the end. */
+        readonly finalize?: string;
+      }
+  );
+
+/** An aggregates table: result name → spec. */
+export type AggregatesSpec = Readonly<Record<string, AggregateSpec>>;
+
+/** Options for `Sheet.aggregate`. */
+export interface AggregateOptions {
+  /**
+   * Optional AbortSignal. Checked before the call starts and before the
+   * result is returned; an abort throws `signal.reason`.
+   */
+  readonly signal?: AbortSignal;
+}
+
+/** Does a filter carry a function predicate anywhere (nested included)? */
+function filterHasFunctions(filter: RecordLike): boolean {
+  for (const v of Object.values(filter)) {
+    if (typeof v === 'function') return true;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+      if (filterHasFunctions(v as RecordLike)) return true;
+    }
+  }
+  return false;
+}
+
 // --- Attachments iterator (#140) ---
 
 /**
@@ -1260,6 +1320,89 @@ export class Sheet<T extends RecordLike = RecordLike> {
     let n = 0;
     for await (const _ of this.query(filter, { withBody: false })) n++;
     return n;
+  }
+
+  /**
+   * Ad-hoc aggregation (specs/behaviors/aggregation.md § "Ad-hoc
+   * aggregation"): one value per named aggregate, computed in the core over
+   * the records matching `filter` — pruned by the path template like `query`,
+   * read body-less, folded in canonical path order. Nothing is persisted.
+   *
+   * `filter` takes everything `query` does. Function predicates can't cross
+   * the FFI, so when the filter carries any, the matching record paths are
+   * collected host-side first and the core folds over its own reads of
+   * exactly those records (so the fold never sees the host's lossy number
+   * projection). Works on a tx-bound sheet against the private tree.
+   *
+   * Throws `TypeError` for a malformed spec or a body-field reference,
+   * `AggregationError` (`aggregation_failed`) for a data-dependent failure.
+   */
+  async aggregate(
+    filter: QueryFilter<T> | undefined,
+    aggregates: AggregatesSpec,
+    opts: AggregateOptions = {},
+  ): Promise<Record<string, unknown>> {
+    if (typeof filter === 'function') {
+      throw new TypeError('Sheet.aggregate() does not accept a function filter — pass a filter object');
+    }
+    if (aggregates === null || typeof aggregates !== 'object' || Array.isArray(aggregates)) {
+      throw new TypeError('Sheet.aggregate: aggregates must be an object mapping result names to specs');
+    }
+    const fullFilter = (filter ?? {}) as RecordLike;
+    assertWellFormedOperators(fullFilter);
+
+    const { signal } = opts;
+    if (signal?.aborted) throwAborted(signal);
+
+    const config = await this.readConfig();
+    const format = this.#getFormat(config);
+    const bodyField = config.format.body;
+    if (bodyField !== undefined && bodyField in fullFilter) {
+      throw new TypeError(
+        `Sheet.aggregate: filter references body field ${JSON.stringify(bodyField)} — aggregates read records body-less`,
+      );
+    }
+
+    // Host-side predicates admit records first; the core folds over exactly
+    // those paths (re-read in the core).
+    let paths: string[] | null = null;
+    if (filterHasFunctions(fullFilter)) {
+      paths = [];
+      const q = signal !== undefined ? { withBody: false, signal } : { withBody: false };
+      for await (const record of this.query(filter, q)) {
+        paths.push((record as Record<symbol, unknown>)[RECORD_PATH_KEY] as string);
+      }
+    }
+    const coreFilter = stripFilterFunctions(fullFilter);
+    if (signal?.aborted) throwAborted(signal);
+
+    let result: Record<string, unknown>;
+    if (this.#transaction !== undefined) {
+      this.#ensureCoreSheetOpened();
+      result = callCore(() =>
+        this.#transaction!.coreTx.aggregate(this.#name, coreFilter, aggregates, paths),
+      ) as Record<string, unknown>;
+    } else {
+      const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
+      const base = joinTreePath(this.#dataBase, this.#effectiveRoot(config));
+      result = callCore(() =>
+        addon.recordAggregate(
+          this.#gitDir,
+          treeRef,
+          this.#name,
+          base,
+          config.path,
+          coreFilter,
+          aggregates,
+          format.extension,
+          bodyField ?? null,
+          config.format.title ?? null,
+          paths,
+        ),
+      ) as Record<string, unknown>;
+    }
+    if (signal?.aborted) throwAborted(signal);
+    return result;
   }
 
   /**

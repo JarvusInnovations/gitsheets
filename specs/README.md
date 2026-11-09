@@ -48,6 +48,7 @@ specs/
     ├── freshness.md
     ├── indexing.md
     ├── push-sync.md
+    ├── aggregation.md
     ├── attachments.md
     ├── content-types.md
     └── patch-semantics.md

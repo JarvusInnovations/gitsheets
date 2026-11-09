@@ -89,7 +89,7 @@ List records.
 | `"k in (a,b,c)"` | value is one of the listed strings |
 | `k:present` / `k:empty` | field exists and is non-empty / is absent, null, `""`, or `[]` |
 
-`--group-by <field>` aggregates over the **filtered** set (ignores `--limit`), biggest bucket first: `groups[K]{value,count}:`.
+`--group-by <field>` aggregates over the **filtered** set (ignores `--limit`), biggest bucket first: `groups[K]{value,count}:`. Any value kind groups (Dates as ISO strings); records missing the field count under the empty value. For sums, extremes, or averages per group, use `aggregate … --group-by`.
 
 **Default schema is format-aware:**
 
@@ -117,6 +117,31 @@ Record count. With no `--filter`, counts candidate tree paths **without parsing*
 ### `gitsheets-axi distinct <sheet> <field> [--filter expr ...]`
 
 Unique values of `<field>` with counts, sorted alphabetically (`values[K]{value,count}:`). `query --group-by <field>` is the same facets ordered by count. Kills the `--ndjson-out | jq 'group_by'` loop for "what values does this field take?".
+
+### `gitsheets-axi aggregate <sheet> --agg <name>=<form>[:<field>] ... [flags]`
+
+Named aggregates computed in the gitsheets core — the same fold as the library's `sheet.aggregate` — over the filtered records (body-less, canonical path order). One call answers "how many / how much / what range / which values".
+
+| Flag | Notes |
+| --- | --- |
+| `--agg <name>=<form>[:<field>]` | Repeatable, at least one: `n=count`, `total=sum:amountCents`, `lo=min:f`, `hi=max:f`, `mean=avg:f`, `vals=distinct:f` |
+| `--group-by <field>` | Group every aggregate: each result becomes a table keyed by the field's string form |
+| `--filter <expr>` | Same DSL as `query` (the clauses pick the records, date-bucket ranges also prune; the core folds over the picked records). A body-field clause on a markdown sheet → `VALIDATION_ERROR` |
+| `--prefix <p>` | Tenant sub-tree scope |
+
+```
+$ gitsheets-axi aggregate tx --agg n=count --agg total=sum:amountCents --group-by status
+sheet: tx
+results:
+  n:
+    pending: 12
+    posted: 1390
+  total:
+    pending: -500
+    posted: 98231600
+```
+
+`sum` stays an integer when every value is one (store money as integer cents). An aggregate with nothing to fold is omitted, except `count` and `sum` (`0`). Mixed kinds in one field under `min`/`max`/`distinct` → `AGGREGATION_FAILED`. Custom folds (`reduce`) are library-only.
 
 ### `gitsheets-axi read <sheet> <path> [--full]`
 

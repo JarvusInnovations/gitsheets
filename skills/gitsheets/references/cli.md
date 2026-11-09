@@ -7,6 +7,7 @@
 - [Global flags](#global-flags)
 - [upsert](#upsert) — insert or update records
 - [query](#query) — read records
+- [aggregate](#aggregate) — count / sum / min / max / avg / distinct
 - [read](#read) — read a single record
 - [edit](#edit) — open a record in $EDITOR
 - [check](#check) — validate + optionally fix a working-tree file
@@ -90,6 +91,21 @@ gitsheets query posts --filter 'publishedAt>=2026-01-01' --filter 'publishedAt<2
 - `--body` / `--no-body` — for content-typed (markdown/mdx) sheets, include or suppress the body field. Default `true`. No effect on TOML sheets.
 
 TOML output emits a `[[records]]` array round-trippable through `upsert --format=toml`.
+
+## aggregate
+
+```bash
+gitsheets aggregate transactions --agg count=count --agg total=sum:amountCents
+gitsheets aggregate transactions --filter 'postedAt>=2026-01-01' --agg total=sum:amountCents --group-by status
+gitsheets aggregate repos --agg teams=distinct:targetTeam --format toml
+```
+
+- `--agg <name>=<form>[:<field>]` (repeatable, at least one) — `count`, or `sum` / `min` / `max` / `avg` / `distinct` with a field
+- `--filter` — as on `query`
+- `--group-by <field>` — groups every aggregate; each result becomes an object keyed by the field's string form
+- `--format <json|toml>` — default `json`: one object with a key per `--agg` name
+
+Computed in the core, body-less, canonical path order. Empty aggregates are omitted except `count` / `sum` (`0`). `reduce` is library-only.
 
 ## read
 

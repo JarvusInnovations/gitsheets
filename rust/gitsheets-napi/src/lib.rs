@@ -29,6 +29,8 @@
 
 use chrono::{Datelike, Timelike};
 use gitsheets_core::diff::{MergePatch, PatchOp, PatchValue};
+use gitsheets_core::aggregate;
+use std::collections::HashSet;
 use gitsheets_core::engine::Engine;
 use gitsheets_core::index::{MultiIndex, UniqueIndex};
 use gitsheets_core::path_template::Template;
@@ -49,7 +51,7 @@ fn tree_cache() -> &'static TreeCache {
     TREE_CACHE.with(|c| *c)
 }
 use napi::bindgen_prelude::*;
-use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, ValueType};
+use napi::{Env, JsDate, JsFunction, JsObject, JsString, JsUnknown, NapiRaw, Property, PropertyAttributes, ValueType};
 use napi_derive::napi;
 use toml::value::{Date as TomlDate, Datetime as TomlDatetime, Offset, Time as TomlTime};
 
@@ -216,7 +218,20 @@ impl ToNapiValue for JsValue {
                 for (k, v) in map {
                     let child_raw = JsValue::to_napi_value(env, JsValue(v))?;
                     let child = JsUnknown::from_napi_value(env, child_raw)?;
-                    obj.set_named_property(&k, child)?;
+                    if k == "__proto__" {
+                        // `[[Set]]` of `__proto__` would hit Object.prototype's
+                        // accessor (repointing the prototype, or silently
+                        // dropping a primitive) — define an own data property.
+                        obj.define_properties(&[Property::new(&k)?
+                            .with_value(&child)
+                            .with_property_attributes(
+                                PropertyAttributes::Writable
+                                    | PropertyAttributes::Enumerable
+                                    | PropertyAttributes::Configurable,
+                            )])?;
+                    } else {
+                        obj.set_named_property(&k, child)?;
+                    }
                 }
                 JsObject::to_napi_value(env, obj)
             }
@@ -1097,6 +1112,164 @@ fn content_format(extension: &str, body_field: String, title_field: Option<Strin
     }
 }
 
+// ── ad-hoc aggregation (spec: behaviors/aggregation.md) ──────────────────────
+
+/// Throw a JS `TypeError` (a malformed aggregate spec at the call site) and
+/// return the sentinel that tells napi the exception is already pending.
+fn throw_type_error(env: &Env, message: &str) -> Error {
+    match env.throw_type_error(message, None) {
+        Ok(()) => Error::new(Status::PendingException, message.to_string()),
+        Err(e) => e,
+    }
+}
+
+/// Marshal the aggregates object and prepare it against `engine`: parse,
+/// reject body-field references (the filter's too), compile `reduce` /
+/// `finalize`. Every failure is a call-site `TypeError`.
+fn prepare_aggregates(
+    env: &Env,
+    aggregates: JsUnknown,
+    body_field: Option<&str>,
+    filter: &Filter,
+) -> Result<aggregate::Prepared> {
+    precheck_aggregates(env, &aggregates)?;
+    let spec = unsafe { JsValue::from_napi_value(env.raw(), aggregates.raw()) }
+        .map_err(|e| throw_type_error(env, &format!("aggregate spec: {}", e.reason)))?;
+    aggregate::prepare(&spec.0, body_field, Some(filter)).map_err(|e| throw_type_error(env, e.message()))
+}
+
+/// Host-shape checks the value marshal would otherwise blur: an explicit
+/// `initial: null` (the marshal drops null keys, so the core would report it
+/// missing) and a function inside `where` (the marshal's generic "cannot
+/// marshal" error names no key).
+fn precheck_aggregates(env: &Env, aggregates: &JsUnknown) -> Result<()> {
+    if aggregates.get_type()? != ValueType::Object || aggregates.is_array()? {
+        return Ok(()); // the core reports the shape
+    }
+    let table = unsafe { JsObject::from_napi_value(env.raw(), aggregates.raw())? };
+    let names = table.get_property_names()?;
+    for i in 0..names.get_array_length()? {
+        let name: JsString = names.get_element(i)?;
+        let name = name.into_utf8()?.as_str()?.to_owned();
+        let spec: JsUnknown = table.get_named_property(&name)?;
+        if spec.get_type()? != ValueType::Object || spec.is_array()? {
+            continue;
+        }
+        let spec = unsafe { JsObject::from_napi_value(env.raw(), spec.raw())? };
+        if spec.has_own_property("initial")? {
+            let initial: JsUnknown = spec.get_named_property("initial")?;
+            if matches!(initial.get_type()?, ValueType::Null | ValueType::Undefined) {
+                return Err(throw_type_error(
+                    env,
+                    &format!("aggregate spec: {name:?}: `initial` must be a TOML value, got null"),
+                ));
+            }
+        }
+        if spec.has_own_property("where")? {
+            let w: JsUnknown = spec.get_named_property("where")?;
+            if w.get_type()? == ValueType::Object && !w.is_array()? && !w.is_date()? {
+                let w = unsafe { JsObject::from_napi_value(env.raw(), w.raw())? };
+                if let Some(key) = function_key(env, &w, "")? {
+                    return Err(throw_type_error(
+                        env,
+                        &format!(
+                            "aggregate spec: {name:?}: `where` key {key:?} is a function — `where` takes values and ranges only"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The (dotted) key of the first function-valued entry in a filter object.
+fn function_key(env: &Env, obj: &JsObject, prefix: &str) -> Result<Option<String>> {
+    let names = obj.get_property_names()?;
+    for i in 0..names.get_array_length()? {
+        let key: JsString = names.get_element(i)?;
+        let key = key.into_utf8()?.as_str()?.to_owned();
+        let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
+        let v: JsUnknown = obj.get_named_property(&key)?;
+        match v.get_type()? {
+            ValueType::Function => return Ok(Some(path)),
+            ValueType::Object if !v.is_array()? && !v.is_date()? => {
+                let sub = unsafe { JsObject::from_napi_value(env.raw(), v.raw())? };
+                if let Some(found) = function_key(env, &sub, &path)? {
+                    return Ok(Some(found));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+fn admitted_paths(paths: Option<Vec<String>>) -> Option<HashSet<String>> {
+    paths.map(|p| p.into_iter().collect())
+}
+
+/// Ad-hoc aggregation over the sheet under `base` in `treeRef`: the records
+/// matching `filter` (pruned by `template`, read body-less, the filter
+/// applied in the core — the same forms `recordQuery` takes) folded in
+/// canonical path order by the `aggregates` table (count / sum / avg / min /
+/// max / distinct / reduce, each with optional `where` / `groupBy`). Returns
+/// one value per aggregate name. `paths`, when given, restricts the
+/// contributing set to those record paths (the binding admits records with
+/// host-side predicates first). A malformed spec throws `TypeError`; a
+/// data-dependent failure throws `AggregationError` (`aggregation_failed`)
+/// carrying `sheet` and `aggregate`. Batch-first: one FFI crossing.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn record_aggregate(
+    env: Env,
+    git_dir: String,
+    tree_ref: String,
+    sheet: String,
+    base: String,
+    template: String,
+    filter: JsObject,
+    aggregates: JsUnknown,
+    extension: Option<String>,
+    body_field: Option<String>,
+    title_field: Option<String>,
+    paths: Option<Vec<String>>,
+) -> Result<JsValue> {
+    let ext = extension_of(extension);
+    let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+    let parsed = parse_filter(&env, &filter, &mut engine)?;
+    let prepared = prepare_aggregates(&env, aggregates, body_field.as_deref(), &parsed)?;
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let ctx = Context::new(&repo, tree_cache());
+    let mut tree = record::resolve_tree(&repo, &tree_ref).map_err(|err| raise_core_error(&env, &err))?;
+    let compiled = Template::compile(&template, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
+    let format = match body_field {
+        Some(body) => content_format(&ext, body, title_field),
+        None => FormatConfig {
+            kind: FormatKind::Toml,
+            body: None,
+            title: None,
+            normalize: true,
+        },
+    };
+    let only = admitted_paths(paths);
+    aggregate::aggregate_records(
+        &ctx,
+        &mut tree,
+        &base,
+        &compiled,
+        &parsed,
+        &mut engine,
+        &ext,
+        &format,
+        &sheet,
+        &prepared,
+        only.as_ref(),
+    )
+    .map(JsValue)
+    .map_err(|err| raise_core_error(&env, &err))
+}
+
 /// A blob read by `treeRef:path` — the bytes plus the blob's object id, or
 /// `null` when nothing (or a subtree) lives at `path`. Backs sheet-config
 /// loading and lazy-body hydration without a `git cat-file` subprocess
@@ -1570,6 +1743,14 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
 
     if let Some(contract) = err.contract() {
         obj.set_named_property("contract", env.create_string(contract)?)?;
+    }
+
+    if let Some((sheet, aggregate, partition)) = err.aggregation() {
+        obj.set_named_property("sheet", env.create_string(sheet)?)?;
+        obj.set_named_property("aggregate", env.create_string(aggregate)?)?;
+        if let Some(p) = partition {
+            obj.set_named_property("partition", env.create_string(p)?)?;
+        }
     }
 
     env.throw(obj)?;
@@ -2163,6 +2344,43 @@ impl CoreTransaction {
                 .collect()),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
+    }
+
+    /// Ad-hoc aggregation over the sheet's records in the transaction's
+    /// private tree — the tx-bound `Sheet.aggregate` (spec:
+    /// `behaviors/aggregation.md`). Same filter / aggregates / `paths` forms
+    /// and errors as `recordAggregate`; reads body-less. Read-only.
+    #[napi]
+    pub fn aggregate(
+        &mut self,
+        env: Env,
+        name: String,
+        filter: JsObject,
+        aggregates: JsUnknown,
+        paths: Option<Vec<String>>,
+    ) -> Result<JsValue> {
+        let Self { inner, sheets, .. } = self;
+        let tx = inner.as_mut().ok_or_else(|| {
+            Error::new(Status::GenericFailure, "transaction is already finalized")
+        })?;
+        let (ctx, tree) = tx.split();
+        let sheet = sheets
+            .get_mut(&name)
+            .ok_or_else(|| Error::new(Status::InvalidArg, format!("sheet {name:?} not opened")))?;
+        // The fold gets its own engine for `where` matching; reduce snippets
+        // run in per-group realms the core creates.
+        let mut fold_engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
+        let parsed = parse_filter(&env, &filter, sheet.engine_mut())?;
+        let body = sheet.config().format.body.clone();
+        let extension = sheet.config().format.extension();
+        let prepared = prepare_aggregates(&env, aggregates, body.as_deref(), &parsed)?;
+        let rows = sheet
+            .query(&ctx, tree, &parsed, false)
+            .map_err(|err| raise_core_error(&env, &err))?;
+        let only = admitted_paths(paths);
+        aggregate::fold_rows(&name, &rows, extension, only.as_ref(), &prepared, &mut fold_engine)
+            .map(JsValue)
+            .map_err(|err| raise_core_error(&env, &err))
     }
 
     /// Read the one record at `recordPath` (relative to the sheet's base, no

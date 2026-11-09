@@ -99,6 +99,27 @@ Flags:
 
 TOML output emits a `[[records]]` array of tables, round-trippable through `upsert --format=toml`.
 
+### `gitsheets aggregate <sheet>`
+
+Compute ad-hoc aggregates over the records matching `--filter`. Output is one object with a key per `--agg` name.
+
+```bash
+gitsheets aggregate transactions --agg count=count --agg total=sum:amountCents
+# {"count":1402,"total":98231100}
+gitsheets aggregate transactions --filter 'postedAt>=2026-01-01' --agg total=sum:amountCents --group-by status
+# {"total":{"pending":-500,"posted":3500}}
+gitsheets aggregate repos --agg teams=distinct:targetTeam --format toml
+```
+
+Flags:
+
+- `--agg <name>=<form>[:<field>]` (repeatable, at least one) — `count`, or `sum` / `min` / `max` / `avg` / `distinct` with a field.
+- `--filter` — as on `query`.
+- `--group-by <field>` — applies `groupBy` to every aggregate; each result becomes an object keyed by the field's string form. Records whose field isn't a string, integer, or boolean don't contribute.
+- `--format <json|toml>` — default `json`.
+
+The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except `count` and `sum` (`0`). `reduce` snippets are library-only ([`sheet.aggregate`](api.md#aggregation)). A field holding mixed kinds under `min`/`max`/`distinct` fails with `AggregationError` (exit `1`).
+
 ### `gitsheets read <sheet> <path>`
 
 Read a single record by its rendered path.

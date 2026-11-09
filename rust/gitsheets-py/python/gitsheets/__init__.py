@@ -34,6 +34,7 @@ RefError = _core.RefError
 PathTemplateError = _core.PathTemplateError
 NotFoundError = _core.NotFoundError
 ContractError = _core.ContractError
+AggregationError = _core.AggregationError
 
 # Stateful classes.
 CompiledDefinition = _core.CompiledDefinition
@@ -60,6 +61,7 @@ apply_merge_patch = _core.apply_merge_patch
 diff_records = _core.diff_records
 record_query = _core.record_query
 record_query_candidates = _core.record_query_candidates
+record_aggregate = _core.record_aggregate
 tree_read_blob = _core.tree_read_blob
 tree_entry_hash = _core.tree_entry_hash
 blob_read = _core.blob_read
@@ -90,6 +92,7 @@ __all__ = [
     "PathTemplateError",
     "NotFoundError",
     "ContractError",
+    "AggregationError",
     "CompiledDefinition",
     "CoreTransaction",
     "Transaction",
@@ -115,6 +118,7 @@ __all__ = [
     "diff_records",
     "record_query",
     "record_query_candidates",
+    "record_aggregate",
     "tree_read_blob",
     "tree_entry_hash",
     "blob_read",
