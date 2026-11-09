@@ -24,6 +24,7 @@ import {
   advanceDetachedHead,
   gitlinkCommit,
   locateSubmoduleGitDir,
+  resolveStagePointer,
   resolveSubmodulePath,
   stageGitlink,
   submoduleNameForPath,
@@ -93,7 +94,8 @@ export interface OpenRepoOptions {
   /**
    * Submodule mode: after each commit that moves the pointer, also update
    * the superproject's index entry for the gitlink (`160000 <commit>`).
-   * Never commits in the superproject. Default false.
+   * Never commits in the superproject. Default: `GITSHEETS_STAGE_POINTER`,
+   * else the superproject's `gitsheets.stagePointer` git config, else false.
    */
   readonly stagePointer?: boolean;
 }
@@ -333,7 +335,8 @@ export class Repository {
     const gitDir = await locateSubmoduleGitDir(superproject, source);
     const branch = await resolveDefaultBranch(gitDir, opts.branch);
     const pinnedAt = opts.at !== undefined ? await gitlinkCommit(superGitDir, opts.at, path, gitDir) : null;
-    return new Repository({ gitDir, branch, superproject, stagePointer: opts.stagePointer ?? false, pinnedAt });
+    const stagePointer = await resolveStagePointer(superGitDir, opts.stagePointer);
+    return new Repository({ gitDir, branch, superproject, stagePointer, pinnedAt });
   }
 
   get gitDir(): string {

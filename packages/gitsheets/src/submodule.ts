@@ -46,6 +46,48 @@ export async function resolveSubmodulePath(
 }
 
 /**
+ * Whether a submodule-mode repository stages its moved gitlink, resolved once
+ * at open: `explicit` (the `openRepo` option) → `GITSHEETS_STAGE_POINTER` →
+ * the superproject's `gitsheets.stagePointer` git config → `false`. Values
+ * are git booleans; anything else is `ConfigError(config_invalid)` naming the
+ * tier. See specs/behaviors/default-branch.md "After a commit".
+ */
+export async function resolveStagePointer(superGitDir: string, explicit: boolean | undefined): Promise<boolean> {
+  if (explicit !== undefined) return explicit;
+  const env = process.env['GITSHEETS_STAGE_POINTER'];
+  if (env !== undefined && env !== '') {
+    const parsed = parseGitBoolean(env);
+    if (parsed === null) {
+      throw new ConfigError(
+        'config_invalid',
+        `GITSHEETS_STAGE_POINTER: ${JSON.stringify(env)} is not a boolean — use true/false, yes/no, on/off, or 1/0`,
+      );
+    }
+    return parsed;
+  }
+  try {
+    const { stdout } = await gitExec(superGitDir, ['config', '--type=bool', '--get', 'gitsheets.stagePointer']);
+    return stdout.trim() === 'true';
+  } catch (err) {
+    // Exit 1: unset. Anything else (git's "bad boolean config value"): invalid.
+    if (err && typeof err === 'object' && 'code' in err && err.code === 1) return false;
+    throw new ConfigError(
+      'config_invalid',
+      `git config gitsheets.stagePointer: not a boolean — use true/false, yes/no, on/off, or 1/0: ${errText(err)}`,
+      { cause: err },
+    );
+  }
+}
+
+/** A git boolean spelling (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`, any case), or null. */
+function parseGitBoolean(raw: string): boolean | null {
+  const v = raw.trim().toLowerCase();
+  if (v === 'true' || v === 'yes' || v === 'on' || v === '1') return true;
+  if (v === 'false' || v === 'no' || v === 'off' || v === '0') return false;
+  return null;
+}
+
+/**
  * Where the submodule binding came from — the prefix of every submodule-mode
  * `ConfigError` message, so a CLI can name the knob the user actually set.
  */
