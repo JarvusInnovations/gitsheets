@@ -554,6 +554,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rollup-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollup sheet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#push-daemon" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -924,6 +935,8 @@
       
         
       
+        
+      
     
     
     
@@ -1040,6 +1053,34 @@
     
   
     Secondary indices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/rollups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rollups (stored aggregates)
   
 
     
@@ -1303,6 +1344,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rollup-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollup sheet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#push-daemon" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1538,6 +1590,8 @@ ${{ a }}/${{ b }}           # path segments separated by `/`
 </code></pre></div>
 <p>Indices are <strong>not persisted</strong> — they live in process memory, invalidate on <code>upsert</code> / <code>delete</code> (same instance) or on out-of-band ref movement, and rebuild on demand.</p>
 <p>Use indices for &ldquo;find by email&rdquo; / &ldquo;find all memberships for this person&rdquo; — access paths the path template can&rsquo;t serve in the dominant direction.</p>
+<h2 id="rollup-sheet">Rollup sheet<a class="headerlink" href="#rollup-sheet" title="Permanent link"> ¶</a></h2>
+<p>A <strong>derived, read-only</strong> sheet declared with <code>[gitsheet.rollup]</code>: one record per partition of a source sheet (a year, a month, a domain, or the whole sheet) holding aggregates — counts, sums, extremes, distinct values, or a deterministic <code>reduce</code>. gitsheets commits them in the same commit as the record changes that move them and stamps each with the source partition&rsquo;s git tree id, so a stale one is a single hash comparison away and reads recompute it on the fly. Unlike an <a href="#index">index</a>, a rollup is persisted. See the <a href="../recipes/rollups/">rollups recipe</a>.</p>
 <h2 id="push-daemon">Push Daemon<a class="headerlink" href="#push-daemon" title="Permanent link"> ¶</a></h2>
 <p>An optional, library-side background task that pushes new commits to a configured git remote with retry and exponential backoff. <strong>Push-only — never pulls.</strong></p>
 <div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">daemon</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">repo</span><span class="p">.</span><span class="nx">startPushDaemon</span><span class="p">({</span>

@@ -825,6 +825,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rollup-sheets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollup sheets
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1057,6 +1068,8 @@
       
         
       
+        
+      
     
     
     
@@ -1173,6 +1186,34 @@
     
   
     Secondary indices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/rollups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rollups (stored aggregates)
   
 
     
@@ -1491,6 +1532,17 @@
     <span class="md-ellipsis">
       
         Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rollup-sheets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollup sheets
       
     </span>
   </a>
@@ -2036,12 +2088,60 @@
 <li>An aggregate with nothing to fold is left out of the result, except <code>count</code> and <code>sum</code> (<code>0</code>). A grouped aggregate is always a table (<code>{}</code> when empty).</li>
 <li><code>filter</code> may carry function predicates as on <code>query</code>; they run host-side to pick the records, then the core folds over exactly those.</li>
 <li><code>distinct</code> holds every unique value in memory — fine at gitsheets&rsquo; scale, but don&rsquo;t point it at a high-cardinality field you don&rsquo;t need.</li>
-<li><code>reduce</code> / <code>finalize</code> must be pure (no clock, randomness, or I/O). That is required but <strong>not enforced</strong> yet: <code>Math.random()</code> / <code>Date.now()</code> are reachable and make results nondeterministic — your problem, not a guarantee. Each <code>reduce</code> group runs in a fresh engine realm under loop / recursion / stack limits, so a runaway snippet is an <code>AggregationError</code>, not a hang. Hardening is tracked in <a href="https://github.com/JarvusInnovations/gitsheets/issues/354">#354</a>.</li>
+<li><code>reduce</code> / <code>finalize</code> must be pure, and the core enforces it: <code>Math.random()</code>, <code>Date.now()</code>, and an argument-less <code>new Date()</code> / <code>Date()</code> throw (an <code>AggregationError</code>); <code>new Date(ms)</code>, <code>new Date(isoString)</code>, <code>Date.UTC</code>, and <code>Date.parse</code> still work, and a <code>Date</code>&rsquo;s local-time methods read UTC on every host. Each <code>reduce</code> group runs in a fresh engine realm under loop / recursion / stack limits, so a runaway snippet is an <code>AggregationError</code>, not a hang. That determinism is what lets <a href="#rollup-sheets">rollup sheets</a> commit <code>reduce</code> results.</li>
 <li>Numbers coming out of a <code>reduce</code> follow the engine&rsquo;s one rule: an exact integer within ±(2^53 − 1) is an integer, anything else a float. On Node, an integral float result (<code>4.0</code>, e.g. from <code>avg</code>) is indistinguishable from <code>4</code> anyway — JS has one number type (a pre-existing binding projection, not specific to aggregation).</li>
 <li>Grouped results are plain objects, so JS orders integer-like keys numerically first (<code>"9"</code> before <code>"10"</code>, both before <code>"a"</code>); the core and the TOML output sort keys by byte order. A group literally named <code>__proto__</code> is an ordinary own key.</li>
 <li>Throws <code>TypeError</code> for a malformed spec or a body-field reference on a content-typed sheet; <code>AggregationError</code> (<code>aggregation_failed</code>, with <code>sheet</code> and <code>aggregate</code>) when the data can&rsquo;t be aggregated, or a <code>reduce</code> throws or returns something TOML can&rsquo;t hold.</li>
 </ul>
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/aggregation.md"><code>specs/behaviors/aggregation.md</code></a></p>
+<h3 id="rollup-sheets">Rollup sheets<a class="headerlink" href="#rollup-sheets" title="Permanent link"> ¶</a></h3>
+<p>A sheet whose config has a <code>[gitsheet.rollup]</code> table is a <strong>rollup sheet</strong>: one record per partition of a source sheet, holding aggregates in the grammar above, committed by gitsheets in the same commit as the record changes and stamped with the source partition&rsquo;s git tree id (<code>sourceTree</code>) and the <code>.gitsheets/</code> directory&rsquo;s (<code>configTree</code>). See the <a href="../recipes/rollups/">rollups recipe</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># .gitsheets/transactions-monthly.toml</span>
+<span class="k">[gitsheet]</span>
+<span class="n">root</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'transactions-monthly'</span>
+<span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'${{ postedAt: YYYY/MM }}'</span><span class="w">     </span><span class="c1"># a proper prefix of the source's path</span>
+
+<span class="k">[gitsheet.rollup]</span>
+<span class="n">from</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'transactions'</span>
+
+<span class="k">[gitsheet.rollup.aggregates]</span>
+<span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">count</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
+<span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">sum</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s1">'amountCents'</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>query</code> / <code>queryFirst</code> / <code>queryAll</code> / <code>get</code> / <code>count</code> / <code>aggregate</code> / <code>findByIndex</code></td>
+<td>Read <strong>through the source</strong>: a stored record whose stamps match its partition and the configs is served; a stale or missing one is recomputed transiently (nothing is written); a record whose partition is gone is not yielded. Key-field filters (including bucket ranges) prune like on the source</td>
+</tr>
+<tr>
+<td><code>opts.stale</code> (on <code>query</code>, <code>queryFirst</code>, <code>queryAll</code>, <code>get</code>)</td>
+<td><code>'recompute'</code> (default) or <code>'serve'</code> — the stored records exactly as committed</td>
+</tr>
+<tr>
+<td><code>sheet.materialize()</code></td>
+<td><code>Promise&lt;{ recomputed: string[], deleted: string[] }&gt;</code> — recompute every stale or missing rollup record and delete orphans, in one commit (into the current transaction on a tx-bound sheet); no commit when everything is fresh. <code>TypeError</code> on a non-rollup sheet</td>
+</tr>
+<tr>
+<td><code>upsert</code> / <code>delete</code> / <code>patch</code> / <code>clear</code> / attachment writers</td>
+<td>Throw <code>TransactionError</code> (<code>sheet_derived</code>)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>Every commit gitsheets produces — <code>repo.transact</code>, a permissive write, <code>repo.merge</code>, each <code>repo.sync</code> replay — regenerates the rollups of the partitions it touched. A config change regenerates them all.</li>
+<li>An <code>AggregationError</code> in that pass (with <code>sheet</code>, <code>aggregate</code>, and <code>partition</code>) aborts the commit; so does a <code>ValidationError</code> against a declared rollup <code>[gitsheet.schema]</code>.</li>
+<li>A plain <code>git merge</code> or an outside writer leaves stale stamps: reads stay correct, and <code>materialize()</code> / <code>git sheet rollup</code> persists the repair.</li>
+<li>Prefixed (multi-tenant) sources get per-prefix rollups under <code>&lt;rollup root&gt;/&lt;prefix&gt;/…</code>; every gitsheets commit, merge, and sync replay maintains all of them.</li>
+<li>Equality on a date key field accepts <code>'2026-03-01'</code> or a midnight-UTC <code>Date</code> (any local-date field does).</li>
+</ul>
+<p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/rollups.md"><code>specs/behaviors/rollups.md</code></a></p>
 <h2 id="transaction">Transaction<a class="headerlink" href="#transaction" title="Permanent link"> ¶</a></h2>
 <table>
 <thead>

@@ -715,6 +715,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#gitsheets-rollup-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets rollup &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gitsheets-read-sheet-path" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -957,6 +968,8 @@
       
         
       
+        
+      
     
     
     
@@ -1073,6 +1086,34 @@
     
   
     Secondary indices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/rollups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rollups (stored aggregates)
   
 
     
@@ -1308,6 +1349,17 @@
     <span class="md-ellipsis">
       
         gitsheets aggregate &lt;sheet&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-rollup-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets rollup &lt;sheet&gt;
       
     </span>
   </a>
@@ -1653,6 +1705,16 @@ gitsheets<span class="w"> </span>aggregate<span class="w"> </span>repos<span cla
 <li><code>--format &lt;json|toml&gt;</code> — default <code>json</code>.</li>
 </ul>
 <p>The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except <code>count</code> and <code>sum</code> (<code>0</code>). <code>reduce</code> snippets are library-only (<a href="../api/#aggregation"><code>sheet.aggregate</code></a>). A field holding mixed kinds under <code>min</code>/<code>max</code>/<code>distinct</code> fails with <code>AggregationError</code> (exit <code>1</code>).</p>
+<h3 id="gitsheets-rollup-sheet"><code>gitsheets rollup &lt;sheet&gt;</code><a class="headerlink" href="#gitsheets-rollup-sheet" title="Permanent link"> ¶</a></h3>
+<p>Materialize a <a href="../recipes/rollups/">rollup sheet</a>: recompute every stale or missing rollup record and delete orphaned ones, in one commit — none when everything is fresh. Honors the transaction flags (<code>--message</code>, <code>--author-*</code>, <code>--trailer</code>, <code>--ref</code>, <code>--commit-to</code>, <code>--prefix</code>). Prints one <code>&lt;status&gt; &lt;partition&gt;</code> line per partition touched.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>rollup<span class="w"> </span>transactions-monthly
+<span class="c1"># recomputed 2026/03</span>
+<span class="c1"># deleted 2025/11</span>
+gitsheets<span class="w"> </span>rollup<span class="w"> </span>transactions-monthly<span class="w"> </span>--check
+<span class="c1"># stale 2026/03</span>
+<span class="c1"># (exit 1 — nothing written)</span>
+</code></pre></div>
+<p><code>--check</code> writes nothing, prints one <code>stale</code> / <code>missing</code> / <code>orphaned</code> line per partition that is not fresh, and exits <code>1</code> if there are any — the CI gate for a data branch other tools write to. Writing to a rollup sheet (<code>upsert</code>, <code>edit</code>, …) fails with <code>TransactionError</code> (<code>sheet_derived</code>, exit <code>69</code>).</p>
 <h3 id="gitsheets-read-sheet-path"><code>gitsheets read &lt;sheet&gt; &lt;path&gt;</code><a class="headerlink" href="#gitsheets-read-sheet-path" title="Permanent link"> ¶</a></h3>
 <p>Read a single record by its rendered path.</p>
 <div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span><span class="nb">read</span><span class="w"> </span>users<span class="w"> </span>jane

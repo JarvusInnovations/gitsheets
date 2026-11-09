@@ -858,6 +858,8 @@
       
         
       
+        
+      
     
     
     
@@ -974,6 +976,34 @@
     
   
     Secondary indices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/rollups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rollups (stored aggregates)
   
 
     
@@ -1434,6 +1464,7 @@ gitsheets-axi migrate-config &lt;sheet&gt;     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment &lt;list|get|set|delete&gt; &lt;sheet&gt; &lt;path&gt; [&lt;name&gt;]
 gitsheets-axi push                       # one-shot git push
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
+gitsheets-axi rollup &lt;sheet&gt; [--check]   # materialize / check a rollup sheet
 </code></pre></div>
 <p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.</p>
 <h3 id="default-branch">Default branch<a class="headerlink" href="#default-branch" title="Permanent link"> ¶</a></h3>
@@ -1482,6 +1513,14 @@ field are also pushed down so the walk prunes; then the core folds over the
 picked records. A clause on a markdown sheet&rsquo;s body field is a
 <code>VALIDATION_ERROR</code> (aggregates read body-less). A field with mixed kinds
 under <code>min</code>/<code>max</code>/<code>distinct</code> fails with <code>AGGREGATION_FAILED</code>.</p>
+<p><code>rollup &lt;sheet&gt; [--check] [--prefix p] [--message m]</code> maintains a
+<a href="../recipes/rollups/">rollup sheet</a>. Without <code>--check</code> it recomputes every
+stale or missing rollup record and deletes orphans in one commit (<code>result:
+no-op</code>, no commit, when everything is fresh), listing each partition as
+<code>recomputed</code> or <code>deleted</code>. With <code>--check</code> it writes nothing and fails with
+<code>ROLLUP_STALE</code> (exit 1), naming each <code>stale</code> / <code>missing</code> / <code>orphaned</code>
+partition. A write to a rollup sheet fails with <code>SHEET_DERIVED</code>; a
+non-rollup sheet is a <code>VALIDATION_ERROR</code>.</p>
 <p><code>query --group-by &lt;field&gt;</code> is a separate TOON view, not an <code>aggregate</code>
 call: <code>{value,count}</code> facets biggest-first, computed host-side over the
 matched records — any value kind (Dates as ISO strings), records missing the
