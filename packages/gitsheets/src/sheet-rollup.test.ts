@@ -83,8 +83,9 @@ describe('rollup sheets', () => {
     const fixture = await seeded();
     const march = await show(fixture, 'HEAD:transactions-monthly/2026/03.toml');
     const stamp = await revParse(fixture, 'HEAD:transactions/2026/03');
+    const cfg = await revParse(fixture, 'HEAD:.gitsheets');
     expect(march).toBe(
-      `count = 2\nlargest = 240000\nposted = 241200\npostedAt = 2026-03-01\nsourceTree = "${stamp}"\ntotal = 241200\n\n[byCategory]\ngroceries = 1200\nrent = 240000\n`,
+      `configTree = "${cfg}"\ncount = 2\nlargest = 240000\nposted = 241200\npostedAt = 2026-03-01\nsourceTree = "${stamp}"\ntotal = 241200\n\n[byCategory]\ngroceries = 1200\nrent = 240000\n`,
     );
     const files = (await fixture.git('show', '--name-only', '--format=', 'HEAD')).stdout.trim().split('\n');
     expect(files).toContain('transactions-monthly/2026/01.toml');
@@ -160,6 +161,52 @@ describe('rollup sheets', () => {
     expect(feb.map((r) => r['total'])).toEqual([2000]);
     const q1 = await monthly.queryAll({ postedAt: { $gte: '2026-01-01', $lte: '2026-03-31' }, count: 1 });
     expect(q1).toHaveLength(2);
+  });
+
+  it('equality on the date key field matches an ISO date string and a midnight-UTC Date', async () => {
+    const fixture = await seeded();
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    const monthly = await repo.openSheet('transactions-monthly');
+    expect((await monthly.queryAll({ postedAt: '2026-03-01' })).map((r) => r['count'])).toEqual([2]);
+    expect((await monthly.queryAll({ postedAt: new Date('2026-03-01T00:00:00Z') })).map((r) => r['count'])).toEqual([2]);
+    expect(await monthly.queryAll({ postedAt: new Date('2026-03-01T05:00:00Z') })).toEqual([]);
+  });
+
+  it('aggregate() on a rollup sheet folds over the read-through, not stale bytes', async () => {
+    const fixture = await seeded();
+    await fixture.git('reset', '-q', '--hard');
+    await writeFile(
+      join(fixture.path, 'transactions', '2026', '03', 'g.toml'),
+      'amountCents = 5\ncategory = "fun"\nid = "g"\npostedAt = 2026-03-30T00:00:00Z\nstatus = "posted"\n',
+    );
+    await fixture.git('add', 'transactions/');
+    await fixture.git('commit', '-m', 'raw');
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    const monthly = await repo.openSheet('transactions-monthly');
+    expect(await monthly.aggregate({}, { n: { sum: 'count' } })).toEqual({ n: 5 });
+  });
+
+  it('a multi-tenant repo.merge regenerates prefixed rollups with no conflict markers', async () => {
+    const fixture = await fixtureWith({ transactions: TX_CONFIG, 'transactions-monthly': MONTHLY_CONFIG });
+    const repo = await openRepo({ gitDir: fixture.gitDir });
+    await repo.transact({ message: 'seed' }, async (tx) => {
+      await tx.sheet('transactions', { prefix: 'acme' }).upsert(LEDGER[2]!);
+    });
+    await fixture.git('branch', 'import');
+    await repo.transact({ message: 'ours', parent: 'main' }, async (tx) => {
+      await tx.sheet('transactions', { prefix: 'acme' }).upsert({ id: 'x', postedAt: new Date('2026-03-11T00:00:00Z'), amountCents: 1, status: 'posted', category: 'fun' });
+    });
+    await repo.transact({ message: 'theirs', parent: 'import' }, async (tx) => {
+      await tx.sheet('transactions', { prefix: 'acme' }).upsert({ id: 'y', postedAt: new Date('2026-03-12T00:00:00Z'), amountCents: 2, status: 'posted', category: 'fun' });
+    });
+    const merged = await repo.merge({ ours: 'main', theirs: 'import' });
+    expect(merged.outcome).toBe('merged');
+    expect(merged.conflicts).toEqual([]);
+    const text = await show(fixture, 'main:transactions-monthly/acme/2026/03.toml');
+    expect(text).not.toContain('<<<<<<<');
+    expect(text).toContain('count = 3\n');
+    const scoped = await repo.openSheet('transactions-monthly', { prefix: 'acme', ref: 'main' });
+    expect((await scoped.queryAll({}, { stale: 'serve' })).map((r) => r['count'])).toEqual([3]);
   });
 
   it('a transaction-bound rollup sheet reads the transaction’s tree', async () => {

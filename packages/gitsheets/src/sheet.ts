@@ -217,6 +217,13 @@ function queryMatches(filter: RecordLike, record: RecordLike): boolean {
       if (!queryMatches(qval as RecordLike, rval as RecordLike)) return false;
       continue;
     }
+    if (typeof qval === 'string' && rval instanceof Date && /^\d{4}-\d{2}-\d{2}$/.test(qval)) {
+      // An ISO date string against a local-date field (which the binding
+      // surfaces as a midnight-UTC Date): the core already matched it by its
+      // day (specs/api/sheet.md § query); agree here.
+      if (rval.getTime() !== Date.parse(`${qval}T00:00:00Z`)) return false;
+      continue;
+    }
     if (rval !== qval) return false;
   }
   return true;
@@ -1432,6 +1439,22 @@ export class Sheet<T extends RecordLike = RecordLike> {
       this.#ensureCoreSheetOpened();
       result = callCore(() =>
         this.#transaction!.coreTx.aggregate(this.#name, coreFilter, aggregates, paths),
+      ) as Record<string, unknown>;
+    } else if (config.rollup !== undefined) {
+      // A rollup sheet folds over its read-through records, not the stored
+      // (possibly stale) bytes (specs/behaviors/rollups.md "Reads").
+      result = callCore(() =>
+        addon.rollupAggregate(
+          this.#gitDir,
+          this.#readRef ?? EMPTY_TREE_HASH,
+          this.#name,
+          this.#configPath,
+          openRootFromConfigPath(this.#configPath),
+          this.#prefix,
+          coreFilter,
+          aggregates,
+          paths,
+        ),
       ) as Record<string, unknown>;
     } else {
       const treeRef = this.#readRef ?? EMPTY_TREE_HASH;
