@@ -135,10 +135,14 @@ kind for faithful re-serialization.
 
 ## Embedded code execution
 
-Some behavior is **embedded in the sheet definition** itself — today, raw-JS sort
-comparators (`Sheet.<field>.sort` string rules, run via `node:vm`) and aggregate
-`reduce` / `finalize` snippets ([behaviors/aggregation.md](behaviors/aggregation.md));
-plausibly later, partition-path derivations and custom validation expressions. Embedded
+Some behavior is **embedded in the sheet definition** itself — today,
+path-template expression components (`${{ expr }}`,
+[behaviors/path-templates.md](behaviors/path-templates.md#expression-rendering)),
+raw-JS sort comparators (`[gitsheet.fields.<f>] sort = '<js body>'`,
+[behaviors/normalization.md](behaviors/normalization.md#sort-rule-formats)), and
+aggregate `reduce` / `finalize` snippets
+([behaviors/aggregation.md](behaviors/aggregation.md)); plausibly later, custom
+validation expressions. Embedded
 code is the one thing that does **not** portability-flatten the way TOML bytes do:
 a definition-embedded snippet must produce identical results under every binding.
 
@@ -192,6 +196,70 @@ below) and upgraded deliberately.
 > engine when the Python binding needs raw-JS comparators to stay byte-identical.
 > Until then the core's boa engine is the specified target for this escape hatch,
 > not the Node runtime path. Tracked in [`node-binding-thin`](../plans/node-binding-thin.md).
+
+### Determinism rule for definition snippets
+
+Every definition-embedded snippet — a path-template expression, a raw-JS sort
+comparator, an aggregate `reduce` / `finalize` — decides committed bytes: where a
+record lives, the order of an array in canonical TOML, the value a persisted
+rollup stores. So each must be a **pure function of its inputs**, and the realm
+it runs in enforces that for every source of nondeterminism it can reach. One
+rule, for all three:
+
+- **No clock, no entropy.** The realm has no `Math.random`, no `Date.now`, and
+  no argument-less `Date` (`new Date()` and `Date()` alike). Calling any of them
+  throws a `TypeError` whose message names the call and says it is not available
+  in a gitsheets snippet.
+- **No host time zone or locale.** The engine's clock is pinned to the epoch and
+  its local time-zone offset to UTC, so a `Date`'s local-time methods
+  (`getHours()`, `getFullYear()`, `getTimezoneOffset()`, `toString()`,
+  `toDateString()`, `toTimeString()`) read **UTC** on every host and thread, and
+  the multi-argument constructor (`new Date(y, m, d, …)`) and an offset-less ISO
+  date-time string (`new Date('2026-01-01T05:00')`) are taken at UTC. The
+  locale-formatting methods (`toLocaleString()`, `toLocaleDateString()`,
+  `toLocaleTimeString()`) throw like the clock does. The engine has no `Intl`,
+  no timers, and no host I/O.
+- **Argument-taking `Date` forms remain**, since they are functions of their
+  arguments: `new Date(ms)`, `new Date(isoString)`, `new Date(y, m, …)`,
+  `Date.UTC`, `Date.parse`. Strings parse in the ISO 8601 format and the
+  engine's own `toString()` / `toUTCString()` formats; any other string is
+  `NaN` (implementation-defined legacy formats are outside the contract).
+
+A violation is detected **when the snippet runs**, not at sheet open: snippets
+are opaque code, and which calls a body makes is not statically decidable. Where
+it surfaces depends on the snippet:
+
+| Snippet | Surfaces as | When |
+| --- | --- | --- |
+| Path-template expression | `PathTemplateError` (`path_render_failed`), naming the `${{ … }}` expression and the forbidden call | Rendering the path — on write, `pathForRecord`, and query planning alike (a throw is never "un-renderable") |
+| Raw-JS sort comparator | `ConfigError` (`config_invalid`), naming the field and the forbidden call — the rule is a definition defect, not a record defect | Normalizing a record with two or more elements in that array field — on write and `normalizeRecord` |
+| Aggregate `reduce` / `finalize` | `AggregationError` (`aggregation_failed`) | Computing the aggregate ([behaviors/aggregation.md](behaviors/aggregation.md)) |
+
+Each binding's index `keyFn`s and query filter predicates compiled into the same
+engine run under the same rule.
+
+**Behavior change (v2.13).** Before this rule covered path expressions and
+comparators, their realm had the clock, randomness, and the host time zone: a
+template like `${{ publishedAt.getFullYear() }}` or `${{ at.getHours() }}` read
+the process's local time, so the same record rendered to different paths on
+hosts in different zones — the wart
+[path-templates.md](behaviors/path-templates.md#rendering-semantics) already
+named. Those methods now read UTC on every host. A sheet whose records were
+written on a non-UTC host by such a template can find an existing record at a
+different path than the template now renders; the fix is the UTC accessors
+(`getUTCFullYear()`) or the declarative [date-bucket
+form](behaviors/path-templates.md#date-bucket-references) — see
+[docs/migration-guide.md](../docs/migration-guide.md).
+
+**Host-side parity while the comparator deferral stands.** On the Node binding
+the exported `Template` (and so `Sheet.pathForRecord`) and `Sheet.normalizeRecord`'s
+comparators still run in a host `node:vm` context (see *Shipped status* above).
+That context must apply this same rule with the same results: the same denials
+with the same messages, local-time `Date` methods reading UTC, the same string
+parsing and `toString()` form, a record's `Date` values rebuilt inside the
+context so they carry its patched `Date.prototype`, and the same error mapping
+(`PathTemplateError` / `ConfigError`). The core engine is the reference; any
+divergence is a bug in the host shim.
 
 **Two constraints this creates:**
 

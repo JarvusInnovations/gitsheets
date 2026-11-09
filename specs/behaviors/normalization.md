@@ -89,6 +89,8 @@ sort = '''
 
 The string is the *body* of a sort comparator — `(a, b) => { <body> }`. Used when the comparison is non-trivial.
 
+The comparator decides canonical bytes, so it runs in the deterministic realm every definition snippet shares — no clock, no randomness, local time is UTC: [rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets). A comparator that throws — including one calling a forbidden `Date.now()` / `Math.random()` / argument-less `new Date()` — fails the normalization with `ConfigError` (`config_invalid`) naming the field, on write and in `normalizeRecord` alike. It is only called for an array of two or more elements, so the failure appears with the first such record, not at sheet open.
+
 **Bare boolean** (sort scalars):
 
 ```toml
