@@ -52,6 +52,45 @@ pub const AGGREGATE_STACK_LIMIT: usize = 10 * 1024;
 /// tree expansion is exponential even when its depth is small.
 pub const MAX_UNMARSHAL_NODES: usize = 1_000_000;
 
+/// Host hooks for the aggregate realm: the local time zone is UTC on every
+/// host, whatever the process's own offset (see [`Engine::new_limited`]).
+#[derive(Debug, Clone, Copy)]
+struct DeterministicHooks;
+
+impl boa_engine::context::HostHooks for DeterministicHooks {
+    fn local_timezone_offset_seconds(&self, _unix_time_seconds: i64) -> i32 {
+        0
+    }
+}
+
+/// Evaluated once into every aggregate realm: removes the clock and entropy
+/// sources a `reduce` / `finalize` snippet could reach. Calling one throws a
+/// `TypeError`, which the fold reports as `AggregationError`. `Date` stays a
+/// constructor for every argument-taking form (and `instanceof Date` keeps
+/// working — the replacement shares the intrinsic prototype).
+const DENY_NONDETERMINISM: &str = r#"(() => {
+  const D = Date;
+  const deny = (what) => function () {
+    throw new TypeError(what + ' is not available in an aggregate snippet: it is nondeterministic, and aggregate results must be a pure function of the records');
+  };
+  const SafeDate = function Date(...args) {
+    if (new.target === undefined) {
+      throw new TypeError('Date() is not available in an aggregate snippet: it reads the clock, and aggregate results must be a pure function of the records');
+    }
+    if (args.length === 0) {
+      throw new TypeError('new Date() with no arguments is not available in an aggregate snippet: it reads the clock, and aggregate results must be a pure function of the records');
+    }
+    return Reflect.construct(D, args, new.target);
+  };
+  SafeDate.prototype = D.prototype;
+  Object.defineProperty(D.prototype, 'constructor', { value: SafeDate, writable: true, configurable: true, enumerable: false });
+  SafeDate.UTC = D.UTC;
+  SafeDate.parse = D.parse;
+  SafeDate.now = deny('Date.now()');
+  Object.defineProperty(globalThis, 'Date', { value: SafeDate, writable: true, configurable: true, enumerable: false });
+  Math.random = deny('Math.random()');
+})();"#;
+
 /// An opaque handle to a snippet compiled into the engine, returned by
 /// [`Engine::compile`] and reused across operations.
 pub type SnippetHandle = usize;
@@ -87,7 +126,11 @@ pub struct Engine {
 impl Engine {
     /// Build a fresh engine. Evaluates the one bootstrap helper (`make_date`).
     pub fn new() -> Result<Self> {
-        let mut context = Context::default();
+        Engine::with_context(Context::default())
+    }
+
+    /// Wrap `context` and evaluate the one bootstrap helper (`make_date`).
+    fn with_context(mut context: Context) -> Result<Self> {
         let make_date = context
             .eval(Source::from_bytes("(ms) => new Date(ms)"))
             .map_err(|e| Error::ConfigInvalid {
@@ -100,14 +143,39 @@ impl Engine {
         })
     }
 
-    /// A fresh engine under the aggregate runtime limits (spec:
-    /// `behaviors/aggregation.md` — purity is required but not enforced; the
-    /// limits are): a loop may iterate at most [`AGGREGATE_LOOP_LIMIT`] times,
-    /// calls nest at most [`AGGREGATE_RECURSION_LIMIT`] deep, and the VM
-    /// stack is capped, so a runaway snippet throws instead of hanging. Used
-    /// for `reduce` / `finalize`, one engine (realm) per fold.
+    /// A fresh **deterministic** engine under the aggregate runtime limits —
+    /// the realm `reduce` / `finalize` run in (spec:
+    /// `behaviors/aggregation.md`, purity is enforced). One engine (realm)
+    /// per fold, so `globalThis` state cannot leak between groups, aggregates,
+    /// or calls.
+    ///
+    /// - **Limits**: a loop may iterate at most [`AGGREGATE_LOOP_LIMIT`]
+    ///   times, calls nest at most [`AGGREGATE_RECURSION_LIMIT`] deep, and the
+    ///   VM stack is capped, so a runaway snippet throws instead of hanging.
+    /// - **No clock, no entropy, no local time zone**: `Math.random`,
+    ///   `Date.now`, and the argument-less `Date` (`new Date()` / `Date()`)
+    ///   throw a `TypeError` (→ `AggregationError`); `new Date(ms)`,
+    ///   `new Date(string)`, `Date.UTC`, and `Date.parse` remain. Underneath
+    ///   the JS-level denial the host hooks are pinned too: the clock is fixed
+    ///   at the epoch and the local time-zone offset is UTC, so a `Date`'s
+    ///   local-time methods (`getHours`, `toString`) read UTC on every host
+    ///   and thread — boa's default hook consults the process's local offset,
+    ///   which differs between a single-threaded Python host and Node.
     pub fn new_limited() -> Result<Self> {
-        let mut engine = Engine::new()?;
+        let context = Context::builder()
+            .host_hooks(std::rc::Rc::new(DeterministicHooks))
+            .clock(std::rc::Rc::new(boa_engine::context::time::FixedClock::from_millis(0)))
+            .build()
+            .map_err(|e| Error::ConfigInvalid {
+                message: format!("embedded engine bootstrap failed: {e}"),
+            })?;
+        let mut engine = Engine::with_context(context)?;
+        engine
+            .context
+            .eval(Source::from_bytes(DENY_NONDETERMINISM))
+            .map_err(|e| Error::ConfigInvalid {
+                message: format!("embedded engine hardening failed: {e}"),
+            })?;
         let limits = engine.context.runtime_limits_mut();
         limits.set_loop_iteration_limit(AGGREGATE_LOOP_LIMIT);
         limits.set_recursion_limit(AGGREGATE_RECURSION_LIMIT);
