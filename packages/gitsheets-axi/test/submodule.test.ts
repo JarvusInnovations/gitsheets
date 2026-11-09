@@ -121,6 +121,69 @@ describe('gitsheets-axi --submodule', () => {
   });
 });
 
+describe('gitsheets-axi --no-submodule / --no-branch (explicit opt-out)', () => {
+  /** superproject() plus the superproject's own users sheet holding `root`, written through --no-submodule. */
+  async function bothSheets(): Promise<TestRepoHandle> {
+    const h = await superproject();
+    process.env['GITSHEETS_SUBMODULE'] = 'data';
+    expect((await runCli(['init', 'users', '--path', '${{ slug }}', '--no-submodule'], h.path)).exitCode).toBe(0);
+    expect((await runCli(['--no-submodule', 'upsert', 'users', '--data', '{"slug":"root","email":"root@x.org"}'], h.path)).exitCode).toBe(0);
+    delete process.env['GITSHEETS_SUBMODULE'];
+    // The data submodule was not touched.
+    expect(await git(join(h.gitDir, 'modules', 'data'), 'ls-tree', '--name-only', 'HEAD', 'users/')).toBe('users/jane.toml');
+    return h;
+  }
+
+  it('GITSHEETS_SUBMODULE=data with --no-submodule reads the superproject, in any position', async () => {
+    const h = await bothSheets();
+    process.env['GITSHEETS_SUBMODULE'] = 'data';
+    expect((await runCli(['query', 'users'], h.path)).stdout).toContain('jane');
+    for (const argv of [
+      ['--no-submodule', 'query', 'users'],
+      ['query', '--no-submodule', 'users'],
+      ['query', 'users', '--no-submodule'],
+      ['query', 'users', '--submodule', 'data', '--no-submodule'],
+    ]) {
+      const r = await runCli(argv, h.path);
+      expect(r.exitCode, argv.join(' ')).toBe(0);
+      expect(r.stdout, argv.join(' ')).toContain('root');
+      expect(r.stdout, argv.join(' ')).not.toContain('jane');
+    }
+    // The last of a flag and its --no- form wins.
+    expect((await runCli(['query', 'users', '--no-submodule', '--submodule=data'], h.path)).stdout).toContain('jane');
+  });
+
+  it('--no-submodule beats gitsheets.submodule; an empty GITSHEETS_SUBMODULE does not', async () => {
+    const h = await bothSheets();
+    await git(h.path, 'config', 'gitsheets.submodule', 'data');
+    process.env['GITSHEETS_SUBMODULE'] = '';
+    expect((await runCli(['query', 'users'], h.path)).stdout).toContain('jane');
+    const r = await runCli(['query', 'users', '--no-submodule'], h.path);
+    expect(r.stdout).toContain('root');
+    expect(r.stdout).not.toContain('jane');
+  });
+
+  it('--no-branch binds HEAD’s branch, ignoring GITSHEETS_BRANCH and gitsheets.branch', async () => {
+    const h = await bothSheets();
+    process.env['GITSHEETS_BRANCH'] = 'unborn-data';
+    expect((await runCli(['query', 'users'], h.path)).exitCode).not.toBe(0);
+    expect((await runCli(['--no-branch', 'query', 'users'], h.path)).stdout).toContain('root');
+    delete process.env['GITSHEETS_BRANCH'];
+    await git(h.path, 'config', 'gitsheets.branch', 'unborn-data');
+    expect((await runCli(['query', 'users', '--no-branch'], h.path)).stdout).toContain('root');
+  });
+
+  it('a --no-* flag takes no value (VALIDATION_ERROR, exit 2)', async () => {
+    const h = await superproject();
+    for (const argv of [['query', 'users', '--no-submodule=data'], ['--no-branch=main', 'query', 'users']]) {
+      const r = await runCli(argv, h.path);
+      expect(r.exitCode, argv.join(' ')).toBe(2);
+      expect(r.stdout, argv.join(' ')).toContain('VALIDATION_ERROR');
+      expect(r.stdout, argv.join(' ')).toContain('takes no value');
+    }
+  });
+});
+
 describe('gitsheets-axi --stage-pointer / --at', () => {
   const staged = (h: TestRepoHandle): Promise<string> => git(h.path, 'ls-files', '--stage', 'data');
   const tip = (h: TestRepoHandle): Promise<string> => git(join(h.gitDir, 'modules', 'data'), 'rev-parse', 'HEAD');

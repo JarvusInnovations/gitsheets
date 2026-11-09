@@ -18,10 +18,10 @@ export interface GitsheetsContext {
 
 /** Global flags `gitsheets-axi` accepts before the command name. */
 export interface GlobalFlags {
-  /** `--branch <name>`: the repository's default branch (specs/behaviors/default-branch.md). */
-  branch?: string;
-  /** `--submodule <path>`: submodule mode — the data submodule every command reads/writes. */
-  submodule?: string;
+  /** `--branch <name>`: the repository's default branch (specs/behaviors/default-branch.md); `null` for `--no-branch` (HEAD's branch, env and config ignored). */
+  branch?: string | null;
+  /** `--submodule <path>`: submodule mode — the data submodule every command reads/writes; `null` for `--no-submodule` (the superproject, env and config ignored). */
+  submodule?: string | null;
   /** `--stage-pointer` / `--no-stage-pointer`: submodule mode — stage the moved gitlink after each commit. */
   stagePointer?: boolean;
   /** `--at <superproject-ref>`: submodule mode — read-only at the commit that ref gitlinks. */
@@ -37,7 +37,8 @@ const VALUE_FLAGS = {
 
 /**
  * Pull the global flags (`--branch <name>`, `--submodule <path>`,
- * `--at <superproject-ref>` — each also as `--flag=value` — and
+ * `--at <superproject-ref>` — each also as `--flag=value` — plus
+ * `--no-branch` / `--no-submodule` (the `null` opt-out) and
  * `--stage-pointer` / `--no-stage-pointer`) out of `argv`, wherever they
  * appear — after the command per AXI convention, or before it — and return
  * the rest for the command parser. A malformed one is an `AxiError`
@@ -58,6 +59,16 @@ export function parseGlobalFlags(argv: readonly string[]): { flags: GlobalFlags;
     if (arg.startsWith('--stage-pointer=') || arg.startsWith('--no-stage-pointer=')) {
       throw new AxiError(`${arg.slice(0, arg.indexOf('='))} takes no value`, 'VALIDATION_ERROR', [
         'Pass --stage-pointer to stage the moved gitlink, or --no-stage-pointer to turn it off',
+      ]);
+    }
+    if (arg === '--no-branch' || arg === '--no-submodule') {
+      flags[arg === '--no-branch' ? 'branch' : 'submodule'] = null;
+      continue;
+    }
+    if (arg.startsWith('--no-branch=') || arg.startsWith('--no-submodule=')) {
+      const name = arg.slice(0, arg.indexOf('='));
+      throw new AxiError(`${name} takes no value`, 'VALIDATION_ERROR', [
+        `Pass ${name} alone to ignore $GITSHEETS_${name === '--no-branch' ? 'BRANCH' : 'SUBMODULE'} and the git config for this run`,
       ]);
     }
     const eq = arg.indexOf('=');
