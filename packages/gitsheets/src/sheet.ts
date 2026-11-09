@@ -928,8 +928,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #configPath: string;
   readonly #transaction: Transaction | undefined;
   /**
-   * Non-transactional read snapshot — mutable: rebound to the current HEAD
-   * tree by the owning Repository's refresh/auto-refresh, or by
+   * Non-transactional read snapshot — mutable: rebound to the default
+   * branch's current tree by the owning Repository's refresh/auto-refresh, or by
    * {@link refresh}. See specs/behaviors/freshness.md.
    */
   #readRef: string | undefined;
@@ -983,7 +983,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
   /** The tree ref config/reads resolve against (tx parent, or the open snapshot). */
   #configTreeRef(): string {
     if (this.#transaction !== undefined) {
-      return this.#transaction.parentCommitHash ?? 'HEAD';
+      // No parent commit: an orphan or an unborn branch — the tx starts empty.
+      return this.#transaction.parentCommitHash ?? EMPTY_TREE_HASH;
     }
     return this.#readRef ?? EMPTY_TREE_HASH;
   }
@@ -1124,7 +1125,8 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
-   * Rebind this sheet's read snapshot to the repository's current HEAD tree.
+   * Rebind this sheet's read snapshot to the current tree of the
+   * repository's default branch (specs/behaviors/default-branch.md).
    * Only this sheet — the "did my row land?" primitive; use `repo.refresh()`
    * or `store.refresh()` to rebind every open sheet at once. Not needed after
    * this repository's own `repo.transact` (a successful commit
@@ -1140,7 +1142,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
       );
     }
     // A pinned sheet re-resolves its own ref (a branch catches up with its
-    // tip; a commit/tree hash resolves to the same tree), never HEAD.
+    // tip; a commit/tree hash resolves to the same tree), never the default branch.
     const tree =
       this.#pinnedRef !== undefined
         ? await this.#repo.resolveTreeForRef(this.#pinnedRef)
@@ -2263,7 +2265,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
   /**
    * Run `fn` against a core transaction with this sheet opened. Tx-bound sheets
    * reuse their bound transaction; standalone sheets get a short-lived,
-   * read-only core transaction (opened at HEAD) that is discarded without
+   * read-only core transaction (opened at the default branch) that is discarded without
    * committing — used by `willChange`'s prepare pipeline.
    */
   async #withCoreTx<R>(fn: (coreTx: CoreTransaction) => R): Promise<R> {
@@ -2272,8 +2274,10 @@ export class Sheet<T extends RecordLike = RecordLike> {
       return fn(this.#transaction.coreTx);
     }
     const author = { name: 'gitsheets', email: 'gitsheets@local' };
+    const start = await this.#repo.readTxStart();
     const coreTx = callCore(() =>
       CoreTransaction.begin(this.#gitDir, {
+        ...start,
         message: 'willChange',
         author,
         committer: author,

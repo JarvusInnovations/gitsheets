@@ -8,6 +8,7 @@ import type { RecordLike } from 'gitsheets';
 import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
+import { defaultRef } from '../util/default-ref.js';
 
 const exec = promisify(execFile);
 
@@ -61,9 +62,9 @@ function parseMigrateFlags(args: string[]): MigrateFlags {
   return flags;
 }
 
-async function readConfigText(gitDir: string, path: string): Promise<string | null> {
+async function readConfigText(gitDir: string, ref: string, path: string): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['show', `HEAD:${path}`], {
+    const { stdout } = await exec('git', ['show', `${ref}:${path}`], {
       cwd: gitDir,
       maxBuffer: 100 * 1024 * 1024,
     });
@@ -85,7 +86,7 @@ export async function migrateConfigCommand(
   const repo = await ctx.repo();
   const configPath = `.gitsheets/${flags.sheet}.toml`;
 
-  const configText = await readConfigText(repo.gitDir, configPath);
+  const configText = await readConfigText(repo.gitDir, defaultRef(repo), configPath);
   if (configText === null) {
     throw new AxiError(
       `migrate-config: ${configPath} doesn't exist`,

@@ -33,6 +33,7 @@ nav:
       - Request-bound transactions: recipes/request-bound-transactions.md
       - Secondary indices: recipes/secondary-indices.md
       - Production push daemon: recipes/production-push-daemon.md
+      - Headless data (records off the checked-out branch): recipes/headless-data.md
       - Markdown CMS pattern: recipes/markdown-cms.md
       - Migrating a fields config: recipes/migrating-config.md
   - Migration guide: migration-guide.md

@@ -62,7 +62,7 @@ When in doubt about whether an entry belongs in `deferred.md`, the litmus test i
 ### CLI `--working` global flag — [#165](https://github.com/JarvusInnovations/gitsheets/issues/165)
 
 - **What:** Read/write the working tree's state rather than HEAD.
-- **Why deferred:** Substantive library work — `Repository` needs a parallel read/write path against on-disk files (no commit). Split out of #148 during v1.1; `--prefix` shipped, `--working` tracked separately.
+- **Why deferred:** Substantive library work — `Repository` needs a parallel read/write path against on-disk files (no commit). Split out of #148 during v1.1; `--prefix` shipped, `--working` tracked separately. Projects that hit the ref/working-tree split for *live* records should use a never-checked-out data branch instead ([behaviors/default-branch.md](behaviors/default-branch.md)); `--working` remains for humans editing files before committing them.
 
 ## Dropped (no plan)
 

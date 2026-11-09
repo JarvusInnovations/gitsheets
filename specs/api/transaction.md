@@ -105,7 +105,7 @@ In **strict mode** (`repo.requireExplicitTransactions()`), mutations outside `re
 
 - If `opts.parent` is a branch name (e.g., `main`), the transaction's parent commit is `main`'s tip at transaction open; on commit, `main` advances to the new commit.
 - If `opts.parent` is a commit hash, the transaction commits onto that hash; if `opts.branch` is also set, that branch is updated.
-- If neither is set, defaults to `HEAD`'s ref.
+- If neither is set, defaults to the repository's default branch ([behaviors/default-branch.md](../behaviors/default-branch.md)).
 - If `opts.parent` is **`null`**, the transaction is an **orphan**: it starts from the empty tree, `parentCommitHash` is `null`, and the commit has no parents — a fresh root for a snapshot, a scrubbed export, or a seed branch. An orphan always commits (there is no parent tree to compare against), even when the handler leaves the tree empty. With `opts.branch`, the branch is **created** pointing at the new root; an orphan refuses to land on a branch that already exists (`TransactionError` `commit_failed` at open — delete the ref or pick another name), because there is no parent to make the move safe. Without `opts.branch`, the result is a detached root commit (`ref: null`) the consumer tags or pushes by hash.
 
 ### `opts.branch` may name a branch that does not exist yet
@@ -148,7 +148,7 @@ Standalone mutations (mutations called without an enclosing `repo.transact`) aut
 <sheet> upsert <path>
 ```
 
-or `<sheet> delete <path>`, etc. The author defaults to git config. The branch defaults to `HEAD`'s ref.
+or `<sheet> delete <path>`, etc. The author defaults to git config. The branch defaults to the repository's default branch ([behaviors/default-branch.md](../behaviors/default-branch.md)).
 
 This makes simple scripts ergonomic. For request-bound workflows, consumers should call `repo.transact` explicitly to control the message/author/trailers.
 

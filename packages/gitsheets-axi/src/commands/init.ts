@@ -10,6 +10,7 @@ import type { RecordLike, Repository } from 'gitsheets';
 import type { GitsheetsContext } from '../context.js';
 import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
+import { defaultRef } from '../util/default-ref.js';
 
 const exec = promisify(execFile);
 
@@ -91,15 +92,16 @@ function parseInitFlags(args: string[]): InitFlags {
 }
 
 /**
- * Read the raw bytes of a tracked file at HEAD. Returns null if the file
- * doesn't exist there (or if HEAD doesn't exist yet on a fresh repo).
+ * Read the raw bytes of a tracked file at `ref` (the default branch). Returns
+ * null if the file doesn't exist there (or the branch is unborn).
  */
-async function readBytesAtHead(
+async function readBytesAtRef(
   gitDir: string,
+  ref: string,
   path: string,
 ): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['show', `HEAD:${path}`], {
+    const { stdout } = await exec('git', ['show', `${ref}:${path}`], {
       cwd: gitDir,
       maxBuffer: 100 * 1024 * 1024,
     });
@@ -165,7 +167,7 @@ export async function initCommand(
     );
   }
 
-  const existing = await readBytesAtHead(repoGitDir(repo), configPath);
+  const existing = await readBytesAtRef(repoGitDir(repo), defaultRef(repo), configPath);
 
   if (existing === newText) {
     return renderObject({

@@ -46,7 +46,8 @@ export type Store<V extends ValidatorMap = ValidatorMap> = {
 } & {
   readonly transact: StoreTransactFn<V>;
   /**
-   * Rebind every sheet to the repository's current HEAD tree — delegates to
+   * Rebind every sheet to the current tree of the repository's default
+   * branch (specs/behaviors/default-branch.md) — delegates to
    * `repo.refresh()`. Use after out-of-band ref movement; not needed after
    * this store's own transact (a successful commit auto-refreshes).
    * See specs/behaviors/freshness.md.

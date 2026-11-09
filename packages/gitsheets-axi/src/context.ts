@@ -1,5 +1,5 @@
 import { AxiError } from 'axi-sdk-js';
-import { openRepo, type Repository } from 'gitsheets';
+import { ConfigError, openRepo, type Repository } from 'gitsheets';
 
 /**
  * Lazy gitsheets repo resolver. Opens the repo when a command actually needs
@@ -16,7 +16,45 @@ export interface GitsheetsContext {
   tryRepo(): Promise<Repository | null>;
 }
 
-export function createContext(): GitsheetsContext {
+/** Global flags `gitsheets-axi` accepts before the command name. */
+export interface GlobalFlags {
+  /** `--branch <name>`: the repository's default branch (specs/behaviors/default-branch.md). */
+  branch?: string;
+}
+
+/**
+ * Pull the global flags (`--branch <name>` / `--branch=<name>`) out of
+ * `argv`, wherever they appear — after the command per AXI convention, or
+ * before it — and return the rest for the command parser.
+ * `GITSHEETS_BRANCH` and `gitsheets.branch` are read by `openRepo` itself.
+ * See specs/behaviors/default-branch.md "CLI".
+ */
+export function parseGlobalFlags(argv: readonly string[]): { flags: GlobalFlags; rest: string[] } {
+  const flags: GlobalFlags = {};
+  const rest: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === '--branch') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new AxiError('--branch expects a branch name', 'VALIDATION_ERROR', [
+          'Example: gitsheets-axi query users --branch data',
+        ]);
+      }
+      flags.branch = value;
+      i++;
+      continue;
+    }
+    if (arg.startsWith('--branch=')) {
+      flags.branch = arg.slice('--branch='.length);
+      continue;
+    }
+    rest.push(arg);
+  }
+  return { flags, rest };
+}
+
+export function createContext(globals: GlobalFlags = {}): GitsheetsContext {
   let cached: Repository | null | undefined;
   let cachedError: unknown;
 
@@ -24,7 +62,7 @@ export function createContext(): GitsheetsContext {
     if (cached !== undefined) return cached;
     if (cachedError !== undefined) throw cachedError;
     try {
-      cached = await openRepo();
+      cached = await openRepo(globals.branch !== undefined ? { branch: globals.branch } : {});
       return cached;
     } catch (error) {
       cached = null;
@@ -47,6 +85,13 @@ export function createContext(): GitsheetsContext {
         return result;
       } catch (error) {
         if (error instanceof AxiError) throw error;
+        // A bad default-branch binding (--branch / GITSHEETS_BRANCH /
+        // gitsheets.branch naming a tag, commit, or malformed name).
+        if (error instanceof ConfigError && error.code === 'config_invalid') {
+          throw new AxiError(error.message, 'CONFIG_INVALID', [
+            'Pass a branch name: gitsheets-axi --branch data <command>, GITSHEETS_BRANCH=data, or `git config gitsheets.branch data`',
+          ]);
+        }
         // openRepo throws when there's no git repo. Translate.
         throw new AxiError(
           'Not inside a git repository.',
