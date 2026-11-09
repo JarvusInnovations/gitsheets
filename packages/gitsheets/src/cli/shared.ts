@@ -11,10 +11,10 @@ export interface GlobalArgs {
   gitDir?: string;
   root?: string;
   prefix?: string;
-  /** The repository's default branch (`--branch` / `GITSHEETS_BRANCH`); see specs/behaviors/default-branch.md. */
-  branch?: string;
-  /** Submodule mode: the data submodule's path (`--submodule` / `GITSHEETS_SUBMODULE`); see specs/behaviors/default-branch.md. */
-  submodule?: string;
+  /** The repository's default branch (`--branch` / `GITSHEETS_BRANCH`); `false` for `--no-branch` (opt out). See specs/behaviors/default-branch.md. */
+  branch?: string | false;
+  /** Submodule mode: the data submodule's path (`--submodule` / `GITSHEETS_SUBMODULE`); `false` for `--no-submodule` (opt out). See specs/behaviors/default-branch.md. */
+  submodule?: string | false;
   /** Submodule mode: stage the moved gitlink after each commit (`--stage-pointer`); only when given on the command line — the env / config tiers are `openRepo`'s. */
   stagePointer?: boolean;
   /** Submodule mode: read-only at the commit this superproject ref gitlinks (`--at` / `GITSHEETS_AT`). */
@@ -64,13 +64,23 @@ export class CliUsageError extends Error {
 /**
  * `openRepo` options from the global flags: `--git-dir`, `--branch`,
  * `--submodule`, `--at` (env already folded in by yargs), and
- * `--stage-pointer` when given on the command line.
+ * `--stage-pointer` when given on the command line. `--no-branch` /
+ * `--no-submodule` (`false`) become the `null` opt-out; an empty value
+ * (`GITSHEETS_SUBMODULE=`) is unset and left to `openRepo`'s config tier.
  */
 export function repoOptions(argv: GlobalArgs): OpenRepoOptions {
-  const opts: { gitDir?: string; branch?: string; submodule?: string; at?: string; stagePointer?: boolean } = {};
+  const opts: {
+    gitDir?: string;
+    branch?: string | null;
+    submodule?: string | null;
+    at?: string;
+    stagePointer?: boolean;
+  } = {};
   if (argv.gitDir) opts.gitDir = argv.gitDir;
-  if (argv.branch) opts.branch = argv.branch;
-  if (argv.submodule) opts.submodule = argv.submodule;
+  if (argv.branch === false) opts.branch = null;
+  else if (argv.branch) opts.branch = argv.branch;
+  if (argv.submodule === false) opts.submodule = null;
+  else if (argv.submodule) opts.submodule = argv.submodule;
   if (argv.at) opts.at = argv.at;
   if (argv.stagePointer !== undefined) opts.stagePointer = argv.stagePointer;
   return opts;

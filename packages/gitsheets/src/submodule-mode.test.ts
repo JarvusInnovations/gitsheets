@@ -372,6 +372,79 @@ describe('openRepo({ submodule })', () => {
   });
 });
 
+describe('explicit opt-out: openRepo({ submodule: null })', () => {
+  /** Point git's global config at a scratch file for the duration of `fn`. */
+  async function withGlobalConfig(fx: SubmoduleFixture, fn: (file: string) => Promise<void>): Promise<void> {
+    const saved = process.env['GIT_CONFIG_GLOBAL'];
+    const file = join(fx.remote, '..', 'global.gitconfig'); // the fixture's own temp dir
+    await writeFile(file, '');
+    process.env['GIT_CONFIG_GLOBAL'] = file;
+    try {
+      await fn(file);
+    } finally {
+      if (saved === undefined) delete process.env['GIT_CONFIG_GLOBAL'];
+      else process.env['GIT_CONFIG_GLOBAL'] = saved;
+      await rm(file, { force: true });
+    }
+  }
+
+  it('opens the superproject although GITSHEETS_SUBMODULE is exported', async () => {
+    const fx = await withSubmodule();
+    process.env['GITSHEETS_SUBMODULE'] = 'data';
+    expect((await openRepo({ gitDir: fx.superproject.gitDir })).submodule).toBe('data');
+    const repo = await openRepo({ gitDir: fx.superproject.gitDir, submodule: null });
+    expect(repo.submodule).toBeNull();
+    expect(repo.gitDir).toBe(fx.superproject.gitDir);
+    expect(repo.branch).toBe('main');
+  });
+
+  it('opens the superproject although a global gitsheets.submodule is set; omitted still resolves it', async () => {
+    const fx = await withSubmodule();
+    await withGlobalConfig(fx, async (file) => {
+      await fx.git(fx.superproject.path, 'config', '--file', file, 'gitsheets.submodule', 'data');
+      expect((await openRepo({ gitDir: fx.superproject.gitDir })).submodule).toBe('data');
+      expect((await openRepo({ gitDir: fx.superproject.gitDir, submodule: null })).submodule).toBeNull();
+      // An empty local value overrides the global one at the config tier and binds nothing.
+      await fx.git(fx.superproject.path, 'config', 'gitsheets.submodule', '');
+      expect((await openRepo({ gitDir: fx.superproject.gitDir })).submodule).toBeNull();
+    });
+  });
+
+  it('an empty GITSHEETS_SUBMODULE is unset — it falls through to git config, not an opt-out', async () => {
+    const fx = await withSubmodule();
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.submodule', 'data');
+    process.env['GITSHEETS_SUBMODULE'] = '';
+    expect((await openRepo({ gitDir: fx.superproject.gitDir })).submodule).toBe('data');
+  });
+
+  it('still resolves branch from env and the superproject config', async () => {
+    const fx = await withSubmodule();
+    await fx.git(fx.superproject.path, 'branch', 'side');
+    process.env['GITSHEETS_SUBMODULE'] = 'data';
+    process.env['GITSHEETS_BRANCH'] = 'side';
+    expect((await openRepo({ gitDir: fx.superproject.gitDir, submodule: null })).branch).toBe('side');
+  });
+
+  it('with at is config_invalid — at pins a data submodule', async () => {
+    const fx = await withSubmodule();
+    process.env['GITSHEETS_SUBMODULE'] = 'data';
+    await expect(openRepo({ gitDir: fx.superproject.gitDir, submodule: null, at: 'HEAD' })).rejects.toMatchObject({
+      code: 'config_invalid',
+    });
+  });
+
+  it('branch: null in submodule mode binds the submodule HEAD, ignoring GITSHEETS_BRANCH and its gitsheets.branch', async () => {
+    const fx = await withSubmodule();
+    await sub(fx, 'branch', 'side');
+    await sub(fx, 'config', 'gitsheets.branch', 'side');
+    expect((await open(fx)).branch).toBe('side');
+    process.env['GITSHEETS_BRANCH'] = 'side';
+    const repo = await open(fx, { branch: null });
+    expect(repo.submodule).toBe('data');
+    expect(repo.branch).toBe('main');
+  });
+});
+
 describe('openRepo({ submodule, at })', () => {
   it('pins every sheet read-only at the commit the superproject gitlinks', async () => {
     const fx = await withSubmodule();

@@ -239,6 +239,15 @@ const staging = await openRepo({ submodule: 'data', stagePointer: true });
 repository. That does not move the pointer, so the code repository sees
 nothing.
 
+Code that needs the code repository's own sheets while the binding is set
+(a migration script, a build step) opts out explicitly with `null`, which
+skips `GITSHEETS_SUBMODULE` and `gitsheets.submodule`; on the command line it
+is `--no-submodule` (and `branch: null` / `--no-branch` for a bound branch):
+
+```typescript
+const code = await openRepo({ submodule: null }); // the superproject itself, whatever env or config say
+```
+
 ### Read the data a release shipped with
 
 `at` takes any commit-ish of the code repository and pins every sheet,

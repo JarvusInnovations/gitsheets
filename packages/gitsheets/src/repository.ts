@@ -68,10 +68,12 @@ export interface OpenRepoOptions {
    * `refresh` / `sync` / `fetch` / the push daemon / `merge` target when
    * given no ref. Default: `GITSHEETS_BRANCH`, else the `gitsheets.branch`
    * git config of the opened repository, else the branch `HEAD` points at.
+   * `null` opts out: bind to the branch `HEAD` points at without reading
+   * `GITSHEETS_BRANCH` or `gitsheets.branch`.
    * A tag, commit, or malformed name is `ConfigError(config_invalid)`; an
    * unborn branch is a fresh-repo start. See specs/behaviors/default-branch.md.
    */
-  readonly branch?: string;
+  readonly branch?: string | null;
   /**
    * **Submodule mode**: open the submodule at this path (relative to the
    * superproject root, as in `.gitmodules`) instead of the superproject.
@@ -79,11 +81,13 @@ export interface OpenRepoOptions {
    * `HEAD`'s branch, or `HEAD` itself when detached (a commit then advances
    * `HEAD` directly). `branch` then names a branch *of the submodule*.
    * Default: `GITSHEETS_SUBMODULE`, else the superproject's
-   * `gitsheets.submodule` git config, else none. A submodule with no git dir
-   * is `ConfigError(config_missing)` naming `git sheet submodule init <path>`.
+   * `gitsheets.submodule` git config, else none. `null` opts out: open the
+   * repository `gitDir` / discovery names, without reading
+   * `GITSHEETS_SUBMODULE` or `gitsheets.submodule`. A submodule with no git
+   * dir is `ConfigError(config_missing)` naming `git sheet submodule init <path>`.
    * See specs/behaviors/default-branch.md "Submodule mode".
    */
-  readonly submodule?: string;
+  readonly submodule?: string | null;
   /**
    * Submodule mode: bind read-only to the commit the superproject's
    * commit-ish `at` gitlinks for the submodule — every sheet ref-pinned
@@ -1101,10 +1105,13 @@ export class Repository {
  * Resolve the default branch for a repository at `gitDir`, once, at open:
  * `explicit` (the `openRepo` option) → `GITSHEETS_BRANCH` → `gitsheets.branch`
  * git config → the branch `HEAD` points at (`null` when HEAD is detached).
- * Explicit sources must name a branch — `ConfigError(config_invalid)` for a
- * tag, commit, or malformed name. See specs/behaviors/default-branch.md.
+ * An explicit `null` opts out: straight to `HEAD`'s branch, without reading
+ * env or config. Explicit sources must name a branch —
+ * `ConfigError(config_invalid)` for a tag, commit, or malformed name. See
+ * specs/behaviors/default-branch.md.
  */
-async function resolveDefaultBranch(gitDir: string, explicit: string | undefined): Promise<string | null> {
+async function resolveDefaultBranch(gitDir: string, explicit: string | null | undefined): Promise<string | null> {
+  if (explicit === null) return headBranch(gitDir);
   if (explicit !== undefined) return validateBranchName(gitDir, explicit, 'openRepo({ branch })');
   const env = process.env['GITSHEETS_BRANCH'];
   if (env !== undefined && env !== '') return validateBranchName(gitDir, env, 'GITSHEETS_BRANCH');
@@ -1112,6 +1119,11 @@ async function resolveDefaultBranch(gitDir: string, explicit: string | undefined
   if (configured !== null && configured !== '') {
     return validateBranchName(gitDir, configured, 'git config gitsheets.branch');
   }
+  return headBranch(gitDir);
+}
+
+/** The branch `HEAD` points at, as a short name; `null` when `HEAD` is detached. */
+async function headBranch(gitDir: string): Promise<string | null> {
   try {
     const { stdout } = await gitExec(gitDir, ['symbolic-ref', '--quiet', 'HEAD']);
     const ref = stdout.trim();

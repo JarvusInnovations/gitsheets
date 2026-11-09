@@ -95,7 +95,9 @@ async function runSubmoduleInit(argv: SubmoduleInitArgs): Promise<void> {
   const url = await resolveSubmoduleUrl(superGitDir, workTree, rawUrl);
 
   // Branch: new → --branch, else the remote's HEAD; existing → .gitmodules, else --branch, else the remote's HEAD.
-  let branch: string | null | undefined = isNew ? argv.branch : (entry.branch ?? argv.branch);
+  // `--no-branch` (false) is the same as no `--branch` here (specs/api/cli.md "Global flags").
+  const flagBranch = argv.branch || undefined;
+  let branch: string | null | undefined = isNew ? flagBranch : (entry.branch ?? flagBranch);
   if (branch === '.') branch = (await superGitOrNull(['symbolic-ref', '--quiet', '--short', 'HEAD'])) ?? undefined;
   branch ??= await remoteHeadBranch(url);
   if (branch === null || branch === undefined) {

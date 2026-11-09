@@ -26,13 +26,15 @@ export interface SuperprojectBinding {
  * The submodule path the repository is bound to, resolved once at open:
  * `explicit` (the `openRepo` option) → `GITSHEETS_SUBMODULE` →
  * `gitsheets.submodule` git config of the superproject → `null` (no
- * submodule mode). See specs/behaviors/default-branch.md "Resolution".
+ * submodule mode). An explicit `null` opts out: no submodule, without
+ * reading env or config. See specs/behaviors/default-branch.md "Resolution".
  */
 export async function resolveSubmodulePath(
   superGitDir: string,
-  explicit: string | undefined,
+  explicit: string | null | undefined,
 ): Promise<{ path: string; source: SubmoduleSource } | null> {
   const from = (raw: string, source: SubmoduleSource) => ({ path: normalizeSubmodulePath(raw, source), source });
+  if (explicit === null) return null; // explicit opt-out: env and config are not read
   if (explicit !== undefined) return from(explicit, 'openRepo({ submodule })');
   const env = process.env['GITSHEETS_SUBMODULE'];
   if (env !== undefined && env !== '') return from(env, 'GITSHEETS_SUBMODULE');

@@ -43,10 +43,12 @@ commands[22]:
 flags[6]:
   --help, -v/-V/--version
   --branch <name>  Default branch every command reads/writes (any command;
-                   default: $GITSHEETS_BRANCH, gitsheets.branch, HEAD's branch)
+                   default: $GITSHEETS_BRANCH, gitsheets.branch, HEAD's branch;
+                   --no-branch: HEAD's branch, env and config ignored)
   --submodule <p>  Data submodule every command reads/writes; writes advance
                    its HEAD (the superproject's pointer). Any command;
                    default: $GITSHEETS_SUBMODULE, gitsheets.submodule
+                   (--no-submodule: the superproject, env and config ignored)
   --stage-pointer  With --submodule: also stage the moved gitlink after each
                    write (--no-stage-pointer: off). Default:
                    $GITSHEETS_STAGE_POINTER, gitsheets.stagePointer, off

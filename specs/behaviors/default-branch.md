@@ -49,6 +49,7 @@ Binding is resolved once, at `openRepo`, from the first source that applies:
 | Source | Branch mode | Submodule mode |
 | --- | --- | --- |
 | `openRepo` option | `branch: 'data'` | `submodule: 'data'` |
+| `openRepo` option `null` — explicit opt-out (CLI `--no-branch` / `--no-submodule`) | the branch `HEAD` points at; env and config are not read | no submodule: the repository `gitDir` / discovery names; env and config are not read |
 | environment (CLI and library alike) | `GITSHEETS_BRANCH` | `GITSHEETS_SUBMODULE` |
 | git config, as git resolves it for the repository (local over global — the normal git layering) | `gitsheets.branch` | `gitsheets.submodule` |
 | neither | the branch `HEAD` points at | — |
@@ -82,6 +83,37 @@ Binding is resolved once, at `openRepo`, from the first source that applies:
 - Git config is the lowest tier because it is per clone and unversioned: an
   operator binds a deployed clone without changing code, the way
   `remote.pushDefault` works. Code that knows its layout passes the option.
+- **Explicit opt-out.** An exported `GITSHEETS_SUBMODULE` or a global
+  `gitsheets.submodule` binds every `openRepo()` in reach, and code that
+  wants the superproject itself (a migration script, a tool that reads the
+  code repo's own sheets) must be able to say so. `null` is that statement:
+  `openRepo({ submodule: null })` opens the repository `gitDir` / discovery
+  names, with no submodule, and `openRepo({ branch: null })` binds to the
+  branch `HEAD` points at (`HEAD` itself when detached) — the "neither" row,
+  reached without reading env or config for that knob. Omitting the option
+  (`undefined`) keeps the env → config → default chain. An explicit option,
+  `null` included, always beats env and config; the two knobs opt out
+  independently, so `{ submodule: null }` still resolves `branch` from
+  `GITSHEETS_BRANCH` / `gitsheets.branch` (now of the superproject), and in
+  submodule mode `{ branch: null }` binds to the submodule's `HEAD` (the
+  pointer) whatever `GITSHEETS_BRANCH` or the submodule's `gitsheets.branch`
+  says. `{ submodule: null, at }` is `ConfigError` (`config_invalid`), as
+  `at` without a submodule always is.
+- **An empty value is unset.** `GITSHEETS_SUBMODULE=` / `GITSHEETS_BRANCH=`
+  falls through to git config, the same as an unset variable; it does not
+  opt out. An empty variable is how shells, CI templates, and `env` files
+  spell "nothing here" (`GITSHEETS_SUBMODULE=${DATA_SUBMODULE:-}`), so giving
+  it a meaning would turn an unfilled template into a silent rebind. The
+  opt-out is the flag (`--no-submodule` / `--no-branch`) or the option
+  (`null`), which say it on purpose. Likewise an empty `gitsheets.submodule`
+  / `gitsheets.branch` value is unset at its tier — so
+  `git config gitsheets.submodule ""` in a clone's local config overrides a
+  global one (git returns the local value) and binds nothing there.
+- **`stagePointer` and `at` need no `null`.** `stagePointer: false` (CLI
+  `--no-stage-pointer`) is already an explicit option that beats
+  `GITSHEETS_STAGE_POINTER` and `gitsheets.stagePointer`. `at` is a
+  per-invocation pin: the library reads it only from the option (the CLI
+  reads `GITSHEETS_AT` and passes it), so omitting it is the opt-out.
 - If `HEAD` is detached and nothing applies, the repository is bound to
   `HEAD` itself exactly as today: reads resolve the detached commit, a
   transaction with no `branch` produces a detached commit, and the
@@ -256,17 +288,21 @@ library enforces this: it is the user's `git push`.
 ### CLI
 
 Four global flags expose the binding knobs, each with an environment
-variable; the two settings also have a git config tier:
+variable; the settings also have a git config tier:
 
 | Flag | Env | Git config | Kind | Meaning |
 | --- | --- | --- | --- | --- |
-| `--branch <name>` | `GITSHEETS_BRANCH` | `gitsheets.branch` | setting | branch mode |
-| `--submodule <path>` | `GITSHEETS_SUBMODULE` | `gitsheets.submodule` | setting | submodule mode (combines with `--branch`) |
+| `--branch <name>` / `--no-branch` | `GITSHEETS_BRANCH` | `gitsheets.branch` | setting | branch mode; `--no-branch` binds to `HEAD`'s branch, ignoring env and config (`openRepo({ branch: null })`) |
+| `--submodule <path>` / `--no-submodule` | `GITSHEETS_SUBMODULE` | `gitsheets.submodule` | setting | submodule mode (combines with `--branch`); `--no-submodule` opens the superproject, ignoring env and config (`openRepo({ submodule: null })`) |
 | `--stage-pointer` / `--no-stage-pointer` | `GITSHEETS_STAGE_POINTER` | `gitsheets.stagePointer` | setting | submodule mode: stage the moved gitlink after each commit |
 | `--at <superproject-ref>` | `GITSHEETS_AT` | — | per-invocation pin | submodule mode: read-only at the commit `<superproject-ref>` gitlinks |
 
 The settings resolve exactly as `openRepo` does (flag → env → git config →
-default); `--at` is flag → env. With `--at`, every read command reads the
+default); `--at` is flag → env. A `--no-*` flag is the flag tier, so it
+wins over env and config (see "Explicit opt-out" under
+[Resolution](#resolution)); an empty `GITSHEETS_BRANCH=` /
+`GITSHEETS_SUBMODULE=` is unset, not an opt-out. When a flag and its
+`--no-` form are both given, the last one wins. With `--at`, every read command reads the
 pinned commit and every write command fails with `TransactionError`
 (`transaction_required`); `--at` outside submodule mode is `ConfigError`
 (`config_invalid`). Errors from a flag or its environment variable name the
@@ -281,9 +317,10 @@ submodule with no flags. A command that reads and then commits (`normalize`,
 `upsert --delete-missing`, `edit`, `infer`) reads at the same `--ref` it
 commits onto. `--commit-to` derives from the resolved `--ref` as today.
 
-`gitsheets-axi` accepts the same four flags — `--branch <name>`,
-`--submodule <path>`, `--stage-pointer` / `--no-stage-pointer`,
-`--at <superproject-ref>` (each value also as `--flag=value`) — on every
+`gitsheets-axi` accepts the same four flags — `--branch <name>` /
+`--no-branch`, `--submodule <path>` / `--no-submodule`, `--stage-pointer` /
+`--no-stage-pointer`, `--at <superproject-ref>` (each value also as
+`--flag=value`; a `--no-*` form takes no value) — on every
 command, after the command name per AXI convention
 (`gitsheets-axi query users --branch data`) or before it, with the same
 environment variables and git config. `push --branch` is that same global

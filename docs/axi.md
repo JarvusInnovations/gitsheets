@@ -142,6 +142,13 @@ shows `modified: data (new commits)` and nothing else. A submodule that is
 not set up yet is `CONFIG_MISSING`, with `git sheet submodule init <path>`
 as the fix.
 
+`--no-submodule` and `--no-branch` (any command, any position, no value)
+opt out of an inherited binding for one run: `--no-submodule` reads and
+writes the superproject itself, `--no-branch` the branch `HEAD` points at,
+and neither consults the environment variable or git config
+(`GITSHEETS_SUBMODULE=data gitsheets-axi query users --no-submodule`). An
+empty `GITSHEETS_SUBMODULE=` counts as unset, so the flag is the opt-out.
+
 Two more global flags work with `--submodule` (any command, any position):
 
 - `--stage-pointer` also stages the moved gitlink in the superproject's
@@ -153,7 +160,8 @@ Two more global flags work with `--submodule` (any command, any position):
   --at v1.2.0`); writes are refused. It is a per-run pin, so it has no git
   config.
 
-A malformed global flag (`--branch` with no value, `--stage-pointer=yes`) is
+A malformed global flag (`--branch` with no value, `--stage-pointer=yes`,
+`--no-submodule=data`) is
 a `VALIDATION_ERROR` (exit 2), like any other usage error.
 
 After a write, the materialize hint (`git checkout HEAD -- .`) appears only

@@ -13,8 +13,8 @@ operation on a `Repository` (or `Sheet`/`Transaction`).
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
-| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
-| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
+| `--branch <name>` / `--no-branch` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
+| `--submodule <path>` / `--no-submodule` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
 | `--stage-pointer` / `--no-stage-pointer` | `gitsheets.stagePointer` git config, else off | `GITSHEETS_STAGE_POINTER` |
 | `--at <superproject-ref>` | none | `GITSHEETS_AT` |
 | `--ref <ref>` | the default branch (the pinned commit under `--at`) | `GITSHEETS_REF` |
@@ -58,6 +58,16 @@ the submodule*). Set the submodule up with
 git config gitsheets.submodule data  # once per clone
 gitsheets upsert users '{"slug":"jane"}'
 git add data && git commit -m "Add jane"
+```
+
+To skip an inherited binding for one run, `--no-submodule` reads and writes
+the superproject itself and `--no-branch` uses the branch `HEAD` points at;
+neither consults the environment variable or git config. An empty
+`GITSHEETS_SUBMODULE=` or `GITSHEETS_BRANCH=` counts as unset and falls
+through to git config, so use the flag to opt out.
+
+```bash
+GITSHEETS_SUBMODULE=data gitsheets --no-submodule query users  # the superproject's own users sheet
 ```
 
 Two more flags apply in submodule mode:
