@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [aggregate-core]
 specs:
   - specs/behaviors/rollups.md
