@@ -25,10 +25,30 @@ The 0.x releases are honestly scoped as a **transactional writer with parity-pro
 
 **Rollup sheets** ([behaviors/rollups.md](../behaviors/rollups.md)) — the commit-time rollup pass lives in the core transaction, so every `transact` commit maintains rollups byte-identically to Node with no Python-side call. The explicit surface, in the batch-first shape:
 
-- `record_query(..., *, sheet=None, open_root='.', prefix='', stale=None)` — with `sheet=<name>` the core opens that sheet from the tree (every open-time check, rollup resolution included); a rollup sheet then reads **through its source** (stamped records served, stale partitions recomputed, orphans dropped; `base`/`template` are ignored), with `stale='recompute'` (default) or `'serve'`. `stale=` without `sheet=` is a `TypeError`. Without `sheet=`, `record_query` (and `record_aggregate`) over a rollup root are plain reads of the stored bytes — no read-through, so possibly stale.
+- `record_query(..., *, sheet=None, open_root='.', prefix='', stale=None)` — with `sheet=<name>` the core opens that sheet from the tree (every open-time check, rollup resolution included); a rollup sheet then reads **through its source** (stamped records served, stale partitions recomputed, orphans dropped; `base`/`template` are ignored), with `stale='recompute'` (default) or `'serve'`. `stale=` without `sheet=` is a `TypeError`. Without `sheet=`, `record_query(base=…)` (and `record_aggregate`) over a rollup root are plain reads of the stored bytes: no read-through, so a stale partition is returned as committed. Only `sheet=` reads through.
 - `rollup_status(git_dir, tree_ref, sheet, open_root='.', prefix='')` — the non-fresh partitions as `[{"path", "status"}]` (`stale` / `missing` / `orphaned`); writes nothing. `TypeError` on a non-rollup sheet.
 - `Transaction.materialize_rollups(sheet)` — materialize into the open transaction (the sheet opened first); returns `{"recomputed": [...], "deleted": [...]}` and leaves the transaction unmutated (no commit) when everything is fresh. `TypeError` on a non-rollup sheet.
 - Errors: a write to a rollup sheet raises `TransactionError` (code `sheet_derived`); a failed aggregate raises `AggregationError` with `sheet`, `aggregate`, and `partition` attributes and aborts the commit; a bad rollup config raises `ConfigError` (`config_invalid`) at `open_sheet`.
+
+**Ref, blob and merge primitives** — the rest of the exported batch surface, each a module-level function over a `git_dir`:
+
+- `sync_branch(git_dir, branch, remote_ref, time_seconds, offset_minutes=0, on_conflict='fail', conflict_branch_prefix=None, committer=None)` — the object-database half of `repo.sync()` ([behaviors/push-sync.md](../behaviors/push-sync.md)): classifies `branch` against an already-fetched `remote_ref` and moves it; returns `{outcome, old_commit, new_commit, ahead, behind, conflict_commit, conflict_branch}`. It does not fetch or push.
+- `is_ancestor(git_dir, a, b)` — whether commit `a` is reachable from `b` (or equal); Node's `repo.isAncestor`.
+- `tree_list(git_dir, tree_ref, path='.')` — the direct entries at `tree_ref:path` as `[{name, type, mode, hash}]`, or `None` when nothing (or a blob) is there; Node's `repo.listTree`.
+- `tag_set(git_dir, name, target='HEAD', force=False)` — point the lightweight tag `refs/tags/<name>` at `target`, refusing an existing tag unless `force`; returns the tagged object id. Node's `repo.tag`.
+- `merge_sheets(git_dir, ours, theirs, time_seconds, offset_minutes=0, open_root='.', prefer='fail', commit=True, message=None, author=None, committer=None)` — sheet-aware merge ([behaviors/merge.md](../behaviors/merge.md)); returns `{outcome, ours_commit, theirs_commit, base, tree, commit, merged_records, conflicts}`. `ours` is resolved as given (pass `refs/heads/<name>` for a hex-looking branch name).
+- `merge_record_texts(git_dir, tree_ref, sheet_name, config_path, open_root, base, ours, theirs, prefer='fail')` — field-merge one record's three texts through the sheet at `tree_ref` (the merge-driver primitive); returns `{text, conflicts}`.
+- `tree_read_blob(git_dir, tree_ref, path)` — the blob at `tree_ref:path` as `{hash, content}` (bytes), or `None` when absent or a subtree.
+- `tree_entry_hash(git_dir, tree_ref, path)` — the object id of the blob at `tree_ref:path`, or `None`.
+- `blob_read(git_dir, hash)` — a blob's bytes by object id, or `None`.
+- `blob_header(git_dir, hash)` — `{kind, size}` from the object header without inflating it, or `None`.
+- `record_write(git_dir, base_ref, base, paths, records, extension=None)` / `record_delete(git_dir, base_ref, base, paths, extension=None)` — write or delete a batch of records under `base` starting from the tree `base_ref`, returning the new tree (`{tree_hash, blob_hashes}` / `{tree_hash, existed}`); no commit, no validation, no ref movement.
+- `template_field_names(template)` — the record fields a path template reads (the set a query filter prunes on).
+- `core_check_validators(declared, validator_names)` — the store-open check that every validator names a declared sheet; raises `ConfigError` (`config_missing`) otherwise.
+- `run_comparator(rule, a, b)` — run a raw-JS sort comparator body once in the core's engine, so a Python caller gets Node's result for the same snippet.
+- `roundtrip(records)` — pass records through the core's value marshalling and back, preserving TOML type fidelity (a parity probe).
+
+**Test-only, not API** — `substrate_stats()`, `substrate_reset()` (holo-tree's process-wide counters and the tree cache) and `simulate_core_error(code)` (raises the typed exception for a stable code, to test the error mapping) are exported for the binding's own tests. They carry no compatibility promise and may change or disappear in any release.
 
 ## Known gaps (documented, tracked, not blockers for 0.x)
 

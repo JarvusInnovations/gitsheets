@@ -107,6 +107,9 @@ path = '${{ postedAt: YYYY/MM }}/${{ id }}'
 - Aggregate names may not collide with the key fields, `sourceTree`, or
   `configTree` (`config_invalid`). An aggregate may not reference a content-typed source's
   body field (`config_invalid`); rollups read records body-less.
+- `[gitsheet.rollup]` takes exactly `from` and `aggregates`: any other key
+  is `config_invalid`, and so is an `aggregates` table that declares no
+  aggregate.
 
 Every config problem above is reported at sheet open, in every binding, like
 the existing template checks.

@@ -140,6 +140,10 @@ When both conditions hold, the return shape matches the existing `!anyMutation` 
 
 The last bullet is a behavior change from v1.3.0, where `markMutated()` alone forced a commit. Real consumers of `markMutated` (internal callers like `upsert`/`delete`/`setAttachments`) always pair it with an actual mutation, so this isn't expected to break anyone. Consumers who genuinely want empty commits should use `git commit --allow-empty` outside the library.
 
+## Rollup pass
+
+When the repository declares rollup sheets, `finalize` runs a **rollup pass** before writing the commit: every partition the transaction touched in a rollup's source sheet has its rollup record regenerated and staged into the same tree, so the records and their aggregates land in one commit. An `AggregationError` in the pass aborts the commit with nothing moved, like a `ValidationError`. A transaction that touches no rollup source (and no `.gitsheets/` config) stages nothing extra. Rollup sheets themselves are read-only inside the handler: `tx.sheet('<rollup>').upsert(…)` (and the other writers) throw `TransactionError` (`sheet_derived`). See [behaviors/transactions.md § Rollup pass](../behaviors/transactions.md#rollup-pass) and [behaviors/rollups.md § Maintenance at commit](../behaviors/rollups.md#maintenance-at-commit).
+
 ## Permissive mode
 
 Standalone mutations (mutations called without an enclosing `repo.transact`) auto-open a transaction with a generated message:
@@ -210,6 +214,11 @@ await repo.transact({ message: '...' }, async (tx) => {
 | `TransactionError` | `commit_failed` | `git commit-tree` / `update-ref` returned non-zero, **or** a malformed trailer key/value was rejected at option-normalization time (HTTP-header-style key, string value with no newlines) |
 | `RefError` | `ref_not_found` | `opts.parent` is a branch name that doesn't exist |
 | `TransactionError` | `commit_failed` | `opts.parent: null` with an `opts.branch` that already exists (an orphan only creates a branch); or `opts.branch` (≠ parent ref) moved between open and commit |
+| `TransactionError` | `lock_held` | `repo.transact` (or a permissive-mode write) from inside a `repo.withLock` callback, or a nested `withLock` / `sync` / `merge` from inside a handler — the write lock is not reentrant |
+| `TransactionError` | `transaction_closed` | `tx.sheet(…)`, `tx.writeFile`, or `tx.deleteFile` on a `Transaction` captured past its handler (already finalized or discarded) |
+| `TransactionError` | `sheet_derived` | A write (`upsert`, `delete`, `patch`, `clear`, attachment writers) to a rollup sheet through `tx.sheet(name)` |
+| `TransactionError` | `pointer_stage_failed` | Submodule mode with `stagePointer: true`: the commit **landed** (`err.commitHash`) but the superproject's index could not be updated — do not retry ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)) |
+| `AggregationError` | `aggregation_failed` | The [rollup pass](#rollup-pass) could not compute an aggregate for a touched partition; the commit is aborted and no ref moves |
 | (any) | (any) | Errors thrown by the handler propagate out after tree discard |
 
 ## Coordinates with
