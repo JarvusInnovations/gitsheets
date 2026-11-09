@@ -118,6 +118,45 @@ describe('CLI: aggregate', () => {
   });
 });
 
+describe('CLI: aggregate exit codes', () => {
+  async function runErr(args: string[]): Promise<{ code: number; err: string }> {
+    const original = process.stderr.write.bind(process.stderr);
+    const chunks: string[] = [];
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const { code } = await run(args);
+      return { code, err: chunks.join('') };
+    } finally {
+      process.stderr.write = original;
+    }
+  }
+
+  it('a malformed --agg is an argument error (exit 2) with one gitsheets: line', async () => {
+    const h = await seeded();
+    for (const bad of ['n=sum', 'n=median:x', 'count']) {
+      const r = await runErr(['--git-dir', h.gitDir, 'aggregate', 'transactions', '--agg', bad]);
+      expect(r.code, bad).toBe(2);
+      expect(r.err, bad).toMatch(/^gitsheets: --agg .*\n$/);
+    }
+    const twice = await runErr(['--git-dir', h.gitDir, 'aggregate', 'transactions', '--agg', 'n=count', '--agg', 'n=count']);
+    expect(twice.code).toBe(2);
+  });
+
+  it('an AggregationError exits 23 and names the sheet and aggregate', async () => {
+    const h = await seeded();
+    expect((await run(['--git-dir', h.gitDir, 'upsert', 'transactions', '{"id":"s","amountCents":"lots"}'])).code).toBe(0);
+    const r = await runErr(['--git-dir', h.gitDir, 'aggregate', 'transactions', '--agg', 'low=min:amountCents']);
+    expect(r.code).toBe(23);
+    expect(r.err).toMatch(/^gitsheets: AggregationError: /);
+    expect(r.err).toContain('  code:   aggregation_failed\n');
+    expect(r.err).toContain('  sheet:  transactions\n');
+    expect(r.err).toContain('  aggregate: low\n');
+  });
+});
+
 describe('parseAggClause', () => {
   it('parses count and field forms', () => {
     expect(parseAggClause('n=count')).toEqual(['n', { count: true }]);

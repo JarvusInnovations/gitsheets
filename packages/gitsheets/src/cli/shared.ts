@@ -4,7 +4,7 @@
 // registration functions (e.g. `registerContractsCommands`) from the modules
 // that need these.
 
-import { ConfigError, type ConfigErrorCode } from '../errors.js';
+import { ConfigError, RefError, type ConfigErrorCode, type RefErrorCode } from '../errors.js';
 import { openRepo, type OpenRepoOptions, type Repository } from '../repository.js';
 
 export interface GlobalArgs {
@@ -15,6 +15,10 @@ export interface GlobalArgs {
   branch?: string;
   /** Submodule mode: the data submodule's path (`--submodule` / `GITSHEETS_SUBMODULE`); see specs/behaviors/default-branch.md. */
   submodule?: string;
+  /** Submodule mode: stage the moved gitlink after each commit (`--stage-pointer`); only when given on the command line — the env / config tiers are `openRepo`'s. */
+  stagePointer?: boolean;
+  /** Submodule mode: read-only at the commit this superproject ref gitlinks (`--at` / `GITSHEETS_AT`). */
+  at?: string;
   ref?: string;
   commitTo?: string;
   message?: string;
@@ -45,12 +49,30 @@ export function buildTxOpts(argv: GlobalArgs, defaultMessage: string): TxOpts {
   return opts;
 }
 
-/** `openRepo` options from the global flags: `--git-dir`, `--branch`, `--submodule` (env already folded in by yargs). */
+/**
+ * An argument-parsing error — a malformed flag value or an invalid flag
+ * combination. Exits 2 with a single `gitsheets: <message>` line, like the
+ * errors yargs reports itself (specs/api/cli.md "Exit codes").
+ */
+export class CliUsageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CliUsageError';
+  }
+}
+
+/**
+ * `openRepo` options from the global flags: `--git-dir`, `--branch`,
+ * `--submodule`, `--at` (env already folded in by yargs), and
+ * `--stage-pointer` when given on the command line.
+ */
 export function repoOptions(argv: GlobalArgs): OpenRepoOptions {
-  const opts: { gitDir?: string; branch?: string; submodule?: string } = {};
+  const opts: { gitDir?: string; branch?: string; submodule?: string; at?: string; stagePointer?: boolean } = {};
   if (argv.gitDir) opts.gitDir = argv.gitDir;
   if (argv.branch) opts.branch = argv.branch;
   if (argv.submodule) opts.submodule = argv.submodule;
+  if (argv.at) opts.at = argv.at;
+  if (argv.stagePointer !== undefined) opts.stagePointer = argv.stagePointer;
   return opts;
 }
 
@@ -61,6 +83,8 @@ export function repoOptions(argv: GlobalArgs): OpenRepoOptions {
  */
 export function readRef(argv: GlobalArgs, repo: Repository): string {
   if (argv.ref) return argv.ref;
+  const pinned = repo.pinnedAtCommit();
+  if (pinned !== null) return pinned;
   return repo.branch !== null ? `refs/heads/${repo.branch}` : 'HEAD';
 }
 
@@ -77,6 +101,12 @@ export async function openCliRepo(argv: GlobalArgs): Promise<Repository> {
     }
     if (err instanceof ConfigError && err.message.startsWith('openRepo({ submodule })')) {
       throw new ConfigError(err.code as ConfigErrorCode, `--submodule / GITSHEETS_SUBMODULE${err.message.slice('openRepo({ submodule })'.length)}`, { cause: err });
+    }
+    if ((err instanceof ConfigError || err instanceof RefError) && err.message.startsWith('openRepo({ at })')) {
+      const message = `--at / GITSHEETS_AT${err.message.slice('openRepo({ at })'.length)}`;
+      throw err instanceof RefError
+        ? new RefError(err.code as RefErrorCode, message, { cause: err })
+        : new ConfigError(err.code as ConfigErrorCode, message, { cause: err });
     }
     throw err;
   }

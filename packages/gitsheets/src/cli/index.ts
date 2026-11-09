@@ -37,7 +37,7 @@ import {
   type OutputFormat,
 } from './formats.js';
 import { registerContractsCommands } from './contracts.js';
-import { buildTxOpts, openCliRepo, readRef, type GlobalArgs } from './shared.js';
+import { buildTxOpts, CliUsageError, openCliRepo, readRef, type GlobalArgs } from './shared.js';
 import { registerSubmoduleCommands } from './submodule.js';
 
 export type { GlobalArgs } from './shared.js';
@@ -130,7 +130,9 @@ interface CheckArgs extends GlobalArgs {
 
 // Exit codes per specs/api/cli.md
 function exitCodeForError(err: unknown): number {
+  if (err instanceof CliUsageError) return 2;
   if (err instanceof ValidationError) return 22;
+  if (err instanceof AggregationError) return 23;
   if (err instanceof ConfigError) return 64;
   if (err instanceof RefError) return 65;
   if (err instanceof NotFoundError) return 66;
@@ -143,6 +145,10 @@ function exitCodeForError(err: unknown): number {
 
 function reportError(err: unknown): void {
   const out = process.stderr;
+  if (err instanceof CliUsageError) {
+    out.write(`gitsheets: ${err.message}\n`);
+    return;
+  }
   if (err instanceof GitsheetsError) {
     out.write(`gitsheets: ${err.name}: ${err.message}\n`);
     out.write(`  code:   ${err.code}\n`);
@@ -206,7 +212,7 @@ const VALID_ENCODINGS: ReadonlySet<BufferEncoding> = new Set([
 function resolveEncoding(raw: string | undefined): BufferEncoding {
   const enc = (raw ?? 'utf8').toLowerCase() as BufferEncoding;
   if (!VALID_ENCODINGS.has(enc)) {
-    throw new Error(`--encoding "${raw}" is not a recognized encoding`);
+    throw new CliUsageError(`--encoding "${raw}" is not a recognized encoding`);
   }
   return enc;
 }
@@ -215,9 +221,13 @@ async function loadRepoAndSheet(
   argv: GlobalArgs & { sheet: string },
 ): Promise<{ repo: Awaited<ReturnType<typeof openRepo>>; sheet: Sheet }> {
   const repo = await openCliRepo(argv);
-  const sheetOpts: { root?: string; prefix?: string } = {};
+  // `--ref` pins every read (specs/api/cli.md "Global flags"). Commands that
+  // then commit do so through `repo.transact` with `parent: --ref`
+  // (buildTxOpts), so the read side and the commit see the same ref.
+  const sheetOpts: { root?: string; prefix?: string; ref?: string } = {};
   if (argv.root) sheetOpts.root = argv.root;
   if (argv.prefix) sheetOpts.prefix = argv.prefix;
+  if (argv.ref) sheetOpts.ref = argv.ref;
   const sheet = await repo.openSheet(argv.sheet, sheetOpts);
   return { repo, sheet };
 }
@@ -237,7 +247,7 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   const attachmentMap = argv.attachment ?? {};
   const attachmentNames = Object.keys(attachmentMap);
   if (attachmentNames.length > 0 && records.length !== 1) {
-    throw new Error(
+    throw new CliUsageError(
       `--attachment requires a single-record input (got ${records.length} records)`,
     );
   }
@@ -255,7 +265,7 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
     const source = attachmentMap[name]!;
     if (source === '-') {
       if (stdinConsumed) {
-        throw new Error(
+        throw new CliUsageError(
           `--attachment ${name}=-: stdin is already consumed; only one '-' source per command`,
         );
       }
@@ -276,10 +286,10 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   }
 
   if (argv.patch && argv.deleteMissing) {
-    throw new Error('--patch and --delete-missing cannot be combined');
+    throw new CliUsageError('--patch and --delete-missing cannot be combined');
   }
   if (argv.patch && attachmentNames.length > 0) {
-    throw new Error('--patch and --attachment cannot be combined');
+    throw new CliUsageError('--patch and --attachment cannot be combined');
   }
 
   // For --patch: pre-load the sheet's path-template so we know which input
@@ -308,7 +318,8 @@ async function runUpsert(argv: UpsertArgs): Promise<void> {
   // For --delete-missing, capture the existing record paths BEFORE the
   // transaction opens, so we can compute the "missing" set after all upserts.
   // Reading from the same Sheet handle the loadRepoAndSheet returned gives us
-  // a HEAD snapshot, not the in-flight tx state — exactly what we want.
+  // the committed snapshot at --ref (else the default branch) — the parent
+  // the transaction commits onto — not the in-flight tx state.
   const existingPaths = new Set<string>();
   if (argv.deleteMissing) {
     for await (const r of sheet.query()) {
@@ -424,7 +435,7 @@ export function parseCliFilters(raw: string[] | string): RecordLike {
       break;
     }
     if (!matched) {
-      throw new Error(`--filter expects field=value or field>=value / <= / > / <, got ${item}`);
+      throw new CliUsageError(`--filter expects field=value or field>=value / <= / > / <, got ${item}`);
     }
   }
   return out;
@@ -489,17 +500,17 @@ export function parseAggClause(item: string): [string, AggregateSpec] {
   const form = colon === -1 ? rhs : rhs.slice(0, colon);
   const field = colon === -1 ? undefined : rhs.slice(colon + 1);
   if (!name) {
-    throw new Error(`--agg expects <name>=<form>[:<field>], got ${item}`);
+    throw new CliUsageError(`--agg expects <name>=<form>[:<field>], got ${item}`);
   }
   if (form === 'count') {
-    if (field !== undefined) throw new Error(`--agg ${name}: count takes no field, got ${item}`);
+    if (field !== undefined) throw new CliUsageError(`--agg ${name}: count takes no field, got ${item}`);
     return [name, { count: true }];
   }
   if (form === 'sum' || form === 'min' || form === 'max' || form === 'avg' || form === 'distinct') {
-    if (!field) throw new Error(`--agg ${name}: ${form} needs a field (${name}=${form}:<field>)`);
+    if (!field) throw new CliUsageError(`--agg ${name}: ${form} needs a field (${name}=${form}:<field>)`);
     return [name, { [form]: field } as unknown as AggregateSpec];
   }
-  throw new Error(
+  throw new CliUsageError(
     `--agg ${name}: unknown form ${JSON.stringify(form)} — use count, sum, min, max, avg, or distinct (reduce is library-only)`,
   );
 }
@@ -508,12 +519,12 @@ async function runAggregate(argv: AggregateArgs): Promise<void> {
   const { sheet } = await loadRepoAndSheet(argv);
   const format = argv.format ?? 'json';
   if (format !== 'json' && format !== 'toml') {
-    throw new Error(`--format must be one of: json, toml (got "${format}")`);
+    throw new CliUsageError(`--format must be one of: json, toml (got "${format}")`);
   }
   // Null-prototype so names like `toString` aren't mistaken for duplicates.
   const aggregates = Object.create(null) as Record<string, AggregateSpec>;
   for (const [name, spec] of argv.agg) {
-    if (Object.hasOwn(aggregates, name)) throw new Error(`--agg ${name} given twice`);
+    if (Object.hasOwn(aggregates, name)) throw new CliUsageError(`--agg ${name} given twice`);
     aggregates[name] = argv.groupBy !== undefined ? { ...spec, groupBy: argv.groupBy } : spec;
   }
   const filter = (argv.filter as RecordLike | undefined) ?? {};
@@ -524,13 +535,14 @@ async function runAggregate(argv: AggregateArgs): Promise<void> {
 // `git sheet rollup <sheet> [--check]` — specs/api/cli.md, specs/behaviors/rollups.md
 // "Materializing explicitly".
 async function runRollup(argv: RollupArgs): Promise<void> {
-  const repo = await openRepo(argv.gitDir ? { gitDir: argv.gitDir } : {});
+  const repo = await openCliRepo(argv);
+  // Reads at --ref when given (the parent the materialize commit lands on).
   const sheetOpts: { root?: string; prefix?: string; ref?: string } = {};
   if (argv.root) sheetOpts.root = argv.root;
   if (argv.prefix) sheetOpts.prefix = argv.prefix;
+  if (argv.ref) sheetOpts.ref = argv.ref;
   if (argv.check) {
-    // --check reads (at --ref when given) and writes nothing.
-    if (argv.ref) sheetOpts.ref = argv.ref;
+    // --check reads and writes nothing.
     const sheet = await repo.openSheet(argv.sheet, sheetOpts);
     const entries = await sheet.rollupStatus();
     for (const e of entries) process.stdout.write(`${e.status} ${e.path}\n`);
@@ -700,7 +712,7 @@ async function runInfer(argv: InferArgs): Promise<void> {
 
 async function runInit(argv: InitArgs): Promise<void> {
   if (argv.commit === false) {
-    throw new Error('init --no-commit is not supported: init always commits the config (--commit is the explicit spelling)');
+    throw new CliUsageError('init --no-commit is not supported: init always commits the config (--commit is the explicit spelling)');
   }
   const repo = await openCliRepo(argv);
   const configPath = `${argv.root && argv.root !== '/' && argv.root !== '.' ? argv.root + '/' : ''}.gitsheets/${argv.sheet}.toml`;
@@ -1202,6 +1214,10 @@ async function runNormalize(argv: NormalizeArgs): Promise<void> {
 // --- Entry ---
 
 export async function main(args: string[] = hideBin(process.argv)): Promise<number> {
+  const end = args.indexOf('--');
+  const stagePointerOnCommandLine = (end === -1 ? args : args.slice(0, end)).some((a) =>
+    /^--(no-)?stage-pointer(=|$)/.test(a),
+  );
   const parser = yargs(args)
     .scriptName('gitsheets')
     .usage('Usage: $0 <command> [options]')
@@ -1228,7 +1244,20 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       describe:
         "Submodule mode: read and write the data submodule at this path (its HEAD is the superproject's pointer); default: $GITSHEETS_SUBMODULE, gitsheets.submodule git config",
     })
-    .option('ref', { type: 'string', describe: 'Ref/commit to read from or transact against; default: the default branch' })
+    .option('stage-pointer', {
+      type: 'boolean',
+      describe:
+        "Submodule mode: also stage the moved gitlink in the superproject's index after each commit (--no-stage-pointer turns it off); default: $GITSHEETS_STAGE_POINTER, gitsheets.stagePointer git config, else off",
+    })
+    .option('at', {
+      type: 'string',
+      describe:
+        'Submodule mode: read-only at the data commit this superproject ref gitlinks (writes are refused); default: $GITSHEETS_AT',
+    })
+    .option('ref', {
+      type: 'string',
+      describe: 'Ref/commit to read from or transact against; default: the default branch (the pinned commit under --at)',
+    })
     .option('commit-to', { type: 'string', describe: 'Branch to update on commit' })
     .option('message', { type: 'string', describe: 'Commit message (mutating commands)' })
     .option('author-name', { type: 'string', describe: 'Commit author name' })
@@ -1242,13 +1271,22 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
         const out: Record<string, string> = {};
         for (const item of items) {
           const eq = item.indexOf('=');
-          if (eq === -1) throw new Error(`--trailer expects Key=Value, got ${item}`);
+          if (eq === -1) throw new CliUsageError(`--trailer expects Key=Value, got ${item}`);
           out[item.slice(0, eq)] = item.slice(eq + 1);
         }
         return out;
       },
     })
     .env('GITSHEETS')
+    .middleware((argv) => {
+      // yargs' env folding reads only "true" as true, so GITSHEETS_STAGE_POINTER
+      // and gitsheets.stagePointer are left to openRepo, which parses git
+      // booleans. Keep the value only when the flag is on the command line.
+      if (stagePointerOnCommandLine) return;
+      const a = argv as Record<string, unknown>;
+      delete a['stagePointer'];
+      delete a['stage-pointer'];
+    }, true)
     .command<UpsertArgs>(
       'upsert <sheet> [input]',
       'Insert or update one or more records',
@@ -1291,7 +1329,7 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
               for (const item of items) {
                 const eq = item.indexOf('=');
                 if (eq === -1) {
-                  throw new Error(`--attachment expects <name>=<source>, got ${item}`);
+                  throw new CliUsageError(`--attachment expects <name>=<source>, got ${item}`);
                 }
                 out[item.slice(0, eq)] = item.slice(eq + 1);
               }
@@ -1467,7 +1505,7 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       (y) =>
         y
           .positional('theirs', { type: 'string', describe: 'Branch, tag, or commit to merge in' })
-          .option('into', { type: 'string', describe: "Branch to merge into (default: HEAD's branch)" })
+          .option('into', { type: 'string', describe: 'Branch to merge into (default: the default branch)' })
           .option('prefer', { type: 'string', choices: ['ours', 'theirs'], describe: 'Resolve conflicts in favour of a side' })
           .option('dry-run', { type: 'boolean', default: false, describe: 'Write the merged tree, move nothing' })
           .option('install-driver', {
@@ -1505,12 +1543,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       (y) => registerSubmoduleCommands(y),
     )
     .fail((msg, err) => {
-      if (err) {
-        reportError(err);
-        process.exit(exitCodeForError(err));
-      }
-      process.stderr.write(`gitsheets: ${msg}\n`);
-      process.exit(2);
+      // Rethrown to main's catch, which reports and returns the exit code.
+      // yargs wraps an error thrown by a `coerce` (a malformed flag value) in
+      // its own YError: that is an argument error, exit 2.
+      if (err) throw err.name === 'YError' ? new CliUsageError(err.message) : err;
+      throw new CliUsageError(msg);
     })
     .help()
     .alias('h', 'help')

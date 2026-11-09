@@ -110,6 +110,26 @@ describe('CLI: rollup', () => {
     expect(m.out).toBe('recomputed 2026/03\ndeleted 2026/01\n');
   });
 
+  it('honors --branch: --check and materialize operate on the bound branch, not HEAD\'s', async () => {
+    const h = await seeded();
+    // Move the records to `data`; the checked-out branch keeps no sheets.
+    await h.git('branch', 'data');
+    await h.git('rm', '-rq', '.');
+    await h.git('commit', '-qm', 'empty code branch');
+    const head0 = (await h.git('rev-parse', 'HEAD')).stdout.trim();
+
+    let r = await run(['--git-dir', h.gitDir, '--branch', 'data', 'rollup', 'transactions-monthly', '--check']);
+    expect(r.code).toBe(1);
+    expect(r.out).toBe('missing 2026/01\nmissing 2026/03\n');
+    r = await run(['--git-dir', h.gitDir, '--branch', 'data', 'rollup', 'transactions-monthly']);
+    expect(r.code).toBe(0);
+    expect(r.out).toBe('recomputed 2026/01\nrecomputed 2026/03\n');
+    expect((await h.git('show', 'data:transactions-monthly/2026/03.toml')).stdout).toContain('total = 50\n');
+    expect((await h.git('rev-parse', 'HEAD')).stdout.trim()).toBe(head0);
+    r = await run(['--git-dir', h.gitDir, '--branch', 'data', 'rollup', 'transactions-monthly', '--check']);
+    expect(r.code).toBe(0);
+  });
+
   it('refuses a non-rollup sheet', async () => {
     const h = await seeded();
     const r = await run(['--git-dir', h.gitDir, 'rollup', 'transactions']);
