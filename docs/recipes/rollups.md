@@ -60,6 +60,7 @@ That one commit carries the two transactions **and**:
 
 ```toml
 # transactions-monthly/2026/03.toml
+configTree = "41d07a…"
 count = 2
 largest = 240000
 posted = 241200
@@ -75,7 +76,11 @@ rent = 240000
 - `postedAt` is the **key field**: the first day of the period, as a TOML
   local date. A plain-field partition (`${{ domain }}`) carries the field's
   value instead.
-- `sourceTree` is the stamp — `git rev-parse HEAD:transactions/2026/03`.
+- `sourceTree` and `configTree` are the stamp — `git rev-parse
+  HEAD:transactions/2026/03` and `git rev-parse HEAD:.gitsheets`. A record is
+  fresh only while both match, so editing any sheet config makes reads
+  recompute until the next gitsheets commit (which regenerates every rollup)
+  or `git sheet rollup`.
 - An aggregate with nothing to fold is left out, except `count` and `sum`
   (`0`).
 
@@ -95,10 +100,21 @@ const march = await monthly.get('2026/03');
 ```
 
 Reads are always correct. For each partition, gitsheets compares the stored
-record's `sourceTree` with the partition's current tree id: a match is served
+record's stamp with the partition's and the configs' current tree ids: a match is served
 as stored (one small blob read); a mismatch is recomputed from the
 transactions on the fly, without writing. Pass `{ stale: 'serve' }` to see
-exactly what the commit stored instead.
+exactly what the commit stored instead. `monthly.aggregate(…)` folds over
+those same read-through records, and an equality filter on the key field
+accepts the day as `'2026-03-01'` or `new Date('2026-03-01T00:00:00Z')`.
+
+## Tenants (`prefix`)
+
+A source written under prefixes (`tx.sheet('transactions', { prefix: 'acme' })`)
+gets per-tenant rollups at `transactions-monthly/acme/2026/03.toml`. gitsheets
+works out each changed record's prefix from its depth — whatever lies above
+the segments the source template renders — so every commit, merge, and sync
+replay keeps every tenant's rollups fresh. Read them with
+`repo.openSheet('transactions-monthly', { prefix: 'acme' })`.
 
 ## Keeping them fresh after outside writes
 
@@ -130,6 +146,16 @@ Expression components, recursive `**` components, and anything that is not a
 prefix of the source's path are rejected when the sheet is opened.
 
 ## Things to know
+
+- **Removing a rollup config leaves its records.** Nothing reads them as a
+  rollup any more; delete the directory in the same commit if they should go.
+- **A bad rollup config only blocks commits that touch it** — its source's
+  records, or the configs — with the `ConfigError` opening it would raise.
+- **Rollup roots stay clear of every other sheet's root** (`config_invalid`
+  otherwise), so a rollup never lands inside data another sheet reads.
+- **Raw writes can forge a stamp.** A `tx.writeFile` under a rollup root is
+  served as-is while its stamps match; `git sheet rollup --check` compares
+  bytes and catches it.
 
 - **Rollup sheets are read-only.** `upsert`, `delete`, `patch`, `clear`, and
   the attachment writers throw `TransactionError` (`sheet_derived`).

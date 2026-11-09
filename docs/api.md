@@ -213,7 +213,7 @@ Forms: `{ count: true }`, `{ sum: 'f' }`, `{ avg: 'f' }`, `{ min: 'f' }`, `{ max
 
 ### Rollup sheets
 
-A sheet whose config has a `[gitsheet.rollup]` table is a **rollup sheet**: one record per partition of a source sheet, holding aggregates in the grammar above, committed by gitsheets in the same commit as the record changes and stamped with the source partition's git tree id (`sourceTree`). See the [rollups recipe](recipes/rollups.md).
+A sheet whose config has a `[gitsheet.rollup]` table is a **rollup sheet**: one record per partition of a source sheet, holding aggregates in the grammar above, committed by gitsheets in the same commit as the record changes and stamped with the source partition's git tree id (`sourceTree`) and the `.gitsheets/` directory's (`configTree`). See the [rollups recipe](recipes/rollups.md).
 
 ```toml
 # .gitsheets/transactions-monthly.toml
@@ -231,7 +231,7 @@ total = { sum = 'amountCents' }
 
 | Member | Behavior |
 | --- | --- |
-| `query` / `queryFirst` / `queryAll` / `get` / `count` / `findByIndex` | Read **through the source**: a stored record whose stamp matches its partition is served; a stale or missing one is recomputed transiently (nothing is written); a record whose partition is gone is not yielded. Key-field filters (including bucket ranges) prune like on the source |
+| `query` / `queryFirst` / `queryAll` / `get` / `count` / `aggregate` / `findByIndex` | Read **through the source**: a stored record whose stamps match its partition and the configs is served; a stale or missing one is recomputed transiently (nothing is written); a record whose partition is gone is not yielded. Key-field filters (including bucket ranges) prune like on the source |
 | `opts.stale` (on `query`, `queryFirst`, `queryAll`, `get`) | `'recompute'` (default) or `'serve'` — the stored records exactly as committed |
 | `sheet.materialize()` | `Promise<{ recomputed: string[], deleted: string[] }>` — recompute every stale or missing rollup record and delete orphans, in one commit (into the current transaction on a tx-bound sheet); no commit when everything is fresh. `TypeError` on a non-rollup sheet |
 | `upsert` / `delete` / `patch` / `clear` / attachment writers | Throw `TransactionError` (`sheet_derived`) |
@@ -239,6 +239,8 @@ total = { sum = 'amountCents' }
 - Every commit gitsheets produces — `repo.transact`, a permissive write, `repo.merge`, each `repo.sync` replay — regenerates the rollups of the partitions it touched. A config change regenerates them all.
 - An `AggregationError` in that pass (with `sheet`, `aggregate`, and `partition`) aborts the commit; so does a `ValidationError` against a declared rollup `[gitsheet.schema]`.
 - A plain `git merge` or an outside writer leaves stale stamps: reads stay correct, and `materialize()` / `git sheet rollup` persists the repair.
+- Prefixed (multi-tenant) sources get per-prefix rollups under `<rollup root>/<prefix>/…`; every gitsheets commit, merge, and sync replay maintains all of them.
+- Equality on a date key field accepts `'2026-03-01'` or a midnight-UTC `Date` (any local-date field does).
 
 → [`specs/behaviors/rollups.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/rollups.md)
 

@@ -269,7 +269,7 @@ byCategory = { sum = 'amountCents', groupBy = 'category' }
 ```
 
 - Partition components: literal, plain field (`${{ domain }}`), date bucket (cut `YYYY/MM/DD` at `YYYY` or `YYYY/MM`; `YYYY/WW` only whole). `path = 'all'` (literals only) = one whole-sheet record.
-- Generated record: the key fields (bucket → period-start local date, e.g. `postedAt = 2026-03-01`), `sourceTree`, one field per aggregate. Aggregate names can't be a key field or `sourceTree`.
+- Generated record: the key fields (bucket → period-start local date, e.g. `postedAt = 2026-03-01`), `sourceTree`, `configTree`, one field per aggregate. Aggregate names can't be a key field or a stamp field. The root must not overlap any other sheet's root.
 - TOML format only; `[gitsheet.schema]` optional (validates generated records). Aggregates can't reference a markdown source's body field.
 - Every violation → `ConfigError('config_invalid')` at sheet open.
 
