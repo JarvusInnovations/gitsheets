@@ -334,7 +334,13 @@ sit in a working tree. Stages; never commits.
 - Without `--url` (an existing entry, e.g. a fresh clone of the
   superproject): fetches, puts `HEAD` on the `.gitmodules` branch at the
   commit the superproject pins, and sets `ignore`. Re-running is safe — an
-  existing data branch is left where it is.
+  existing data branch is left where it is; a detached `HEAD` holding
+  gitsheets writes (after `git submodule update`) is fast-forwarded onto the
+  branch first, and a branch that diverged from it is refused, naming both
+  commits.
+
+`--url` reaches the remote before writing anything, so a failed clone leaves
+`.gitmodules` and the git config untouched; re-run with a working URL.
 
 ```bash
 gitsheets submodule init data --url git@github.com:org/app-data.git --branch main

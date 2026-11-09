@@ -219,7 +219,10 @@ git commit -m "Add jane"  # or commit the pointer together with your code change
 
 gitsheets stages nothing in the code repository unless you ask it to. In
 code, `stagePointer: true` updates the index entry for the pointer after each
-write, so `git commit -a` carries it:
+write (and after a `merge` or `sync` that moves it), so `git commit -a`
+carries it. If the index is locked when it tries, the write has still landed:
+the error is `TransactionError` `pointer_stage_failed` with the commit on
+`err.commitHash`, and the fix is `git add data`, not another write:
 
 ```typescript
 import { openRepo } from 'gitsheets';
@@ -267,8 +270,24 @@ Re-running it is safe: a data branch that already exists is left where it is.
 Plain `git submodule update --init` works too, but it checks the records out
 and leaves `HEAD` detached. On a detached `HEAD`, gitsheets advances `HEAD`
 itself, so the pointer still moves, but `sync`, `fetch`, and the push daemon
-need a branch and refuse until `HEAD` is on one (`git sheet submodule init
-data` puts it back on the `.gitmodules` branch).
+need a branch and refuse until `HEAD` is on one. `git sheet submodule init
+data` puts it back on the `.gitmodules` branch, fast-forwarding the branch
+over any writes made on the detached `HEAD` first. If the branch has moved on
+separately, it refuses and names both commits rather than drop either.
+
+!!! warning "Writes on a detached `HEAD` hang off `HEAD` alone"
+    Until you commit the pointer in the code repository (`git add data`), a
+    write made on a detached `HEAD` is referenced only by that `HEAD`. A
+    `git submodule update`, `git checkout`, or `git switch` in `data/`
+    moves `HEAD` and leaves the write reachable only from the reflog. Put
+    the submodule on a branch (`git sheet submodule init data`) before
+    writing, or pin each write promptly.
+
+    gitsheets also resolves the binding once, when the repository is
+    opened. A long-running process does not notice a later
+    `git submodule update` detaching `HEAD`, or a checkout attaching it,
+    and keeps writing the way it started. Reopen the repository after
+    changing what `data/` has checked out.
 
 ### Push the data before the pointer
 
