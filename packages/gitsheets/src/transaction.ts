@@ -10,17 +10,14 @@
 // git-config author resolution, and post-commit hooks.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 
 import { CoreTransaction, callCore } from './core.js';
+import { gitExec } from './git-exec.js';
 import { RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
 import type { Sheet } from './sheet.js';
 import type { StandardSchemaV1 } from './validation.js';
 import { makeBlobHandle, type BlobHandle } from './working-tree.js';
-
-const exec = promisify(execFile);
 
 export interface Author {
   readonly name: string;
@@ -301,8 +298,8 @@ export async function resolveAuthor(
   if (explicit) return explicit;
   try {
     const [name, email] = await Promise.all([
-      exec('git', ['config', 'user.name'], { cwd: gitDir }).then((r) => r.stdout.trim()),
-      exec('git', ['config', 'user.email'], { cwd: gitDir }).then((r) => r.stdout.trim()),
+      gitExec(gitDir, ['config', 'user.name']).then((r) => r.stdout.trim()),
+      gitExec(gitDir, ['config', 'user.email']).then((r) => r.stdout.trim()),
     ]);
     if (name && email) {
       return { name, email };

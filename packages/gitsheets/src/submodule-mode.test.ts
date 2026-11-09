@@ -5,7 +5,7 @@
 // `at` pins every sheet read-only to the commit a superproject commit-ish
 // gitlinks.
 
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -130,6 +130,86 @@ describe('openRepo({ submodule })', () => {
     expect(first).not.toBe(moved);
   });
 
+  it('the detached-HEAD advance leaves a HEAD that became a symref alone (commit_failed)', async () => {
+    const fx = await withSubmodule();
+    await sub(fx, 'checkout', '--quiet', '--detach');
+    const repo = await open(fx);
+    const err = await repo
+      .transact({ message: 'add carol' }, async (tx) => {
+        await tx.sheet('users').upsert({ slug: 'carol', email: 'carol@x.org' });
+        // The user checks a branch out at the same commit mid-transaction.
+        await sub(fx, 'update-ref', 'refs/heads/main', 'HEAD');
+        await sub(fx, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransactionError);
+    expect((err as TransactionError).code).toBe('commit_failed');
+    expect(await sub(fx, 'symbolic-ref', 'HEAD')).toBe('refs/heads/main');
+    const written = /commit ([0-9a-f]{40}) was written/.exec((err as Error).message)?.[1];
+    expect(written).toBeDefined();
+    expect(await sub(fx, 'cat-file', '-t', written!)).toBe('commit');
+    expect(await sub(fx, 'rev-parse', 'refs/heads/main')).not.toBe(written);
+  });
+
+  it('stagePointer failure (held index.lock) is pointer_stage_failed after rebind and hooks', async () => {
+    const fx = await withSubmodule();
+    const repo = await open(fx, { stagePointer: true });
+    const users = await repo.openSheet('users');
+    const daemon = await repo.startPushDaemon({ remote: 'origin' });
+    const pushed = new Promise<string>((resolve) => daemon.on('push', (e: { commit: string }) => resolve(e.commit)));
+    const lock = join(fx.superproject.gitDir, 'index.lock');
+    await writeFile(lock, '');
+    try {
+      const err = await upsert(repo, 'bob').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(TransactionError);
+      expect((err as TransactionError).code).toBe('pointer_stage_failed');
+      const commit = (err as TransactionError).commitHash;
+      expect(commit).toBe(await sub(fx, 'rev-parse', 'refs/heads/main'));
+      expect((err as Error).message).toContain('landed');
+      expect((err as Error).message).toContain('git add data');
+      // Read-your-writes and the push daemon still saw the commit.
+      expect(await users.queryFirst({ slug: 'bob' })).toBeDefined();
+      expect(await pushed).toBe(commit);
+    } finally {
+      await rm(lock, { force: true });
+      await daemon.stop();
+    }
+  });
+
+  it('stagePointer stages after a merge and a sync that move the pointer', async () => {
+    const fx = await withSubmodule();
+    await sub(fx, 'branch', 'side');
+    const side = await upsert(await open(fx, { branch: 'side' }), 'bob');
+    const repo = await open(fx, { stagePointer: true });
+    const merged = await repo.merge({ theirs: 'side' });
+    expect(merged.commit).toBe(side);
+    expect(await fx.git(fx.superproject.path, 'ls-files', '--stage', 'data')).toBe(`160000 ${side} 0\tdata`);
+
+    const ahead = await upsert(await open(fx, { branch: 'side' }), 'carol');
+    await sub(fx, 'update-ref', 'refs/remotes/origin/main', ahead);
+    const synced = await repo.sync({ fetch: false });
+    expect(synced.newCommit).toBe(ahead);
+    expect(await fx.git(fx.superproject.path, 'ls-files', '--stage', 'data')).toBe(`160000 ${ahead} 0\tdata`);
+  });
+
+  it('an inherited GIT_DIR does not redirect submodule git commands', async () => {
+    const fx = await withSubmodule();
+    const saved = process.env['GIT_DIR'];
+    process.env['GIT_DIR'] = fx.superproject.gitDir;
+    try {
+      const repo = await openRepo({ submodule: 'data', stagePointer: true });
+      expect(repo.gitDir).toBe(join(fx.superproject.gitDir, 'modules', 'data'));
+      expect(repo.branch).toBe('main');
+      const commit = await upsert(repo, 'bob');
+      expect(await (await repo.openSheet('users')).queryFirst({ slug: 'bob' })).toBeDefined();
+      expect(await fx.git(fx.superproject.path, 'ls-files', '--stage', 'data')).toBe(`160000 ${commit} 0\tdata`);
+    } finally {
+      if (saved === undefined) delete process.env['GIT_DIR'];
+      else process.env['GIT_DIR'] = saved;
+    }
+    expect(await sub(fx, 'rev-parse', 'HEAD')).toBe(await sub(fx, 'rev-parse', 'refs/heads/main'));
+  });
+
   it('sync / fetch / the push daemon need a branch on a detached pointer', async () => {
     const fx = await withSubmodule();
     await sub(fx, 'checkout', '--quiet', '--detach');
@@ -180,10 +260,38 @@ describe('openRepo({ submodule })', () => {
   it('a submodule with no git dir is config_missing naming the remedy', async () => {
     const fx = await submoduleFixture();
     fixtures.push(fx);
+    // A .gitmodules entry (as a fresh clone has), but nothing initialized.
+    await fx.git(fx.superproject.path, 'config', '-f', '.gitmodules', 'submodule.data.path', 'data');
+    await fx.git(fx.superproject.path, 'config', '-f', '.gitmodules', 'submodule.data.url', fx.remote);
     const err = await openRepo({ gitDir: fx.superproject.gitDir, submodule: 'data' }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConfigError);
     expect((err as ConfigError).code).toBe('config_missing');
     expect((err as ConfigError).message).toContain('git sheet submodule init data');
+    expect((err as ConfigError).message).toContain('modules/data');
+  });
+
+  it('a nested repository with no .gitmodules entry is not a submodule (config_invalid)', async () => {
+    const fx = await submoduleFixture();
+    fixtures.push(fx);
+    await fx.git(fx.superproject.path, 'clone', '--quiet', fx.remote, 'data');
+    const err = await openRepo({ gitDir: fx.superproject.gitDir, submodule: 'data' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as ConfigError).code).toBe('config_invalid');
+    expect((err as ConfigError).message).toContain('not a submodule of this repository');
+  });
+
+  it('a linked worktree never writes through the main worktree\'s submodule', async () => {
+    const fx = await withSubmodule();
+    const wt = join(fx.superproject.path, '..', `${fx.superproject.path.split('/').pop()}-wt`);
+    await fx.git(fx.superproject.path, 'worktree', 'add', '--quiet', '--detach', wt);
+    try {
+      const err = await openRepo({ gitDir: wt, submodule: 'data' }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConfigError);
+      expect((err as ConfigError).code).toBe('config_missing');
+      expect((err as ConfigError).message).toContain('git sheet submodule init data');
+    } finally {
+      await fx.git(fx.superproject.path, 'worktree', 'remove', '--force', wt);
+    }
   });
 
   it('rejects a path outside the superproject', async () => {
@@ -199,7 +307,13 @@ describe('openRepo({ submodule })', () => {
     expect((await openRepo({ gitDir: fx.superproject.gitDir })).submodule).toBe('data');
 
     process.env['GITSHEETS_SUBMODULE'] = 'nope';
-    await expect(openRepo({ gitDir: fx.superproject.gitDir })).rejects.toMatchObject({ code: 'config_missing' });
+    const err = await openRepo({ gitDir: fx.superproject.gitDir }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'config_invalid' });
+    expect((err as Error).message.startsWith('GITSHEETS_SUBMODULE: ')).toBe(true);
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.submodule', 'nope');
+    delete process.env['GITSHEETS_SUBMODULE'];
+    const fromConfig = await openRepo({ gitDir: fx.superproject.gitDir }).catch((e: unknown) => e);
+    expect((fromConfig as Error).message.startsWith('git config gitsheets.submodule: ')).toBe(true);
     expect((await openRepo({ gitDir: fx.superproject.gitDir, submodule: './data/' })).submodule).toBe('data');
   });
 
@@ -249,6 +363,10 @@ describe('openRepo({ submodule, at })', () => {
     await expect(repo.transact({ message: 'x' }, async () => undefined)).rejects.toMatchObject({ code: 'transaction_required' });
     await expect(users.upsert({ slug: 'dave', email: 'd@x.org' })).rejects.toMatchObject({ code: 'transaction_required' });
     await expect(repo.sync()).rejects.toMatchObject({ code: 'transaction_required' });
+    await expect(repo.fetch()).rejects.toMatchObject({ code: 'transaction_required' });
+    const refusal = await users.upsert({ slug: 'eve', email: 'e@x.org' }).catch((e: unknown) => e);
+    expect((refusal as Error).message).toContain('openRepo({ at })');
+    expect((refusal as Error).message).not.toContain('transact({ parent');
     await expect(repo.tag('t')).rejects.toMatchObject({ code: 'transaction_required' });
     await expect(repo.merge({ theirs: 'main' })).rejects.toMatchObject({ code: 'transaction_required' });
   });

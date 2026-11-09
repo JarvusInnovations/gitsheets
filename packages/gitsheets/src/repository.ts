@@ -10,6 +10,7 @@ import type { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { addon, callCore, CoreTransaction } from './core.js';
+import { cleanGitEnv, gitExec } from './git-exec.js';
 import type { OpenSheetContractOptions } from './contracts.js';
 import { ConfigError, NotFoundError, RefError, TransactionError } from './errors.js';
 import type { RecordLike } from './path-template/index.js';
@@ -27,6 +28,7 @@ import {
   stageGitlink,
   submoduleNameForPath,
   superprojectWorkTree,
+  type SubmoduleSource,
   type SuperprojectBinding,
 } from './submodule.js';
 import {
@@ -239,7 +241,10 @@ export interface MergeResult {
 async function resolveGitDir(gitDir: string | undefined): Promise<string> {
   const cwd = gitDir ?? process.cwd();
   try {
-    const { stdout } = await exec('git', ['rev-parse', '--absolute-git-dir'], { cwd });
+    // An explicit gitDir is discovered from that path alone; with none, an
+    // inherited GIT_DIR names the repository, as it does for git itself.
+    const env = gitDir !== undefined ? cleanGitEnv() : process.env;
+    const { stdout } = await exec('git', ['rev-parse', '--absolute-git-dir'], { cwd, env });
     return stdout.trim();
   } catch (err) {
     throw new ConfigError(
@@ -300,15 +305,15 @@ export class Repository {
   /** Open a specific git directory (or discover one from the cwd). */
   static async open(opts: OpenRepoOptions): Promise<Repository> {
     const gitDir = await resolveGitDir(opts.gitDir);
-    const submodulePath = await resolveSubmodulePath(gitDir, opts.submodule);
-    if (submodulePath === null) {
+    const submodule = await resolveSubmodulePath(gitDir, opts.submodule);
+    if (submodule === null) {
       if (opts.at !== undefined) {
         throw new ConfigError('config_invalid', 'openRepo({ at }) pins a data submodule — pass submodule (or set GITSHEETS_SUBMODULE / gitsheets.submodule)');
       }
       const branch = await resolveDefaultBranch(gitDir, opts.branch);
       return new Repository({ gitDir, branch });
     }
-    return Repository.#openSubmodule(gitDir, submodulePath, opts);
+    return Repository.#openSubmodule(gitDir, submodule.path, submodule.source, opts);
   }
 
   /**
@@ -316,11 +321,16 @@ export class Repository {
    * `superGitDir`, with the branch tiers resolved inside the submodule.
    * See specs/behaviors/default-branch.md "Submodule mode".
    */
-  static async #openSubmodule(superGitDir: string, path: string, opts: OpenRepoOptions): Promise<Repository> {
+  static async #openSubmodule(
+    superGitDir: string,
+    path: string,
+    source: SubmoduleSource,
+    opts: OpenRepoOptions,
+  ): Promise<Repository> {
     const workTree = await superprojectWorkTree(superGitDir, opts.workTree);
-    const name = await submoduleNameForPath(superGitDir, workTree, path);
+    const name = await submoduleNameForPath(superGitDir, workTree, path, source);
     const superproject: SuperprojectBinding = { path, name, gitDir: superGitDir, workTree };
-    const gitDir = await locateSubmoduleGitDir(superproject);
+    const gitDir = await locateSubmoduleGitDir(superproject, source);
     const branch = await resolveDefaultBranch(gitDir, opts.branch);
     const pinnedAt = opts.at !== undefined ? await gitlinkCommit(superGitDir, opts.at, path, gitDir) : null;
     return new Repository({ gitDir, branch, superproject, stagePointer: opts.stagePointer ?? false, pinnedAt });
@@ -384,9 +394,7 @@ export class Repository {
    */
   async resolveTreeForRef(ref: string): Promise<string> {
     try {
-      const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', `${ref}^{tree}`], {
-        cwd: this.#gitDir,
-      });
+      const { stdout } = await gitExec(this.#gitDir, ['rev-parse', '--verify', '--quiet', `${ref}^{tree}`]);
       const hash = stdout.trim();
       if (hash) return hash;
     } catch {
@@ -656,9 +664,10 @@ export class Repository {
         return { value, commitHash: null, treeHash: null, ref: null, parentCommitHash: null };
       }
       let result = await tx.finalize(value);
+      let pointerMoved = false;
       if (result.commitHash !== null && this.#superproject !== null) {
         const defaultStarted = normalized.parent === undefined && !normalized.orphan && normalized.branch === undefined;
-        result = await this.#afterSubmoduleCommit(result, defaultStarted, normalized.message);
+        ({ result, pointerMoved } = await this.#advancePointer(result, defaultStarted, normalized.message));
       }
       if (result.commitHash !== null) {
         // Auto-refresh: rebind every live sheet to the default branch's
@@ -676,6 +685,9 @@ export class Repository {
             // Hooks must not break transactions.
           }
         }
+        // Stage last: a failed index update (pointer_stage_failed) must not
+        // skip read-your-writes or the push daemon for a commit that landed.
+        if (pointerMoved) await this.#stagePointerAt(result.commitHash);
       }
       return result;
     } finally {
@@ -698,11 +710,12 @@ export class Repository {
    * See specs/api/repository.md#repofetchopts.
    */
   async fetch(opts: FetchOptions = {}): Promise<FetchResult> {
+    this.#assertWritable('repo.fetch');
     const remote = opts.remote ?? 'origin';
     const bare = (await this.#syncBranch(opts.branch, 'repo.fetch')).replace(/^refs\/heads\//, '');
     const remoteRef = `refs/remotes/${remote}/${bare}`;
     try {
-      await exec('git', ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`], { cwd: this.#gitDir });
+      await gitExec(this.#gitDir, ['fetch', '--prune', remote, `+refs/heads/${bare}:${remoteRef}`]);
     } catch (err) {
       return { ok: false, remoteRef, error: err instanceof Error ? err.message : String(err) };
     }
@@ -781,9 +794,12 @@ export class Repository {
     if ((result.outcome === 'ahead' || result.outcome === 'rebased') && this.#pushDaemon) {
       this.#pushDaemon.notifyCommit(result.newCommit);
     }
+    if (result.newCommit !== result.oldCommit && (await this.#movesPointer(`refs/heads/${bare}`))) {
+      await this.#stagePointerAt(result.newCommit);
+    }
     if (result.outcome === 'conflict-escaped' && result.conflictBranch !== undefined && opts.pushConflictBranch !== false) {
       try {
-        await exec('git', ['push', remote, `${result.conflictBranch}:${result.conflictBranch}`], { cwd: this.#gitDir });
+        await gitExec(this.#gitDir, ['push', remote, `${result.conflictBranch}:${result.conflictBranch}`]);
         Object.assign(result, { conflictBranchPushed: true });
       } catch {
         Object.assign(result, { conflictBranchPushed: false });
@@ -849,6 +865,9 @@ export class Repository {
       const defaultRef = await this.#defaultBranchRef();
       if (defaultRef === `refs/heads/${oursArg.replace(/^refs\/heads\//, '')}`) {
         this.#rebindLiveSheets(await this.#resolveReadTree());
+      }
+      if (result.commit !== null && (await this.#movesPointer(qualifyBranch(oursArg)))) {
+        await this.#stagePointerAt(result.commit);
       }
     }
     return result;
@@ -950,29 +969,44 @@ export class Repository {
   }
 
   /**
+   * @internal — the commit an `openRepo({ submodule, at })` repository pins
+   * every sheet at, or `null`. Lets a pinned Sheet word its write refusal.
+   */
+  pinnedAtCommit(): string | null {
+    return this.#pinnedAt;
+  }
+
+  /**
    * Submodule mode, after a commit: a default-started commit on a detached
-   * `HEAD` advances `HEAD` itself (strict CAS); then, with `stagePointer`,
-   * a commit that moved the pointer is staged as the superproject's gitlink.
+   * `HEAD` advances `HEAD` itself (strict CAS — see advanceDetachedHead).
+   * Reports whether the pointer moved (that, or the commit advanced `HEAD`'s
+   * branch), for {@link #stagePointerAt}, which runs after rebind and hooks.
    * See specs/behaviors/default-branch.md "The pointer" / "After a commit".
    */
-  async #afterSubmoduleCommit<T>(
+  async #advancePointer<T>(
     result: TransactionResult<T>,
     defaultStarted: boolean,
     message: string,
-  ): Promise<TransactionResult<T>> {
-    const superproject = this.#superproject!;
+  ): Promise<{ result: TransactionResult<T>; pointerMoved: boolean }> {
     const commit = result.commitHash!;
-    let moved = false;
     if (this.#branch === null && defaultStarted && result.ref === null && result.parentCommitHash !== null) {
       const subject = message.split('\n', 1)[0] ?? '';
       await advanceDetachedHead(this.#gitDir, commit, result.parentCommitHash, `gitsheets: ${subject}`);
-      result = { ...result, ref: 'HEAD' };
-      moved = true;
-    } else if (result.ref !== null && result.ref === (await this.#headBranchRef())) {
-      moved = true;
+      return { result: { ...result, ref: 'HEAD' }, pointerMoved: true };
     }
-    if (moved && this.#stagePointer) await stageGitlink(superproject, commit);
-    return result;
+    return { result, pointerMoved: result.ref !== null && (await this.#movesPointer(result.ref)) };
+  }
+
+  /** Submodule mode: whether advancing `ref` moves the pointer — `HEAD` is a symref to it. */
+  async #movesPointer(ref: string): Promise<boolean> {
+    if (this.#superproject === null) return false;
+    return ref === (await this.#headBranchRef());
+  }
+
+  /** `stagePointer`: stage `commit` as the superproject's gitlink (throws pointer_stage_failed). */
+  async #stagePointerAt(commit: string): Promise<void> {
+    if (this.#superproject === null || !this.#stagePointer) return;
+    await stageGitlink(this.#superproject, commit);
   }
 
   #makeTxSheet<T extends RecordLike = RecordLike>(
@@ -1041,9 +1075,7 @@ export class Repository {
   async #resolveReadTree(): Promise<string> {
     const target = this.#branch !== null ? `refs/heads/${this.#branch}^{tree}` : 'HEAD^{tree}';
     try {
-      const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', target], {
-        cwd: this.#gitDir,
-      });
+      const { stdout } = await gitExec(this.#gitDir, ['rev-parse', '--verify', '--quiet', target]);
       const hash = stdout.trim();
       if (hash) return hash;
     } catch {
@@ -1054,9 +1086,7 @@ export class Repository {
 
   async #headBranchRef(): Promise<string | null> {
     try {
-      const { stdout } = await exec('git', ['symbolic-ref', '--quiet', 'HEAD'], {
-        cwd: this.gitDir,
-      });
+      const { stdout } = await gitExec(this.gitDir, ['symbolic-ref', '--quiet', 'HEAD']);
       return stdout.trim() || null;
     } catch {
       return null;
@@ -1080,7 +1110,7 @@ async function resolveDefaultBranch(gitDir: string, explicit: string | undefined
     return validateBranchName(gitDir, configured, 'git config gitsheets.branch');
   }
   try {
-    const { stdout } = await exec('git', ['symbolic-ref', '--quiet', 'HEAD'], { cwd: gitDir });
+    const { stdout } = await gitExec(gitDir, ['symbolic-ref', '--quiet', 'HEAD']);
     const ref = stdout.trim();
     return ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
   } catch {
@@ -1091,7 +1121,7 @@ async function resolveDefaultBranch(gitDir: string, explicit: string | undefined
 /** One git-config value for the repository at `gitDir`, or null when unset. */
 async function gitConfigValue(gitDir: string, key: string): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['config', '--get', key], { cwd: gitDir });
+    const { stdout } = await gitExec(gitDir, ['config', '--get', key]);
     return stdout.trim();
   } catch {
     return null; // exit 1: unset
@@ -1114,14 +1144,14 @@ async function validateBranchName(gitDir: string, raw: string, source: string): 
   }
   if (name === '' || name === 'HEAD' || name.startsWith('-')) throw invalid('is not a valid branch name');
   try {
-    await exec('git', ['check-ref-format', `refs/heads/${name}`], { cwd: gitDir });
+    await gitExec(gitDir, ['check-ref-format', `refs/heads/${name}`]);
   } catch {
     throw invalid('is not a valid branch name');
   }
   if ((await resolveCommit(gitDir, `refs/heads/${name}`)) !== null) return name;
   await assertNotRemoteOnly(gitDir, name, source);
   try {
-    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', name], { cwd: gitDir });
+    const { stdout } = await gitExec(gitDir, ['rev-parse', '--verify', '--quiet', name]);
     if (stdout.trim() !== '') throw invalid('names a tag, commit, or other ref, not a branch');
   } catch (err) {
     if (err instanceof ConfigError) throw err;
@@ -1140,7 +1170,7 @@ async function validateBranchName(gitDir: string, raw: string, source: string): 
 export async function assertNotRemoteOnly(gitDir: string, name: string, source: string): Promise<void> {
   let remotes: string[];
   try {
-    const { stdout } = await exec('git', ['remote'], { cwd: gitDir });
+    const { stdout } = await gitExec(gitDir, ['remote']);
     remotes = stdout.split('\n').map((r) => r.trim()).filter((r) => r.length > 0);
   } catch {
     return;
@@ -1168,9 +1198,7 @@ export async function openRepo(opts: OpenRepoOptions = {}): Promise<Repository> 
 /** Resolve a ref/commit-ish to its full commit hash via git rev-parse; null on failure. */
 async function resolveCommit(gitDir: string, ref: string): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
-      cwd: gitDir,
-    });
+    const { stdout } = await gitExec(gitDir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
     const hash = stdout.trim();
     return hash || null;
   } catch {
