@@ -2218,9 +2218,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
-   * @internal — rollup sheets only: the partitions that are not fresh
+   * Rollup sheets only: the partitions that are not fresh
    * (`stale` / `missing` / `orphaned`) against this sheet's read tree,
-   * writing nothing. Backs `git sheet rollup --check`.
+   * writing nothing. Backs `git sheet rollup --check`. See specs/api/sheet.md.
    */
   async rollupStatus(): Promise<RollupStatusEntry[]> {
     const config = await this.readConfig();

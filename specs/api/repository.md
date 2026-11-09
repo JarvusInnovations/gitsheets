@@ -17,7 +17,7 @@ const repo = await openRepo({
   branch?: string,           // branch mode: the default branch — reads, commits, refresh, sync all target it; default: GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch
   submodule?: string,        // submodule mode: open this submodule of the project; writes advance its HEAD (the superproject's pointer)
   at?: string,               // submodule mode: read-only, pinned to the snapshot the superproject's commit-ish gitlinks
-  stagePointer?: boolean,    // submodule mode: also update the superproject's index gitlink after each commit; default false
+  stagePointer?: boolean,    // submodule mode: also update the superproject's index gitlink after each commit; default: GITSHEETS_STAGE_POINTER, else the superproject's gitsheets.stagePointer git config, else false
 });
 ```
 

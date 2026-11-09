@@ -30,6 +30,8 @@ Accepted on any command, in any position (before or after the command name), as 
 | --- | --- |
 | `--branch <name>` | Bind the repository to this default branch ([behaviors/default-branch.md](../behaviors/default-branch.md)); else `GITSHEETS_BRANCH`, else `gitsheets.branch` git config, else `HEAD`'s branch. A tag, commit, or malformed name is `CONFIG_INVALID` |
 | `--submodule <path>` | Submodule mode: read and write this data submodule; each write advances its `HEAD` (the superproject's pointer). Else `GITSHEETS_SUBMODULE`, else `gitsheets.submodule`. A path that is not a submodule is `CONFIG_INVALID`; one not set up yet is `CONFIG_MISSING`, naming `git sheet submodule init <path>` |
+| `--stage-pointer` / `--no-stage-pointer` | Submodule mode: also stage the moved gitlink in the superproject index after each commit ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)). Else `GITSHEETS_STAGE_POINTER`, else the superproject's `gitsheets.stagePointer` git config, else off. A non-boolean value is `CONFIG_INVALID` |
+| `--at <superproject-ref>` | Submodule mode: read every sheet pinned at the data snapshot that superproject commit gitlinks; writes are refused. Else `GITSHEETS_AT`. Outside submodule mode it is `CONFIG_INVALID`; a ref with no gitlink for the submodule is `REF_ERROR` |
 
 Per-command flags shared by most commands:
 
@@ -39,7 +41,7 @@ Per-command flags shared by most commands:
 | `--message <m>` | every committing command | Commit message; each command has a default naming the sheet and operation |
 | `--json-out[=path]`, `--ndjson-out[=path]`, `--csv-out[=path]` | `query` | Side-channel export; see [`query`](#query) |
 
-There is no `--format` flag: stdout is always TOON.
+There is no `--format` flag: stdout is always TOON. A malformed value for any global flag is `VALIDATION_ERROR` (exit 2).
 
 ## Semantics
 

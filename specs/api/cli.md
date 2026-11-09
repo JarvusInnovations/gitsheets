@@ -17,10 +17,16 @@ These apply to every command unless noted otherwise:
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` env var |
 | `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` env var |
 | `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` env var |
-| `--ref <ref>` | the resolved default branch | `GITSHEETS_REF` env var |
+| `--stage-pointer` / `--no-stage-pointer` | `gitsheets.stagePointer` git config, else off | `GITSHEETS_STAGE_POINTER` env var |
+| `--at <superproject-ref>` | none | `GITSHEETS_AT` env var |
+| `--ref <ref>` | the resolved default branch (the pinned commit under `--at`) | `GITSHEETS_REF` env var |
 | `--commit-to <ref>` | derived from `--ref` (if ref is a branch) | none |
 
-`--ref` selects which commit/branch to read from or transact against. `--branch` and `--submodule` select the repository's binding (branch mode / submodule mode: flag → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` → `gitsheets.branch` / `gitsheets.submodule` git config → `HEAD`'s branch); `--ref`'s default is the resolved default branch, so a project that exports `GITSHEETS_BRANCH=data` or `GITSHEETS_SUBMODULE=data`, or a clone with the matching git config set, needs no flags ([behaviors/default-branch.md](../behaviors/default-branch.md)). `--commit-to` overrides which branch a write-transaction advances.
+`--ref` selects which commit/branch to read from or transact against. Read commands (`query`, `read`, `aggregate`, `rollup --check`, `check`'s sheet config) open the sheet **pinned at `--ref`** (`openSheet(name, { ref })`, [api/repository.md](repository.md)) and read nothing else. Write commands transact with `parent: --ref`, and a write command that reads first — `normalize`, `upsert --delete-missing` / `--patch`, `edit`, `infer`, `rollup` — does that read at the same `--ref` it then commits onto, never at the default branch.
+
+`--branch` and `--submodule` select the repository's binding (branch mode / submodule mode: flag → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE` → `gitsheets.branch` / `gitsheets.submodule` git config → `HEAD`'s branch); `--ref`'s default is the resolved default branch, so a project that exports `GITSHEETS_BRANCH=data` or `GITSHEETS_SUBMODULE=data`, or a clone with the matching git config set, needs no flags ([behaviors/default-branch.md](../behaviors/default-branch.md)). `--stage-pointer` (submodule mode) also stages the moved gitlink in the superproject's index after each commit (`openRepo({ stagePointer })`; flag → env → git config, git boolean values). `--at` (submodule mode) binds read-only to the commit the superproject's `<superproject-ref>` gitlinks (`openRepo({ at })`): reads see that snapshot, and every write command fails with `TransactionError` (`transaction_required`). `--at` is a per-invocation pin — like `--ref`, it has no git config tier ([principles.md](../principles.md#behave-like-a-first-party-git-extension)). `--commit-to` overrides which branch a write-transaction advances.
+
+Every global flag applies to every command, `rollup` and `submodule init` included (`submodule init` uses `--git-dir` and `--branch` only: it operates on the superproject).
 
 A `--working` flag — read/write the working tree state instead of a committed tree — is documented but not yet implemented; it's tracked at [#165](https://github.com/JarvusInnovations/gitsheets/issues/165) and listed in [`deferred.md`](../deferred.md).
 
@@ -43,7 +49,7 @@ Flags:
 - `--format <json|toml|csv>` — input format. Default: inferred from extension (`*.toml` → TOML, `*.csv` → CSV), otherwise JSON.
 - `--encoding <enc>` — encoding for file/stdin input. Default `utf8`.
 - `--delete-missing` — full-replace mode: records in the sheet but not in the input are deleted in the same transaction.
-- `--attachment <name>=<source>` (repeatable) — attach a file alongside the (single) upserted record. `<source>` is a file path (relative to the input file's directory, or cwd for stdin input) or `-` for stdin. Requires a single-record input set.
+- `--attachment <name>=<source>` (repeatable) — attach a file alongside the (single) upserted record. `<source>` is a file path (relative to the input file's directory, or cwd for stdin input) or `-` for stdin. Requires a single-record input set. Each source's bytes are hashed verbatim through [`repo.writeBlob`](repository.md#repowriteblobcontent) and placed with `sheet.setAttachments`.
 - `--patch` — treat each input record as an [RFC 7396 JSON Merge Patch](https://datatracker.ietf.org/doc/html/rfc7396). Path-template fields auto-derive the query; remaining fields are merged into the matched record. Cannot be combined with `--delete-missing` or `--attachment`. See [`behaviors/patch-semantics.md`](../behaviors/patch-semantics.md).
 - `--message <msg>`, `--author-name`, `--author-email`, `--trailer Key=Value` (repeatable) — transaction metadata
 
@@ -195,7 +201,7 @@ git sheet submodule init data        # fresh clone of the superproject
 
 ### `git sheet rollup <sheet>`
 
-Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert`. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`). `--check` writes nothing (reading at `--ref` when given), prints one `<status> <partition>` line per partition that is not fresh (`stale` / `missing` / `orphaned`), and exits **1** if there are any. A non-rollup `<sheet>` exits 1.
+Materialize a rollup sheet ([behaviors/rollups.md](../behaviors/rollups.md)): recompute every stale or missing rollup record and delete orphaned ones, in one commit (none when everything is fresh). Honors the transaction flags of `upsert` and the binding flags (`--branch`, `--submodule`, `--at`, `--stage-pointer`) like every other command. Prints one `<status> <partition>` line per partition touched (`recomputed` / `deleted`). `--check` writes nothing (reading at `--ref` when given), reports [`sheet.rollupStatus()`](sheet.md#sheetrollupstatus), prints one `<status> <partition>` line per partition that is not fresh (`stale` / `missing` / `orphaned`), and exits **1** if there are any. A non-rollup `<sheet>` exits 1.
 
 ```bash
 git sheet rollup transactions-monthly
@@ -253,8 +259,9 @@ List (and with confirmation, remove) vendored documents no sheet declares.
 | --- | --- |
 | 0 | Success |
 | 1 | Generic error (unhandled exception) |
-| 2 | Argument-parsing error |
+| 2 | Argument-parsing error — unknown flag or command, a missing positional, a malformed flag value (`--filter`, `--agg`, `--trailer`, `--attachment`, `--encoding`), or an invalid flag combination |
 | 22 | `ValidationError` |
+| 23 | `AggregationError` |
 | 64 | `ConfigError` |
 | 65 | `RefError` (not-found) |
 | 66 | `NotFoundError` |
@@ -277,6 +284,26 @@ gitsheets: <error-class>: <message>
   code:   <code>
   cause:  <optional cause>
 ```
+
+Some error classes add lines between `code:` and `cause:`. A `ValidationError` adds one `issue:` line per issue (`<path>` is the dotted field path, `<root>` for the record itself; `<source>` is `json-schema` or `standard-schema`; the bracketed contract name appears when the issue comes from a contract):
+
+```text
+gitsheets: ValidationError: <message>
+  code:   <code>
+  issue:  <path>: <message> (<source>) [<contract>]
+```
+
+A `ContractError` with issues prints the same `issue:` lines without the `(<source>)`. An `AggregationError` names the sheet, the aggregate, and — for a rollup partition — the partition:
+
+```text
+gitsheets: AggregationError: <message>
+  code:   aggregation_failed
+  sheet:  <sheet>
+  aggregate: <aggregate name>
+  partition: <partition>
+```
+
+An argument-parsing error (exit 2) prints a single `gitsheets: <message>` line.
 
 Plus a non-zero exit code per the table above.
 

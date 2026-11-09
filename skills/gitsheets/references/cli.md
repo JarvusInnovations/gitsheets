@@ -30,7 +30,9 @@
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
 | `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
 | `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
-| `--ref <ref>` | the default branch | `GITSHEETS_REF` |
+| `--stage-pointer` / `--no-stage-pointer` | `gitsheets.stagePointer` git config, else off | `GITSHEETS_STAGE_POINTER` |
+| `--at <superproject-ref>` | none | `GITSHEETS_AT` |
+| `--ref <ref>` | the default branch (the pinned commit under `--at`) | `GITSHEETS_REF` |
 | `--commit-to <ref>` | derived from `--ref` | — |
 | `--message <msg>` | auto-generated | — |
 | `--author-name <name>`, `--author-email <email>` | git config | — |
@@ -41,6 +43,10 @@
 A `--working` flag (read/write the working tree's state) is documented but deferred — see issue #165.
 
 `--branch` binds the repository's **default branch** (what commands read and commit to); `--submodule` binds a **data submodule** instead (its `HEAD` is the superproject's pointer; combine with `--branch` for a branch of the submodule). Both resolve flag → env → git config, so one `git config gitsheets.branch data` or `git config gitsheets.submodule data` per clone binds the CLI, `gitsheets-axi`, and the application alike.
+
+In submodule mode, `--stage-pointer` (flag → `GITSHEETS_STAGE_POINTER` → the superproject's `gitsheets.stagePointer`, git booleans) also stages the moved gitlink after each write, and `--at <superproject-ref>` (or `GITSHEETS_AT`; no git config — it is a one-run pin) reads the data snapshot that superproject commit pins, refusing writes (exit `69`).
+
+`--ref` pins reads as well as writes: `query` / `read` / `aggregate` read `<ref>`, and `normalize`, `upsert --delete-missing`, `edit`, `infer`, `rollup` read `<ref>` and commit onto it.
 
 > **Working-tree gotcha.** Every mutating command commits to the git **ref** via plumbing and never updates checked-out files. If the records live on the branch you check out, `git status` shows them *deleted* or *modified* after each write — not data loss. **Fix the layout:** keep records on a data branch (`gitsheets init <sheet> --commit --branch data`, then `git config gitsheets.branch data`) or in a data submodule ([submodule init](#submodule-init), then `git config gitsheets.submodule data`) — no working tree of records exists to fall behind. Only when records must stay on the code branch, run `git checkout HEAD -- .` after writes to refresh the files.
 
@@ -111,7 +117,7 @@ gitsheets aggregate repos --agg teams=distinct:targetTeam --format toml
 - `--group-by <field>` — groups every aggregate; each result becomes an object keyed by the field's string form
 - `--format <json|toml>` — default `json`: one object with a key per `--agg` name
 
-Computed in the core, body-less, canonical path order. Empty aggregates are omitted except `count` / `sum` (`0`). `reduce` is library-only.
+Computed in the core, body-less, canonical path order. Empty aggregates are omitted except `count` / `sum` (`0`). `reduce` is library-only. Mixed value kinds under `min` / `max` / `distinct` exit `23` (`AggregationError`); a malformed `--agg` exits `2`.
 
 ## rollup
 
@@ -265,11 +271,13 @@ Migration mapping: `type` → `[gitsheet.schema.properties.<name>].type`, `enum`
 | --- | --- |
 | 0 | Success |
 | 1 | Generic / unknown error (or `check` reporting not-canonical) |
-| 2 | Argument-parsing error |
+| 2 | Argument-parsing error, incl. a malformed `--filter` / `--agg` / `--trailer` / `--attachment` value or an invalid flag combination |
 | 22 | `ValidationError` |
+| 23 | `AggregationError` |
 | 64 | `ConfigError` |
 | 65 | `RefError` |
 | 66 | `NotFoundError` |
+| 67 | `ContractError` |
 | 69 | `TransactionError` |
 | 70 | `IndexError` |
 

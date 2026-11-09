@@ -21,7 +21,7 @@ import {
 
 const fixtures: SubmoduleFixture[] = [];
 const saved: Record<string, string | undefined> = {};
-const ENV = ['GITSHEETS_BRANCH', 'GITSHEETS_SUBMODULE'] as const;
+const ENV = ['GITSHEETS_BRANCH', 'GITSHEETS_SUBMODULE', 'GITSHEETS_STAGE_POINTER'] as const;
 
 beforeEach(() => {
   for (const k of ENV) {
@@ -239,6 +239,39 @@ describe('openRepo({ submodule })', () => {
     expect(await fx.git(fx.superproject.path, 'ls-files', '--stage', 'data')).toBe(`160000 ${commit} 0\tdata`);
     expect(await fx.git(fx.superproject.path, 'diff', '--cached', '--name-only')).toBe('data');
     expect(await fx.git(fx.superproject.path, 'rev-parse', 'HEAD')).toBe(superHead);
+  });
+
+  it('stagePointer resolves option → GITSHEETS_STAGE_POINTER → gitsheets.stagePointer (superproject config)', async () => {
+    const fx = await withSubmodule();
+    const staged = (): Promise<string> => fx.git(fx.superproject.path, 'ls-files', '--stage', 'data');
+    const before = await staged();
+
+    // Superproject config (git boolean spelling), read by the library itself.
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.stagePointer', 'yes');
+    let commit = await upsert(await open(fx), 'bob');
+    expect(await staged()).toBe(`160000 ${commit} 0\tdata`);
+
+    // The environment beats config; an explicit option beats both.
+    await fx.git(fx.superproject.path, 'reset', '--quiet', '--', 'data');
+    process.env['GITSHEETS_STAGE_POINTER'] = '0';
+    await upsert(await open(fx), 'carol');
+    expect(await staged()).toBe(before);
+    commit = await upsert(await open(fx, { stagePointer: true }), 'dave');
+    expect(await staged()).toBe(`160000 ${commit} 0\tdata`);
+    await fx.git(fx.superproject.path, 'reset', '--quiet', '--', 'data');
+    process.env['GITSHEETS_STAGE_POINTER'] = 'on';
+    await upsert(await open(fx, { stagePointer: false }), 'erin');
+    expect(await staged()).toBe(before);
+
+    // Invalid values are config_invalid naming the tier, never ignored.
+    process.env['GITSHEETS_STAGE_POINTER'] = 'maybe';
+    await expect(open(fx)).rejects.toThrow(/^GITSHEETS_STAGE_POINTER: /);
+    delete process.env['GITSHEETS_STAGE_POINTER'];
+    await fx.git(fx.superproject.path, 'config', 'gitsheets.stagePointer', 'maybe');
+    await expect(open(fx)).rejects.toMatchObject({ name: 'ConfigError', code: 'config_invalid' });
+    await expect(open(fx)).rejects.toThrow(/^git config gitsheets\.stagePointer: /);
+    // Outside submodule mode the knob is not read at all.
+    await expect(openRepo({ gitDir: fx.superproject.gitDir })).resolves.toBeDefined();
   });
 
   it('stagePointer on a detached pointer stages the advanced HEAD', async () => {

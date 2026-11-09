@@ -4,7 +4,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { main } from './index.js';
 import { testRepo, type TestRepoHandle } from '../test-helpers/test-repo.js';
@@ -219,5 +219,63 @@ describe('CLI: upsert + query + read', () => {
       expect(out).not.toContain('"slug":"a"');
       expect(out).not.toContain('"slug":"c"');
     }
+  });
+});
+
+describe('CLI: argument errors exit 2 (specs/api/cli.md "Exit codes")', () => {
+  async function runCaptured(args: string[]): Promise<{ code: number; err: string }> {
+    const out = captureStdout();
+    const original = process.stderr.write.bind(process.stderr);
+    const chunks: string[] = [];
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const code = await main(args);
+      return { code, err: chunks.join('') };
+    } finally {
+      process.stderr.write = original;
+      out.restore();
+    }
+  }
+
+  it('malformed --filter, --trailer, --attachment, and --encoding values, and bad flag combinations', async () => {
+    const fixture = await makeRepoWithUsers();
+    const g = ['--git-dir', fixture.gitDir];
+    const rec = '{"slug":"jane"}';
+    const cases: Array<[string[], RegExp]> = [
+      [[...g, 'query', 'users', '--filter', 'nooperator'], /^gitsheets: --filter expects /],
+      [[...g, '--trailer', 'NoEquals', 'upsert', 'users', rec], /^gitsheets: --trailer expects Key=Value/],
+      [[...g, 'upsert', 'users', rec, '--attachment', 'noequals'], /^gitsheets: --attachment expects /],
+      [[...g, 'upsert', 'users', rec, '--encoding', 'klingon'], /^gitsheets: --encoding /],
+      [[...g, 'upsert', 'users', rec, '--patch', '--delete-missing'], /^gitsheets: --patch and --delete-missing/],
+      [[...g, 'query', 'users', '--no-such-flag'], /^gitsheets: Unknown argument/],
+    ];
+    for (const [args, message] of cases) {
+      const r = await runCaptured(args);
+      expect(r.code, args.join(' ')).toBe(2);
+      expect(r.err, args.join(' ')).toMatch(message);
+      expect(r.err.trimEnd().split('\n'), args.join(' ')).toHaveLength(1);
+    }
+    // Nothing was written by any of them.
+    expect((await fixture.git('rev-list', '--count', 'HEAD')).stdout.trim()).toBe('2');
+  });
+
+  it('merge --help names the default branch for --into', async () => {
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      lines.push(a.map(String).join(' '));
+    });
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      await main(['merge', '--help']);
+    } finally {
+      log.mockRestore();
+      exit.mockRestore();
+    }
+    const help = lines.join('\n');
+    expect(help).toContain('Branch to merge into (default: the default branch)');
+    expect(help).not.toContain("HEAD's branch)");
   });
 });

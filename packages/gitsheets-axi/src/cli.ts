@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runAxiCli } from 'axi-sdk-js';
 
-import { createContext, parseGlobalFlags, type GitsheetsContext } from './context.js';
+import { createContext, parseGlobalFlagsForDispatch, type GitsheetsContext } from './context.js';
 import { homeCommand } from './commands/home.js';
 import { sheetsCommand, SHEETS_HELP } from './commands/sheets.js';
 import { queryCommand, QUERY_HELP } from './commands/query.js';
@@ -40,13 +40,18 @@ commands[22]:
   delete, check, diff, normalize,
   init, infer, migrate-config,
   attachment, contracts, push, setup, rollup
-flags[4]:
+flags[6]:
   --help, -v/-V/--version
   --branch <name>  Default branch every command reads/writes (any command;
                    default: $GITSHEETS_BRANCH, gitsheets.branch, HEAD's branch)
   --submodule <p>  Data submodule every command reads/writes; writes advance
                    its HEAD (the superproject's pointer). Any command;
                    default: $GITSHEETS_SUBMODULE, gitsheets.submodule
+  --stage-pointer  With --submodule: also stage the moved gitlink after each
+                   write (--no-stage-pointer: off). Default:
+                   $GITSHEETS_STAGE_POINTER, gitsheets.stagePointer, off
+  --at <ref>       With --submodule: read-only at the data commit this
+                   superproject ref pins; writes are refused. Default: $GITSHEETS_AT
 examples:
   gitsheets-axi
   gitsheets-axi query repos --filter status=unclassified --sort pushed_at
@@ -116,14 +121,7 @@ const COMMANDS: Record<string, CommandFn> = {
 
 export async function main(): Promise<void> {
   // Global flags, accepted on any command (specs/behaviors/default-branch.md "CLI").
-  let globals: ReturnType<typeof parseGlobalFlags>;
-  try {
-    globals = parseGlobalFlags(process.argv.slice(2));
-  } catch (error) {
-    process.stdout.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
-    return;
-  }
+  const globals = parseGlobalFlagsForDispatch(process.argv.slice(2));
   await runAxiCli<GitsheetsContext>({
     description: DESCRIPTION,
     version: VERSION,
@@ -131,7 +129,7 @@ export async function main(): Promise<void> {
     topLevelHelp: TOP_HELP,
     resolveContext: () => createContext(globals.flags),
     home: (_args, ctx) => homeCommand(ctx as GitsheetsContext),
-    commands: COMMANDS as Record<
+    commands: { ...COMMANDS, ...globals.commands } as Record<
       string,
       (args: string[], ctx: GitsheetsContext | undefined) => Promise<string | Record<string, unknown>>
     >,
