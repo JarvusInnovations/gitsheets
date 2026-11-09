@@ -38,6 +38,7 @@ import {
 } from './formats.js';
 import { registerContractsCommands } from './contracts.js';
 import { buildTxOpts, openCliRepo, readRef, type GlobalArgs } from './shared.js';
+import { registerSubmoduleCommands } from './submodule.js';
 
 export type { GlobalArgs } from './shared.js';
 
@@ -1184,6 +1185,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       describe:
         "The repository's default branch (reads, commits, sync); default: $GITSHEETS_BRANCH, gitsheets.branch git config, else HEAD's branch",
     })
+    .option('submodule', {
+      type: 'string',
+      describe:
+        "Submodule mode: read and write the data submodule at this path (its HEAD is the superproject's pointer); default: $GITSHEETS_SUBMODULE, gitsheets.submodule git config",
+    })
     .option('ref', { type: 'string', describe: 'Ref/commit to read from or transact against; default: the default branch' })
     .option('commit-to', { type: 'string', describe: 'Branch to update on commit' })
     .option('message', { type: 'string', describe: 'Commit message (mutating commands)' })
@@ -1441,6 +1447,11 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
       'contracts',
       'Manage schema contracts: adopt, verify, test, sync, export, prune (see specs/behaviors/contracts.md)',
       (y) => registerContractsCommands(y),
+    )
+    .command(
+      'submodule',
+      'Data submodule setup: init (see specs/behaviors/default-branch.md "Submodule mode")',
+      (y) => registerSubmoduleCommands(y),
     )
     .fail((msg, err) => {
       if (err) {
