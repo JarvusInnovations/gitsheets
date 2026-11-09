@@ -96,6 +96,23 @@ describe('gitsheets-axi --submodule', () => {
     expect(r.stdout).toContain('git sheet submodule init');
   });
 
+  it('submodule errors map to CONFIG_* with the submodule hint and the source the user set', async () => {
+    const h = await superproject();
+    const flag = await runCli(['query', 'users', '--submodule', 'nope'], h.path);
+    expect(flag.exitCode).not.toBe(0);
+    expect(flag.stdout).toContain('CONFIG_INVALID');
+    expect(flag.stdout).toContain('--submodule: ');
+    expect(flag.stdout).not.toContain('openRepo(');
+    expect(flag.stdout).toContain('git sheet submodule init');
+    expect(flag.stdout).not.toContain('gitsheets.branch');
+
+    await git(h.path, 'config', 'gitsheets.submodule', '../outside');
+    const config = await runCli(['query', 'users'], h.path);
+    expect(config.stdout).toContain('CONFIG_INVALID');
+    expect(config.stdout).toContain('git config gitsheets.submodule: ');
+    expect(config.stdout).toContain('git sheet submodule init');
+  });
+
   it('push on a detached pointer needs a branch', async () => {
     const h = await superproject();
     await git(join(h.gitDir, 'modules', 'data'), 'checkout', '--quiet', '--detach');
