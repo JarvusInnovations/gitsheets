@@ -86,13 +86,33 @@ Each is in `docs/migration-guide.md` (v2.13 → v2.14). Before = the `node:vm`
 path; after = the core (which the write path already used).
 
 - **Bare datetime field** — `Template.fromString('${{ at }}').render({ at:
-  new Date(0) })`: before `"Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated
-  Universal Time)"` (host zone dependent), after `PathTemplateError
-  path_render_failed`.
-- **Float / bigint field formatting** — `{ x: 1e21 }`: before `1e+21`, after
-  `1000000000000000000000`; `1e-7`: `1e-7` → `0.0000001`; `Infinity`:
-  `Infinity` → `inf`; `2n ** 70n`: `1180591620717411303424` → render failure
-  (outside i64).
+  new Date(0) })`: before, the vm path stringified it with `Date#toString()`
+  and its `:` threw `PathTemplateError` `path_invalid_chars` (it never
+  returned the string — corrected in review round 1); after
+  `PathTemplateError` `path_render_failed`, the write path's code.
+- **Bigint field outside i64** — `{ x: 2n ** 70n }`: before
+  `1180591620717411303424`, after `path_render_failed` (marshal failure).
+- **Float path segments, write path included (review round 1)** — the
+  core's `format_js_number` cast integral floats to `i64`, which saturates:
+  with `path = '${{ x }}'`, `{x: 1e19}` and `{x: 1e20}` both rendered
+  `9223372036854775807` and a transaction upserting both left one file. It
+  now implements ECMAScript `Number::toString`: `1e19` →
+  `10000000000000000000`, `1e20` → `100000000000000000000`, `2**60` →
+  `1152921504606847000` (was `1152921504606846976`), `-1e20` →
+  `-100000000000000000000`, `1e21` → `1e+21` (was `1000000000000000000000`),
+  `1e-7` → `1e-7` (was `0.0000001`), `5e-324` → `5e-324` (was a 324-digit
+  decimal), `Infinity` → `Infinity` (was `inf`), `-0` → `0`. This changes
+  committed paths for existing records with such float fields (migration
+  guide: run `git sheet normalize`). For the Node `Template` it restores
+  develop's output (`String(x)`), so it is not a change there.
+- **`normalizeRecord(null)`** — before `{}` (`{...null}`), after
+  `ValidationError validation_failed`.
+- **Snippet error messages** — before (core and, via the core, now Node)
+  a thrown non-`Error` read `failed: "str"` followed by boa's multi-line
+  `at <anonymous> (unknown at :1:54)` frames, and an `Error` carried a source
+  position; after (review round 1, `thrown_message` in engine.rs) one line:
+  `failed: "str"`, `failed: Error: boom`, `failed: TypeError: Date.now() …`.
+  Codes unchanged.
 - **Unrepresentable values anywhere in the record** — `render({ x: 'a', f() {}
   })`: before `"a"`, after `PathTemplateError path_render_failed` ("cannot
   marshal JS value of type Function"); same for a symbol, a `null` array
@@ -122,6 +142,23 @@ path; after = the core (which the write path already used).
 - **Template parse errors** — same classes and codes; messages now come
   from the core (e.g. a bad expression's message names boa's SyntaxError).
 
+## Determinism corpus (review round 1)
+
+The first cut of `snippet-determinism.test.ts` kept ~25 of the 89
+expressions the vm-vs-core parity suite had. The core's Rust tests pin only
+a few of the dropped ones (`engine.rs`: the `toLocale*` denials, `Date.parse`
+of an offset-less and a `Z` ISO string). So all 89 are restored as direct
+assertions through the public `Template`, each with its expected `String()`
+hardcoded (the core's value — the one the old suite proved the vm shim
+matched), checked under New York, Kolkata, and UTC: the setters incl. Annex B
+`setYear` (99, 2026, -5, on an invalid date, `NaN`), two-digit years and the
+local-time constructor, the DST-boundary instant, UTC forms, ToPrimitive in
+the constructor (`String` object, `toString` / `valueOf` /
+`Symbol.toPrimitive` objects, `true` / `null` / `undefined`), class-instance
+records, the locale-free methods, and all 52 date-string parses. Only the
+`T24:01` boa-deviation probe was not restored (the contract says not to rely
+on either answer).
+
 ## Release order
 
 This changes `gitsheets-core` (`SortPlan`, `render_component_partial`) and
@@ -145,7 +182,14 @@ build runs the changed core.
 - [x] no `sandbox.ts`, no non-test `node:vm` import under
   `packages/gitsheets/src` (guard test)
 - [x] write path ≡ `pathForRecord` / `normalizeRecord` regression tests pass
-- [x] worker-thread render test passes
+- [x] worker-thread render test passes (the napi class, and the public
+  `Template` loaded from `dist/` — runs whenever dist is built; CI builds it
+  first)
+- [x] float path segments are `Number::toString` (core test against the
+  engine's own `String(x)`; Node test: 1e19 / 1e20 / 2**63 / -1e20 commit
+  four distinct files)
+- [x] snippet throws report one line without frames (core + Node tests)
+- [x] the full 89-expression determinism corpus asserts pinned values
 - [x] `sort-keys` removed from `packages/gitsheets` and the lockfile
 
 ## Notes
@@ -180,3 +224,10 @@ build runs the changed core.
   error (a write-path behavior change — needs its own issue).
 - Marshal failures on the write path (`upsert`) still surface as a plain
   napi `Error` (`code: 'InvalidArg'`) rather than a typed `GitsheetsError`.
+- An expression snippet can mutate engine globals that persist across
+  renders for the life of the engine (one per compiled template, so per
+  isolate for the Node `Template` cache, per sheet open in the core):
+  `${{ globalThis.c = (globalThis.c || 0) + 1 }}` renders `1`, then `2`. The
+  determinism rule covers the clock, entropy, and locale, not hidden state
+  between calls. Same on develop (the vm realm persisted too). Options: a
+  frozen global object, or a fresh realm per call (cost).
