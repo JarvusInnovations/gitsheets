@@ -256,6 +256,12 @@ rule, for all three:
   caller's record or array elements — a comparator that assigns to `a.x`
   changes nothing outside the call.
 
+A snippet's throw is reported on one line: `Kind: message` for a thrown
+`Error` (`TypeError: Date.now() is not available in a gitsheets snippet: …`),
+and the thrown value's engine display, whitespace collapsed, for anything
+else (`throw "nope"` → `"nope"`, `throw { a: 1 }` → `{ a: 1 }`). No source
+positions or stack frames are included.
+
 A violation is detected **when the snippet runs**, not at sheet open: snippets
 are opaque code, and which calls a body makes is not statically decidable. Where
 it surfaces depends on the snippet:

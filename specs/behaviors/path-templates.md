@@ -190,8 +190,10 @@ component is un-renderable, so `render` (and every write) fails with
 level. Bucket references are the supported way to put a date field in a path;
 an expression (`${{ at.toISOString().slice(0, 10) }}`) is the escape hatch.
 *(Behavior change, v2.14: before then the Node `Template` export — and so
-`Sheet.pathForRecord` — rendered such a field with the host's
-`Date#toString()`, a string the write path never produced.)*
+`Sheet.pathForRecord` — stringified such a field with the host's
+`Date#toString()`, whose `:` then failed the render as
+`path_invalid_chars`; the error code is now `path_render_failed`, as on
+write.)*
 
 ## Rendering
 
@@ -201,7 +203,7 @@ If any component returns `null` or `undefined`, the render fails with `PathTempl
 
 Rendering is the core's (`gitsheets-core`'s path-template module) in every binding and on every path: a write, `Sheet.pathForRecord`, the Node `Template` export (`render` and each `queryTree` step), and the query planner all run the same code, so a path any of them computes is the path a write commits. The record crosses into the core under the binding's marshalling rules ([rust-core.md § Type-fidelity rules](../rust-core.md#type-fidelity-rules), [normalization.md § Null / undefined handling](normalization.md#null--undefined-handling)): a `null` / `undefined` field is absent, and a record holding a value the core cannot represent anywhere in it — a function, a symbol, a `null` / `undefined` array element, an integer beyond i64 — fails the render with `PathTemplateError` (`path_render_failed`) naming the marshal failure, even when the template does not read that field (it could not be written either).
 
-Field references render natively: a string as itself; an integer in decimal; a float by ECMAScript `Number::toString` for integral and plain-decimal values (`2026`, `1.5`, `NaN`) but in plain positional notation where JS would use an exponent (`1e21` → `1000000000000000000000`, `1e-7` → `0.0000001`) and `inf` / `-inf` for the infinities — a JS `number` holding an integral value within ±(2^53−1) is an integer; a boolean as `true` / `false`. A datetime, array, or table field is un-renderable (above). An expression's result renders by ECMAScript `ToString` when it is a string, number, boolean, or bigint, and is un-renderable when it is `null`, `undefined`, an object (a `Date` included), a function, or a symbol.
+Field references render natively: a string as itself; an integer in decimal; a float exactly as ECMAScript `Number::prototype::toString()` renders it — the shortest round-tripping digits, positional below 1e21 and from 1e-6 up (`1.5`, `1e20` → `100000000000000000000`, `2**63` → `9223372036854776000`, `0.000001`), exponential outside that (`1e21` → `1e+21`, `1e-7` → `1e-7`, `5e-324`), `-0` → `0`, and `NaN` / `Infinity` / `-Infinity` (a JS `number` holding an integral value within ±(2^53−1) is an integer, so this governs larger integral numbers too) — the same string an expression `${{ String(x) }}` yields; a boolean as `true` / `false`. A datetime, array, or table field is un-renderable (above). An expression's result renders by ECMAScript `ToString` when it is a string, number, boolean, or bigint, and is un-renderable when it is `null`, `undefined`, an object (a `Date` included), a function, or a symbol.
 
 ### Expression rendering
 
