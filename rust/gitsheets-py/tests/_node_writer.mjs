@@ -21,6 +21,9 @@
 //     rollup ledger (test_rollups.py) in one transaction; the core's rollup
 //     pass commits the rollup records alongside.
 //   rollup-query <gitDir> <rev> <sheet> [stale] → { rows: [{ path, toml }] }
+//   bind <gitDir> [optsJson] → { ok, gitDir, branch, submodule } | { ok: false,
+//     name, code } — openRepo's binding resolution (packages/gitsheets/dist;
+//     { skipped: true } when it isn't built).
 //
 // The binding.cjs path comes from $GITSHEETS_NAPI_BINDING. Fixtures are authored
 // here as native JS values (the whole point: the same logical data, expressed in
@@ -251,6 +254,24 @@ if (op === 'record-write') {
   const [gitDir, rev, sheet, stale] = args;
   const rows = binding.rollupQuery(gitDir, rev, sheet, `.gitsheets/${sheet}.toml`, '.', '', {}, stale);
   out({ rows: rows.map((row) => ({ path: row.path, toml: binding.serializeRecords([row.record])[0] })) });
+} else if (op === 'bind') {
+  // openRepo's default-branch / submodule resolution over <gitDir> with the
+  // inherited env and git config — diffed against Python's resolve_binding.
+  // <optsJson> carries `branch` / `submodule` (a value, or null to opt out);
+  // an absent key is omitted, so the env → config tiers apply.
+  const dist = new URL('../../../packages/gitsheets/dist/index.js', import.meta.url);
+  if (!existsSync(dist)) {
+    out({ skipped: true });
+  } else {
+    const { openRepo } = await import(dist.href);
+    const opts = { gitDir: args[0], ...JSON.parse(args[1] ?? '{}') };
+    try {
+      const repo = await openRepo(opts);
+      out({ ok: true, gitDir: repo.gitDir, branch: repo.branch, submodule: repo.submodule });
+    } catch (err) {
+      out({ ok: false, name: err.name, code: err.code });
+    }
+  }
 } else {
   process.stderr.write(`unknown op: ${op}\n`);
   process.exit(2);
