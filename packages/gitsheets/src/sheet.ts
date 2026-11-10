@@ -22,25 +22,27 @@ import { gitEnv } from './git-exec.js';
 import {
   ConfigError,
   ContractError,
+  GitsheetsError,
   IndexError,
   NotFoundError,
   PathTemplateError,
   RefError,
   TransactionError,
+  ValidationError,
   type ValidationIssue,
 } from './errors.js';
 import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
-import { compileSnippet, thrownMessage } from './sandbox.js';
 import {
   EMPTY_TREE_HASH,
   makeBlobHandle,
   type BlobHandle,
 } from './working-tree.js';
 import { parseConfigToml } from './toml.js';
-import sortKeys from 'sort-keys';
 import { Transaction, transactionContext } from './transaction.js';
+
+type CompiledSortPlan = InstanceType<typeof addon.CompiledSortPlan>;
 import {
   validateRecord,
   type JSONSchema,
@@ -145,72 +147,6 @@ function joinTreePath(...parts: string[]): string {
     .map((p) => p.replace(/^\/+/, '').replace(/\/+$/, ''))
     .filter((p) => p.length > 0 && p !== '.')
     .join('/');
-}
-
-/** A Sheet's compiled comparators, keyed by comparator body. */
-type SorterCache = Map<string, (a: unknown, b: unknown) => number>;
-
-function buildSorter(
-  field: string,
-  rule: SortRule,
-  cache: SorterCache,
-): (a: unknown, b: unknown) => number {
-  if (rule === true) {
-    return (a, b) =>
-      String(a).localeCompare(String(b), undefined, {
-        sensitivity: 'base',
-        ignorePunctuation: true,
-        numeric: true,
-      });
-  }
-  if (rule === false) {
-    return () => 0;
-  }
-  let body: string;
-  if (typeof rule === 'string') {
-    body = rule;
-  } else {
-    // Array of field names → ASC for each
-    let directives: Array<[string, 'ASC' | 'DESC']>;
-    if (Array.isArray(rule)) {
-      directives = rule.map((f) => [f, 'ASC' as const]);
-    } else {
-      directives = Object.entries(rule) as Array<[string, 'ASC' | 'DESC']>;
-    }
-    const exprLines: string[] = [];
-    for (const [f, dir] of directives) {
-      const sign = dir === 'ASC' ? 1 : -1;
-      exprLines.push(
-        `if ((a[${JSON.stringify(f)}]) < (b[${JSON.stringify(f)}])) return ${-1 * sign};`,
-        `if ((a[${JSON.stringify(f)}]) > (b[${JSON.stringify(f)}])) return ${1 * sign};`,
-      );
-    }
-    exprLines.push('return 0;');
-    body = exprLines.join('\n');
-  }
-  const fail = (err: unknown): ConfigError =>
-    new ConfigError(
-      'config_invalid',
-      `array-field sort comparator for field ${JSON.stringify(field)} failed: ${thrownMessage(err)}`,
-      { cause: err },
-    );
-  let compiled = cache.get(body);
-  if (compiled === undefined) {
-    try {
-      compiled = compileSnippet(`(a, b) => { ${body} }`) as (a: unknown, b: unknown) => number;
-    } catch (err) {
-      throw fail(err);
-    }
-    cache.set(body, compiled);
-  }
-  const comparator = compiled;
-  return (a, b) => {
-    try {
-      return comparator(a, b);
-    } catch (err) {
-      throw fail(err);
-    }
-  };
 }
 
 /**
@@ -425,6 +361,13 @@ async function lsTreeBlobs(
 
 const CONFIG_CACHE = new Map<string, SheetConfig>();
 
+/**
+ * The config TOML each parsed {@link SheetConfig} came from, so
+ * `normalizeRecord` can compile the core's sort plan from the exact config
+ * text the write path compiles (specs/api/sheet.md `normalizeRecord`).
+ */
+const CONFIG_SOURCE = new WeakMap<SheetConfig, string>();
+
 async function loadConfig(
   gitDir: string,
   treeRef: string,
@@ -547,6 +490,7 @@ function parseConfigEntry(
     Object.assign(config, { rollup: { from: (rollupRaw as RecordLike)['from'] as string } });
   }
   CONFIG_CACHE.set(hash, config);
+  CONFIG_SOURCE.set(config, tomlText);
   return config;
 }
 
@@ -1013,9 +957,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #prefix: string;
   readonly #pinnedRef: string | undefined;
   readonly #indexes = new Map<string, IndexState<T>>();
-  // Comparators compiled for this sheet's sort rules — one realm per rule,
-  // never shared with another Sheet (or repository).
-  readonly #sorters: SorterCache = new Map();
+  // The core sort plan compiled for this sheet's current config — its own
+  // engine, never shared with another Sheet (or repository).
+  #sortPlan: { config: SheetConfig; plan: CompiledSortPlan } | undefined;
   #configPromise: Promise<SheetConfig> | undefined;
   /** Set by {@link verifyContract} on a successful `openSheet({ contract })`. */
   #contractVerification: ConformanceReport | undefined;
@@ -1789,17 +1733,33 @@ export class Sheet<T extends RecordLike = RecordLike> {
    */
   async normalizeRecord(record: T): Promise<T> {
     const config = await this.readConfig();
-    const out: RecordLike = { ...record };
-    for (const [field, fcfg] of Object.entries(config.fields)) {
-      const value = out[field];
-      if (fcfg.sort !== undefined && Array.isArray(value)) {
-        const sorter = buildSorter(field, fcfg.sort, this.#sorters);
-        out[field] = [...value].sort(sorter);
+    if (this.#sortPlan?.config !== config) {
+      const source = CONFIG_SOURCE.get(config);
+      if (source === undefined) {
+        throw new ConfigError('config_invalid', `${this.#configPath}: config source unavailable`);
       }
+      const configPath = this.#configPath;
+      this.#sortPlan = {
+        config,
+        plan: callCore(() => new addon.CompiledSortPlan(source, configPath)),
+      };
     }
-    // Deep-sort keys per specs/api/sheet.md — the returned JS object reflects
-    // canonical form even before TOML serialization.
-    return sortKeys(out, { deep: true }) as T;
+    const plan = this.#sortPlan.plan;
+    // The core's normalization — the same SortPlan the write path applies:
+    // array-field sorts, then the deep key sort, over the marshalled record.
+    try {
+      return callCore(() => plan.normalize(record)) as T;
+    } catch (err) {
+      if (err instanceof Error && !(err instanceof GitsheetsError)) {
+        // A value the core cannot marshal (function, symbol, null array
+        // element, out-of-range integer, …): the record has no canonical form.
+        throw new ValidationError('validation_failed', `cannot normalize record: ${err.message}`, {
+          issues: [],
+          cause: err,
+        });
+      }
+      throw err;
+    }
   }
 
   async clear(): Promise<void> {
