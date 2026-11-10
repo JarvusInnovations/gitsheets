@@ -184,11 +184,14 @@ path template should tell the whole story of the tree layout. One plain-looking
 reference silently expanding to three directory levels via a side declaration
 hurts readability — the reader of `path` should see the shape of the tree.
 
-Related wart this supersedes for the bucket case: a bare `Date`-typed field
-referenced as `${{ field }}` has no portable path form (the core treats it as
-un-renderable; the Node `Template` falls back to the host `Date#toString()`).
-That remains a wart for non-bucket references; bucket references are the
-supported way to put a date field in a path.
+A bare datetime field referenced as `${{ field }}` has no path form: the
+component is un-renderable, so `render` (and every write) fails with
+`PathTemplateError` (`path_render_failed`) and a query walk widens at that
+level. Bucket references are the supported way to put a date field in a path;
+an expression (`${{ at.toISOString().slice(0, 10) }}`) is the escape hatch.
+*(Behavior change, v2.14: before then the Node `Template` export — and so
+`Sheet.pathForRecord` — rendered such a field with the host's
+`Date#toString()`, a string the write path never produced.)*
 
 ## Rendering
 
@@ -196,9 +199,13 @@ supported way to put a date field in a path.
 
 If any component returns `null` or `undefined`, the render fails with `PathTemplateError` (`path_render_failed`). The error names which component couldn't render.
 
+Rendering is the core's (`gitsheets-core`'s path-template module) in every binding and on every path: a write, `Sheet.pathForRecord`, the Node `Template` export (`render` and each `queryTree` step), and the query planner all run the same code, so a path any of them computes is the path a write commits. The record crosses into the core under the binding's marshalling rules ([rust-core.md § Type-fidelity rules](../rust-core.md#type-fidelity-rules), [normalization.md § Null / undefined handling](normalization.md#null--undefined-handling)): a `null` / `undefined` field is absent, and a record holding a value the core cannot represent anywhere in it — a function, a symbol, a `null` / `undefined` array element, an integer beyond i64 — fails the render with `PathTemplateError` (`path_render_failed`) naming the marshal failure, even when the template does not read that field (it could not be written either).
+
+Field references render natively: a string as itself; an integer in decimal; a float by ECMAScript `Number::toString` for integral and plain-decimal values (`2026`, `1.5`, `NaN`) but in plain positional notation where JS would use an exponent (`1e21` → `1000000000000000000000`, `1e-7` → `0.0000001`) and `inf` / `-inf` for the infinities — a JS `number` holding an integral value within ±(2^53−1) is an integer; a boolean as `true` / `false`. A datetime, array, or table field is un-renderable (above). An expression's result renders by ECMAScript `ToString` when it is a string, number, boolean, or bigint, and is un-renderable when it is `null`, `undefined`, an object (a `Date` included), a function, or a symbol.
+
 ### Expression rendering
 
-Expressions are evaluated in the core's embedded engine (the Node `Template` export: a `node:vm` context held to the same contract) with the record's fields bound as identifiers via `with(record) { return (<expression>) }`. Undefined-identifier errors are treated as "this component is un-renderable" (returns `undefined`) rather than thrown, since they're typically expected at *query* time (see below).
+Expressions are evaluated in the core's embedded engine — on every binding; no binding evaluates one in its host runtime — with the record's fields bound as identifiers via `with(record) { return (<expression>) }`. Undefined-identifier errors are treated as "this component is un-renderable" (returns `undefined`) rather than thrown, since they're typically expected at *query* time (see below).
 
 The realm is **deterministic** — no clock, no randomness, local time is UTC — under the one rule every definition snippet follows: [rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets). Any other throw from an expression, including calling a forbidden `Date.now()` / `Math.random()` / argument-less `new Date()`, fails the render with `PathTemplateError` (`path_render_failed`) naming the `${{ … }}` expression and the error — on write and at query time alike, since an expression's calls cannot be checked at sheet open.
 
@@ -303,7 +310,7 @@ See [behaviors/attachments.md](attachments.md).
 
 ## Caching
 
-Templates are parsed once per template string (process-wide cache by string). Re-parsing on every render would be wasteful and is avoided.
+Templates are parsed once per template string. Re-parsing on every render would be wasteful and is avoided. A compiled template owns a single-threaded engine context, so the cache is per thread: the Node `Template.fromString` cache is per isolate (each worker thread compiles its own, and a worker can render), and a `Sheet` compiles its own template and comparators.
 
 ## Principles
 
