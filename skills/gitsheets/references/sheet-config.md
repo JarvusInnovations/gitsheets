@@ -55,7 +55,7 @@ path = '${{ year }}-${{ slug }}'              # → posts/2024-hello-world
 
 A field reference must evaluate against the record. If the field is missing or `undefined`, the render fails (`PathTemplateError`).
 
-Fields render as strings: numbers and booleans stringify; Dates use `.toString()`; arrays and plain objects are un-renderable.
+Fields render as strings: strings as-is, numbers as JS `String(n)` would (`1.5`, `100000000000000000000`, `1e+21`), booleans as `true`/`false`. A datetime, array, or table is un-renderable — put a date in a path with a date bucket (below) or an expression.
 
 ### Expressions: `${{ <js-expression> }}`
 
@@ -66,7 +66,7 @@ path = '${{ slug.toLowerCase() }}'                  # → 'janedoe'
 path = '${{ id || legacy_id }}'                     # fallback to legacy_id when id missing
 ```
 
-Expressions that throw `ReferenceError` for a missing identifier are treated as "un-renderable" (so queries with partial fields can walk the tree). Other thrown errors propagate.
+Expressions run in the core's embedded JS engine (on every binding — never in your Node process), in a deterministic realm: no `Date.now()`, `Math.random()`, or argument-less `new Date()`, and local-time `Date` methods read UTC. Expressions that throw `ReferenceError` for a missing identifier are treated as "un-renderable" (so queries with partial fields can walk the tree). Other thrown errors fail the render with `PathTemplateError` (`path_render_failed`).
 
 **Don't use expressions to partition by date** (`${{ publishedAt.getUTCFullYear() }}/…`). Use the declarative date-bucket form below — it's shorter, timezone-safe by construction, and it's the only form whose queries can be range-pruned.
 
@@ -182,13 +182,13 @@ sort = { 'priority' = 'DESC', 'updatedAt' = 'ASC' }    # explicit directions
 
 `sort` values:
 
-- `true` — natural sort, ASC (uses `localeCompare` with numeric collation, case/punct-insensitive)
+- `true` — natural sort, ASC (the core's pinned ICU collator: numeric collation, case/punct-insensitive — like `localeCompare` with those options, identical on every binding)
 - `false` — no sort (default)
 - `string[]` — list of field names to sort by, ASC each
 - `Record<string, 'ASC' | 'DESC'>` — explicit per-field directions
-- `string` — a JS expression of the form `(a, b) => { … }` (sandboxed via `vm.runInNewContext`)
+- `string` — the body of a comparator `(a, b) => { … }`, run in the core's deterministic embedded engine (no clock or randomness; `localeCompare` there is plain code-unit order — use `sort = true` for human ordering)
 
-The sort is applied on canonical normalization (every write goes through this). Array order on disk is byte-stable.
+The sort is applied on canonical normalization (every write goes through this, and `sheet.normalizeRecord` runs the same code). Array order on disk is byte-stable.
 
 `fields` and `schema` are different concepts: `fields` controls *bytes-on-disk* (sort rules), `schema` controls *validity* (type/required/pattern/etc.).
 
