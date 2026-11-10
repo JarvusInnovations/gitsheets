@@ -127,8 +127,9 @@ carries the resolution as read-only attributes:
 An explicit `tree_ref`, `parent`, or `target` keeps its existing meaning,
 resolved in the repository the call was given: a plain `str` `git_dir` is
 consulted for the binding only when a default is taken. Resolution runs a
-few `git` subprocesses per call; resolve once and pass the `Binding` in a
-loop or a long-lived process.
+few `git` subprocesses per call (so `git` must be on `PATH` when a call
+takes a default; calls with explicit refs still need no `git` binary);
+resolve once and pass the `Binding` in a loop or a long-lived process.
 
 Not mirrored, by design: `at` (pass the gitlinked commit as `tree_ref`),
 pointer staging after `sync_branch` / `merge_sheets` (both take their
