@@ -56,7 +56,7 @@ The active work scope is [the 1.0.0 milestone](https://github.com/JarvusInnovati
 - **Bindings** — Node (`gitsheets` npm package, a thin marshalling shell over the `@gitsheets/core-napi` addon) and Python (`rust/gitsheets-py`, pyo3), byte-identical over the same core.
 - **Language** — TypeScript (strict). ESM-only.
 - **Runtime** — Node.js ≥ 20 or Bun ≥ 1.
-- **Retained JS deps** — `sort-keys` (public `Sheet.normalizeRecord` array-field sort), `node:vm` (exported `Template` render + raw-JS sort comparators), `rfc6902` (public `DiffChange.patch` type + markdown `diffFrom`), `yargs`, `csv-*`. Dropped at the cutover: `@iarna/toml`, `smol-toml`, `ajv`, `ajv-formats`, `markdownlint`, `@hologit/holo-tree`.
+- **Retained JS deps** — `rfc6902` (public `DiffChange.patch` type + markdown `diffFrom`), `yargs`, `csv-*`. Dropped at the cutover: `@iarna/toml`, `smol-toml`, `ajv`, `ajv-formats`, `markdownlint`, `@hologit/holo-tree`. Dropped in #373: `sort-keys` and the `node:vm` snippet realm — the exported `Template` and `Sheet.normalizeRecord` run in the core.
 - **Runtime consumer-validator interface** — [Standard Schema](https://standardschema.dev) (any compliant validator: Zod, Valibot, ArkType, Effect Schema), run host-side in the binding.
 - **JSON Merge Patch** — RFC 7396, inline in `packages/gitsheets/src/patch.ts`.
 - **Tests** — Vitest.

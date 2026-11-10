@@ -7,7 +7,7 @@ A sheet's records are stored as `.toml` files by default. Setting `[gitsheet.for
 ## Applies To
 
 - [api/sheet.md](../api/sheet.md) — `query`, `queryFirst`, `queryAll`, `loadBody`, `upsert`, `patch`, `findByIndex`
-- [behaviors/normalization.md](normalization.md) — canonical frontmatter via the existing sort-keys-deep TOML serializer
+- [behaviors/normalization.md](normalization.md) — canonical frontmatter via the core's deep-key-sorted TOML serializer
 - [behaviors/validation.md](validation.md) — JSON Schema unchanged; the body field is just a string-typed property on the record
 
 ## Why sheet-level (not per-record)

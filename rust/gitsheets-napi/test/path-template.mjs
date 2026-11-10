@@ -115,8 +115,7 @@ test('local-time Date methods read UTC in the engine, whatever the process TZ', 
   // realm's local offset is pinned to UTC, so getHours/getFullYear are the
   // UTC values on every host. (The reference renderer above is plain
   // `node:vm`, which reads the host zone — hence UTC-only corpus cases. The
-  // production host shim, packages/gitsheets/src/sandbox.ts, is diffed
-  // against the engine in the package suite.)
+  // package's exported Template renders through this same engine.)
   const record = { publishedAt: new Date('2026-03-09T02:00:00Z') };
   const [hours] = renderPathsBatch('${{ publishedAt.getHours() }}', [record]);
   const [year] = renderPathsBatch('${{ publishedAt.getFullYear() }}', [record]);

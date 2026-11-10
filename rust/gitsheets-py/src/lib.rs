@@ -1999,6 +1999,13 @@ impl CoreTransaction {
         Ok(d)
     }
 
+    /// Whether a mutating call has run in this transaction — lets the host
+    /// discard an unborn-branch bootstrap that staged nothing (Node's
+    /// `isMutated`; specs/behaviors/default-branch.md "Python binding").
+    fn is_mutated(&self) -> bool {
+        self.inner.as_ref().is_some_and(|t| t.is_mutated())
+    }
+
     /// The parent commit hash captured at open (`None` on a fresh repo).
     fn parent_commit_hash(&self) -> Option<String> {
         self.inner.as_ref().and_then(|t| t.parent_commit_hash())
