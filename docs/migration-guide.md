@@ -381,6 +381,23 @@ Path-template expression components (`${{ … }}`) and raw-JS sort comparators (
 
 **Fix:** spell the accessor you mean in UTC (`getUTCFullYear()`, `getUTCHours()`), or better, use the declarative date-bucket form (`${{ publishedAt: YYYY/MM }}`), which has always rendered at UTC. Then run `git sheet normalize <sheet>` once: it re-upserts every record through the current template in a single commit, so any record whose rendered path changed shows up there as a rename you can review. Derive anything time-based from a record field rather than the clock.
 
+## v2.13 → v2.14
+
+### `Template` and `normalizeRecord` run in the core
+
+The exported `Template` (`render`, `queryTree`), and so `sheet.pathForRecord`, and `sheet.normalizeRecord` now call the core — the same renderer and normalizer a write uses — instead of evaluating snippets in a Node `node:vm` realm. What they return is now exactly what an upsert of the same record commits. Most records see no difference; these do:
+
+- **A bare datetime field in a path** (`${{ publishedAt }}`) can't be rendered: `Template.render` / `pathForRecord` throw `PathTemplateError` (`path_render_failed`) instead of returning the host's `Date#toString()` (`"Thu Jan 01 2026 00:00:00 GMT+0000 (…)"`). Writes already rejected it. Use a [date bucket](path-templates.md#date-buckets) or an expression such as `${{ publishedAt.toISOString().slice(0, 10) }}`.
+- **Float and big-integer fields in a path** render as the core does: `1e21` → `1000000000000000000000` (was `1e+21`), `1e-7` → `0.0000001` (was `1e-7`), `Infinity` → `inf` (was `Infinity`); a `bigint` outside i64 is a render failure. Writes already rendered these this way.
+- **Records the core can't represent** — a function or symbol value anywhere in the record, a `null` array element, a `bigint` outside i64 — make `Template.render` / `pathForRecord` throw `PathTemplateError` (`path_render_failed`) and `normalizeRecord` throw `ValidationError` (`validation_failed`), even when the template or sort rules don't touch that field. Before, the field was ignored.
+- **`normalizeRecord` returns the core's value**: a fresh plain object with `null` / `undefined` keys removed (at every depth), class instances flattened to plain objects, `bigint`s within ±(2^53−1) as `number`s, and new `Date` objects. Before, it kept your values and nulls as they were.
+- **`sort = true` order** in `normalizeRecord` comes from the core's pinned ICU collator (as on write) rather than the host's `localeCompare`. They agree for ordinary input; if your Node's ICU differs from the pinned one, `normalizeRecord` now follows the bytes you commit.
+- **Comparators** in `normalizeRecord` run in the core's stable insertion sort instead of V8's `Array#sort`. A consistent comparator gives the same order; an inconsistent one now gives the order a write gives.
+- **An invalid `Date`** (`new Date(NaN)`) crosses into the core as the epoch, `1970-01-01T00:00:00Z` — what a write already stored for it. A date-bucket template that used to fail on it now renders `1970/01/01`. Validate dates before writing; this marshalling is a known bug and will become an error.
+- **`queryTree`** drops function-valued query entries (they never pruned), and a query holding another value the core can't represent throws `PathTemplateError` (`path_render_failed`).
+
+The `sort-keys` dependency is gone.
+
 ## Going forward
 
 Once migrated, the recipes are the fastest path to common patterns:
