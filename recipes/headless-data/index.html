@@ -1722,12 +1722,26 @@ same on a data branch: <code>git sheet init</code>, <code>infer</code>, <code>mi
 <code>gitsheets-axi</code> <code>init</code> / <code>infer</code> / <code>migrate-config</code> commands all read the
 existing config from the default branch and commit the new one there.</p>
 <h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link"> ¶</a></h2>
-<p>The Python binding&rsquo;s batch functions take an explicit <code>tree_ref</code> on every
-call (<code>record_query(git_dir, tree_ref, …)</code>). <code>gitsheets.branch</code> and
-<code>GITSHEETS_BRANCH</code> do not apply there, and neither do <code>gitsheets.submodule</code> and
-<code>GITSHEETS_SUBMODULE</code>. Pass <code>'refs/heads/data'</code> (or the tree it resolves to)
-yourself, with the submodule&rsquo;s git dir (<code>.git/modules/data</code>) as <code>git_dir</code> in
-submodule mode.</p>
+<p>The Python binding reads the same binding. <code>gitsheets.resolve_binding()</code>
+resolves <code>branch=</code> / <code>submodule=</code> → <code>GITSHEETS_BRANCH</code> / <code>GITSHEETS_SUBMODULE</code>
+→ <code>gitsheets.branch</code> / <code>gitsheets.submodule</code> → <code>HEAD</code>, exactly as <code>openRepo</code>
+does, with <code>False</code> as the opt-out. In a bound clone, <code>transact</code> with no
+<code>parent</code> commits to the data branch (or the data submodule, advancing a
+detached <code>HEAD</code> and honoring <code>gitsheets.stagePointer</code>), and reads given
+<code>tree_ref=None</code> read it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">gitsheets</span>
+
+<span class="n">repo</span> <span class="o">=</span> <span class="n">gitsheets</span><span class="o">.</span><span class="n">resolve_binding</span><span class="p">(</span><span class="s2">".git"</span><span class="p">)</span>   <span class="c1"># the clone's binding</span>
+<span class="n">rows</span> <span class="o">=</span> <span class="n">gitsheets</span><span class="o">.</span><span class="n">record_query</span><span class="p">(</span><span class="n">repo</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="s2">"people"</span><span class="p">,</span> <span class="s2">"${{ slug }}"</span><span class="p">,</span> <span class="p">{})</span>
+<span class="k">with</span> <span class="n">gitsheets</span><span class="o">.</span><span class="n">transact</span><span class="p">(</span><span class="n">repo</span><span class="p">,</span> <span class="s2">"people: add jane"</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()))</span> <span class="k">as</span> <span class="n">tx</span><span class="p">:</span>
+    <span class="n">tx</span><span class="o">.</span><span class="n">open_sheet</span><span class="p">(</span><span class="s2">"people"</span><span class="p">,</span> <span class="s2">".gitsheets/people.toml"</span><span class="p">)</span>
+    <span class="n">tx</span><span class="o">.</span><span class="n">upsert</span><span class="p">(</span><span class="s2">"people"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"slug"</span><span class="p">:</span> <span class="s2">"jane"</span><span class="p">})</span>
+</code></pre></div>
+<p>An explicit ref still means what it says: <code>record_query(git_dir, "HEAD", …)</code>
+reads <code>HEAD</code>. <code>at</code> has no Python equivalent; pass the gitlinked commit as the
+<code>tree_ref</code>.</p>
 
 
 
