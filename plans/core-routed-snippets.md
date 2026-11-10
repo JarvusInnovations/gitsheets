@@ -194,16 +194,17 @@ build runs the changed core.
 
 ## Notes
 
-- Verified at closeout (branch atop develop 0fb0bdd): `cargo test -p
-  gitsheets-core` 348 + 4 passed (5 ignored TZ inner tests, run via their
-  wrappers); `cargo clippy --workspace --all-targets -- -D warnings` clean;
-  `cargo build --workspace --all-targets` clean; release napi addon rebuilt
-  (`npm run build` in `rust/gitsheets-napi`), napi `node --test` 160/160;
-  `npm run build` and `npm run type-check` clean; `npm test` — gitsheets
-  612/612 (58 files; 26 in `snippet-determinism.test.ts`), gitsheets-axi
-  172/172, napi 160/160; `rust/gitsheets-py` wheel built with maturin and
-  `pytest` 127/127 with `CI=1 TZ=America/New_York` (the cross-binding host
-  leg now renders through the core-backed `Template`).
+- Verified at closeout after review round 1 (branch atop develop 0fb0bdd):
+  `cargo test -p gitsheets-core` 350 + 4 passed (5 ignored TZ inner tests,
+  run via their wrappers); `cargo clippy --workspace --all-targets -- -D
+  warnings` clean; release napi addon rebuilt (`npm run build` in
+  `rust/gitsheets-napi`), napi `node --test` 160/160; `npm run build` and
+  `npm run type-check` clean; `npm test` — gitsheets 617/617 (58 files; 31
+  in `snippet-determinism.test.ts`, incl. the dist worker test), gitsheets-axi
+  172/172, napi 160/160; `rust/gitsheets-py` wheel rebuilt with maturin and
+  `pytest` 127/127 with `CI=1 TZ=America/New_York`.
+- Round 0 totals, for the record: core 348 + 4, gitsheets 612, axi 172,
+  napi 160, pytest 127.
 - `rust-core.yml`'s cross-binding parity gate runs in CI on the PR, not
   locally beyond the pytest run above.
 - `sort-keys` dropped: the core value comes back with sorted keys, and the
