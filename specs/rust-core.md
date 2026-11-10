@@ -158,8 +158,8 @@ The resolution is two-part:
    embedded engine.** It uses a Rust ICU collator that matches V8's
    `localeCompare`, so its order is byte-stable and identical across bindings.
    Because boa is built without `Intl`, routing locale sorting through the engine
-   would diverge from `node:vm` for non-ASCII input; the engine is for *arbitrary*
-   raw-JS comparators only. The ICU collator is part of the canonical-behavior
+   would diverge from V8's `localeCompare` for non-ASCII input; the engine is for
+   *arbitrary* raw-JS comparators only. The ICU collator is part of the canonical-behavior
    contract — its **version is pinned** like the serializer and the engine.
 
 2. **JS escape-hatch via an embedded engine *in the core*.** When a definition
@@ -176,7 +176,7 @@ spec-completeness edge buys little, while its C toolchain is permanent overhead
 that multiplies per binding/target. Pure-Rust boa keeps the *whole* core C-free →
 trivial cross-platform prebuilds across all six targets (incl. musl + windows),
 clean Python wheels, and a plausible WASM binding later. Full V8 is overkill.
-The accepted trade-off is boa's divergence risk vs the current `node:vm` baseline
+The accepted trade-off is boa's divergence risk vs the `node:vm` baseline it replaced
 (concentrated in `Intl`/locale + exotic built-ins our snippets don't use); the
 **`node:vm` parity gate is a hard validation criterion** that catches any
 real divergence on actual snippets before adoption. Flip to `rquickjs` only if
@@ -184,18 +184,19 @@ parity fails on real snippets or a use case needs `Intl`/advanced built-ins. As
 boa evolves quickly, its **version is pinned** (per the contract constraint
 below) and upgraded deliberately.
 
-> **Shipped status (Node cutover).** The *declarative-first* half (point 1) is
-> live in the core: `${{ field }}` substitution, `{field: dir}` directives,
-> JSON-Schema validation, and locale-sensitive `sort = true` via the native ICU
-> collator all run natively in `gitsheets-core`. The *JS escape-hatch* half
-> (point 2) is **not yet routed through the core's boa engine on the Node
-> binding**: raw-JS sort comparators (`Sheet.<field>.sort` string rules) still run
-> host-side in `node:vm` via the retained `buildSorter`/exported `Template`
-> path. This is a **deliberate deferral** — it is single-binding today (Node only,
-> where `node:vm` is the parity baseline anyway) and moves to the in-core boa
-> engine when the Python binding needs raw-JS comparators to stay byte-identical.
-> Until then the core's boa engine is the specified target for this escape hatch,
-> not the Node runtime path. Tracked in [`node-binding-thin`](../plans/node-binding-thin.md).
+> **Shipped status.** Both halves are live in `gitsheets-core` for every
+> binding. Declarative substitution, `{field: dir}` directives, JSON-Schema
+> validation, and `sort = true` (ICU collator) run natively; path-template
+> expression components and raw-JS sort comparators run in the core's boa
+> engine. **No definition snippet runs in a binding's host runtime** — on Node
+> that includes the exported `Template` (`render`, `queryTree`), and therefore
+> `Sheet.pathForRecord`, and `Sheet.normalizeRecord`: they call into the core
+> through the napi addon, the same code the write path runs, so a path or an
+> array order computed there is the one a write commits
+> ([#373](https://github.com/JarvusInnovations/gitsheets/issues/373); the
+> earlier host `node:vm` realm and its determinism shim are gone). A core
+> engine holds a single-threaded (`!Send`) context, so each binding thread —
+> each Node worker thread included — compiles its own.
 
 ### Determinism rule for definition snippets
 
@@ -246,15 +247,20 @@ rule, for all three:
     fields range-checked (day within the month, `HH` ≤ 23, minutes and
     seconds ≤ 59, offset minutes ≤ 59), so `String(date)` round-trips.
 
-  *Known divergence:* boa also accepts an hour of `24` with non-zero minutes
+  *Known deviation:* boa also accepts an hour of `24` with non-zero minutes
   or milliseconds (`T24:01`, `T24:00:00.001Z`) and rolls it into the next
-  day; the Node host realm returns `NaN`. That is a boa bug, not the contract;
-  do not rely on either.
+  day, where the contract says `NaN`. That is a boa bug; do not rely on it.
 - **Arguments are copied in.** A snippet receives a copy of its inputs built
   from their own enumerable keys (a `Date` as a `Date` of the same instant),
   as the core marshals a record into the engine, so it cannot mutate the
   caller's record or array elements — a comparator that assigns to `a.x`
   changes nothing outside the call.
+
+A snippet's throw is reported on one line: `Kind: message` for a thrown
+`Error` (`TypeError: Date.now() is not available in a gitsheets snippet: …`),
+and the thrown value's engine display, whitespace collapsed, for anything
+else (`throw "nope"` → `"nope"`, `throw { a: 1 }` → `{ a: 1 }`). No source
+positions or stack frames are included.
 
 A violation is detected **when the snippet runs**, not at sheet open: snippets
 are opaque code, and which calls a body makes is not statically decidable. Where
@@ -292,20 +298,14 @@ different path than the template now renders; the fix is the UTC accessors
 form](behaviors/path-templates.md#date-bucket-references) — see
 [docs/migration-guide.md](../docs/migration-guide.md).
 
-**Host-side parity while the comparator deferral stands.** On the Node binding
-the exported `Template` (and so `Sheet.pathForRecord`) and `Sheet.normalizeRecord`'s
-comparators still run in a host `node:vm` context (see *Shipped status* above).
-That context must apply this same rule with the same results: the same denials
-with the same messages, the same global names (V8-only globals removed),
-local-time `Date` methods and setters reading and writing UTC, the same string
-parsing and `toString()` form, the locale-free methods above, arguments copied
-in so a record's `Date` values carry the context's patched `Date.prototype`, and
-the same error mapping (`PathTemplateError` / `ConfigError`). The core engine
-is the reference; any divergence is a bug in the host shim, apart from the boa
-bug noted above. (boa also exposes two non-standard globals, `TypedArray` and,
-ahead of Node 22, `Float16Array`, which the host realm lacks; a snippet should
-not name them.) Routing these through the core and deleting the shim is
-[#373](https://github.com/JarvusInnovations/gitsheets/issues/373).
+**One realm, no host copy.** The core engine is the only place a definition
+snippet runs. A binding must not evaluate one in its own runtime, nor keep a
+hand-written imitation of the core's semantics (for path rendering, date
+handling, locale methods, or comparator ordering) to approximate it: a host
+re-implementation can drift from the write path on every engine or runtime
+upgrade. A binding that exposes path rendering or record normalization calls
+the core for it. (boa exposes two non-standard globals, `TypedArray` and
+`Float16Array`; a snippet should not name them.)
 
 **Two constraints this creates:**
 
@@ -369,7 +369,8 @@ landed before a second binding existed**, so Node and Python agree on bytes.
   decision above.
 - Parity passes are required wherever a Rust component replaces a JS one with
   observable output: the TOML serializer (#196), the JSON-Schema validator vs
-  `ajv`, and the embedded engine vs `node:vm`.
+  `ajv`, and the embedded engine vs `node:vm` (the adoption gate; the host
+  realm has since been retired — see *Shipped status* above).
 - **Markdown body normalization is native.** Content-typed (`markdown`/`mdx`)
   sheets normalize the body on write with the embedded `dprint-plugin-markdown`
   formatter rather than a host-side `markdownlint` pre-pass, so body bytes are

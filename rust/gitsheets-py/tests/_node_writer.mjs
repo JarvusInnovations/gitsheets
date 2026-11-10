@@ -6,8 +6,8 @@
 //   commit <gitDir>                   → { commitHash, treeHash, refName }
 //   comparator <rule> <aJson> <bJson> → { result }
 //   render <template> <recordJson> → { core, host } — the path the napi core
-//     renders, and the one the gitsheets package's host `Template` (node:vm
-//     shim) renders when packages/gitsheets/dist is built (else host: null).
+//     renders, and the one the gitsheets package's exported `Template` (a
+//     core wrapper) renders when packages/gitsheets/dist is built (else host: null).
 //     String values under a `$date` key ({"$date": iso}) become JS Dates.
 //   contract-hash <kind> <input>      → { hash } — kind: data|json|toml
 //   verify-contract <gitDir> <docJson> [mode]

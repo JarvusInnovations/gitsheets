@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, canonicalContractHash, validateContractName, contractPath, checkContractDocument, contractLoad, verifySheetContract, runComparator, collatorSort, CompiledDefinition, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, recordAggregate, treeReadBlob, treeEntryHash, blobRead, blobHeader, treeList, tagSet, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, rollupQuery, rollupGet, rollupAggregate, rollupStatus, syncBranch, isAncestor, mergeSheets, mergeRecordTexts, coreDiscoverSheets, sheetConfigCheck, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
+const { roundtrip, parseRecords, serializeRecords, renderPathsBatch, validateBatch, canonicalContractHash, validateContractName, contractPath, checkContractDocument, contractLoad, verifySheetContract, runComparator, collatorSort, CompiledDefinition, CompiledSortPlan, recordRead, recordWrite, recordDelete, recordList, writeBlob, substrateStats, substrateReset, recordQuery, recordAggregate, treeReadBlob, treeEntryHash, blobRead, blobHeader, treeList, tagSet, recordQueryCandidates, templateFieldNames, recordIndexUnique, recordIndexMulti, createPatch, applyMergePatch, diffRecords, simulateCoreError, CoreTransaction, rollupQuery, rollupGet, rollupAggregate, rollupStatus, syncBranch, isAncestor, mergeSheets, mergeRecordTexts, coreDiscoverSheets, sheetConfigCheck, coreCheckValidators, markdownSerialize, markdownNormalizeBody, markdownParse, markdownParseHeaderOnly, markdownExtractH1, markdownRewriteH1 } = nativeBinding
 
 module.exports.roundtrip = roundtrip
 module.exports.parseRecords = parseRecords
@@ -326,6 +326,7 @@ module.exports.verifySheetContract = verifySheetContract
 module.exports.runComparator = runComparator
 module.exports.collatorSort = collatorSort
 module.exports.CompiledDefinition = CompiledDefinition
+module.exports.CompiledSortPlan = CompiledSortPlan
 module.exports.recordRead = recordRead
 module.exports.recordWrite = recordWrite
 module.exports.recordDelete = recordDelete

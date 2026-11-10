@@ -1,8 +1,15 @@
-// Path template parser + renderer + query-tree traversal.
+// Path templates — the exported `Template` and its query-tree walk.
 // See specs/behaviors/path-templates.md for the contract.
+//
+// Parsing and rendering happen in the core (`gitsheets-core`'s
+// `path_template` module, through the napi `CompiledDefinition`): a compiled
+// template holds its own embedded engine, and every expression component runs
+// there — never in this runtime. This module only walks a tree for
+// `queryTree`, asking the core to render each component against the partial
+// query. See specs/rust-core.md "Embedded code execution".
 
-import { ConfigError, PathTemplateError } from '../errors.js';
-import { compileSnippet, thrownMessage } from '../sandbox.js';
+import { addon, callCore } from '../core.js';
+import { GitsheetsError, PathTemplateError } from '../errors.js';
 
 // --- Public types ---
 
@@ -24,502 +31,49 @@ export interface PathTemplateQueryResult {
   readonly blob: PathTemplateBlob;
 }
 
-// --- Internal model ---
+type CompiledDefinition = InstanceType<typeof addon.CompiledDefinition>;
 
-interface LiteralPart {
-  readonly kind: 'literal';
-  readonly text: string;
-}
-
-interface FieldPart {
-  readonly kind: 'field';
-  readonly name: string;
-  readonly recursive: boolean;
-}
-
-interface ExpressionPart {
-  readonly kind: 'expression';
-  readonly source: string;
-  readonly evaluate: (record: RecordLike) => unknown;
-}
+// --- Core calls ---
 
 /**
- * One path segment of a date-bucket reference (`${{ field: YYYY/MM/DD }}`).
- * The parser expands a bucket token into one `bucket` part per format part,
- * each its own component, so a `YYYY/MM/DD` bucket creates three real tree
- * levels. `YYYY` in a `YYYY/WW` bucket is the ISO *week-based* year
- * (`isoYYYY`) — a different value from the calendar year near year
- * boundaries. See specs/behaviors/path-templates.md § "Date-bucket
- * references".
+ * Run a core call for `template`. Typed core errors (`PathTemplateError`,
+ * `ConfigError`) pass through `callCore`; a value the core cannot marshal (a
+ * function, a symbol, a `null` array element, …) surfaces as
+ * `PathTemplateError('path_render_failed')` — the record cannot be rendered,
+ * exactly as it could not be written.
  */
-interface BucketPart {
-  readonly kind: 'bucket';
-  /** The referenced field, split on `.` (dotted references read nested objects). */
-  readonly field: readonly string[];
-  readonly unit: BucketUnit;
-}
-
-type BucketUnit = 'YYYY' | 'MM' | 'DD' | 'isoYYYY' | 'WW';
-
-type Part = LiteralPart | FieldPart | ExpressionPart | BucketPart;
-
-interface Component {
-  readonly parts: readonly Part[];
-  /** True iff this component is exactly one recursive (`/**`) field part. */
-  readonly recursive: boolean;
-}
-
-// --- Validation ---
-
-// Windows-disallowed chars per specs/behaviors/path-templates.md.
-const WINDOWS_INVALID = /[<>:"|?*\x00-\x1f]/;
-
-// Same set plus `/` — segments rendered for non-recursive components must not
-// contain `/`, since that would silently expand the rendered path's structure.
-const SEGMENT_INVALID = /[<>:"|?*\x00-\x1f/]/;
-
-function rejectInvalidChars(
-  rendered: string,
-  pattern: RegExp,
-  source: string,
-  componentIndex: number,
-): void {
-  const match = pattern.exec(rendered);
-  if (match) {
-    throw new PathTemplateError(
-      'path_invalid_chars',
-      `component ${componentIndex} of "${source}" rendered to ${JSON.stringify(rendered)}, ` +
-        `which contains disallowed character ${JSON.stringify(match[0])}`,
-    );
-  }
-}
-
-// --- Expression compilation ---
-
-const NOT_DEFINED_RE = / is not defined$/;
-
-function compileExpression(source: string, template: string): (record: RecordLike) => unknown {
-  // Compiled in the deterministic realm (specs/rust-core.md "Determinism rule
-  // for definition snippets"), held to the core engine's results.
-  let compiled: (record: RecordLike) => unknown;
+function renderCall<R>(template: string, fn: () => R): R {
   try {
-    compiled = compileSnippet(`(record) => { with (record) { return (${source}) } }`) as (
-      record: RecordLike,
-    ) => unknown;
+    return callCore(fn);
   } catch (err) {
-    throw new PathTemplateError(
-      'path_render_failed',
-      `expression ${JSON.stringify(source)} failed to compile: ${thrownMessage(err)}`,
-      { cause: err },
-    );
-  }
-
-  return (record: RecordLike) => {
-    try {
-      return compiled(record);
-    } catch (err) {
-      // Per spec: missing identifiers are "un-renderable", not fatal —
-      // that lets queries with partial fields walk the tree fully. The error
-      // comes from the snippet's realm, so match by name, not instanceof.
-      if (
-        err !== null &&
-        typeof err === 'object' &&
-        (err as { name?: unknown }).name === 'ReferenceError' &&
-        NOT_DEFINED_RE.test(String((err as { message?: unknown }).message))
-      ) {
-        return undefined;
-      }
-      // Any other throw — including a call the realm forbids (Date.now(),
-      // Math.random(), argument-less new Date()) — fails the render.
+    if (err instanceof Error && !(err instanceof GitsheetsError)) {
       throw new PathTemplateError(
         'path_render_failed',
-        `expression \${{ ${source.trim()} }} in ${JSON.stringify(template)} failed: ${thrownMessage(err)}`,
+        `cannot render "${template}": ${err.message}`,
         { cause: err },
       );
     }
-  };
-}
-
-// --- Value rendering ---
-
-function stringifyValue(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === 'function') return undefined;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-    return String(value);
-  }
-  if (value instanceof Date) return value.toString();
-  // Plain objects / arrays / Symbols: treat as un-renderable. Consumers
-  // wanting a custom serialization use an expression component.
-  return undefined;
-}
-
-function renderPart(part: Part, record: RecordLike, strict: boolean): string | undefined {
-  switch (part.kind) {
-    case 'literal':
-      return part.text;
-    case 'field':
-      return stringifyValue(record[part.name]);
-    case 'bucket': {
-      const date = bucketDate(record, part.field, strict);
-      return date === undefined ? undefined : renderBucketUnit(date, part.unit);
-    }
-    case 'expression':
-      return stringifyValue(part.evaluate(record));
+    throw err;
   }
 }
 
 /**
- * Render a component to text, or `undefined` (un-renderable). `strict` is
- * true for full-record `render` — where a date-bucket field holding a
- * non-date value throws `PathTemplateError` — and false for `queryTree`
- * planning, where a bad bucket value degrades to un-renderable so the walk
- * widens instead of erroring (matching how opaque filter values widen the
- * walk).
+ * Drop function-valued entries (at any table depth) from a query before it
+ * crosses to the core: a function filter value is opaque to pruning, exactly
+ * like an absent field (specs/behaviors/path-templates.md "Function-valued
+ * filter entries"), and it cannot be marshalled.
  */
-function renderComponent(c: Component, record: RecordLike, strict: boolean): string | undefined {
-  let out = '';
-  for (const part of c.parts) {
-    const piece = renderPart(part, record, strict);
-    if (piece === undefined) return undefined;
-    out += piece;
+function stripFunctions(query: RecordLike): RecordLike {
+  const out: RecordLike = {};
+  for (const [k, v] of Object.entries(query)) {
+    if (typeof v === 'function') continue;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+      out[k] = stripFunctions(v as RecordLike);
+    } else {
+      out[k] = v;
+    }
   }
   return out;
-}
-
-// --- Date buckets (specs/behaviors/path-templates.md § "Date-bucket references") ---
-
-/**
- * The closed format enum. Deliberately not a format language: anything else
- * in the format position is `ConfigError('config_invalid')` at sheet-open.
- */
-const BUCKET_FORMATS: Record<string, readonly BucketUnit[]> = {
-  'YYYY': ['YYYY'],
-  'YYYY/MM': ['YYYY', 'MM'],
-  'YYYY/MM/DD': ['YYYY', 'MM', 'DD'],
-  'YYYY/WW': ['isoYYYY', 'WW'],
-};
-
-const BUCKET_FIELD_SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
-
-/**
- * Recognize a date-bucket *attempt*: `<field(.dotted)?> : <format>`. Format
- * validation against the closed enum happens at the call site, so an unknown
- * format is `config_invalid` rather than falling through to the expression
- * compiler.
- *
- * Recognizing this shape breaks no working template: `(field: ...)` is a JS
- * labeled statement inside the renderer's `return (...)` wrapper — a
- * guaranteed syntax error — so the colon-after-identifier space was dead.
- */
-function splitBucketAttempt(
-  source: string,
-): { field: readonly string[]; format: string } | undefined {
-  const idx = source.indexOf(':');
-  if (idx === -1) return undefined;
-  const head = source.slice(0, idx).trim();
-  if (head === '') return undefined;
-  const field = head.split('.');
-  if (!field.every((seg) => BUCKET_FIELD_SEGMENT_RE.test(seg))) return undefined;
-  return { field, format: source.slice(idx + 1).trim() };
-}
-
-/** A UTC calendar date — the value a bucket partitions on. */
-interface UtcDate {
-  readonly year: number;
-  readonly month: number;
-  readonly day: number;
-}
-
-// ISO 8601 shapes accepted for bucket string values, mirroring the core
-// (chrono): RFC 3339 offsets only (`Z` or `±hh:mm`), seconds required in
-// datetimes, optional fraction.
-const BUCKET_DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const BUCKET_DATETIME_RE =
-  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?([Zz]|[+-]\d{2}:\d{2})?$/;
-
-/** Is `y-m-d` a real proleptic-Gregorian calendar date? */
-function isRealDate(year: number, month: number, day: number): boolean {
-  const t = new Date(Date.UTC(year, month - 1, day));
-  return (
-    t.getUTCFullYear() === year && t.getUTCMonth() === month - 1 && t.getUTCDate() === day
-  );
-}
-
-/**
- * Resolve a (possibly dotted) bucket field against `record` and reduce it to
- * the **UTC calendar date** the bucket partitions on. **UTC always**: a JS
- * `Date` (an absolute instant) is read through its UTC accessors; a string
- * with an explicit offset is normalized to UTC; offset-less strings are read
- * at face value — never via `new Date(string)`, which would consult the host
- * timezone. Absent field → `undefined` (un-renderable); present-but-not-a-
- * date → throws in strict mode, `undefined` otherwise.
- */
-function bucketDate(
-  record: RecordLike,
-  field: readonly string[],
-  strict: boolean,
-): UtcDate | undefined {
-  let current: unknown = record;
-  for (const seg of field) {
-    if (current === null || typeof current !== 'object' || Array.isArray(current)) {
-      return undefined;
-    }
-    current = (current as RecordLike)[seg];
-    if (current === undefined) return undefined;
-  }
-  const fail = (detail: string): undefined => {
-    if (strict) {
-      throw new PathTemplateError(
-        'path_render_failed',
-        `date-bucket reference: ${detail}`,
-      );
-    }
-    return undefined;
-  };
-  const name = field.join('.');
-
-  if (current instanceof Date) {
-    if (Number.isNaN(current.getTime())) {
-      return fail(`field "${name}" is an invalid Date`);
-    }
-    return {
-      year: current.getUTCFullYear(),
-      month: current.getUTCMonth() + 1,
-      day: current.getUTCDate(),
-    };
-  }
-
-  if (typeof current === 'string') {
-    const dateOnly = BUCKET_DATE_ONLY_RE.exec(current);
-    if (dateOnly) {
-      const [, y, m, d] = dateOnly;
-      const year = Number(y);
-      const month = Number(m);
-      const day = Number(d);
-      if (!isRealDate(year, month, day)) {
-        return fail(`field "${name}" value ${JSON.stringify(current)} is not a real date`);
-      }
-      return { year, month, day };
-    }
-    const dt = BUCKET_DATETIME_RE.exec(current);
-    if (dt) {
-      const [, y, m, d, hh, mm, ss, offset] = dt;
-      const year = Number(y);
-      const month = Number(m);
-      const day = Number(d);
-      if (
-        !isRealDate(year, month, day) ||
-        Number(hh) > 23 ||
-        Number(mm) > 59 ||
-        Number(ss) > 60
-      ) {
-        return fail(
-          `field "${name}" value ${JSON.stringify(current)} is not a real date or time`,
-        );
-      }
-      if (offset === undefined) {
-        // Offset-less datetime: face value, no TZ math.
-        return { year, month, day };
-      }
-      // Explicit offset (Z or ±hh:mm): normalize the instant to UTC.
-      const epoch = Date.parse(current);
-      if (Number.isNaN(epoch)) {
-        return fail(`field "${name}" value ${JSON.stringify(current)} is not parseable`);
-      }
-      const at = new Date(epoch);
-      return {
-        year: at.getUTCFullYear(),
-        month: at.getUTCMonth() + 1,
-        day: at.getUTCDate(),
-      };
-    }
-    return fail(
-      `field "${name}" value ${JSON.stringify(current)} is not an ISO 8601 date or datetime`,
-    );
-  }
-
-  return fail(
-    `field "${name}" has type ${Array.isArray(current) ? 'array' : typeof current} — ` +
-      'date-bucket fields accept Date values or ISO 8601 strings',
-  );
-}
-
-/**
- * ISO-8601 week and week-based year of a UTC date (nearest-Thursday rule).
- * Must agree exactly with chrono's `iso_week()` in the core — covered by the
- * boundary-date parity tests.
- */
-function isoWeekOf(d: UtcDate): { year: number; week: number } {
-  const t = new Date(Date.UTC(d.year, d.month - 1, d.day));
-  const dayNum = (t.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
-  t.setUTCDate(t.getUTCDate() - dayNum + 3); // this ISO week's Thursday
-  const isoYear = t.getUTCFullYear();
-  const jan1 = Date.UTC(isoYear, 0, 1);
-  const week = Math.floor((t.getTime() - jan1) / 86_400_000 / 7) + 1;
-  return { year: isoYear, week };
-}
-
-const pad2 = (n: number): string => String(n).padStart(2, '0');
-const pad4 = (n: number): string => String(n).padStart(4, '0');
-
-/** Render one bucket unit, zero-padded (`MM`/`DD`/`WW` two digits, years four). */
-function renderBucketUnit(date: UtcDate, unit: BucketUnit): string {
-  switch (unit) {
-    case 'YYYY':
-      return pad4(date.year);
-    case 'MM':
-      return pad2(date.month);
-    case 'DD':
-      return pad2(date.day);
-    case 'isoYYYY':
-      return pad4(isoWeekOf(date).year);
-    case 'WW':
-      return pad2(isoWeekOf(date).week);
-  }
-}
-
-// --- Parser ---
-
-const FIELD_NAME_RE = /^[a-zA-Z0-9_-]+(\/\*\*)?$/;
-
-function parseTemplateString(source: string): readonly Component[] {
-  const normalized = source.replace(/^\/+/, '').replace(/\/+$/, '');
-  if (normalized === '') {
-    throw new PathTemplateError('path_render_failed', 'path template is empty');
-  }
-
-  // Single-pass: structural `/` separates components, but `/` inside an
-  // expression (notably the `/**` recursive suffix) belongs to the expression
-  // and must not split segments.
-  const segments: Part[][] = [[]];
-  let pendingLiteral = '';
-  let i = 0;
-
-  const flushLiteral = () => {
-    if (pendingLiteral) {
-      segments[segments.length - 1]!.push({ kind: 'literal', text: pendingLiteral });
-      pendingLiteral = '';
-    }
-  };
-
-  while (i < normalized.length) {
-    if (normalized.startsWith('${{', i)) {
-      flushLiteral();
-      i += 3;
-
-      let exprSource = '';
-      while (!normalized.startsWith('}}', i)) {
-        if (i >= normalized.length) {
-          throw new PathTemplateError(
-            'path_render_failed',
-            `expression "\${{${exprSource}" in template "${source}" was not closed with }}`,
-          );
-        }
-        exprSource += normalized[i]!;
-        i++;
-      }
-      exprSource = exprSource.trim();
-      i += 2;
-
-      // Date-bucket reference — recognized BEFORE the expression fallback
-      // (specs/behaviors/path-templates.md § "Date-bucket references").
-      const bucket = splitBucketAttempt(exprSource);
-      if (bucket !== undefined) {
-        const units = BUCKET_FORMATS[bucket.format];
-        if (units === undefined) {
-          throw new ConfigError(
-            'config_invalid',
-            `invalid date-bucket format ${JSON.stringify(bucket.format)} in ` +
-              `"\${{ ${exprSource} }}" — supported formats: YYYY, YYYY/MM, YYYY/MM/DD, YYYY/WW`,
-          );
-        }
-        // A bucket expands into multiple real segments, so it must stand
-        // alone in its path segment: nothing already in the segment (any
-        // pending literal was flushed above), and a `/` or end-of-template
-        // after it.
-        const standaloneBefore = segments[segments.length - 1]!.length === 0;
-        const standaloneAfter = i >= normalized.length || normalized[i] === '/';
-        if (!standaloneBefore || !standaloneAfter) {
-          throw new ConfigError(
-            'config_invalid',
-            `date-bucket reference "\${{ ${exprSource} }}" must stand alone in its ` +
-              'path segment — no literal prefix/suffix or adjacent references',
-          );
-        }
-        for (let u = 0; u < units.length; u++) {
-          if (u > 0) segments.push([]);
-          segments[segments.length - 1]!.push({
-            kind: 'bucket',
-            field: bucket.field,
-            unit: units[u]!,
-          });
-        }
-        continue;
-      }
-
-      if (FIELD_NAME_RE.test(exprSource)) {
-        const recursive = exprSource.endsWith('/**');
-        const name = recursive ? exprSource.slice(0, -3) : exprSource;
-        segments[segments.length - 1]!.push({ kind: 'field', name, recursive });
-      } else {
-        segments[segments.length - 1]!.push({
-          kind: 'expression',
-          source: exprSource,
-          evaluate: compileExpression(exprSource, source),
-        });
-      }
-    } else if (normalized[i] === '/') {
-      flushLiteral();
-      segments.push([]);
-      i++;
-    } else {
-      pendingLiteral += normalized[i]!;
-      i++;
-    }
-  }
-  flushLiteral();
-
-  const components = segments.map((parts, idx) => buildComponent(parts, idx, source));
-
-  // Recursive (`/**`) must be the last component if present.
-  for (let i = 0; i < components.length - 1; i++) {
-    if (components[i]!.recursive) {
-      throw new PathTemplateError(
-        'path_render_failed',
-        `recursive component (\${{ ... /** }}) must be the final component of the template`,
-      );
-    }
-  }
-
-  return components;
-}
-
-function buildComponent(parts: readonly Part[], index: number, source: string): Component {
-  if (parts.length === 0) {
-    throw new PathTemplateError(
-      'path_render_failed',
-      `empty component at index ${index} of "${source}" — consecutive slashes are not allowed`,
-    );
-  }
-
-  const onlyPart = parts.length === 1 ? parts[0]! : null;
-  const componentRecursive =
-    onlyPart !== null && onlyPart.kind === 'field' && onlyPart.recursive;
-
-  if (!componentRecursive) {
-    for (const part of parts) {
-      if (part.kind === 'field' && part.recursive) {
-        throw new PathTemplateError(
-          'path_render_failed',
-          `recursive field reference (\${{ ${part.name}/** }}) must be the only part of its component`,
-        );
-      }
-    }
-  }
-
-  return { parts, recursive: componentRecursive };
 }
 
 // --- Tree helpers ---
@@ -536,41 +90,22 @@ function joinPath(prefix: string, name: string): string {
   return prefix ? `${prefix}/${name}` : name;
 }
 
-// --- Identifier extraction (for Template.getFieldNames on ExpressionParts) ---
-
-// Bare identifiers anywhere in the expression source. Members (`x.y`) match
-// only `x` because the `\b` boundary follows a non-word char.
-const IDENTIFIER_RE = /(?<![.\w$])([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
-
-const JS_RESERVED = new Set<string>([
-  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default',
-  'delete', 'do', 'else', 'enum', 'export', 'extends', 'false', 'finally', 'for',
-  'function', 'if', 'import', 'in', 'instanceof', 'new', 'null', 'return',
-  'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'undefined',
-  'var', 'void', 'while', 'with', 'yield', 'let', 'static', 'async', 'await',
-  'of', 'Array', 'Boolean', 'Date', 'Number', 'Object', 'String', 'Math',
-  'JSON', 'RegExp', 'Symbol', 'Promise', 'Map', 'Set', 'NaN', 'Infinity',
-  'globalThis',
-]);
-
-function extractIdentifiers(source: string): string[] {
-  const out: string[] = [];
-  for (const match of source.matchAll(IDENTIFIER_RE)) {
-    const id = match[1]!;
-    if (!JS_RESERVED.has(id)) out.push(id);
-  }
-  return out;
-}
-
 // --- Template class ---
 
+// Per isolate: a worker thread loads its own copy of this module, so each
+// thread compiles its own templates into its own engine (boa contexts are
+// single-threaded).
 const TEMPLATE_CACHE = new Map<string, Template>();
 
 export class Template {
   static fromString(templateString: string): Template {
     const cached = TEMPLATE_CACHE.get(templateString);
     if (cached) return cached;
-    const instance = new Template(templateString, parseTemplateString(templateString));
+    const compiled = renderCall(
+      templateString,
+      () => new addon.CompiledDefinition(templateString),
+    );
+    const instance = new Template(templateString, compiled);
     TEMPLATE_CACHE.set(templateString, instance);
     return instance;
   }
@@ -581,15 +116,19 @@ export class Template {
   }
 
   readonly source: string;
-  readonly #components: readonly Component[];
+  readonly #compiled: CompiledDefinition;
+  readonly #componentCount: number;
+  #fieldNames: readonly string[] | undefined;
+  #staticFieldNames: readonly string[] | undefined;
 
-  private constructor(source: string, components: readonly Component[]) {
+  private constructor(source: string, compiled: CompiledDefinition) {
     this.source = source;
-    this.#components = components;
+    this.#compiled = compiled;
+    this.#componentCount = compiled.componentCount();
   }
 
   get componentCount(): number {
-    return this.#components.length;
+    return this.#componentCount;
   }
 
   /**
@@ -604,23 +143,8 @@ export class Template {
    * because the caller still passes only known input fields downstream.
    */
   getFieldNames(): readonly string[] {
-    const seen = new Set<string>();
-    for (const c of this.#components) {
-      for (const p of c.parts) {
-        if (p.kind === 'field') {
-          seen.add(p.name);
-        } else if (p.kind === 'bucket') {
-          // A bucket contributes its base (top-level) field name — the same
-          // contribution an expression scan would make for a dotted member.
-          seen.add(p.field[0]!);
-        } else if (p.kind === 'expression') {
-          for (const id of extractIdentifiers(p.source)) {
-            seen.add(id);
-          }
-        }
-      }
-    }
-    return [...seen];
+    this.#fieldNames ??= this.#compiled.fieldNames();
+    return [...this.#fieldNames];
   }
 
   /**
@@ -630,42 +154,27 @@ export class Template {
    * decidable. This is the set the open-time template-coherence check requires
    * the schema to list (specs/behaviors/path-templates.md "Template fields
    * must be schema-required"); `infer` / `migrate-config` always put these in
-   * the written schema's `required`. Mirrors the core's
-   * `Template::static_field_names`.
+   * the written schema's `required`.
    */
   getStaticFieldNames(): readonly string[] {
-    const seen = new Set<string>();
-    for (const c of this.#components) {
-      for (const p of c.parts) {
-        if (p.kind === 'field') seen.add(p.name);
-        else if (p.kind === 'bucket') seen.add(p.field[0]!);
-      }
-    }
-    return [...seen];
+    this.#staticFieldNames ??= this.#compiled.staticFieldNames();
+    return [...this.#staticFieldNames];
   }
 
   /**
-   * Render the template against a full record.
+   * Render the template against a full record, in the core.
    *
    * @throws PathTemplateError(`path_render_failed`) when any component is unrenderable.
    * @throws PathTemplateError(`path_invalid_chars`) when a rendered segment contains
    *         disallowed characters.
    */
   render(record: RecordLike): string {
-    const segments: string[] = [];
-    for (let i = 0; i < this.#components.length; i++) {
-      const c = this.#components[i]!;
-      const rendered = renderComponent(c, record, true);
-      if (rendered === undefined) {
-        throw new PathTemplateError(
-          'path_render_failed',
-          `cannot render component ${i} of "${this.source}" — a required field or expression returned undefined`,
-        );
-      }
-      rejectInvalidChars(rendered, c.recursive ? WINDOWS_INVALID : SEGMENT_INVALID, this.source, i);
-      segments.push(rendered);
-    }
-    return segments.join('/');
+    return renderCall(this.source, () => this.#compiled.renderPath(record));
+  }
+
+  /** Render component `index` against a partial query; `undefined` = un-renderable. */
+  #renderComponent(index: number, query: RecordLike): string | undefined {
+    return renderCall(this.source, () => this.#compiled.renderComponent(index, query)) ?? undefined;
   }
 
   /**
@@ -687,20 +196,26 @@ export class Template {
     opts: { pathPrefix?: string; depth?: number; extension?: string } = {},
   ): AsyncGenerator<PathTemplateQueryResult> {
     if (!tree) return;
+    yield* this.#walk(tree, stripFunctions(query), opts);
+  }
 
+  async *#walk(
+    tree: PathTemplateTree,
+    query: RecordLike,
+    opts: { pathPrefix?: string; depth?: number; extension?: string },
+  ): AsyncGenerator<PathTemplateQueryResult> {
     const pathPrefix = opts.pathPrefix ?? '';
     const depth = opts.depth ?? 0;
     const extension = opts.extension ?? '.toml';
     const extLen = extension.length;
 
-    const numComponents = this.#components.length;
+    const numComponents = this.#componentCount;
     let currentTree: PathTemplateTree = tree;
     let currentPrefix = pathPrefix;
 
     for (let i = depth; i < numComponents; i++) {
       const isLast = i + 1 === numComponents;
-      const c = this.#components[i]!;
-      const rendered = renderComponent(c, query, false);
+      const rendered = this.#renderComponent(i, query);
 
       if (isLast) {
         if (rendered !== undefined) {
@@ -711,7 +226,7 @@ export class Template {
           return;
         }
 
-        const children = c.recursive
+        const children = this.#compiled.isRecursiveComponent(i)
           ? await currentTree.getBlobMap()
           : await currentTree.getChildren();
 
@@ -749,7 +264,7 @@ export class Template {
       for (const name in children) {
         const child = children[name];
         if (!child || !isTree(child)) continue;
-        yield* this.queryTree(child, query, {
+        yield* this.#walk(child, query, {
           pathPrefix: joinPath(currentPrefix, name),
           depth: i + 1,
           extension,

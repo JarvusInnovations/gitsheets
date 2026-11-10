@@ -45,7 +45,6 @@
     "csv-parse": "^7.0.2",
     "csv-stringify": "^6.7.0",
     "rfc6902": "^5.2.0",
-    "sort-keys": "^6.0.0",
     "yargs": "^18.0.0"
   },
   "devDependencies": {
