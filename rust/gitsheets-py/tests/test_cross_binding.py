@@ -371,3 +371,99 @@ def test_verify_sheet_contract_failure_issue_set_identical_across_bindings():
         assert py_issue_set == node_issue_set == {("bob", "required", "example.com/people/v1")}
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ── default-branch binding parity ─────────────────────────────────────────────
+# specs/behaviors/default-branch.md "Python binding": the same clone, env, and
+# git config bind identically from openRepo and resolve_binding — git dir,
+# branch (or detached null/None), submodule — and a refused binding is the
+# same error class and code from both.
+
+
+def _node_bind(git_dir: str, opts: dict, env: dict) -> dict:
+    proc = subprocess.run(
+        ["node", _NODE_WRITER, "bind", git_dir, json.dumps(opts)],
+        capture_output=True,
+        env=dict(env, GITSHEETS_NAPI_BINDING=_NAPI_BINDING),
+        cwd=_HERE,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"node helper failed: {proc.stderr.decode()}")
+    out = json.loads(proc.stdout.decode())
+    if out.get("skipped"):
+        pytest.skip("packages/gitsheets/dist not built (npm run build -w gitsheets)")
+    return out
+
+
+def _py_bind(git_dir: str, opts: dict) -> dict:
+    kwargs = {k: (False if v is None else v) for k, v in opts.items()}
+    try:
+        b = gitsheets.resolve_binding(git_dir, **kwargs)
+    except gitsheets.GitsheetsError as err:
+        return {"ok": False, "name": type(err).__name__, "code": err.code}
+    return {"ok": True, "gitDir": b.git_dir, "branch": b.branch, "submodule": b.submodule}
+
+
+def test_default_branch_binding_identical_across_bindings(tmp_path, monkeypatch):
+    for key in ("GITSHEETS_BRANCH", "GITSHEETS_SUBMODULE", "GITSHEETS_STAGE_POINTER", "GIT_DIR"):
+        monkeypatch.delenv(key, raising=False)
+    global_cfg = tmp_path / "gitconfig-global"
+    global_cfg.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_cfg))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for k, v in (("NAME", "Seed"), ("EMAIL", "seed@x.org")):
+        monkeypatch.setenv(f"GIT_AUTHOR_{k}", v)
+        monkeypatch.setenv(f"GIT_COMMITTER_{k}", v)
+
+    def repo(name):
+        d = str(tmp_path / name)
+        _git(["init", "-q", "-b", "main", d])
+        _git(["commit", "-q", "--allow-empty", "-m", "seed"], cwd=d)
+        return d
+
+    plain = repo("plain")
+    _git(["tag", "v1"], cwd=plain)
+    _git(["remote", "add", "origin", "https://example.invalid/x.git"], cwd=plain)
+    _git(["update-ref", "refs/remotes/origin/remote-only", "HEAD"], cwd=plain)
+    data = repo("data-origin")
+    sup = repo("super")
+    _git(["-c", "protocol.file.allow=always", "submodule", "add", "-q", data, "data"], cwd=sup)
+    _git(["config", "gitsheets.branch", "records"], cwd=os.path.join(sup, "data"))
+    detached = repo("detached")
+    _git(["checkout", "-q", "--detach"], cwd=detached)
+
+    # (label, git dir, opts — None = opt out, env, local config)
+    cases = [
+        ("head", plain, {}, {}, {}),
+        ("config", plain, {}, {}, {"gitsheets.branch": "data"}),
+        ("env over config", plain, {}, {"GITSHEETS_BRANCH": "envb"}, {"gitsheets.branch": "data"}),
+        ("empty env is unset", plain, {}, {"GITSHEETS_BRANCH": ""}, {"gitsheets.branch": "data"}),
+        ("option", plain, {"branch": "refs/heads/opt"}, {"GITSHEETS_BRANCH": "envb"}, {}),
+        ("opt-out", plain, {"branch": None}, {"GITSHEETS_BRANCH": "envb"}, {"gitsheets.branch": "data"}),
+        ("tag refused", plain, {"branch": "v1"}, {}, {}),
+        ("tag ref refused", plain, {"branch": "refs/tags/v1"}, {}, {}),
+        ("remote-only refused", plain, {}, {"GITSHEETS_BRANCH": "remote-only"}, {}),
+        ("detached", detached, {}, {}, {}),
+        ("submodule config", sup, {}, {}, {"gitsheets.submodule": "./data/"}),
+        ("submodule env", sup, {}, {"GITSHEETS_SUBMODULE": "data"}, {}),
+        ("submodule branch opt-out", sup, {"branch": None}, {"GITSHEETS_SUBMODULE": "data"}, {}),
+        ("submodule opt-out", sup, {"submodule": None}, {"GITSHEETS_SUBMODULE": "data"}, {}),
+        ("not a submodule", sup, {}, {"GITSHEETS_SUBMODULE": "nope"}, {}),
+        ("bad submodule path", sup, {"submodule": "../x"}, {}, {}),
+    ]
+    for label, d, opts, env, config in cases:
+        for key, value in config.items():
+            _git(["config", key, value], cwd=d)
+        with monkeypatch.context() as m:
+            for key, value in env.items():
+                m.setenv(key, value)
+            node = _node_bind(os.path.join(d, ".git"), opts, dict(os.environ))
+            py = _py_bind(os.path.join(d, ".git"), opts)
+        for key in config:
+            _git(["config", "--unset", key], cwd=d)
+        if node.get("ok"):
+            node["gitDir"] = os.path.realpath(node["gitDir"])
+            py["gitDir"] = os.path.realpath(py["gitDir"])
+        assert py == node, label
+        refused = "refused" in label or label.startswith(("not a", "bad"))
+        assert node["ok"] is not refused, (label, node)
