@@ -11,7 +11,7 @@ import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -164,8 +164,10 @@ describe('Template expressions run in the deterministic core realm', () => {
     expect(t.render({ x: 2026 })).toBe('2026');
     expect(t.render({ x: 5n })).toBe('5');
     expect(t.render({ x: true })).toBe('true');
-    expect(t.render({ x: 1e21 })).toBe('1000000000000000000000');
-    expect(t.render({ x: Infinity })).toBe('inf');
+    expect(t.render({ x: 1e21 })).toBe('1e+21');
+    expect(t.render({ x: 1e20 })).toBe('100000000000000000000');
+    expect(t.render({ x: 1e-7 })).toBe('1e-7');
+    expect(t.render({ x: Infinity })).toBe('Infinity');
   });
 });
 
@@ -197,52 +199,113 @@ function renderExpr(expr: string, record: Record<string, unknown>): { ok: string
   }
 }
 
-const HARD_EXPRESSIONS = [
-  // setters, incl. Annex B setYear
-  '(() => { const x = new Date(dst.getTime()); x.setYear(99); return x.getTime(); })()',
-  '(() => { const x = new Date(dst.getTime()); x.setYear(2026); return x.getTime(); })()',
-  '(() => { const x = new Date(dst.getTime()); x.setHours(2, 30); return x.getTime(); })()',
-  '(() => { const x = new Date(dst.getTime()); x.setFullYear(2025, 10, 2); return x.getTime(); })()',
-  '(() => { const x = new Date(dst.getTime()); x.setMinutes(61); x.setSeconds(-1); x.setMilliseconds(5); return x.getTime(); })()',
-  // two-digit years and the local-time constructor
-  'new Date(99, 0).getTime()',
-  'new Date(2026, 2, 8, 2, 30).getTime()',
-  // DST-boundary instant
-  'dst.getHours() + ":" + dst.getMinutes() + ":" + dst.getDate() + ":" + dst.getDay() + ":" + dst.getYear()',
-  'dst.toString()',
-  'dst.toDateString() + "|" + dst.toTimeString()',
-  'dst.getTimezoneOffset()',
-  'Date.parse("2026-03-08T02:30")',
-  'dst.toJSON() + dst.toISOString() + dst.toUTCString() + JSON.stringify(dst)',
-  // class-instance records: their Dates are marshalled in too
-  'k.d.getHours()',
-  'k.d.toString()',
-  // locale-sensitive methods
-  '"\\u00e9".localeCompare("f") + ":" + "e\\u0301".localeCompare("\\u00e9")',
-  '"i".toLocaleUpperCase("tr") + "\\u0130".toLocaleLowerCase()',
-  '[1234.5, "x", null, undefined, [1, 2]].toLocaleString()',
-  // string → time
-  ...['2026-03-04T05:06', '2026-03-04T05:06:07.1Z', 'Wed Mar 04 2026 05:06:07 GMT+0000', 'Jan 1 2026 05:00', '2026/03/04'].map(
-    (str) => `Date.parse(${JSON.stringify(str)}) + ":" + new Date(${JSON.stringify(str)}).getTime()`,
-  ),
+// The pre-#373 parity corpus (vm shim vs core, under three host zones),
+// kept as direct assertions: each expression's String() through the public
+// Template, with the value the core — the specified behavior — produces.
+// Setters incl. Annex B setYear, two-digit years and the local-time
+// constructor, a DST-boundary instant, UTC forms, ToPrimitive in the
+// constructor, class-instance records, the locale-free methods, and the
+// three accepted date-string forms (anything else is NaN).
+const HARD_CASES: Array<[string, string]> = [
+  ["(() => { const x = new Date(dst.getTime()); x.setYear(99); return x.getTime(); })()", "920878205123"],
+  ["(() => { const x = new Date(dst.getTime()); x.setYear(2026); return x.getTime(); })()", "1772955005123"],
+  ["(() => { const x = new Date(dst.getTime()); x.setYear(-5); return x.getTime(); })()", "-62319256194877"],
+  ["(() => { const x = new Date(NaN); x.setYear(99); return x.getTime(); })()", "915148800000"],
+  ["(() => { const x = new Date(dst.getTime()); x.setYear(NaN); return x.getTime(); })()", "NaN"],
+  ["(() => { const x = new Date(dst.getTime()); x.setHours(2, 30); return x.getTime(); })()", "1772937005123"],
+  ["(() => { const x = new Date(dst.getTime()); x.setFullYear(2025, 10, 2); return x.getTime(); })()", "1762068605123"],
+  ["(() => { const x = new Date(dst.getTime()); x.setMonth(5); x.setDate(31); return x.getTime(); })()", "1782891005123"],
+  ["(() => { const x = new Date(dst.getTime()); x.setMinutes(61); x.setSeconds(-1); x.setMilliseconds(5); return x.getTime(); })()", "1772956859005"],
+  ["new Date(99, 0).getTime()", "915148800000"],
+  ["new Date(5, 1, 3, 4, 5, 6, 7).getTime()", "-2048356493993"],
+  ["Date.UTC(99, 0)", "915148800000"],
+  ["new Date(2026, 2, 8, 2, 30).getTime()", "1772937000000"],
+  ["dst.getHours() + \":\" + dst.getMinutes() + \":\" + dst.getDate() + \":\" + dst.getDay() + \":\" + dst.getYear()", "7:30:8:0:126"],
+  ["dst.toString()", "Sun Mar 08 2026 07:30:05 GMT+0000"],
+  ["dst.toDateString() + \"|\" + dst.toTimeString()", "Sun Mar 08 2026|07:30:05 GMT+0000"],
+  ["dst.getTimezoneOffset()", "0"],
+  ["Date.parse(\"2026-03-08T02:30\")", "1772937000000"],
+  ["dst.toJSON() + dst.toISOString() + dst.toUTCString() + JSON.stringify(dst)", "2026-03-08T07:30:05.123Z2026-03-08T07:30:05.123ZSun, 08 Mar 2026 07:30:05 GMT\"2026-03-08T07:30:05.123Z\""],
+  ["new Date(new String(\"2026-03-04T05:06\")).getTime()", "1772600760000"],
+  ["new Date({ toString() { return \"2026-03-04T05:06\"; }, valueOf: undefined }).getTime()", "1772600760000"],
+  ["new Date({ valueOf() { return 5; } }).getTime()", "5"],
+  ["new Date({ [Symbol.toPrimitive]() { return \"2026-01-01T05:00\"; } }).getTime()", "1767243600000"],
+  ["new Date(true).getTime() + \":\" + new Date(null).getTime() + \":\" + new Date(undefined).getTime()", "1:0:NaN"],
+  ["new Date(at).getTime()", "1772589967089"],
+  ["k.d.getHours()", "2"],
+  ["k.d.toString()", "Wed Mar 04 2026 02:06:07 GMT+0000"],
+  ["typeof Intl + typeof WebAssembly + typeof console + typeof SharedArrayBuffer + typeof Atomics", "undefinedundefinedundefinedundefinedundefined"],
+  ["\"a\".localeCompare(\"B\")", "1"],
+  ["\"\\u00e9\".localeCompare(\"f\") + \":\" + \"e\\u0301\".localeCompare(\"\\u00e9\") + \":\" + \"ab\".localeCompare()", "1:-1:-1"],
+  ["\"i\".toLocaleUpperCase(\"tr\") + \"\\u0130\".toLocaleLowerCase() + \"\\u00df\".toLocaleUpperCase()", "Ii̇SS"],
+  ["(1234.5).toLocaleString() + \"|\" + (1234.5).toLocaleString(\"de\") + \"|\" + (-0).toLocaleString() + \"|\" + (1e21).toLocaleString()", "1234.5|1234.5|0|1e+21"],
+  ["(12345n).toLocaleString()", "12345"],
+  ["[1234.5, \"x\", null, undefined, [1, 2]].toLocaleString()", "1234.5, x, , , 1, 2"],
+  ["[ , 1].toLocaleString()", ", 1"],
+  ["Date.parse(\"2026\") + \":\" + new Date(\"2026\").getTime()", "1767225600000:1767225600000"],
+  ["Date.parse(\"2026-03\") + \":\" + new Date(\"2026-03\").getTime()", "1772323200000:1772323200000"],
+  ["Date.parse(\"2026-03-04\") + \":\" + new Date(\"2026-03-04\").getTime()", "1772582400000:1772582400000"],
+  ["Date.parse(\"2026T05:06Z\") + \":\" + new Date(\"2026T05:06Z\").getTime()", "1767243960000:1767243960000"],
+  ["Date.parse(\"2026-03T05:06\") + \":\" + new Date(\"2026-03T05:06\").getTime()", "1772341560000:1772341560000"],
+  ["Date.parse(\"2026-03-04T05:06\") + \":\" + new Date(\"2026-03-04T05:06\").getTime()", "1772600760000:1772600760000"],
+  ["Date.parse(\"2026-03-04T05:06:07\") + \":\" + new Date(\"2026-03-04T05:06:07\").getTime()", "1772600767000:1772600767000"],
+  ["Date.parse(\"2026-03-04T05:06:07.123\") + \":\" + new Date(\"2026-03-04T05:06:07.123\").getTime()", "1772600767123:1772600767123"],
+  ["Date.parse(\"2026-03-04T05:06:07.1Z\") + \":\" + new Date(\"2026-03-04T05:06:07.1Z\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-03-04T05:06:07.12Z\") + \":\" + new Date(\"2026-03-04T05:06:07.12Z\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-03-04T05:06:07.1234Z\") + \":\" + new Date(\"2026-03-04T05:06:07.1234Z\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-03-04T05:06:07+05:30\") + \":\" + new Date(\"2026-03-04T05:06:07+05:30\").getTime()", "1772580967000:1772580967000"],
+  ["Date.parse(\"2026-01-01T05:06+23:59\") + \":\" + new Date(\"2026-01-01T05:06+23:59\").getTime()", "1767157620000:1767157620000"],
+  ["Date.parse(\"2026-01-01T05:06+24:00\") + \":\" + new Date(\"2026-01-01T05:06+24:00\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-01-01T05:06+05:60\") + \":\" + new Date(\"2026-01-01T05:06+05:60\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-01-01T05:06+0530\") + \":\" + new Date(\"2026-01-01T05:06+0530\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-03-04T05:06:61Z\") + \":\" + new Date(\"2026-03-04T05:06:61Z\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-03-04T05:60Z\") + \":\" + new Date(\"2026-03-04T05:60Z\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-03-04t05:06Z\") + \":\" + new Date(\"2026-03-04t05:06Z\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-01-01T24:00Z\") + \":\" + new Date(\"2026-01-01T24:00Z\").getTime()", "1767312000000:1767312000000"],
+  ["Date.parse(\"2026-02-30\") + \":\" + new Date(\"2026-02-30\").getTime()", "1772409600000:1772409600000"],
+  ["Date.parse(\"2026-04-31\") + \":\" + new Date(\"2026-04-31\").getTime()", "1777593600000:1777593600000"],
+  ["Date.parse(\"2026-01-32\") + \":\" + new Date(\"2026-01-32\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-13-01\") + \":\" + new Date(\"2026-13-01\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"+002026-03-04\") + \":\" + new Date(\"+002026-03-04\").getTime()", "1772582400000:1772582400000"],
+  ["Date.parse(\"-000000-01-01\") + \":\" + new Date(\"-000000-01-01\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"+000000-01-01\") + \":\" + new Date(\"+000000-01-01\").getTime()", "-62167219200000:-62167219200000"],
+  ["Date.parse(\"+275760-09-13T00:00:00Z\") + \":\" + new Date(\"+275760-09-13T00:00:00Z\").getTime()", "8640000000000000:8640000000000000"],
+  ["Date.parse(\"-271821-04-20\") + \":\" + new Date(\"-271821-04-20\").getTime()", "-8640000000000000:-8640000000000000"],
+  ["Date.parse(\"-271821-04-19\") + \":\" + new Date(\"-271821-04-19\").getTime()", "NaN:NaN"],
+  ["Date.parse(\" 2026-03-04\") + \":\" + new Date(\" 2026-03-04\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Mar 04 2026 05:06:07 GMT+0000\") + \":\" + new Date(\"Wed Mar 04 2026 05:06:07 GMT+0000\").getTime()", "1772600767000:1772600767000"],
+  ["Date.parse(\"Mon Mar 04 2026 05:06:07 GMT-0130\") + \":\" + new Date(\"Mon Mar 04 2026 05:06:07 GMT-0130\").getTime()", "1772606167000:1772606167000"],
+  ["Date.parse(\"Wed Mar 04 2026 05:06:61 GMT+0000\") + \":\" + new Date(\"Wed Mar 04 2026 05:06:61 GMT+0000\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Mar 04 2026 05:06:07 GMT+9999\") + \":\" + new Date(\"Wed Mar 04 2026 05:06:07 GMT+9999\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Mar 04 2026 05:06:07 GMT+2500\") + \":\" + new Date(\"Wed Mar 04 2026 05:06:07 GMT+2500\").getTime()", "1772510767000:1772510767000"],
+  ["Date.parse(\"Xyz Mar 04 2026 05:06:07 GMT+0000\") + \":\" + new Date(\"Xyz Mar 04 2026 05:06:07 GMT+0000\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Feb 29 2026 05:06:07 GMT+0000\") + \":\" + new Date(\"Wed Feb 29 2026 05:06:07 GMT+0000\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Feb 29 2028 05:06:07 GMT+0000\") + \":\" + new Date(\"Wed Feb 29 2028 05:06:07 GMT+0000\").getTime()", "1835413567000:1835413567000"],
+  ["Date.parse(\"Wed Mar 04 -12026 05:06:07 GMT+0000\") + \":\" + new Date(\"Wed Mar 04 -12026 05:06:07 GMT+0000\").getTime()", "-441665722433000:-441665722433000"],
+  ["Date.parse(\"Wed Mar 04 12026 05:06:07 GMT+0000\") + \":\" + new Date(\"Wed Mar 04 12026 05:06:07 GMT+0000\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Mar 4 2026 05:06:07 GMT+0000\") + \":\" + new Date(\"Wed Mar 4 2026 05:06:07 GMT+0000\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Mar 04 2026 05:06:07 GMT+0000 (Coordinated Universal Time)\") + \":\" + new Date(\"Wed Mar 04 2026 05:06:07 GMT+0000 (Coordinated Universal Time)\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed, 04 Mar 2026 05:06:07 GMT\") + \":\" + new Date(\"Wed, 04 Mar 2026 05:06:07 GMT\").getTime()", "1772600767000:1772600767000"],
+  ["Date.parse(\"Wed, 04 Mar -0001 05:06:07 GMT\") + \":\" + new Date(\"Wed, 04 Mar -0001 05:06:07 GMT\").getTime()", "-62193380033000:-62193380033000"],
+  ["Date.parse(\"Wed, 31 Feb 2026 05:06:07 GMT\") + \":\" + new Date(\"Wed, 31 Feb 2026 05:06:07 GMT\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed, 04 Mar 2026 24:00:00 GMT\") + \":\" + new Date(\"Wed, 04 Mar 2026 24:00:00 GMT\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Jan 1 2026 05:00\") + \":\" + new Date(\"Jan 1 2026 05:00\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026-03-04 05:06\") + \":\" + new Date(\"2026-03-04 05:06\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"Wed Mar 04 2026\") + \":\" + new Date(\"Wed Mar 04 2026\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"2026/03/04\") + \":\" + new Date(\"2026/03/04\").getTime()", "NaN:NaN"],
+  ["Date.parse(\"March 4, 2026\") + \":\" + new Date(\"March 4, 2026\").getTime()", "NaN:NaN"],
+  ["Date.parse(String(new Date(-1e14))) + \":\" + Date.parse(new Date(-1e14).toUTCString())", "-100000000000000:-100000000000000"],
+  ["String(new Date(Date.UTC(-1, 0, 1))) + \"|\" + String(new Date(-1e14))", "Fri Jan 01 -0001 00:00:00 GMT+0000|Thu Feb 15 -1199 14:13:20 GMT+0000"],
 ];
 
 describe('the core realm gives one answer under every host zone', () => {
-  it('hard Date / locale cases render identically under New York, Kolkata, and UTC', () => {
-    const byZone = ZONES.map((tz) => {
-      process.env['TZ'] = tz;
-      Template.clearCache();
-      return HARD_EXPRESSIONS.map((expr) => renderExpr(expr, HARD_RECORD));
-    });
-    for (const outcomes of byZone) {
-      expect(outcomes).toEqual(byZone[0]);
+  it.each(ZONES)('the hard Date / locale corpus renders its pinned values [TZ=%s]', (tz) => {
+    process.env['TZ'] = tz;
+    Template.clearCache();
+    for (const [expr, expected] of HARD_CASES) {
+      const outcome = renderExpr(expr, HARD_RECORD);
+      expect(outcome, expr).toEqual({ ok: encodeURIComponent(expected) });
     }
-    for (const [i, outcome] of byZone[0]!.entries()) {
-      expect('ok' in outcome, HARD_EXPRESSIONS[i]).toBe(true);
-    }
-    // Spot-check values: UTC readings, legacy formats are NaN.
-    expect(renderExpr('dst.getHours()', HARD_RECORD)).toEqual({ ok: '7' });
-    expect(renderExpr('Date.parse("Jan 1 2026 05:00")', HARD_RECORD)).toEqual({ ok: 'NaN' });
   });
 
   it.each(ZONES)('forbidden and locale-formatting calls fail [TZ=%s]', (tz) => {
@@ -416,13 +479,39 @@ describe('pathForRecord and normalizeRecord compute exactly what a write commits
     expect(Object.keys(normalized)).toEqual(['n', 'nest', 'slug', 'times']);
     expect(Object.keys(normalized['nest'] as object)).toEqual(['a', 'z']);
 
-    for (const bad of [{ slug: 'x', f: () => 1 }, { slug: 'x', times: [1, null] }]) {
+    for (const bad of [{ slug: 'x', f: () => 1 }, { slug: 'x', times: [1, null] }, null]) {
       const err = await sheet.normalizeRecord(bad as Record<string, unknown>).then(
         () => undefined,
         (e: unknown) => e,
       );
       expect(err).toBeInstanceOf(ValidationError);
       expect((err as ValidationError).code).toBe('validation_failed');
+    }
+  });
+
+  it('large integral floats get distinct paths, as Number#toString renders them', async () => {
+    const { repo, sheet, fixture } = await sheetWithConfig(
+      `[gitsheet]\nroot = 'events'\npath = '\${{ x }}'\n`,
+    );
+    const xs = [1e19, 1e20, 2 ** 63, -1e20];
+    const paths = await Promise.all(xs.map((x) => sheet.pathForRecord({ x })));
+    expect(paths).toEqual(['10000000000000000000', '100000000000000000000', '9223372036854776000', '-100000000000000000000']);
+    expect(paths).toEqual(xs.map((x) => String(x)));
+    await repo.transact({ message: 'write' }, async (tx) => {
+      for (const x of xs) await tx.sheet('events').upsert({ x });
+    });
+    const { stdout } = await fixture.git('ls-tree', '-r', '--name-only', 'main', 'events');
+    expect(stdout.trim().split('\n').sort()).toEqual(paths.map((p) => `events/${p}.toml`).sort());
+  });
+
+  it('a thrown value is reported on one line, without stack frames', () => {
+    for (const [body, expected] of [
+      ['throw "nope"', 'failed: "nope"'],
+      ['throw new Error("boom")', 'failed: Error: boom'],
+    ]) {
+      const err = renderError(`\${{ (() => { ${body} })() }}`, {});
+      expect(err.message).toContain(expected);
+      expect(err.message).not.toContain('\n');
     }
   });
 });
@@ -452,4 +541,29 @@ describe('compiled templates are per thread', () => {
     expect((result as string[]).slice(0, 2)).toEqual(['23/A', '23/B']);
     expect((result as string[])[2]).toContain('Function');
   });
+
+  // The public Template, loaded from the built package in a worker. CI builds
+  // dist before testing, so the test only skips for a local run without one.
+  const distEntry = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js');
+  it.skipIf(!existsSync(distEntry) && process.env['CI'] === undefined)(
+    'a worker thread renders through the public Template (dist)',
+    async () => {
+      const worker = new Worker(
+        `const { parentPort, workerData } = require('node:worker_threads');
+         import(workerData.distUrl).then(({ Template, PathTemplateError }) => {
+           const t = Template.fromString('\${{ at.getHours() }}/\${{ slug.toUpperCase() }}');
+           const out = [t.render({ at: new Date('2026-03-04T23:00:00Z'), slug: 'w' }), t.componentCount];
+           try { t.render({ at: new Date(0) }); } catch (e) { out.push(e instanceof PathTemplateError, e.code); }
+           parentPort.postMessage(out);
+         }, (err) => parentPort.postMessage(['import failed', String(err)]));`,
+        { eval: true, workerData: { distUrl: pathToFileURL(distEntry).href } },
+      );
+      const result = await new Promise<unknown>((resolve, reject) => {
+        worker.once('message', resolve);
+        worker.once('error', reject);
+      });
+      await worker.terminate();
+      expect(result).toEqual(['23/W', 2, true, 'path_render_failed']);
+    },
+  );
 });
