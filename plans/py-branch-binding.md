@@ -1,10 +1,11 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/default-branch.md
   - specs/api/python-binding.md
 issues: [355]
+pr: 374
 ---
 
 # Plan: Python binding honors the default-branch and submodule binding
@@ -52,15 +53,41 @@ a Python version bump (separate `py-v*` step).
 
 ## Validation
 
-- [ ] `resolve_binding` resolves option → env → git config → `HEAD` for
+- [x] `resolve_binding` resolves option → env → git config → `HEAD` for
   branch and submodule, with `False` opting out without reading env/config
-- [ ] Tag, commit, and remote-only branch refused with `ConfigError`
+- [x] Tag, commit, and remote-only branch refused with `ConfigError`
   (`config_invalid`); unborn branch allowed
-- [ ] `transact(parent=None)` commits to the bound branch's tip; an unborn
+- [x] `transact(parent=None)` commits to the bound branch's tip; an unborn
   bound branch gets a root commit; an empty handler commits nothing
-- [ ] `tree_ref=None` reads the bound branch's tree; explicit refs unchanged
-- [ ] Submodule mode: detached `HEAD` advanced by CAS; `stage_pointer`
+- [x] `tree_ref=None` reads the bound branch's tree; explicit refs unchanged
+- [x] Submodule mode: detached `HEAD` advanced by CAS; `stage_pointer`
   stages the gitlink
-- [ ] Cross-binding test: Node `openRepo` and Python `resolve_binding` bind
+- [x] Cross-binding test: Node `openRepo` and Python `resolve_binding` bind
   identically across the same clones/env/config
-- [ ] Gate: Python suite green; cargo build / test / clippy green
+- [x] Gate: Python suite green; cargo build / test / clippy green
+
+## Notes
+
+- Resolution lives in Python (`python/gitsheets/_binding.py`) with `git`
+  subprocesses, not in the core, because Node's does too; reading config
+  through `git` keeps includes and local-over-global layering identical
+  across the CLI, Node, and Python. The only pyo3 change is
+  `CoreTransaction.is_mutated()`, for discarding an empty unborn bootstrap.
+- `Binding` subclasses `str` (the bound git dir) so it flows into every
+  native function unchanged; pyo3's `String` extraction accepts `str`
+  subclasses.
+- `False` is the opt-out because `None` already means "not given" in Python
+  (Node's `undefined`); `True` is a `TypeError`.
+- A plain-`str` `git_dir` is resolved only when a call takes a default, so
+  explicit-ref calls are byte-for-byte unchanged and need no `git` binary.
+- The cross-binding test diffs `openRepo` (built `packages/gitsheets/dist`)
+  against `resolve_binding` over 16 clone/env/config cases, including
+  refusals (class and code compared) and submodule tiers.
+
+## Follow-ups
+
+- `at` for Python (a pinned read-only binding) — not mirrored; explicit
+  `tree_ref` covers it. File an issue if a consumer asks.
+- Pointer staging after `sync_branch` / `merge_sheets` in submodule mode —
+  both take their branch explicitly today; would need a default-branch form
+  first.
