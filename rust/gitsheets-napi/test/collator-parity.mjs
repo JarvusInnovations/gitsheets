@@ -18,9 +18,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { collatorSort } = require('../binding.cjs');
 
-// The exact options the JS oracle (`buildSorter` in sheet.ts) passes, and the
-// locale-default (`undefined` → en-US in Node). This is the reference order the
-// native collator must reproduce byte-for-byte.
+// V8's `localeCompare` with the options `sort = true` is specced as (the
+// former JS `buildSorter` oracle), at the locale default (`undefined` → en-US
+// in Node). This is the reference order the native collator must reproduce
+// byte-for-byte.
 const OPTS = { sensitivity: 'base', ignorePunctuation: true, numeric: true };
 function v8Sort(arr) {
   return [...arr].sort((a, b) => a.localeCompare(b, undefined, OPTS));
