@@ -1,20 +1,24 @@
-// The deterministic realm for definition snippets on the Node binding (#362):
-// path-template expressions (the exported `Template`, `pathForRecord`) and
-// raw-JS sort comparators (`normalizeRecord`) run host-side in `node:vm`, held
-// to the core engine's contract — specs/rust-core.md "Determinism rule for
-// definition snippets". Each behavior is checked against the core (the napi
-// addon's boa engine) as well as on its own.
+// Definition snippets on the Node binding — path-template expressions (the
+// exported `Template`, `pathForRecord`, `queryTree`) and raw-JS sort
+// comparators (`normalizeRecord`) — run in the core's engine, the same one
+// the write path uses (#373). There is no host realm to compare against:
+// these tests pin the single engine's behavior through the public API, hold
+// it to the determinism rule (specs/rust-core.md "Determinism rule for
+// definition snippets"), and assert that what `pathForRecord` /
+// `normalizeRecord` compute is exactly what a write commits.
 
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { addon } from './core.js';
-import { ConfigError, PathTemplateError } from './errors.js';
+import { ConfigError, PathTemplateError, ValidationError } from './errors.js';
 import { Template } from './path-template/index.js';
 import { openRepo } from './repository.js';
-import { compileSnippet } from './sandbox.js';
 import { testRepo, type TestRepoHandle } from './test-helpers/test-repo.js';
 
 // A host zone far from UTC: anything reading host local time shows it.
@@ -50,7 +54,53 @@ function renderError(template: string, record: Record<string, unknown>): PathTem
   throw new Error(`${template} rendered`);
 }
 
-describe('Template expressions run in the deterministic realm', () => {
+async function sheetWithConfig(config: string) {
+  const fixture = await testRepo({ withInitialCommit: true });
+  handles.push(fixture);
+  await mkdir(join(fixture.path, '.gitsheets'), { recursive: true });
+  await writeFile(join(fixture.path, '.gitsheets', 'events.toml'), config);
+  await fixture.git('add', '.gitsheets/');
+  await fixture.git('commit', '-m', 'add events sheet');
+  const repo = await openRepo({ gitDir: fixture.gitDir });
+  return { repo, fixture, sheet: await repo.openSheet('events') };
+}
+
+function sheetWithSort(rule: string) {
+  return sheetWithConfig(
+    `[gitsheet]\nroot = 'events'\npath = '\${{ slug }}'\n\n[gitsheet.fields.times]\nsort = ${JSON.stringify(rule)}\n`,
+  );
+}
+
+// --- No host realm ------------------------------------------------------------
+
+describe('no definition snippet runs in the host runtime', () => {
+  const srcDir = dirname(fileURLToPath(import.meta.url));
+
+  it('the node:vm shim is gone', () => {
+    expect(existsSync(join(srcDir, 'sandbox.ts'))).toBe(false);
+  });
+
+  it('no non-test source under packages/gitsheets/src imports node:vm', async () => {
+    const offenders: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+        } else if (/\.[cm]?[jt]s$/.test(entry.name) && !/\.test\.[cm]?[jt]s$/.test(entry.name)) {
+          const text = await readFile(full, 'utf8');
+          if (/['"](node:)?vm['"]/.test(text)) offenders.push(full.slice(srcDir.length + 1));
+        }
+      }
+    };
+    await walk(srcDir);
+    expect(offenders).toEqual([]);
+  });
+});
+
+// --- Template expressions -----------------------------------------------------
+
+describe('Template expressions run in the deterministic core realm', () => {
   it('the host zone really is non-UTC (guards the tests below)', () => {
     expect(new Date('2026-03-04T02:06:07Z').getHours()).toBe(21);
   });
@@ -62,11 +112,9 @@ describe('Template expressions run in the deterministic realm', () => {
     expect(err.message).toContain(`\${{ ${expr} }}`);
     expect(err.message).toContain(named);
     expect(err.message).toContain('not available in a gitsheets snippet');
-    // The core says the same thing.
-    expect(() => addon.renderPathsBatch(`\${{ ${expr} }}/\${{ slug }}`, [{ slug: 'x' }])).toThrow(named);
   });
 
-  it('local-time Date methods read UTC — and match the core', () => {
+  it('local-time Date methods read UTC', () => {
     const record = { at: new Date('2026-03-04T02:06:07Z'), slug: 'x' };
     const cases: Array<[string, string]> = [
       ['${{ at.getFullYear() }}/${{ at.getMonth() }}/${{ at.getDate() }}/${{ at.getHours() }}', '2026/2/4/2'],
@@ -82,22 +130,46 @@ describe('Template expressions run in the deterministic realm', () => {
       ['${{ Date.parse("2026-01-01T00:00:00Z") }}', '1767225600000'],
       ['${{ Date.parse("Wed Mar 04 2026 02:06:07 GMT+0000") }}', '1772589967000'],
       ['${{ String(at instanceof Date) }}', 'true'],
+      // Locale methods are locale-free.
+      ['${{ "a".localeCompare("B") }}', '1'],
+      ['${{ (1234.5).toLocaleString() }}', '1234.5'],
+      ['${{ typeof Intl }}-${{ typeof console }}-${{ typeof WebAssembly }}', 'undefined-undefined-undefined'],
     ];
     for (const [template, expected] of cases) {
       expect(Template.fromString(template).render(record), template).toBe(expected);
-      expect(addon.renderPathsBatch(template, [record]), `core: ${template}`).toEqual([expected]);
     }
   });
 
-  it('an expression cannot reach a record value through the host realm', () => {
-    // The record's Date is rebuilt in the realm, so its prototype is the
-    // patched one even though the caller handed in a host Date.
-    const t = Template.fromString('${{ at.getHours() }}');
-    expect(t.render({ at: new Date('2026-03-04T23:00:00Z') })).toBe('23');
+  it('a bare datetime field is un-renderable (no host Date#toString)', () => {
+    const err = renderError('${{ at }}', { at: new Date('2026-03-04T02:06:07Z') });
+    expect(err).toBeInstanceOf(PathTemplateError);
+    expect(err.code).toBe('path_render_failed');
+  });
+
+  it('a record value the core cannot marshal fails the render, even off-template', () => {
+    for (const record of [
+      { slug: 'x', f: () => 1 },
+      { slug: 'x', s: Symbol('s') },
+      { slug: 'x', list: [null] },
+    ]) {
+      const err = renderError('${{ slug }}', record);
+      expect(err).toBeInstanceOf(PathTemplateError);
+      expect(err.code).toBe('path_render_failed');
+    }
+  });
+
+  it('field stringification is the core\'s', () => {
+    const t = Template.fromString('${{ x }}');
+    expect(t.render({ x: 1.5 })).toBe('1.5');
+    expect(t.render({ x: 2026 })).toBe('2026');
+    expect(t.render({ x: 5n })).toBe('5');
+    expect(t.render({ x: true })).toBe('true');
+    expect(t.render({ x: 1e21 })).toBe('1000000000000000000000');
+    expect(t.render({ x: Infinity })).toBe('inf');
   });
 });
 
-// --- Hard cases: the vm realm vs the core, under several host zones ---------
+// --- Hard cases: one engine, the same answer under every host zone -----------
 
 const ZONES = ['America/New_York', 'Asia/Kolkata', 'UTC'];
 
@@ -116,39 +188,24 @@ const HARD_RECORD = {
   slug: 'x',
 };
 
-type Outcome = { ok: string } | { err: string };
-function attempt(f: () => string): Outcome {
+/** Render `String(expr)` through the public Template. */
+function renderExpr(expr: string, record: Record<string, unknown>): { ok: string } | { err: string } {
   try {
-    return { ok: f() };
+    return { ok: Template.fromString(`\${{ encodeURIComponent(String(${expr})) }}`).render(record) };
   } catch (err) {
     return { err: (err as Error).message };
   }
 }
 
-/** Render `String(expr)` through the host Template and the core; return both. */
-function renderBoth(expr: string, record: Record<string, unknown>): { host: Outcome; core: Outcome } {
-  const template = `\${{ encodeURIComponent(String(${expr})) }}`;
-  return {
-    host: attempt(() => Template.fromString(template).render(record)),
-    core: attempt(() => addon.renderPathsBatch(template, [record])[0]!),
-  };
-}
-
-const PARITY_EXPRESSIONS = [
+const HARD_EXPRESSIONS = [
   // setters, incl. Annex B setYear
   '(() => { const x = new Date(dst.getTime()); x.setYear(99); return x.getTime(); })()',
   '(() => { const x = new Date(dst.getTime()); x.setYear(2026); return x.getTime(); })()',
-  '(() => { const x = new Date(dst.getTime()); x.setYear(-5); return x.getTime(); })()',
-  '(() => { const x = new Date(NaN); x.setYear(99); return x.getTime(); })()',
-  '(() => { const x = new Date(dst.getTime()); x.setYear(NaN); return x.getTime(); })()',
   '(() => { const x = new Date(dst.getTime()); x.setHours(2, 30); return x.getTime(); })()',
   '(() => { const x = new Date(dst.getTime()); x.setFullYear(2025, 10, 2); return x.getTime(); })()',
-  '(() => { const x = new Date(dst.getTime()); x.setMonth(5); x.setDate(31); return x.getTime(); })()',
   '(() => { const x = new Date(dst.getTime()); x.setMinutes(61); x.setSeconds(-1); x.setMilliseconds(5); return x.getTime(); })()',
   // two-digit years and the local-time constructor
   'new Date(99, 0).getTime()',
-  'new Date(5, 1, 3, 4, 5, 6, 7).getTime()',
-  'Date.UTC(99, 0)',
   'new Date(2026, 2, 8, 2, 30).getTime()',
   // DST-boundary instant
   'dst.getHours() + ":" + dst.getMinutes() + ":" + dst.getDate() + ":" + dst.getDay() + ":" + dst.getYear()',
@@ -156,98 +213,39 @@ const PARITY_EXPRESSIONS = [
   'dst.toDateString() + "|" + dst.toTimeString()',
   'dst.getTimezoneOffset()',
   'Date.parse("2026-03-08T02:30")',
-  // UTC forms
   'dst.toJSON() + dst.toISOString() + dst.toUTCString() + JSON.stringify(dst)',
-  // ToPrimitive in the constructor
-  'new Date(new String("2026-03-04T05:06")).getTime()',
-  'new Date({ toString() { return "2026-03-04T05:06"; }, valueOf: undefined }).getTime()',
-  'new Date({ valueOf() { return 5; } }).getTime()',
-  'new Date({ [Symbol.toPrimitive]() { return "2026-01-01T05:00"; } }).getTime()',
-  'new Date(true).getTime() + ":" + new Date(null).getTime() + ":" + new Date(undefined).getTime()',
-  'new Date(at).getTime()',
-  // class-instance records: their Dates are copied in too
+  // class-instance records: their Dates are marshalled in too
   'k.d.getHours()',
   'k.d.toString()',
-  // Intl and the locale-sensitive methods
-  'typeof Intl + typeof WebAssembly + typeof console + typeof SharedArrayBuffer + typeof Atomics',
-  '"a".localeCompare("B")',
-  '"\\u00e9".localeCompare("f") + ":" + "e\\u0301".localeCompare("\\u00e9") + ":" + "ab".localeCompare()',
-  '"i".toLocaleUpperCase("tr") + "\\u0130".toLocaleLowerCase() + "\\u00df".toLocaleUpperCase()',
-  '(1234.5).toLocaleString() + "|" + (1234.5).toLocaleString("de") + "|" + (-0).toLocaleString() + "|" + (1e21).toLocaleString()',
-  '(12345n).toLocaleString()',
+  // locale-sensitive methods
+  '"\\u00e9".localeCompare("f") + ":" + "e\\u0301".localeCompare("\\u00e9")',
+  '"i".toLocaleUpperCase("tr") + "\\u0130".toLocaleLowerCase()',
   '[1234.5, "x", null, undefined, [1, 2]].toLocaleString()',
-  '[ , 1].toLocaleString()',
   // string → time
-  ...[
-    '2026',
-    '2026-03',
-    '2026-03-04',
-    '2026T05:06Z',
-    '2026-03T05:06',
-    '2026-03-04T05:06',
-    '2026-03-04T05:06:07',
-    '2026-03-04T05:06:07.123',
-    '2026-03-04T05:06:07.1Z',
-    '2026-03-04T05:06:07.12Z',
-    '2026-03-04T05:06:07.1234Z',
-    '2026-03-04T05:06:07+05:30',
-    '2026-01-01T05:06+23:59',
-    '2026-01-01T05:06+24:00',
-    '2026-01-01T05:06+05:60',
-    '2026-01-01T05:06+0530',
-    '2026-03-04T05:06:61Z',
-    '2026-03-04T05:60Z',
-    '2026-03-04t05:06Z',
-    '2026-01-01T24:00Z',
-    '2026-02-30',
-    '2026-04-31',
-    '2026-01-32',
-    '2026-13-01',
-    '+002026-03-04',
-    '-000000-01-01',
-    '+000000-01-01',
-    '+275760-09-13T00:00:00Z',
-    '-271821-04-20',
-    '-271821-04-19',
-    ' 2026-03-04',
-    'Wed Mar 04 2026 05:06:07 GMT+0000',
-    'Mon Mar 04 2026 05:06:07 GMT-0130',
-    'Wed Mar 04 2026 05:06:61 GMT+0000',
-    'Wed Mar 04 2026 05:06:07 GMT+9999',
-    'Wed Mar 04 2026 05:06:07 GMT+2500',
-    'Xyz Mar 04 2026 05:06:07 GMT+0000',
-    'Wed Feb 29 2026 05:06:07 GMT+0000',
-    'Wed Feb 29 2028 05:06:07 GMT+0000',
-    'Wed Mar 04 -12026 05:06:07 GMT+0000',
-    'Wed Mar 04 12026 05:06:07 GMT+0000',
-    'Wed Mar 4 2026 05:06:07 GMT+0000',
-    'Wed Mar 04 2026 05:06:07 GMT+0000 (Coordinated Universal Time)',
-    'Wed, 04 Mar 2026 05:06:07 GMT',
-    'Wed, 04 Mar -0001 05:06:07 GMT',
-    'Wed, 31 Feb 2026 05:06:07 GMT',
-    'Wed, 04 Mar 2026 24:00:00 GMT',
-    // legacy formats V8 would read in host local time
-    'Jan 1 2026 05:00',
-    '2026-03-04 05:06',
-    'Wed Mar 04 2026',
-    '2026/03/04',
-    'March 4, 2026',
-  ].map((str) => `Date.parse(${JSON.stringify(str)}) + ":" + new Date(${JSON.stringify(str)}).getTime()`),
-  'Date.parse(String(new Date(-1e14))) + ":" + Date.parse(new Date(-1e14).toUTCString())',
-  'String(new Date(Date.UTC(-1, 0, 1))) + "|" + String(new Date(-1e14))',
+  ...['2026-03-04T05:06', '2026-03-04T05:06:07.1Z', 'Wed Mar 04 2026 05:06:07 GMT+0000', 'Jan 1 2026 05:00', '2026/03/04'].map(
+    (str) => `Date.parse(${JSON.stringify(str)}) + ":" + new Date(${JSON.stringify(str)}).getTime()`,
+  ),
 ];
 
-describe('the vm realm matches the core on hard cases, under several host zones', () => {
-  it.each(ZONES)('TZ=%s', (tz) => {
-    process.env['TZ'] = tz;
-    for (const expr of PARITY_EXPRESSIONS) {
-      const { host, core } = renderBoth(expr, HARD_RECORD);
-      expect(host, `${expr} [TZ=${tz}]`).toEqual(core);
-      expect('ok' in core, `${expr} rendered in the core [TZ=${tz}]`).toBe(true);
+describe('the core realm gives one answer under every host zone', () => {
+  it('hard Date / locale cases render identically under New York, Kolkata, and UTC', () => {
+    const byZone = ZONES.map((tz) => {
+      process.env['TZ'] = tz;
+      Template.clearCache();
+      return HARD_EXPRESSIONS.map((expr) => renderExpr(expr, HARD_RECORD));
+    });
+    for (const outcomes of byZone) {
+      expect(outcomes).toEqual(byZone[0]);
     }
+    for (const [i, outcome] of byZone[0]!.entries()) {
+      expect('ok' in outcome, HARD_EXPRESSIONS[i]).toBe(true);
+    }
+    // Spot-check values: UTC readings, legacy formats are NaN.
+    expect(renderExpr('dst.getHours()', HARD_RECORD)).toEqual({ ok: '7' });
+    expect(renderExpr('Date.parse("Jan 1 2026 05:00")', HARD_RECORD)).toEqual({ ok: 'NaN' });
   });
 
-  it.each(ZONES)('forbidden and locale-formatting calls fail alike [TZ=%s]', (tz) => {
+  it.each(ZONES)('forbidden and locale-formatting calls fail [TZ=%s]', (tz) => {
     process.env['TZ'] = tz;
     for (const [expr, named] of [
       ...FORBIDDEN,
@@ -255,52 +253,15 @@ describe('the vm realm matches the core on hard cases, under several host zones'
       ['dst.toLocaleTimeString()', 'toLocaleTimeString()'],
       ['[dst].toLocaleString()', 'toLocaleString()'],
     ] as Array<[string, string]>) {
-      const { host, core } = renderBoth(expr, HARD_RECORD);
-      expect('err' in host && host.err.includes(named), `${expr} host`).toBe(true);
-      expect('err' in core && core.err.includes(named), `${expr} core`).toBe(true);
+      const outcome = renderExpr(expr, HARD_RECORD);
+      expect('err' in outcome && outcome.err.includes(named), expr).toBe(true);
     }
-  });
-
-  it('a 24:xx hour beyond end-of-day is NaN on the host (boa accepts it: known divergence)', () => {
-    for (const str of ['2026-01-01T24:01Z', '2026-01-01T24:00:00.001Z']) {
-      expect(Template.fromString(`\${{ String(Date.parse(${JSON.stringify(str)})) }}`).render({})).toBe('NaN');
-    }
-  });
-
-  it.each(ZONES)('comparators: localeCompare is code-unit order, inputs are copies [TZ=%s]', (tz) => {
-    process.env['TZ'] = tz;
-    const pairs: Array<[string, unknown, unknown]> = [
-      ['return a.localeCompare(b);', 'a', 'B'],
-      ['return a.localeCompare(b);', 'é', 'f'],
-      ['return a.s.localeCompare(b.s);', { s: 'Zed' }, { s: 'apple' }],
-      ['return a.getHours() - b.getHours();', HARD_RECORD.dst, HARD_RECORD.at],
-      ['return a.d.getHours() - b.getHours();', HARD_RECORD.k, HARD_RECORD.at],
-    ];
-    for (const [rule, a, b] of pairs) {
-      const vm = compileSnippet(`(a, b) => { ${rule} }`)(a, b);
-      expect(vm, `${rule} [TZ=${tz}]`).toBe(addon.runComparator(rule, a, b));
-    }
-    const input = { x: 0, d: new Date(0) };
-    compileSnippet('(a, b) => { a.x = 1; a.d.setTime(5); return 0; }')(input, input);
-    expect(input).toEqual({ x: 0, d: new Date(0) });
   });
 });
 
-describe('raw-JS comparators run in the deterministic realm', () => {
-  async function sheetWithSort(rule: string) {
-    const fixture = await testRepo({ withInitialCommit: true });
-    handles.push(fixture);
-    await mkdir(join(fixture.path, '.gitsheets'), { recursive: true });
-    await writeFile(
-      join(fixture.path, '.gitsheets', 'events.toml'),
-      `[gitsheet]\nroot = 'events'\npath = '\${{ slug }}'\n\n[gitsheet.fields.times]\nsort = ${JSON.stringify(rule)}\n`,
-    );
-    await fixture.git('add', '.gitsheets/');
-    await fixture.git('commit', '-m', 'add events sheet');
-    const repo = await openRepo({ gitDir: fixture.gitDir });
-    return { repo, fixture, sheet: await repo.openSheet('events') };
-  }
+// --- Comparators --------------------------------------------------------------
 
+describe('raw-JS comparators run in the deterministic core realm', () => {
   it('a local-hour comparator sorts by UTC hour in normalizeRecord and on write alike', async () => {
     const { repo, sheet, fixture } = await sheetWithSort('return a.getHours() - b.getHours();');
     // UTC hours 23 and 1 → the 01:00 entry first. New York hours (18, 20)
@@ -318,7 +279,6 @@ describe('raw-JS comparators run in the deterministic realm', () => {
     });
     const { stdout } = await fixture.git('show', 'main:events/x.toml');
     expect(stdout.indexOf('2026-03-05T01:00:00')).toBeLessThan(stdout.indexOf('2026-03-04T23:00:00'));
-    expect(addon.runComparator('return a.getHours() - b.getHours();', late, early)).toBe(22);
   });
 
   it.each([
@@ -329,29 +289,25 @@ describe('raw-JS comparators run in the deterministic realm', () => {
     const { repo, sheet } = await sheetWithSort(rule);
     const record = { slug: 'x', times: [2, 1] };
 
-    const viaVm = await sheet.normalizeRecord(record).then(
-      () => undefined,
-      (e: unknown) => e,
-    );
-    expect(viaVm).toBeInstanceOf(ConfigError);
-    expect((viaVm as ConfigError).code).toBe('config_invalid');
-    expect((viaVm as Error).message).toContain('"times"');
-    expect((viaVm as Error).message).toContain(named);
-
-    const viaCore = await repo
-      .transact({ message: 'write' }, async (tx) => {
-        await tx.sheet('events').upsert(record);
-      })
-      .then(
+    for (const attempt of [
+      () => sheet.normalizeRecord(record),
+      () =>
+        repo.transact({ message: 'write' }, async (tx) => {
+          await tx.sheet('events').upsert(record);
+        }),
+    ]) {
+      const err = await attempt().then(
         () => undefined,
         (e: unknown) => e,
       );
-    expect(viaCore).toBeInstanceOf(ConfigError);
-    expect((viaCore as ConfigError).code).toBe('config_invalid');
-    expect((viaCore as Error).message).toContain('"times"');
-    expect((viaCore as Error).message).toContain(named);
+      expect(err).toBeInstanceOf(ConfigError);
+      expect((err as ConfigError).code).toBe('config_invalid');
+      expect((err as Error).message).toContain('"times"');
+      expect((err as Error).message).toContain(named);
+    }
   });
-  it('a localeCompare comparator sorts the same in normalizeRecord and on write', async () => {
+
+  it('a localeCompare comparator is code-unit order in normalizeRecord and on write', async () => {
     const { repo, sheet, fixture } = await sheetWithSort('return a.localeCompare(b);');
     const input = { slug: 'x', times: ['b', 'B', 'a', 'A', 'é', 'f'] };
     const normalized = await sheet.normalizeRecord(input);
@@ -363,10 +319,15 @@ describe('raw-JS comparators run in the deterministic realm', () => {
     expect(stdout).toContain('times = ["A", "B", "a", "b", "f", "é"]');
   });
 
+  it('a comparator receives copies: mutating its arguments changes nothing outside', async () => {
+    const { sheet } = await sheetWithSort('a.x = 1; a.d.setTime(5); return 0;');
+    const input = { slug: 'x', times: [{ x: 0, d: new Date(0) }, { x: 0, d: new Date(0) }] };
+    const normalized = await sheet.normalizeRecord(input);
+    expect(input.times).toEqual([{ x: 0, d: new Date(0) }, { x: 0, d: new Date(0) }]);
+    expect(normalized['times']).toEqual([{ d: new Date(0), x: 0 }, { d: new Date(0), x: 0 }]);
+  });
+
   it('a comparator that does not compile fails the sheet open with ConfigError naming the field', async () => {
-    // The core compiles sort rules when the config is checked, so the sheet
-    // never opens; the host normalizeRecord wraps a compile failure the same
-    // way (ConfigError naming the field) should it be reached first.
     const err = await sheetWithSort('return a - ;').then(
       () => undefined,
       (e: unknown) => e,
@@ -375,5 +336,120 @@ describe('raw-JS comparators run in the deterministic realm', () => {
     expect((err as ConfigError).code).toBe('config_invalid');
     expect((err as Error).message).toContain('"times"');
     expect((err as Error).message).toContain('SyntaxError');
+  });
+});
+
+// --- pathForRecord / normalizeRecord ≡ the write path ------------------------
+
+const WRITE_PATH_CONFIG = `[gitsheet]
+root = 'events'
+path = '\${{ at.getUTCFullYear() }}/\${{ kind.toUpperCase() }}-\${{ slug }}'
+
+[gitsheet.fields.tags]
+sort = true
+
+[gitsheet.fields.roles]
+sort = { rank = 'DESC', name = 'ASC' }
+
+[gitsheet.fields.people]
+sort = ['last', 'first']
+
+[gitsheet.fields.nums]
+sort = '''
+  if ((a % 2) !== (b % 2)) return (a % 2) - (b % 2);
+  return b - a;
+'''
+`;
+
+describe('pathForRecord and normalizeRecord compute exactly what a write commits', () => {
+  it('expression path, sort = true, directives, field lists, and raw JS', async () => {
+    const { repo, sheet, fixture } = await sheetWithConfig(WRITE_PATH_CONFIG);
+    const record = {
+      slug: 'launch',
+      kind: 'talk',
+      at: new Date('2026-12-31T23:30:00-05:00'),
+      tags: ['b', 'B', 'a10', 'a9', 'É', 'e', 'Zed', 'apple'],
+      roles: [
+        { rank: 1, name: 'z' },
+        { rank: 2, name: 'b' },
+        { rank: 2, name: 'a' },
+      ],
+      people: [
+        { last: 'Lovelace', first: 'Ada' },
+        { last: 'Hopper', first: 'Grace' },
+        { last: 'Hopper', first: 'Alan' },
+      ],
+      nums: [3, 8, 1, 6, 5, 2],
+      zeta: { b: 1, a: 2 },
+    };
+
+    const path = await sheet.pathForRecord(record);
+    expect(path).toBe('2027/TALK-launch');
+    const normalized = await sheet.normalizeRecord(record);
+
+    await repo.transact({ message: 'write' }, async (tx) => {
+      await tx.sheet('events').upsert(record);
+    });
+    const { stdout: files } = await fixture.git('ls-tree', '-r', '--name-only', 'main', 'events');
+    expect(files.trim().split('\n')).toEqual([`events/${path}.toml`]);
+
+    const fresh = await repo.openSheet('events');
+    const stored = await fresh.queryFirst({ slug: 'launch' });
+    for (const field of ['tags', 'roles', 'people', 'nums', 'zeta'] as const) {
+      expect(normalized[field], field).toEqual(stored?.[field]);
+    }
+    expect(normalized['tags']).toEqual(['a9', 'a10', 'apple', 'b', 'B', 'É', 'e', 'Zed']);
+    expect(normalized['nums']).toEqual([8, 6, 2, 5, 3, 1]);
+    expect(Object.keys(normalized)).toEqual(Object.keys(stored ?? {}));
+  });
+
+  it('normalizeRecord returns the core value: nulls dropped, keys sorted, unrepresentable values rejected', async () => {
+    const { sheet } = await sheetWithSort('return a - b;');
+    const normalized = await sheet.normalizeRecord({
+      slug: 'x',
+      z: null,
+      times: [3, 1, 2],
+      nest: { z: 1, gone: undefined, a: 2 },
+      n: 5n,
+    } as Record<string, unknown>);
+    expect(normalized).toEqual({ n: 5, nest: { a: 2, z: 1 }, slug: 'x', times: [1, 2, 3] });
+    expect(Object.keys(normalized)).toEqual(['n', 'nest', 'slug', 'times']);
+    expect(Object.keys(normalized['nest'] as object)).toEqual(['a', 'z']);
+
+    for (const bad of [{ slug: 'x', f: () => 1 }, { slug: 'x', times: [1, null] }]) {
+      const err = await sheet.normalizeRecord(bad as Record<string, unknown>).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(ValidationError);
+      expect((err as ValidationError).code).toBe('validation_failed');
+    }
+  });
+});
+
+// --- Threads ------------------------------------------------------------------
+
+describe('compiled templates are per thread', () => {
+  it('a worker thread compiles and renders its own template in the core', async () => {
+    const addonPath = createRequire(import.meta.url).resolve('@gitsheets/core-napi/index.js');
+    const worker = new Worker(
+      `const { parentPort, workerData } = require('node:worker_threads');
+       const addon = require(workerData.addonPath);
+       const def = new addon.CompiledDefinition('\${{ at.getHours() }}/\${{ slug.toUpperCase() }}');
+       const out = [];
+       for (const slug of ['a', 'b']) out.push(def.renderPath({ at: new Date('2026-03-04T23:00:00Z'), slug }));
+       try { def.renderPath({ slug: 'x', at: new Date(0), f: Date.now }); } catch (e) { out.push(e.message); }
+       parentPort.postMessage(out);`,
+      { eval: true, workerData: { addonPath } },
+    );
+    // The main thread keeps rendering while the worker runs.
+    expect(Template.fromString('${{ at.getHours() }}/${{ slug }}').render({ at: new Date('2026-03-04T23:00:00Z'), slug: 'm' })).toBe('23/m');
+    const result = await new Promise<unknown>((resolve, reject) => {
+      worker.once('message', resolve);
+      worker.once('error', reject);
+    });
+    await worker.terminate();
+    expect((result as string[]).slice(0, 2)).toEqual(['23/A', '23/B']);
+    expect((result as string[])[2]).toContain('Function');
   });
 });
