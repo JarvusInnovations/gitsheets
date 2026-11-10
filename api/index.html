@@ -1931,7 +1931,7 @@
 </tr>
 <tr>
 <td><code>sheet.normalizeRecord(record)</code></td>
-<td><code>Promise&lt;T&gt;</code> — canonical form, no write</td>
+<td><code>Promise&lt;T&gt;</code> — canonical form, no write: the core&rsquo;s normalization of the marshalled record (array order and key order exactly as a write commits them; <code>null</code> keys dropped; unrepresentable values throw <code>ValidationError</code>)</td>
 </tr>
 </tbody>
 </table>
@@ -2304,6 +2304,7 @@
 <p>→ <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/errors.md"><code>specs/api/errors.md</code></a> — full code table</p>
 <h2 id="path-template">Path Template<a class="headerlink" href="#path-template" title="Permanent link"> ¶</a></h2>
 <p><code>Template.fromString(s)</code> — parse + cache. Most consumers don&rsquo;t construct <code>Template</code> directly; it&rsquo;s exposed for advanced use cases (path template diagnostics, custom queryTree integrations). <code>getFieldNames()</code> lists every field the template may read (expression identifiers included, best-effort); <code>getStaticFieldNames()</code> lists only the plain / recursive references and date-bucket base fields — the set the open-time <a href="../path-templates/#template-fields-must-be-schema-required">template check</a> requires the schema to list.</p>
+<p><code>render(record)</code> and <code>queryTree(tree, query)</code> run in the core — the same renderer a write uses, expression components included — so <code>Template.render</code>, <code>sheet.pathForRecord</code>, and the path an upsert commits always agree. Each compiled template holds its own engine; the <code>fromString</code> cache is per thread (a worker thread compiles its own).</p>
 <p>→ <a href="../path-templates/">path templates doc</a> · <a href="https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md"><code>specs/behaviors/path-templates.md</code></a></p>
 <h2 id="utility">Utility<a class="headerlink" href="#utility" title="Permanent link"> ¶</a></h2>
 <h3 id="mergepatchtarget-patch"><code>mergePatch(target, patch)</code><a class="headerlink" href="#mergepatchtarget-patch" title="Permanent link"> ¶</a></h3>

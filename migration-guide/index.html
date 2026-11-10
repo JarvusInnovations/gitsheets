@@ -1488,6 +1488,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v213-v214" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.13 → v2.14
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v2.13 → v2.14">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#template-and-normalizerecord-run-in-the-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template and normalizeRecord run in the core
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#float-path-segments-render-as-javascript-does-write-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Float path segments render as JavaScript does (write path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1977,6 +2016,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#v213-v214" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.13 → v2.14
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v2.13 → v2.14">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#template-and-normalizerecord-run-in-the-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template and normalizeRecord run in the core
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#float-path-segments-render-as-javascript-does-write-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Float path segments render as JavaScript does (write path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#going-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2356,6 +2434,76 @@ for the full contract.</p>
 </ul>
 <p><strong>Who is affected:</strong> any sheet whose template or comparator reads the clock, randomness, or host local time. A template that called <code>getFullYear()</code>, <code>getMonth()</code>, <code>getHours()</code>, etc. on a datetime field and ran on a host whose time zone is not UTC rendered paths in that zone; it now renders them at UTC, so records written that way may now live at a path the template no longer produces (for a date near midnight, or always for an hour bucket). On a UTC host nothing moves. A template or comparator using <code>Date.now()</code> / <code>Math.random()</code> was never reproducible and now fails loudly.</p>
 <p><strong>Fix:</strong> spell the accessor you mean in UTC (<code>getUTCFullYear()</code>, <code>getUTCHours()</code>), or better, use the declarative date-bucket form (<code>${{ publishedAt: YYYY/MM }}</code>), which has always rendered at UTC. Then run <code>git sheet normalize &lt;sheet&gt;</code> once: it re-upserts every record through the current template in a single commit, so any record whose rendered path changed shows up there as a rename you can review. Derive anything time-based from a record field rather than the clock.</p>
+<h2 id="v213-v214">v2.13 → v2.14<a class="headerlink" href="#v213-v214" title="Permanent link"> ¶</a></h2>
+<h3 id="template-and-normalizerecord-run-in-the-core"><code>Template</code> and <code>normalizeRecord</code> run in the core<a class="headerlink" href="#template-and-normalizerecord-run-in-the-core" title="Permanent link"> ¶</a></h3>
+<p>The exported <code>Template</code> (<code>render</code>, <code>queryTree</code>), and so <code>sheet.pathForRecord</code>, and <code>sheet.normalizeRecord</code> now call the core — the same renderer and normalizer a write uses — instead of evaluating snippets in a Node <code>node:vm</code> realm. What they return is now exactly what an upsert of the same record commits. Most records see no difference; these do:</p>
+<ul>
+<li><strong>A bare datetime field in a path</strong> (<code>${{ publishedAt }}</code>) fails with a different code: <code>Template.render</code> / <code>pathForRecord</code> used to stringify it with <code>Date#toString()</code>, whose <code>:</code> made the render throw <code>PathTemplateError</code> (<code>path_invalid_chars</code>); it now throws <code>PathTemplateError</code> (<code>path_render_failed</code>), as a write always did. Use a <a href="../path-templates/#date-buckets">date bucket</a> or an expression such as <code>${{ publishedAt.toISOString().slice(0, 10) }}</code>.</li>
+<li><strong>A <code>bigint</code> outside i64 in a path field</strong> is a render failure (<code>path_render_failed</code>); it used to render its digits. Writes already rejected it.</li>
+<li><strong>Records the core can&rsquo;t represent</strong> — a function or symbol value anywhere in the record, a <code>null</code> array element, a <code>bigint</code> outside i64 — make <code>Template.render</code> / <code>pathForRecord</code> throw <code>PathTemplateError</code> (<code>path_render_failed</code>) and <code>normalizeRecord</code> throw <code>ValidationError</code> (<code>validation_failed</code>), even when the template or sort rules don&rsquo;t touch that field. Before, the field was ignored.</li>
+<li><strong><code>normalizeRecord</code> returns the core&rsquo;s value</strong>: a fresh plain object with <code>null</code> / <code>undefined</code> keys removed (at every depth), class instances flattened to plain objects, <code>bigint</code>s within ±(2^53−1) as <code>number</code>s, and new <code>Date</code> objects. Before, it kept your values and nulls as they were.</li>
+<li><strong><code>sort = true</code> order</strong> in <code>normalizeRecord</code> comes from the core&rsquo;s pinned ICU collator (as on write) rather than the host&rsquo;s <code>localeCompare</code>. They agree for ordinary input; if your Node&rsquo;s ICU differs from the pinned one, <code>normalizeRecord</code> now follows the bytes you commit.</li>
+<li><strong>Comparators</strong> in <code>normalizeRecord</code> run in the core&rsquo;s stable insertion sort instead of V8&rsquo;s <code>Array#sort</code>. A consistent comparator gives the same order; an inconsistent one now gives the order a write gives.</li>
+<li><strong>An invalid <code>Date</code></strong> (<code>new Date(NaN)</code>) crosses into the core as the epoch, <code>1970-01-01T00:00:00Z</code> — what a write already stored for it. A date-bucket template that used to fail on it now renders <code>1970/01/01</code>. Validate dates before writing; this marshalling is a known bug and will become an error.</li>
+<li><strong><code>normalizeRecord(null)</code></strong> (or <code>undefined</code>) throws <code>ValidationError</code> (<code>validation_failed</code>); it used to return <code>{}</code>.</li>
+<li><strong>Snippet error messages</strong> are one line. A path expression or comparator that throws now reports <code>Kind: message</code> for an <code>Error</code> (<code>failed: TypeError: Date.now() is not available …</code>) or the thrown value itself (<code>throw "nope"</code> → <code>failed: "nope"</code>), with no source position or stack frames. The error class and code are unchanged; match on those, not the message.</li>
+<li><strong><code>queryTree</code></strong> drops function-valued query entries (they never pruned), and a query holding another value the core can&rsquo;t represent throws <code>PathTemplateError</code> (<code>path_render_failed</code>).</li>
+</ul>
+<p>The <code>sort-keys</code> dependency is gone.</p>
+<h3 id="float-path-segments-render-as-javascript-does-write-path">Float path segments render as JavaScript does (write path)<a class="headerlink" href="#float-path-segments-render-as-javascript-does-write-path" title="Permanent link"> ¶</a></h3>
+<p>A path field holding a <strong>float</strong> (a TOML float, or a Python <code>float</code>; a JS <code>number</code> with an integral value within ±(2^53−1) is an integer and is unaffected) now renders exactly as JavaScript&rsquo;s <code>String(x)</code> — on write, <code>pathForRecord</code>, and queries, in every binding. Before, the core cast integral floats to a 64-bit integer, which <strong>saturated</strong>: <code>1e19</code> and <code>1e20</code> both rendered <code>9223372036854775807</code>, so two records could silently land in the same file. Changes:</p>
+<table>
+<thead>
+<tr>
+<th>Float value</th>
+<th>Was</th>
+<th>Now</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1e19</code></td>
+<td><code>9223372036854775807</code></td>
+<td><code>10000000000000000000</code></td>
+</tr>
+<tr>
+<td><code>1e20</code></td>
+<td><code>9223372036854775807</code></td>
+<td><code>100000000000000000000</code></td>
+</tr>
+<tr>
+<td><code>2**60</code></td>
+<td><code>1152921504606846976</code></td>
+<td><code>1152921504606847000</code></td>
+</tr>
+<tr>
+<td><code>-1e20</code></td>
+<td><code>-9223372036854775808</code></td>
+<td><code>-100000000000000000000</code></td>
+</tr>
+<tr>
+<td><code>1e21</code></td>
+<td><code>1000000000000000000000</code></td>
+<td><code>1e+21</code></td>
+</tr>
+<tr>
+<td><code>1e-7</code></td>
+<td><code>0.0000001</code></td>
+<td><code>1e-7</code></td>
+</tr>
+<tr>
+<td><code>5e-324</code></td>
+<td><code>0.000…0005</code> (324 digits)</td>
+<td><code>5e-324</code></td>
+</tr>
+<tr>
+<td><code>Infinity</code></td>
+<td><code>inf</code></td>
+<td><code>Infinity</code></td>
+</tr>
+</tbody>
+</table>
+<p>Ordinary floats (<code>1.5</code>, <code>2026.0</code>, <code>0.1</code>) render as before. <strong>Who is affected:</strong> a sheet whose path template references a float field holding an integral value of magnitude 2^53 or more, a value of 1e21 or more, a nonzero value below 1e-6, or an infinity. Such records may now live at a path the template no longer renders. <strong>Fix:</strong> run <code>git sheet normalize &lt;sheet&gt;</code> once; records whose path changed show up as renames in that commit (and any that had collided were already overwritten — check history if you stored such values).</p>
 <h2 id="going-forward">Going forward<a class="headerlink" href="#going-forward" title="Permanent link"> ¶</a></h2>
 <p>Once migrated, the recipes are the fastest path to common patterns:</p>
 <ul>
