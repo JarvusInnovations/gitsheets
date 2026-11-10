@@ -42,6 +42,26 @@ name, a `GITSHEETS_<KEY>` environment variable, and a flag, in that
 precedence — never a bespoke dotfile, a `package.json` field, or a
 library-only option with no CLI twin.
 
+Not every option is a setting. Three kinds, three surfaces:
+
+| Kind | What it is | Surfaces | Examples |
+| --- | --- | --- | --- |
+| **Setting** | How *this clone* is wired; the same for every tool and every invocation in it | flag, `GITSHEETS_<KEY>`, `gitsheets.<key>` git config — and the library reads the env and config tiers too | `branch`, `submodule`, `stagePointer` |
+| **Per-invocation pin** | What *one run* looks at; meaningless as a standing per-clone default | flag and `GITSHEETS_<KEY>` (a script exports it for one job); **no** config tier, and the library takes it only as an explicit option | `--ref`, `--at` |
+| **Per-call option** | Shapes one library call's behavior or result; has no command-line meaning on its own | library option only — a CLI command may expose one as a *command* flag where it fits | `stale`, `signal`, `withBody`, `afterMove` |
+
+A pin in git config would silently freeze every tool in the clone at one
+snapshot, which is the two-tools-two-answers trap this principle exists to
+prevent; a per-call option at the CLI's global level would be a knob with
+nothing to turn.
+
+**Grandfathered.** `--root`, `--prefix`, and `--ref` (with `GITSHEETS_ROOT`,
+`GITSHEETS_PREFIX`, `GITSHEETS_REF`) predate this principle and have a flag
+and an environment variable but no `gitsheets.<key>` config tier. `--ref` is
+a per-invocation pin and needs none; `--root` / `--prefix` are kept as they
+are rather than grown a config tier retroactively. New knobs follow the
+table.
+
 Why: the user experience gitsheets is going for is `git sheet` feeling like
 a built-in git subcommand, and that means git's configuration model, not a
 parallel one. The alternative — the library ignoring config the CLI honors —

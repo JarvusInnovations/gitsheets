@@ -92,9 +92,13 @@ outright.
    determinism guarantee: the same record produces the same path on every
    host. An offset datetime is converted to UTC before its date parts are
    read; offset-less values (local datetime, local date, offset-less ISO
-   strings) are taken at face value. (This is the bug class the expression
-   form invites: `getFullYear()` renders host-timezone-dependent paths.
-   `getUTCFullYear()` avoids it, but nothing enforces that spelling.)
+   strings) are taken at face value. (This was the bug class the expression
+   form invited: `getFullYear()` rendered host-timezone-dependent paths.
+   Expressions now run in the deterministic realm
+   ([rust-core.md § Determinism rule](../rust-core.md#determinism-rule-for-definition-snippets)),
+   where local-time `Date` methods read UTC on every host, so
+   `getFullYear()` and `getUTCFullYear()` agree — but the bucket form is
+   still the supported way to partition on a date.)
 2. **`YYYY/WW` is ISO-8601 week**, and its `YYYY` is the **ISO week-based
    year**, not the calendar year. January 1 can belong to week 52/53 of the
    prior ISO year: 2027-01-01 falls in ISO week 2026-W53, so
@@ -181,9 +185,10 @@ reference silently expanding to three directory levels via a side declaration
 hurts readability — the reader of `path` should see the shape of the tree.
 
 Related wart this supersedes for the bucket case: a bare `Date`-typed field
-referenced as `${{ field }}` renders via JS `.toString()` (host-formatted,
-timezone-dependent). That remains a wart for non-bucket references; bucket
-references are the supported way to put a date field in a path.
+referenced as `${{ field }}` has no portable path form (the core treats it as
+un-renderable; the Node `Template` falls back to the host `Date#toString()`).
+That remains a wart for non-bucket references; bucket references are the
+supported way to put a date field in a path.
 
 ## Rendering
 
@@ -193,9 +198,13 @@ If any component returns `null` or `undefined`, the render fails with `PathTempl
 
 ### Expression rendering
 
-Expressions are evaluated in a sandbox (`vm.runInNewContext`) with the record's fields bound as identifiers via `with(record) { return (<expression>) }`. Undefined-identifier errors are treated as "this component is un-renderable" (returns `undefined`) rather than thrown, since they're typically expected at *query* time (see below).
+Expressions are evaluated in the core's embedded engine (the Node `Template` export: a `node:vm` context held to the same contract) with the record's fields bound as identifiers via `with(record) { return (<expression>) }`. Undefined-identifier errors are treated as "this component is un-renderable" (returns `undefined`) rather than thrown, since they're typically expected at *query* time (see below).
 
-This mirrors the pre-v1.0 behavior; documented here so the v1.0 TS rewrite preserves it.
+The realm is **deterministic** — no clock, no randomness, local time is UTC — under the one rule every definition snippet follows: [rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets). Any other throw from an expression, including calling a forbidden `Date.now()` / `Math.random()` / argument-less `new Date()`, fails the render with `PathTemplateError` (`path_render_failed`) naming the `${{ … }}` expression and the error — on write and at query time alike, since an expression's calls cannot be checked at sheet open.
+
+Because local-time `Date` methods now read UTC (v2.13), an expression such as `${{ at.getHours() }}` or `${{ publishedAt.getFullYear() }}` that ran on a non-UTC host before v2.13 may have stored records at a path the template **no longer renders**. Until they move, everything that locates a record by rendering its path misses them: a keyed query prunes to the new subtree, `delete(record)` and `patch` look at the new path, and attachments are resolved under it. `git sheet normalize <sheet>` moves them — it re-upserts every loaded record, and an upsert of a loaded record whose rendered path changed is a rename (verified: the commit shows `people/{jane.toml => x-jane.toml}`). See [docs/migration-guide.md](../../docs/migration-guide.md).
+
+This mirrors the pre-v1.0 behavior (apart from the determinism rule, v2.13); documented here so the v1.0 TS rewrite preserves it.
 
 ### Multi-variable per segment
 

@@ -110,15 +110,29 @@ test('a slash in a non-recursive segment fails identically', () => {
   assert.throws(() => renderPathsBatch('${{ slug }}', [record]), (e) => e.code === 'path_invalid_chars');
 });
 
-test('getFullYear (local-time) parity is reported (TZ-sensitive)', () => {
-  // Local-time date accessors depend on the process TZ in BOTH node:vm and boa.
-  // In the same process they should agree; we assert that and surface the value.
-  const record = { publishedAt: new Date('2026-03-09T12:00:00Z') };
-  const template = '${{ publishedAt.getFullYear() }}';
-  const expected = refRender(template, record);
-  const [actual] = renderPathsBatch(template, [record]);
-  console.log(`\n  getFullYear local-time parity: node:vm=${expected} boa=${actual} (TZ=${process.env.TZ ?? 'system'})`);
-  assert.equal(actual, expected, 'boa local-time year matches node:vm in-process');
+test('local-time Date methods read UTC in the engine, whatever the process TZ', () => {
+  // specs/rust-core.md "Determinism rule for definition snippets" (#362): the
+  // realm's local offset is pinned to UTC, so getHours/getFullYear are the
+  // UTC values on every host. (The reference renderer above is plain
+  // `node:vm`, which reads the host zone — hence UTC-only corpus cases. The
+  // production host shim, packages/gitsheets/src/sandbox.ts, is diffed
+  // against the engine in the package suite.)
+  const record = { publishedAt: new Date('2026-03-09T02:00:00Z') };
+  const [hours] = renderPathsBatch('${{ publishedAt.getHours() }}', [record]);
+  const [year] = renderPathsBatch('${{ publishedAt.getFullYear() }}', [record]);
+  console.log(`\n  engine local-time: getHours=${hours} getFullYear=${year} (TZ=${process.env.TZ ?? 'system'})`);
+  assert.equal(hours, '2');
+  assert.equal(year, '2026');
+});
+
+test('a path expression reading the clock fails the render', () => {
+  for (const expr of ['Date.now()', 'Math.random()', 'new Date().getTime()']) {
+    assert.throws(
+      () => renderPathsBatch(`\${{ ${expr} }}`, [{}]),
+      (e) => e.code === 'path_render_failed' && e.message.includes('not available in a gitsheets snippet'),
+      expr,
+    );
+  }
 });
 
 // --- Date-bucket cases beyond the render corpus ---

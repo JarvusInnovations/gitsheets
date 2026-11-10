@@ -39,7 +39,9 @@ specs/
 │   ├── transaction.md
 │   ├── store.md
 │   ├── errors.md
-│   └── cli.md
+│   ├── cli.md
+│   ├── axi.md            # gitsheets-axi, the agent-facing CLI
+│   └── python-binding.md
 └── behaviors/            # Cross-cutting rules referenced from multiple APIs
     ├── path-templates.md
     ├── validation.md
@@ -53,7 +55,10 @@ specs/
     ├── rollups.md
     ├── attachments.md
     ├── content-types.md
-    └── patch-semantics.md
+    ├── contracts.md
+    ├── merge.md
+    ├── patch-semantics.md
+    └── distribution.md
 ```
 
 ### Why no `data-model.md`?

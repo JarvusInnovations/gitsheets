@@ -2,7 +2,6 @@
 // See specs/api/sheet.md and specs/concepts.md.
 
 import { execFile } from 'node:child_process';
-import { runInNewContext } from 'node:vm';
 import { promisify } from 'node:util';
 import { Readable } from 'node:stream';
 
@@ -33,6 +32,7 @@ import {
 import { mergePatch } from './patch.js';
 import { Template, type RecordLike } from './path-template/index.js';
 import type { Repository } from './repository.js';
+import { compileSnippet, thrownMessage } from './sandbox.js';
 import {
   EMPTY_TREE_HASH,
   makeBlobHandle,
@@ -147,7 +147,14 @@ function joinTreePath(...parts: string[]): string {
     .join('/');
 }
 
-function buildSorter(rule: SortRule): (a: unknown, b: unknown) => number {
+/** A Sheet's compiled comparators, keyed by comparator body. */
+type SorterCache = Map<string, (a: unknown, b: unknown) => number>;
+
+function buildSorter(
+  field: string,
+  rule: SortRule,
+  cache: SorterCache,
+): (a: unknown, b: unknown) => number {
   if (rule === true) {
     return (a, b) =>
       String(a).localeCompare(String(b), undefined, {
@@ -159,29 +166,51 @@ function buildSorter(rule: SortRule): (a: unknown, b: unknown) => number {
   if (rule === false) {
     return () => 0;
   }
+  let body: string;
   if (typeof rule === 'string') {
-    return runInNewContext(`(a, b) => { ${rule} }`) as (a: unknown, b: unknown) => number;
-  }
-  // Array of field names → ASC for each
-  let directives: Array<[string, 'ASC' | 'DESC']>;
-  if (Array.isArray(rule)) {
-    directives = rule.map((f) => [f, 'ASC' as const]);
+    body = rule;
   } else {
-    directives = Object.entries(rule) as Array<[string, 'ASC' | 'DESC']>;
+    // Array of field names → ASC for each
+    let directives: Array<[string, 'ASC' | 'DESC']>;
+    if (Array.isArray(rule)) {
+      directives = rule.map((f) => [f, 'ASC' as const]);
+    } else {
+      directives = Object.entries(rule) as Array<[string, 'ASC' | 'DESC']>;
+    }
+    const exprLines: string[] = [];
+    for (const [f, dir] of directives) {
+      const sign = dir === 'ASC' ? 1 : -1;
+      exprLines.push(
+        `if ((a[${JSON.stringify(f)}]) < (b[${JSON.stringify(f)}])) return ${-1 * sign};`,
+        `if ((a[${JSON.stringify(f)}]) > (b[${JSON.stringify(f)}])) return ${1 * sign};`,
+      );
+    }
+    exprLines.push('return 0;');
+    body = exprLines.join('\n');
   }
-  const exprLines: string[] = [];
-  for (const [field, dir] of directives) {
-    const sign = dir === 'ASC' ? 1 : -1;
-    exprLines.push(
-      `if ((a[${JSON.stringify(field)}]) < (b[${JSON.stringify(field)}])) return ${-1 * sign};`,
-      `if ((a[${JSON.stringify(field)}]) > (b[${JSON.stringify(field)}])) return ${1 * sign};`,
+  const fail = (err: unknown): ConfigError =>
+    new ConfigError(
+      'config_invalid',
+      `array-field sort comparator for field ${JSON.stringify(field)} failed: ${thrownMessage(err)}`,
+      { cause: err },
     );
+  let compiled = cache.get(body);
+  if (compiled === undefined) {
+    try {
+      compiled = compileSnippet(`(a, b) => { ${body} }`) as (a: unknown, b: unknown) => number;
+    } catch (err) {
+      throw fail(err);
+    }
+    cache.set(body, compiled);
   }
-  exprLines.push('return 0;');
-  return runInNewContext(`(a, b) => { ${exprLines.join('\n')} }`) as (
-    a: unknown,
-    b: unknown,
-  ) => number;
+  const comparator = compiled;
+  return (a, b) => {
+    try {
+      return comparator(a, b);
+    } catch (err) {
+      throw fail(err);
+    }
+  };
 }
 
 /**
@@ -984,6 +1013,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
   readonly #prefix: string;
   readonly #pinnedRef: string | undefined;
   readonly #indexes = new Map<string, IndexState<T>>();
+  // Comparators compiled for this sheet's sort rules — one realm per rule,
+  // never shared with another Sheet (or repository).
+  readonly #sorters: SorterCache = new Map();
   #configPromise: Promise<SheetConfig> | undefined;
   /** Set by {@link verifyContract} on a successful `openSheet({ contract })`. */
   #contractVerification: ConformanceReport | undefined;
@@ -1761,7 +1793,7 @@ export class Sheet<T extends RecordLike = RecordLike> {
     for (const [field, fcfg] of Object.entries(config.fields)) {
       const value = out[field];
       if (fcfg.sort !== undefined && Array.isArray(value)) {
-        const sorter = buildSorter(fcfg.sort);
+        const sorter = buildSorter(field, fcfg.sort, this.#sorters);
         out[field] = [...value].sort(sorter);
       }
     }
@@ -2218,9 +2250,9 @@ export class Sheet<T extends RecordLike = RecordLike> {
   }
 
   /**
-   * @internal — rollup sheets only: the partitions that are not fresh
+   * Rollup sheets only: the partitions that are not fresh
    * (`stale` / `missing` / `orphaned`) against this sheet's read tree,
-   * writing nothing. Backs `git sheet rollup --check`.
+   * writing nothing. Backs `git sheet rollup --check`. See specs/api/sheet.md.
    */
   async rollupStatus(): Promise<RollupStatusEntry[]> {
     const config = await this.readConfig();

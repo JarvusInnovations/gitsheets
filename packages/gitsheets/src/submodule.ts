@@ -26,13 +26,15 @@ export interface SuperprojectBinding {
  * The submodule path the repository is bound to, resolved once at open:
  * `explicit` (the `openRepo` option) → `GITSHEETS_SUBMODULE` →
  * `gitsheets.submodule` git config of the superproject → `null` (no
- * submodule mode). See specs/behaviors/default-branch.md "Resolution".
+ * submodule mode). An explicit `null` opts out: no submodule, without
+ * reading env or config. See specs/behaviors/default-branch.md "Resolution".
  */
 export async function resolveSubmodulePath(
   superGitDir: string,
-  explicit: string | undefined,
+  explicit: string | null | undefined,
 ): Promise<{ path: string; source: SubmoduleSource } | null> {
   const from = (raw: string, source: SubmoduleSource) => ({ path: normalizeSubmodulePath(raw, source), source });
+  if (explicit === null) return null; // explicit opt-out: env and config are not read
   if (explicit !== undefined) return from(explicit, 'openRepo({ submodule })');
   const env = process.env['GITSHEETS_SUBMODULE'];
   if (env !== undefined && env !== '') return from(env, 'GITSHEETS_SUBMODULE');
@@ -43,6 +45,48 @@ export async function resolveSubmodulePath(
     // unset
   }
   return configured !== '' ? from(configured, 'git config gitsheets.submodule') : null;
+}
+
+/**
+ * Whether a submodule-mode repository stages its moved gitlink, resolved once
+ * at open: `explicit` (the `openRepo` option) → `GITSHEETS_STAGE_POINTER` →
+ * the superproject's `gitsheets.stagePointer` git config → `false`. Values
+ * are git booleans; anything else is `ConfigError(config_invalid)` naming the
+ * tier. See specs/behaviors/default-branch.md "After a commit".
+ */
+export async function resolveStagePointer(superGitDir: string, explicit: boolean | undefined): Promise<boolean> {
+  if (explicit !== undefined) return explicit;
+  const env = process.env['GITSHEETS_STAGE_POINTER'];
+  if (env !== undefined && env !== '') {
+    const parsed = parseGitBoolean(env);
+    if (parsed === null) {
+      throw new ConfigError(
+        'config_invalid',
+        `GITSHEETS_STAGE_POINTER: ${JSON.stringify(env)} is not a boolean — use true/false, yes/no, on/off, or 1/0`,
+      );
+    }
+    return parsed;
+  }
+  try {
+    const { stdout } = await gitExec(superGitDir, ['config', '--type=bool', '--get', 'gitsheets.stagePointer']);
+    return stdout.trim() === 'true';
+  } catch (err) {
+    // Exit 1: unset. Anything else (git's "bad boolean config value"): invalid.
+    if (err && typeof err === 'object' && 'code' in err && err.code === 1) return false;
+    throw new ConfigError(
+      'config_invalid',
+      `git config gitsheets.stagePointer: not a boolean — use true/false, yes/no, on/off, or 1/0: ${errText(err)}`,
+      { cause: err },
+    );
+  }
+}
+
+/** A git boolean spelling (`true`/`yes`/`on`/`1`, `false`/`no`/`off`/`0`, any case), or null. */
+function parseGitBoolean(raw: string): boolean | null {
+  const v = raw.trim().toLowerCase();
+  if (v === 'true' || v === 'yes' || v === 'on' || v === '1') return true;
+  if (v === 'false' || v === 'no' || v === 'off' || v === '0') return false;
+  return null;
 }
 
 /**

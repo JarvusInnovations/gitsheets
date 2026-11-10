@@ -46,7 +46,7 @@ code: <STABLE_CODE>
 help[N]: <actionable next-step suggestion>
 ```
 
-The exit code is `0` for success and `(no-op)`, `2` for validation/usage errors, `1` for everything else. Stable codes include `VALIDATION_FAILED`, `NOT_FOUND`, `CONFIG_INVALID`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `NOT_A_REPOSITORY`, `INVALID_JSON`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `TRANSACTION_ERROR`.
+The exit code is `0` for success and `(no-op)`, `2` for `VALIDATION_ERROR` (a usage error: unknown command or flag, missing argument, malformed `--filter` / `--agg` or global flag), `1` for everything else. Stable codes include `VALIDATION_ERROR`, `VALIDATION_FAILED` (a record failed its schema — a data error, exit 1), `NOT_FOUND`, `CONFIG_MISSING`, `CONFIG_INVALID`, `CONFIG_EXISTS`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `NOT_A_REPOSITORY`, `INVALID_JSON`, `NO_RECORDS`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `SHEET_DERIVED`, `TRANSACTION_ERROR`, `ROLLUP_STALE`, `AGGREGATION_FAILED`, `CONTRACT_MISSING` / `CONTRACT_INVALID` / `CONTRACT_UNSATISFIED`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`, `HOOK_INSTALL_FAILED`, `UNKNOWN_ERROR`.
 
 ## Command surface
 
@@ -289,8 +289,8 @@ Outputs:
 - `result: ok` — already canonical
 - `result: fixed` — rewritten by --fix
 - `NOT_CANONICAL` error (exit 1) when not canonical and --fix wasn't passed
-- `VALIDATION_FAILED` (exit 2) when the record fails schema validation
-- `CONFIG_INVALID` when the file fails to parse as the sheet's format
+- `VALIDATION_FAILED` (exit 1) when the record fails schema validation
+- `CONFIG_INVALID` (exit 1) when the file fails to parse as the sheet's format
 - `NOT_FOUND` when the target file doesn't exist
 
 #### Claude Code post-edit hook
@@ -353,7 +353,7 @@ Manage binary blobs colocated with records. Subcommands:
 
 ### `gitsheets-axi push [--remote r] [--branch b]`
 
-One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, the repo's default branch (`--branch` is the global flag every command accepts: `GITSHEETS_BRANCH`, `gitsheets.branch` git config, else HEAD's branch). With `--submodule <path>` (also global: `GITSHEETS_SUBMODULE`, `gitsheets.submodule`) every command — `push` included — acts on the data submodule's repository; a detached submodule `HEAD` has no branch to push. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
+One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, the repo's default branch (`--branch` is the global flag every command accepts: `GITSHEETS_BRANCH`, `gitsheets.branch` git config, else HEAD's branch). With `--submodule <path>` (also global: `GITSHEETS_SUBMODULE`, `gitsheets.submodule`) every command — `push` included — acts on the data submodule's repository; a detached submodule `HEAD` has no branch to push. Two more global flags work with `--submodule`: `--stage-pointer` (else `GITSHEETS_STAGE_POINTER`, else `gitsheets.stagePointer`; `--no-stage-pointer` turns it off) also stages the moved gitlink in the superproject after each write, and `--at <superproject-ref>` (else `GITSHEETS_AT`) reads the data snapshot that superproject commit pins and refuses writes. `--no-submodule` / `--no-branch` (no value) opt out of an inherited binding for one run — the superproject itself / `HEAD`'s branch — ignoring env and git config; an empty `GITSHEETS_SUBMODULE=` is unset, not an opt-out. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.
 
 Errors map to:
 

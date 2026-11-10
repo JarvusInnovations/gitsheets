@@ -37,6 +37,12 @@ An **aggregates table** maps a result name to one form each:
 | `{ distinct = 'f' }` | records whose `f` is a scalar | sorted array of the distinct values (numbers numerically, strings by byte order, datetimes chronologically); mixed kinds is `AggregationError` |
 | `{ reduce = '<body>', initial = <value>, finalize = '<body>' }` | every record | whatever `finalize` (or the fold) returns — must be a TOML-representable value |
 
+Each spec carries **exactly one** form key (`count`, `sum`, `avg`, `min`,
+`max`, `distinct`, `reduce`). Any key other than its form key, the
+modifiers below, and (for `reduce`) `initial` / `finalize` is rejected: a
+`TypeError` at a call site, `ConfigError` (`config_invalid`) in a sheet
+config.
+
 Modifiers, allowed on every form:
 
 - **`where = { … }`** — an equality filter in the `query` filter grammar
@@ -92,15 +98,12 @@ Edge rules the table above leaves implicit:
 contributing record in canonical path order with `acc` starting at `initial`
 (required; any TOML value). `finalize`, optional, is the body of
 `(acc) => { … }` run once at the end. The snippet must be pure — no clock,
-no randomness, no I/O — and the core **enforces** it for the sources it can
-reach: the realm a `reduce` / `finalize` runs in has no `Math.random`, no
-`Date.now`, and no argument-less `Date` (`new Date()` and `Date()` alike);
-calling any of them throws, which surfaces as `AggregationError`. `new
-Date(ms)`, `new Date(isoString)`, `Date.UTC`, and `Date.parse` remain, since
-they are functions of their arguments. The engine has no `Intl`, no timers,
-and no host I/O, so locale and time-zone defaults cannot leak in either; every
-`Date` method a snippet can reach reads UTC or its own argument. Each `reduce`
-aggregate evaluates each group (or its single ungrouped fold) in a fresh
+no randomness, no I/O — and the core **enforces** it: `reduce` and `finalize`
+run in the deterministic realm every definition snippet shares
+([rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets) —
+no `Math.random`, no `Date.now`, no argument-less `Date`, local time is UTC;
+argument-taking `Date` forms remain). Calling a forbidden source throws, which
+surfaces as `AggregationError`. Each `reduce` aggregate evaluates each group (or its single ungrouped fold) in a fresh
 engine realm, so `globalThis` state cannot leak between calls, aggregates, or
 groups, and that engine runs under runtime limits on loop iterations,
 recursion depth, and stack size — a snippet that exceeds them (an infinite

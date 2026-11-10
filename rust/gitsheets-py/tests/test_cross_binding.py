@@ -234,6 +234,39 @@ def test_embedded_engine_comparator_identical_across_bindings():
     assert py == node["result"]
 
 
+def test_local_time_path_expression_identical_across_bindings(monkeypatch):
+    """A path expression reading host local time renders the same path in
+    Python and Node with a non-UTC TZ set — both run the deterministic realm
+    (specs/rust-core.md "Determinism rule for definition snippets", #362), so
+    local-time `Date` methods read UTC on every host."""
+    for tz in ("America/New_York", "Asia/Kolkata"):
+        _local_time_parity_under(monkeypatch, tz)
+
+
+def _local_time_parity_under(monkeypatch, tz):
+    import time
+
+    monkeypatch.setenv("TZ", tz)
+    time.tzset()
+    try:
+        template = "${{ at.getFullYear() }}/${{ at.getDate() }}/${{ at.getHours() }}/${{ slug }}"
+        when = dt.datetime(2026, 3, 4, 2, 6, 7, tzinfo=dt.timezone.utc)
+        # New York local time would be 2026-03-03 21:06.
+        (py,) = gitsheets.render_paths_batch(template, [{"at": when, "slug": "x"}])
+        assert py == "2026/4/2/x"
+        node = _run_node(
+            "render", template, json.dumps({"at": {"$date": when.isoformat()}, "slug": "x"})
+        )
+        assert node["core"] == py, "napi core diverged from Python"
+        if os.environ.get("CI"):
+            assert node["host"] is not None, "CI must build packages/gitsheets/dist for the host leg"
+        if node["host"] is not None:
+            assert node["host"] == py, "host node:vm Template diverged from the core"
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+
+
 def test_canonical_contract_hash_identical_across_bindings():
     """canonical_contract_hash agrees across Python and Node, and across the
     three input forms (parsed data, JSON text, TOML text) within each binding —

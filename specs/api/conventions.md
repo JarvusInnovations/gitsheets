@@ -17,9 +17,14 @@ import {
   // error classes
   GitsheetsError, ConfigError, ValidationError, TransactionError,
   IndexError, RefError, PathTemplateError, NotFoundError,
+  ContractError, AggregationError,
 
   // utilities
-  mergePatch, validateRecord,
+  mergePatch, validateRecord, canonicalContractHash,
+
+  // helper exports (see "Public helper exports" below)
+  parseToml, parseConfigToml, stringifyRecord,
+  registerFormat, getFormat, hasFormat, resolveFormatConfig,
 
   // record annotation symbols (`record[RECORD_PATH_KEY]`, etc.)
   RECORD_SHEET_KEY, RECORD_PATH_KEY,
@@ -27,22 +32,63 @@ import {
 ```
 
 Type-only exports (interfaces, type aliases) flow alongside the value exports
-above. The full list: `OpenRepoOptions`, `OpenSheetOptions`, `OpenSheetsOptions`,
-`TransactionOptions`, `TransactionResult`, `TransactionHandler`, `Author`,
-`SheetConfig`, `SheetFieldConfig`, `SortRule`, `UpsertResult`, `UpsertOptions`,
-`SheetConstructorOptions`,
-`IndexKeyFn`, `DefineIndexOptions`,
-`QueryFilter`, `QueryOptions`, `DiffStatus`, `DiffOptions`, `DiffChange`,
-`AttachmentBlobHandle`, `AttachmentEntry`,
-`Format`, `FormatConfig`,
-`OpenStoreOptions`, `Store`, `StoreTx`, `StoreTransactFn`, `ValidatorMap`, `InferRecord`,
-`PushDaemonOptions`, `PushDaemonStatus`, `PushFailureReason`, `BackoffConfig`,
-`JSONSchema`, `StandardSchemaV1`, `StandardSchemaIssue`, `StandardSchemaResult`,
-`StandardSchemaFailure`, `StandardSchemaSuccess`, `StandardSchemaPathSegment`,
-`ValidationIssue`, `RecordLike`,
-`PathTemplateBlob`, `PathTemplateTree`, `PathTemplateQueryResult`.
+above. `packages/gitsheets/src/index.ts` is the authoritative list; by area:
+
+- **Repository** — `OpenRepoOptions`, `OpenSheetOptions`, `OpenSheetsOptions`,
+  `SyncOptions`, `SyncResult`, `FetchOptions`, `FetchResult`, `MergeOptions`,
+  `MergeResult`, `MergeConflict`, `TreeEntry`.
+- **Transaction** — `TransactionOptions`, `TransactionResult`,
+  `TransactionHandler`, `Author`.
+- **Sheet** — `SheetConfig`, `SheetFieldConfig`, `SortRule`, `UpsertResult`,
+  `UpsertOptions`, `WillChangeResult`, `SheetConstructorOptions`, `IndexKeyFn`,
+  `DefineIndexOptions`, `QueryFilter`, `RangeFilter`, `QueryOptions`,
+  `DiffStatus`, `DiffOptions`, `DiffChange`, `AttachmentBlobHandle`,
+  `AttachmentContent`, `AttachmentEntry`, `BlobHandle`.
+- **Aggregation and rollups** — `AggregateSpec`, `AggregatesSpec`,
+  `AggregateModifiers`, `AggregateOptions`, `RollupConfig`,
+  `MaterializeResult`, `RollupStatusEntry`.
+- **Formats** — `Format`, `FormatConfig`.
+- **Store** — `OpenStoreOptions`, `Store`, `StoreTx`, `StoreTransactFn`,
+  `ValidatorMap`, `InferRecord`.
+- **Push daemon** — `PushDaemonOptions`, `PushDaemonStatus`,
+  `PushFailureReason`, `BackoffConfig`.
+- **Contracts** — `CanonicalContractHashOptions`, `ConformanceReport`,
+  `ContractDocumentFormat`, `ContractVerificationMode`,
+  `OpenSheetContractOptions`.
+- **Validation** — `JSONSchema`, `StandardSchemaV1`, `StandardSchemaProps`,
+  `StandardSchemaTypes`, `StandardSchemaIssue`, `StandardSchemaResult`,
+  `StandardSchemaFailure`, `StandardSchemaSuccess`,
+  `StandardSchemaPathSegment`, `ValidationIssue`.
+- **Errors** — `GitsheetsErrorCode` and the per-class code unions
+  (`ConfigErrorCode`, `TransactionErrorCode`, …).
+- **Path templates** — `RecordLike`, `PathTemplateBlob`, `PathTemplateTree`,
+  `PathTemplateQueryResult`.
 
 No deep imports (`gitsheets/lib/Sheet`) — the implementation can rearrange `packages/gitsheets/src/` freely.
+
+## Public helper exports
+
+Lower-level helpers exported from the package root alongside the primary
+classes. They are stable API like everything else re-exported here.
+
+| Export | Contract |
+| --- | --- |
+| `parseToml(text)` | Parse a TOML document into a record through the core's parser (datetimes as `Date`, integer/float kept distinct — [behaviors/normalization.md](../behaviors/normalization.md)). Throws on malformed input |
+| `parseConfigToml(text, sourcePath)` | `parseToml`, but a parse failure is `ConfigError` (`config_invalid`) naming `sourcePath` — for sheet-config text |
+| `stringifyRecord(record)` | Serialize a record to canonical TOML (deep-sorted keys) through the core. Array fields are **not** sorted; sheet-level sort rules apply only via a `Sheet` ([behaviors/normalization.md](../behaviors/normalization.md)) |
+| `getFormat(type)` | The registered `Format` for `'toml'`, `'markdown'`, or `'mdx'` (or a name registered with `registerFormat`); throws for an unknown name ([behaviors/content-types.md](../behaviors/content-types.md)) |
+| `hasFormat(type)` | Whether a format is registered under `type` |
+| `registerFormat(name, format)` | Register a host-side `Format` for `getFormat` lookups. The core validates sheet configs and accepts only `toml` / `markdown` / `mdx`, so registering a new name does not make it a valid `[gitsheet.format].type`; overriding a built-in is unsupported and never changes the bytes a sheet writes |
+| `resolveFormatConfig(raw)` | Normalize a raw `[gitsheet.format]` table into a `FormatConfig` (`{ type: 'toml' }` when absent); `TypeError` when it is not a table |
+| `Format` | The format interface: `extension` (with the leading dot), `serialize(record, config)`, `parse(text, config)`, `parseHeaderOnly(text, config)` (frontmatter only — [behaviors/content-types.md § Lazy body loading](../behaviors/content-types.md#lazy-body-loading)) |
+| `FormatConfig` | The `[gitsheet.format]` shape: `type`, plus `body`, `title`, `normalize` for markdown formats ([behaviors/content-types.md](../behaviors/content-types.md)) |
+| `WillChangeResult` | `sheet.willChange`'s result: `{ changed, path, currentBlobHash?, nextText }` ([api/sheet.md](sheet.md#sheetwillchangerecord-opts)) |
+| `AttachmentContent` | What `setAttachment(s)` accepts: `string` (UTF-8), `Buffer`, `Uint8Array`, or `BlobHandle` ([behaviors/attachments.md](../behaviors/attachments.md)) |
+| `GitsheetsErrorCode` | The union of every stable `err.code` string ([api/errors.md](errors.md#code-table)) |
+| `RollupConfig` | `SheetConfig.rollup` on a rollup sheet: `{ from }`, the source sheet's name ([behaviors/rollups.md](../behaviors/rollups.md)) |
+| `MaterializeResult` | `sheet.materialize()`'s result: `{ recomputed, deleted }` partition paths ([api/sheet.md](sheet.md#sheetmaterialize)) |
+| `AggregateOptions` | `sheet.aggregate`'s options: `{ signal? }` ([behaviors/aggregation.md](../behaviors/aggregation.md)) |
+| `RollupStatusEntry` | One element of `sheet.rollupStatus()`: `{ path, status: 'stale' \| 'missing' \| 'orphaned' }` ([api/sheet.md](sheet.md#sheetrollupstatus)) |
 
 ## TypeScript posture
 

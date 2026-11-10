@@ -40,6 +40,8 @@ With `O` = ours (the branch being merged into), `T` = theirs, `B` = their merge 
 
 Records are never left with conflict markers: a conflict either resolves by policy or stops the merge before any commit.
 
+When `ours` is omitted, the default branch is passed to the core fully qualified (`refs/heads/<name>`), so a branch whose name looks like a hex object id (`2026`) is still the branch that moves, never misread as a commit. An explicit `ours` is resolved as given; pass `refs/heads/<name>` for such a branch.
+
 Rollup records ([rollups.md](rollups.md)) are not merged at all: whatever the tree merge produced for a rollup path is discarded, and the rollup pass regenerates every partition changed on either side since the base into the merge tree, so a merge commit carries rollups that match its records. The merge driver, working one file at a time, cannot do this — rollup files it merges carry stale stamps that reads self-heal and `git sheet rollup` repairs.
 
 ### Which paths are records

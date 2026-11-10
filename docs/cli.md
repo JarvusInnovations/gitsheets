@@ -13,9 +13,11 @@ operation on a `Repository` (or `Sheet`/`Transaction`).
 | `--git-dir <path>` | discovered from cwd | `GIT_DIR` |
 | `--root <path>` | `/` | `GITSHEETS_ROOT` |
 | `--prefix <path>` | none | `GITSHEETS_PREFIX` |
-| `--branch <name>` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
-| `--submodule <path>` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
-| `--ref <ref>` | the default branch | `GITSHEETS_REF` |
+| `--branch <name>` / `--no-branch` | `gitsheets.branch` git config, else `HEAD`'s branch | `GITSHEETS_BRANCH` |
+| `--submodule <path>` / `--no-submodule` | `gitsheets.submodule` git config, else none | `GITSHEETS_SUBMODULE` |
+| `--stage-pointer` / `--no-stage-pointer` | `gitsheets.stagePointer` git config, else off | `GITSHEETS_STAGE_POINTER` |
+| `--at <superproject-ref>` | none | `GITSHEETS_AT` |
+| `--ref <ref>` | the default branch (the pinned commit under `--at`) | `GITSHEETS_REF` |
 | `--commit-to <ref>` | derived from `--ref` | — |
 | `--message <msg>` | auto-generated | — |
 | `--author-name <name>`, `--author-email <email>` | git config | — |
@@ -57,6 +59,39 @@ git config gitsheets.submodule data  # once per clone
 gitsheets upsert users '{"slug":"jane"}'
 git add data && git commit -m "Add jane"
 ```
+
+To skip an inherited binding for one run, `--no-submodule` reads and writes
+the superproject itself and `--no-branch` uses the branch `HEAD` points at;
+neither consults the environment variable or git config. An empty
+`GITSHEETS_SUBMODULE=` or `GITSHEETS_BRANCH=` counts as unset and falls
+through to git config, so use the flag to opt out.
+
+```bash
+GITSHEETS_SUBMODULE=data gitsheets --no-submodule query users  # the superproject's own users sheet
+```
+
+Two more flags apply in submodule mode:
+
+- `--stage-pointer` also stages the moved gitlink in the superproject's index
+  after each write, so `git commit -a` carries it. It resolves flag →
+  `GITSHEETS_STAGE_POINTER` → the superproject's `gitsheets.stagePointer` →
+  off, and takes git booleans (`true`/`false`, `yes`/`no`, `on`/`off`,
+  `1`/`0`); `--no-stage-pointer` turns it off for one run. The library's
+  `openRepo` reads the same environment variable and config.
+- `--at <superproject-ref>` (or `GITSHEETS_AT`) reads the data snapshot that
+  superproject commit pins — the data a given code revision shipped with.
+  Writes are refused (`TransactionError`, exit `69`). It is a one-run pin,
+  like `--ref`, so it has no git config setting.
+
+```bash
+gitsheets --submodule data --at v1.2.0 query users   # data as of the v1.2.0 release
+git config gitsheets.stagePointer true               # stage the pointer after every write
+```
+
+`--ref <ref>` pins what a command reads and the commit it builds on:
+`query`, `read`, and `aggregate` read `<ref>`; `normalize`,
+`upsert --delete-missing`, `edit`, `infer`, and `rollup` read `<ref>` and
+commit onto it. Without `--ref`, both are the default branch.
 
 ## Commands
 
@@ -150,7 +185,7 @@ Flags:
 - `--group-by <field>` — applies `groupBy` to every aggregate; each result becomes an object keyed by the field's string form. Records whose field isn't a string, integer, or boolean don't contribute.
 - `--format <json|toml>` — default `json`.
 
-The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except `count` and `sum` (`0`). `reduce` snippets are library-only ([`sheet.aggregate`](api.md#aggregation)). A field holding mixed kinds under `min`/`max`/`distinct` fails with `AggregationError` (exit `1`).
+The fold runs in the core over the matching records, read without bodies, in canonical path order. An aggregate with nothing to fold is left out of the output, except `count` and `sum` (`0`). `reduce` snippets are library-only ([`sheet.aggregate`](api.md#aggregation)). A field holding mixed kinds under `min`/`max`/`distinct` fails with `AggregationError` (exit `23`). A malformed `--agg` clause is an argument error (exit `2`).
 
 ### `gitsheets rollup <sheet>`
 
@@ -372,8 +407,9 @@ gitsheets submodule init data        # fresh clone of the superproject
 | --- | --- |
 | 0 | Success |
 | 1 | Generic / unknown error |
-| 2 | Argument-parsing error |
+| 2 | Argument-parsing error: unknown flag or command, missing positional, malformed `--filter` / `--agg` / `--trailer` / `--attachment` / `--encoding` value, or an invalid flag combination |
 | 22 | `ValidationError` |
+| 23 | `AggregationError` |
 | 64 | `ConfigError` |
 | 65 | `RefError` |
 | 66 | `NotFoundError` |
@@ -381,7 +417,7 @@ gitsheets submodule init data        # fresh clone of the superproject
 | 69 | `TransactionError` |
 | 70 | `IndexError` |
 
-Per [`specs/api/errors.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/errors.md).
+Per [`specs/api/cli.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/api/cli.md#exit-codes).
 
 ## Error output
 
@@ -391,4 +427,20 @@ Errors print to stderr in this shape:
 gitsheets: ValidationError: record failed JSON Schema validation
   code:   validation_failed
   issue:  email: must match format "email" (json-schema)
+```
+
+An `AggregationError` names the sheet, the aggregate, and (for a rollup
+partition) the partition:
+
+```text
+gitsheets: AggregationError: min over mixed value kinds
+  code:   aggregation_failed
+  sheet:  transactions
+  aggregate: low
+```
+
+An argument error (exit `2`) prints one line:
+
+```text
+gitsheets: --agg n: sum needs a field (n=sum:<field>)
 ```

@@ -247,7 +247,12 @@ impl Sheet {
                 Some(SortRule::All(false)) | None => {}
                 Some(rule) => {
                     if let Some(src) = comparator_source(rule) {
-                        let handle = engine.compile(&src)?;
+                        let handle = engine.compile(&src).map_err(|e| Error::ConfigInvalid {
+                            message: format!(
+                                "array-field sort comparator for field {field:?} {}",
+                                e.message().trim_start_matches("embedded snippet ")
+                            ),
+                        })?;
                         sort_plan.push((field.clone(), SortKind::Engine(handle)));
                     }
                 }
@@ -324,7 +329,7 @@ impl Sheet {
                 if let Some(Value::Array(items)) = map.get_mut(field) {
                     match kind {
                         SortKind::Locale => collator::sort_array(items),
-                        SortKind::Engine(handle) => sort_array(&mut self.engine, *handle, items)?,
+                        SortKind::Engine(handle) => sort_array(&mut self.engine, *handle, field, items)?,
                     }
                 }
             }
@@ -845,7 +850,7 @@ impl Sheet {
     /// Declare a secondary index. `key_snippet` is the full keyFn source
     /// (e.g. `(r) => r.email.toLowerCase()`), compiled once into the engine.
     pub fn define_index(&mut self, name: &str, unique: bool, key_snippet: &str) -> Result<()> {
-        let key_handle = self.engine.compile(key_snippet)?;
+        let key_handle = self.engine.compile_query(key_snippet)?;
         self.indexes.push(IndexDef {
             name: name.to_string(),
             unique,
@@ -1061,12 +1066,17 @@ fn json_string(s: &str) -> String {
 /// Stable in-place sort of an array via an engine comparator. Insertion sort —
 /// stable and fine for the small arrays sheet fields hold; each comparison runs
 /// the compiled JS comparator (`< 0` ⇒ a before b, matching `Array.sort`).
-fn sort_array(engine: &mut Engine, handle: SnippetHandle, items: &mut [Value]) -> Result<()> {
+fn sort_array(
+    engine: &mut Engine,
+    handle: SnippetHandle,
+    field: &str,
+    items: &mut [Value],
+) -> Result<()> {
     let n = items.len();
     for i in 1..n {
         let mut j = i;
         while j > 0 {
-            let cmp = compare_via(engine, handle, &items[j - 1], &items[j])?;
+            let cmp = compare_via(engine, handle, field, &items[j - 1], &items[j])?;
             if cmp > 0.0 {
                 items.swap(j - 1, j);
                 j -= 1;
@@ -1078,12 +1088,22 @@ fn sort_array(engine: &mut Engine, handle: SnippetHandle, items: &mut [Value]) -
     Ok(())
 }
 
-fn compare_via(engine: &mut Engine, handle: SnippetHandle, a: &Value, b: &Value) -> Result<f64> {
+/// A comparator that throws — including the deterministic realm's denial of
+/// the clock / entropy / host locale (spec: rust-core.md "Embedded code
+/// execution") — fails the normalization as `ConfigError` (`config_invalid`)
+/// naming the field: the rule is a definition defect, not a record defect.
+fn compare_via(
+    engine: &mut Engine,
+    handle: SnippetHandle,
+    field: &str,
+    a: &Value,
+    b: &Value,
+) -> Result<f64> {
     let result = engine
         .call(handle, &[a.clone(), b.clone()])
         .map_err(|e| match e {
             SnippetError::UndefinedReference(m) | SnippetError::Other(m) => Error::ConfigInvalid {
-                message: format!("array-field sort comparator failed: {m}"),
+                message: format!("array-field sort comparator for field {field:?} failed: {m}"),
             },
         })?;
     engine.to_number(&result)
@@ -2192,5 +2212,66 @@ mod tests {
         // Absent path and a subtree are None, not errors.
         assert!(sheet.read_one(&tctx(&repo), &mut tree, "a/two", true).unwrap().is_none());
         assert!(sheet.read_one(&tctx(&repo), &mut tree, "a", true).unwrap().is_none());
+    }
+
+    // ── determinism rule for raw-JS comparators (#362) ────────────────────
+
+    fn config_with_sort(field: &str, rule: &str) -> Value {
+        let mut sort = IndexMap::new();
+        sort.insert("sort".to_string(), s(rule));
+        let mut fields = IndexMap::new();
+        fields.insert(field.to_string(), Value::Table(sort));
+        let Value::Table(mut top) = config("${{ slug }}", "people") else { unreachable!() };
+        let Some(Value::Table(gs)) = top.get_mut("gitsheet") else { unreachable!() };
+        gs.insert("fields".to_string(), Value::Table(fields));
+        Value::Table(top)
+    }
+
+    #[test]
+    fn a_comparator_reading_the_clock_or_entropy_is_config_invalid_naming_the_field() {
+        let (_d, repo) = temp_repo();
+        for (rule, named) in [
+            ("return Math.random() - 0.5;", "Math.random()"),
+            ("return Date.now() - a;", "Date.now()"),
+            ("return new Date() - a;", "new Date() with no arguments"),
+        ] {
+            let mut tree = tree_with_config(&tctx(&repo), config_with_sort("tags", rule));
+            let mut sheet = open(&tctx(&repo), &mut tree);
+            let r = rec(&[("slug", s("x")), ("tags", Value::Array(vec![Value::Integer(2), Value::Integer(1)]))]);
+            let err = sheet.normalize_record(&r).unwrap_err();
+            assert_eq!(err.code(), "config_invalid", "{rule}");
+            let msg = err.message();
+            assert!(msg.contains("\"tags\""), "names the field: {msg}");
+            assert!(msg.contains(named), "names the forbidden call: {msg}");
+            // The write path fails the same way.
+            let err = sheet.prepare_upsert(&tctx(&repo), &mut tree, &r, None, false).err().unwrap();
+            assert_eq!(err.code(), "config_invalid", "upsert {rule}");
+        }
+    }
+
+    #[test]
+    fn a_local_time_comparator_reads_utc_whatever_the_host_zone() {
+        crate::engine::tz_test::run_under_zones(
+            "sheet::tests::a_local_time_comparator_reads_utc_inner",
+        );
+    }
+
+    #[test]
+    #[ignore = "run under a non-UTC TZ by a_local_time_comparator_reads_utc_whatever_the_host_zone"]
+    fn a_local_time_comparator_reads_utc_inner() {
+        let (_d, repo) = temp_repo();
+        // Sort by local hour-of-day. At UTC: 23:00 → 23, 01:00 → 1, so the
+        // 01:00 entry sorts first; in New York they'd be 18 and 20, reversed.
+        let mut tree = tree_with_config(
+            &tctx(&repo),
+            config_with_sort("times", "return a.getHours() - b.getHours();"),
+        );
+        let mut sheet = open(&tctx(&repo), &mut tree);
+        let late: Value = Value::Datetime("2026-03-04T23:00:00Z".parse().unwrap());
+        let early: Value = Value::Datetime("2026-03-05T01:00:00Z".parse().unwrap());
+        let r = rec(&[("slug", s("x")), ("times", Value::Array(vec![late.clone(), early.clone()]))]);
+        let out = sheet.normalize_record(&r).unwrap();
+        let Value::Table(m) = out else { unreachable!() };
+        assert_eq!(m.get("times"), Some(&Value::Array(vec![early, late])));
     }
 }

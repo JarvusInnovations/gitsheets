@@ -211,3 +211,64 @@ describe('CLI init bootstraps a data branch', () => {
     expect(await git(fixture, 'rev-parse', 'HEAD')).toBe(head0);
   });
 });
+
+describe('CLI --ref selects what read commands read (#352)', () => {
+  it('query, read, and aggregate read --ref, not the default branch', async () => {
+    const fixture = await dataBranchRepo();
+    const g = ['--git-dir', fixture.gitDir, '--ref', 'data'];
+    const q = await run([...g, 'query', 'users']);
+    expect(q.code).toBe(0);
+    expect(q.out).toContain('"slug":"jane"');
+    const r = await run([...g, 'read', 'users', 'jane']);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('"email": "jane@x.org"');
+    const a = await run([...g, 'aggregate', 'users', '--agg', 'n=count']);
+    expect(a.code).toBe(0);
+    expect(a.out).toContain('"n":1');
+    // GITSHEETS_REF is the same knob.
+    process.env['GITSHEETS_REF'] = 'data';
+    try {
+      expect((await run(['--git-dir', fixture.gitDir, 'query', 'users'])).out).toContain('"slug":"jane"');
+    } finally {
+      delete process.env['GITSHEETS_REF'];
+    }
+  });
+
+  it('--ref pins reads even when the default branch also has the sheet', async () => {
+    const fixture = await dataBranchRepo();
+    await fixture.git('config', 'gitsheets.branch', 'data');
+    expect((await run(['--git-dir', fixture.gitDir, 'upsert', 'users', '{"slug":"ada","email":"ada@x.org"}'])).code).toBe(0);
+    // data now has jane + ada; data^ has only jane.
+    const q = await run(['--git-dir', fixture.gitDir, '--ref', 'data^', 'query', 'users']);
+    expect(q.out).toContain('"slug":"jane"');
+    expect(q.out).not.toContain('"slug":"ada"');
+  });
+
+  it('normalize --ref reads and commits on --ref; the default branch stays put', async () => {
+    const fixture = await dataBranchRepo();
+    const repo = await openRepo({ gitDir: fixture.gitDir, branch: 'data' });
+    await repo.transact({ message: 'non-canonical' }, async (tx) => {
+      tx.writeFile('users/zed.toml', 'slug = "zed"\nemail = "zed@x.org"\n');
+    });
+    const main0 = await git(fixture, 'rev-parse', 'main');
+    const data0 = await git(fixture, 'rev-parse', 'data');
+    const r = await run(['--git-dir', fixture.gitDir, '--ref', 'data', 'normalize', 'users']);
+    expect(r.code).toBe(0);
+    expect(await git(fixture, 'rev-parse', 'data^')).toBe(data0);
+    expect(await git(fixture, 'show', 'data:users/zed.toml')).toBe('email = "zed@x.org"\nslug = "zed"');
+    expect(await git(fixture, 'rev-parse', 'main')).toBe(main0);
+  });
+
+  it('upsert --delete-missing --ref computes the missing set from --ref', async () => {
+    const fixture = await dataBranchRepo();
+    const main0 = await git(fixture, 'rev-parse', 'main');
+    const r = await run([
+      '--git-dir', fixture.gitDir, '--ref', 'data',
+      'upsert', 'users', '{"slug":"ada","email":"ada@x.org"}', '--delete-missing',
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('- jane\n');
+    expect(await git(fixture, 'ls-tree', '-r', '--name-only', 'data', 'users')).toBe('users/ada.toml');
+    expect(await git(fixture, 'rev-parse', 'main')).toBe(main0);
+  });
+});

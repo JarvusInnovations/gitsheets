@@ -1003,7 +1003,7 @@ fn parse_filter_pred(env: &Env, val: JsUnknown, engine: &mut Engine) -> Result<F
                 let src = src_js.into_utf8()?.as_str()?.to_owned();
                 let wrapped = format!("(value, record) => ( {src} )");
                 let handle = engine
-                    .compile(&wrapped)
+                    .compile_query(&wrapped)
                     .map_err(|err| raise_core_error(env, &err))?;
                 return Ok(FilterPred::Predicate(handle));
             }
@@ -1439,7 +1439,7 @@ pub fn record_index_unique(
         .map_err(|err| raise_core_error(&env, &err))?;
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let handle = engine
-        .compile(&key_snippet)
+        .compile_query(&key_snippet)
         .map_err(|err| raise_core_error(&env, &err))?;
     let index = UniqueIndex::build(&records, handle, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
     Ok(keys
@@ -1466,7 +1466,7 @@ pub fn record_index_multi(
         .map_err(|err| raise_core_error(&env, &err))?;
     let mut engine = Engine::new().map_err(|err| raise_core_error(&env, &err))?;
     let handle = engine
-        .compile(&key_snippet)
+        .compile_query(&key_snippet)
         .map_err(|err| raise_core_error(&env, &err))?;
     let index = MultiIndex::build(&records, handle, &mut engine).map_err(|err| raise_core_error(&env, &err))?;
     Ok(keys

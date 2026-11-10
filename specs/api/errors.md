@@ -57,22 +57,22 @@ try {
 | Class | Code | `status` | Meaning |
 | --- | --- | ---: | --- |
 | `ConfigError` | `config_missing` | 500 | `.gitsheets/<name>.toml` not found |
-| `ConfigError` | `config_invalid` | 500 | Sheet config TOML malformed or schema unparseable |
+| `ConfigError` | `config_invalid` | 500 | Sheet config TOML malformed or schema unparseable, or a raw-JS sort comparator threw while normalizing (including a call the [deterministic realm](../rust-core.md#determinism-rule-for-definition-snippets) forbids) |
 | `ValidationError` | `validation_failed` | 422 | Record failed JSON Schema or Standard Schema validation |
 | `TransactionError` | `transaction_in_progress` | 409 | Concurrent `repo.transact` attempt |
 | `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode, or a permissive-mode write on a ref-pinned (read-only) sheet |
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero |
-| `TransactionError` | `pointer_stage_failed` | 500 | Submodule mode with `stagePointer`: the data commit **landed** but the superproject's index could not be updated; carries `commitHash`. Stage by hand (`git add <path>`); do not retry the write ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)) |
+| `TransactionError` | `pointer_stage_failed` | 500 | Submodule mode with `stagePointer`: the data commit **landed** but the superproject's index could not be updated; carries `commitHash`. Stage by hand (`git add <path>`); do not retry the write. A distinct code because callers treat `commit_failed` as "nothing landed" and retry, and a retry here would write a second commit ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)) |
 | `TransactionError` | `push_daemon_running` | 409 | `repo.startPushDaemon` while one is already active |
-| `TransactionError` | `transaction_closed` | 409 | `tx.sheet(...)` after the transaction has been finalized or discarded |
+| `TransactionError` | `transaction_closed` | 409 | `tx.sheet(...)` / `tx.writeFile` / `tx.deleteFile` after the transaction has been finalized or discarded |
 | `TransactionError` | `lock_held` | 409 | `repo.withLock` / `repo.transact` attempted while the caller's own async context already holds the write lock — the lock is not reentrant |
+| `TransactionError` | `sheet_derived` | 409 | A write to a rollup sheet — rollup records are regenerated from the source, never written by consumers ([behaviors/rollups.md](../behaviors/rollups.md)) |
 | `IndexError` | `index_unique_conflict` | 409 | Unique index would be violated |
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
 | `RefError` | `not_an_ancestor` | 409 | Merge-like operation where src is not an ancestor of dst |
-| `TransactionError` | `sheet_derived` | 409 | A write to a rollup sheet — rollup records are regenerated from the source, never written by consumers ([behaviors/rollups.md](../behaviors/rollups.md)) |
-| `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.) |
+| `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.), or an expression component threw (including a call the [deterministic realm](../rust-core.md#determinism-rule-for-definition-snippets) forbids) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
 | `NotFoundError` | `record_not_found` | 404 | `delete` / `patch` / etc. against a path that doesn't exist |
 | `ContractError` | `contract_missing` | 500 | `implements` names a contract with no vendored document at its derived path |
