@@ -1,11 +1,11 @@
 //! Path-template parsing + rendering — record → on-disk path.
 //!
-//! A behavior-preserving Rust port of the host renderer
-//! (`packages/gitsheets/src/path-template/index.ts`), per
+//! The one path-template implementation, per
 //! [`specs/behaviors/path-templates.md`](../../../specs/behaviors/path-templates.md).
 //! The template determines where each record's file lives in the data tree, so
 //! it is bytes-determining and belongs in the core (every binding must render
-//! the same path for the same record).
+//! the same path for the same record). The Node binding's exported `Template`
+//! is a wrapper over this module, not a second renderer.
 //!
 //! ## What's native vs engine-backed
 //!
@@ -19,10 +19,12 @@
 //! - **Expression** components (`${{ publishedAt.getUTCFullYear() }}`) are the
 //!   escape hatch: compiled once into the embedded [`Engine`] and evaluated per
 //!   record. This is where partition derivations beyond the closed bucket enum
-//!   live, and it is the path-template half of the `node:vm` parity gate.
+//!   live.
 //!
 //! Query-tree traversal/pruning (the *other* job of a parsed template) is a
-//! record-engine concern and lands downstream; this module owns parse + render.
+//! record-engine concern ([`crate::query`]); this module owns parse + render
+//! and the per-component query planning ([`Template::plan_query`],
+//! [`Template::render_component_partial`]).
 
 use chrono::{Datelike, NaiveDate};
 
@@ -310,6 +312,38 @@ impl Template {
             }
         }
         Ok(Some(out))
+    }
+
+    /// Render component `index` against a (possibly partial) `query`, in the
+    /// non-strict query mode [`Template::plan_query`] uses: `Ok(None)` when the
+    /// component is un-renderable against the query (a field or expression it
+    /// needs is absent, or a date-bucket field holds a non-date value) — the
+    /// walk then expands across every subtree at that level — and `Err` only
+    /// for a genuine expression throw (`path_render_failed`). Invalid-char
+    /// rejection is not applied, as in `plan_query`. This is the per-component
+    /// step of a binding's own tree walk (the Node `Template.queryTree`); it
+    /// does not plan range bounds. An out-of-range `index` is
+    /// [`Error::PathRenderFailed`].
+    pub fn render_component_partial(
+        &self,
+        index: usize,
+        query: &Value,
+        engine: &mut Engine,
+    ) -> Result<Option<String>> {
+        let component = self.components.get(index).ok_or_else(|| Error::PathRenderFailed {
+            message: format!(
+                "component index {index} is out of range for \"{}\" ({} components)",
+                self.source,
+                self.components.len()
+            ),
+        })?;
+        self.render_component(component, query, engine, false)
+    }
+
+    /// Whether component `index` is the recursive (`field/**`) component.
+    /// `false` for an out-of-range index.
+    pub fn is_recursive_component(&self, index: usize) -> bool {
+        self.components.get(index).is_some_and(|c| c.recursive)
     }
 
     /// Names of record fields that contribute to rendering this template — the
@@ -1325,6 +1359,43 @@ mod tests {
             field_names("${{ meta.publishedAt: YYYY/MM }}/${{ slug }}"),
             vec!["meta", "slug"]
         );
+    }
+
+    #[test]
+    fn render_component_partial_matches_plan_query_and_widens_on_absent_inputs() {
+        let mut eng = Engine::new().unwrap();
+        let t = Template::compile(
+            "${{ d: YYYY/MM }}/${{ kind }}-${{ (slug || '').toUpperCase() }}/${{ rest/** }}",
+            &mut eng,
+        )
+        .unwrap();
+        assert_eq!(t.component_count(), 4);
+        assert!(t.is_recursive_component(3));
+        assert!(!t.is_recursive_component(0));
+        assert!(!t.is_recursive_component(99));
+
+        // Partial query: the bucket and the expression render, `kind` is
+        // absent so component 2 is un-renderable, and so is `rest/**`.
+        let q = table(&[("d", dt("2026-03-09T12:00:00Z")), ("slug", Value::String("ab".into()))]);
+        let got: Vec<Option<String>> = (0..4)
+            .map(|i| t.render_component_partial(i, &q, &mut eng).unwrap())
+            .collect();
+        assert_eq!(got, vec![Some("2026".into()), Some("03".into()), None, None]);
+        let plan: Vec<Option<String>> =
+            t.plan_query(&q, &mut eng).unwrap().into_iter().map(|p| p.rendered).collect();
+        assert_eq!(got, plan);
+
+        // A non-date bucket value degrades (non-strict), it does not throw.
+        let q = table(&[("d", Value::Integer(5))]);
+        assert_eq!(t.render_component_partial(0, &q, &mut eng).unwrap(), None);
+
+        // An undefined identifier is un-renderable; any other throw is an error.
+        let t = Template::compile("${{ missing.x }}/${{ Date.now() }}", &mut eng).unwrap();
+        assert_eq!(t.render_component_partial(0, &table(&[]), &mut eng).unwrap(), None);
+        let err = t.render_component_partial(1, &table(&[]), &mut eng).unwrap_err();
+        assert!(matches!(err, Error::PathRenderFailed { .. }), "{err:?}");
+        let err = t.render_component_partial(2, &table(&[]), &mut eng).unwrap_err();
+        assert!(matches!(err, Error::PathRenderFailed { .. }), "{err:?}");
     }
 
     #[test]

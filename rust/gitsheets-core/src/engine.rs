@@ -24,9 +24,7 @@
 //!
 //! Each definition's snippets are compiled **once** (on sheet-open) into
 //! persistent callable handles held on the [`Engine`], then reused across every
-//! operation — never re-parsed per call. This mirrors the host's `node:vm`
-//! comparators being built once in `buildSorter` and the path template being
-//! parsed once per sheet.
+//! operation — never re-parsed per call.
 //!
 //! ## Thread-confinement
 //!
@@ -71,8 +69,9 @@ impl boa_engine::context::HostHooks for DeterministicHooks {
 /// a constructor for every argument-taking form (and `instanceof Date` keeps
 /// working — the replacement shares the intrinsic prototype).
 ///
-/// The Node binding's `node:vm` path applies the same contract with the same
-/// messages (`packages/gitsheets/src/sandbox.ts`) — keep the two in step.
+/// This is the only realm definition snippets run in: every binding (Node's
+/// exported `Template` and `Sheet.normalizeRecord` included) evaluates them
+/// here, never in its host runtime.
 const DENY_NONDETERMINISM: &str = r#"(() => {
   const D = Date;
   const why = ': gitsheets definition snippets must be a pure function of their inputs';
