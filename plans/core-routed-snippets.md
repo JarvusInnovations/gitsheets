@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: [engine-determinism]
 specs:
   - specs/rust-core.md
@@ -8,6 +8,7 @@ specs:
   - specs/api/sheet.md
   - specs/architecture.md
 issues: [373]
+pr: 378
 ---
 
 # Plan: route the Node Template and normalizeRecord through the core
@@ -134,18 +135,44 @@ build runs the changed core.
 
 ## Validation
 
-- [ ] `cargo test -p gitsheets-core` green, incl. new
+- [x] `cargo test -p gitsheets-core` green, incl. new
   `render_component_partial_*` and `standalone_sort_plan_*` tests
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean
-- [ ] napi `node --test` suite green against the rebuilt release addon
-- [ ] `npm run type-check`, `npm run build`, `npm test` (gitsheets +
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` clean
+- [x] napi `node --test` suite green against the rebuilt release addon
+- [x] `npm run type-check`, `npm run build`, `npm test` (gitsheets +
   gitsheets-axi) green against the local release addon
-- [ ] `rust/gitsheets-py` builds and its tests pass
-- [ ] no `sandbox.ts`, no non-test `node:vm` import under
+- [x] `rust/gitsheets-py` builds and its tests pass
+- [x] no `sandbox.ts`, no non-test `node:vm` import under
   `packages/gitsheets/src` (guard test)
-- [ ] write path ≡ `pathForRecord` / `normalizeRecord` regression tests pass
-- [ ] worker-thread render test passes
-- [ ] `sort-keys` removed from `packages/gitsheets` and the lockfile
+- [x] write path ≡ `pathForRecord` / `normalizeRecord` regression tests pass
+- [x] worker-thread render test passes
+- [x] `sort-keys` removed from `packages/gitsheets` and the lockfile
+
+## Notes
+
+- Verified at closeout (branch atop develop 0fb0bdd): `cargo test -p
+  gitsheets-core` 348 + 4 passed (5 ignored TZ inner tests, run via their
+  wrappers); `cargo clippy --workspace --all-targets -- -D warnings` clean;
+  `cargo build --workspace --all-targets` clean; release napi addon rebuilt
+  (`npm run build` in `rust/gitsheets-napi`), napi `node --test` 160/160;
+  `npm run build` and `npm run type-check` clean; `npm test` — gitsheets
+  612/612 (58 files; 26 in `snippet-determinism.test.ts`), gitsheets-axi
+  172/172, napi 160/160; `rust/gitsheets-py` wheel built with maturin and
+  `pytest` 127/127 with `CI=1 TZ=America/New_York` (the cross-binding host
+  leg now renders through the core-backed `Template`).
+- `rust-core.yml`'s cross-binding parity gate runs in CI on the PR, not
+  locally beyond the pytest run above.
+- `sort-keys` dropped: the core value comes back with sorted keys, and the
+  one ordering JS imposes (integer-like keys first) applied to `sort-keys`
+  output too, so no consumer-visible key order changed.
+- Marshal failures: the write path still throws the raw napi `Error`
+  (`code: 'InvalidArg'`) for an unrepresentable record; the new surfaces map
+  it to typed errors (`PathTemplateError` for rendering, `ValidationError`
+  for `normalizeRecord`) rather than leak a plain `Error`. Bringing `upsert`
+  in line is a follow-up.
+- The napi `test/engine-parity.mjs` and `collator-parity.mjs` suites still
+  use `node:vm` / V8 `localeCompare` as historical adoption baselines inside
+  the addon's own tests; nothing under `packages/gitsheets/src` does.
 
 ## Follow-ups
 
