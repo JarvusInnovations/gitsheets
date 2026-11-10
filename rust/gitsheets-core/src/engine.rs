@@ -34,7 +34,27 @@
 //! thread that owns the `Store`.
 
 use boa_engine::object::builtins::JsArray;
-use boa_engine::{js_string, Context, JsNativeErrorKind, JsValue as BoaValue, Source};
+use boa_engine::{js_string, Context, JsError, JsNativeErrorKind, JsValue as BoaValue, Source};
+
+/// A thrown value as a one-line message (`specs/rust-core.md` "Determinism
+/// rule for definition snippets"): `Kind: message` for an `Error` object,
+/// otherwise the value's engine display with whitespace runs collapsed. Never
+/// includes a source position or stack frames.
+fn thrown_message(err: &JsError, context: &mut Context) -> String {
+    if let Ok(native) = err.try_native(context) {
+        let message = native.message().trim();
+        return if message.is_empty() {
+            native.kind.to_string()
+        } else {
+            format!("{}: {message}", native.kind)
+        };
+    }
+    let raw = match err.as_opaque() {
+        Some(value) => value.display().to_string(),
+        None => err.to_string(),
+    };
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 use crate::error::{Error, Result};
 use crate::value::{Datetime, Value};
@@ -256,8 +276,8 @@ impl Engine {
     /// Compile a JS source that must evaluate to a **callable**, returning a
     /// reusable [`SnippetHandle`]. Callers pass the fully-wrapped source — e.g.
     /// `(record) => { with (record) { return (EXPR) } }` for a path expression,
-    /// or `(a, b) => { RULE }` for a sort comparator — exactly as the host's
-    /// `node:vm` path does. A snippet that fails to parse, or that doesn't
+    /// or `(a, b) => { RULE }` for a sort comparator. A snippet that fails to
+    /// parse, or that doesn't
     /// evaluate to a function, is a [`Error::ConfigInvalid`] (a definition
     /// problem surfaced at sheet-open, not per-record).
     pub fn compile(&mut self, source: &str) -> Result<SnippetHandle> {
@@ -343,7 +363,7 @@ impl Engine {
                     .try_native(&mut self.context)
                     .map(|n| n.kind.clone())
                     .ok();
-                let message = err.to_string();
+                let message = thrown_message(&err, &mut self.context);
                 match kind {
                     Some(JsNativeErrorKind::Reference) => {
                         Err(SnippetError::UndefinedReference(message))
@@ -410,7 +430,7 @@ impl Engine {
                     .try_native(&mut self.context)
                     .map(|n| n.kind.clone())
                     .ok();
-                let message = err.to_string();
+                let message = thrown_message(&err, &mut self.context);
                 match kind {
                     Some(JsNativeErrorKind::Reference) => {
                         Err(SnippetError::UndefinedReference(message))
@@ -486,7 +506,7 @@ impl Engine {
                     .try_native(&mut self.context)
                     .map(|n| n.kind.clone())
                     .ok();
-                let message = err.to_string();
+                let message = thrown_message(&err, &mut self.context);
                 match kind {
                     Some(JsNativeErrorKind::Reference) => {
                         Err(SnippetError::UndefinedReference(message))
