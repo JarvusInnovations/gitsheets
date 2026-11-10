@@ -53,8 +53,9 @@ Fancier partitioning falls back to the expression form.
 Semantics worth knowing:
 
 - **UTC always.** Buckets never consult the host timezone, so the same record
-  produces the same path on every machine. (The expression spelling
-  `getFullYear()` doesn't have this guarantee — it renders host-local dates.)
+  produces the same path on every machine. (Since v2.13 an expression's
+  `getFullYear()` reads UTC too, but only the bucket form prunes range
+  queries.)
 - **`YYYY/WW` is ISO-8601 week numbering**, and its year part is the ISO
   *week-based* year: 2027-01-01 belongs to ISO week 2026-W53 and renders as
   `2026/53`.
