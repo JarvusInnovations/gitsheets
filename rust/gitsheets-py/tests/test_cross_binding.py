@@ -261,7 +261,7 @@ def _local_time_parity_under(monkeypatch, tz):
         if os.environ.get("CI"):
             assert node["host"] is not None, "CI must build packages/gitsheets/dist for the host leg"
         if node["host"] is not None:
-            assert node["host"] == py, "host node:vm Template diverged from the core"
+            assert node["host"] == py, "the exported Node Template diverged from the core"
     finally:
         monkeypatch.delenv("TZ")
         time.tzset()
