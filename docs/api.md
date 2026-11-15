@@ -131,7 +131,7 @@ const store = await openStore(repo, {
 | `sheet.loadBody(record)` | `Promise<T>` — hydrate a body-less record (content-typed sheets) |
 | `sheet.refresh()` | Rebind this sheet's read snapshot to the default branch's current tree (out-of-band movement; own commits auto-refresh) |
 | `sheet.pathForRecord(record)` | `Promise<string>` — rendered path, no write |
-| `sheet.normalizeRecord(record)` | `Promise<T>` — canonical form, no write |
+| `sheet.normalizeRecord(record)` | `Promise<T>` — canonical form, no write: the core's normalization of the marshalled record (array order and key order exactly as a write commits them; `null` keys dropped; unrepresentable values throw `ValidationError`) |
 
 ### Writing
 
@@ -344,6 +344,8 @@ Consumers switch on `instanceof` or `err.code` — never on `err.message`.
 ## Path Template
 
 `Template.fromString(s)` — parse + cache. Most consumers don't construct `Template` directly; it's exposed for advanced use cases (path template diagnostics, custom queryTree integrations). `getFieldNames()` lists every field the template may read (expression identifiers included, best-effort); `getStaticFieldNames()` lists only the plain / recursive references and date-bucket base fields — the set the open-time [template check](path-templates.md#template-fields-must-be-schema-required) requires the schema to list.
+
+`render(record)` and `queryTree(tree, query)` run in the core — the same renderer a write uses, expression components included — so `Template.render`, `sheet.pathForRecord`, and the path an upsert commits always agree. Each compiled template holds its own engine; the `fromString` cache is per thread (a worker thread compiles its own).
 
 → [path templates doc](path-templates.md) · [`specs/behaviors/path-templates.md`](https://github.com/JarvusInnovations/gitsheets/blob/develop/specs/behaviors/path-templates.md)
 

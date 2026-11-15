@@ -51,8 +51,7 @@ export interface JsValidationIssue {
  * parsed and its expression components compiled into the embedded engine
  * **once**, then reused across the whole batch — the bulk path crosses the FFI
  * a single time. A render failure surfaces as a structured, typed
- * `PathTemplateError` (`path_render_failed` / `path_invalid_chars`). This is the
- * path-template half of the `node:vm` parity gate.
+ * `PathTemplateError` (`path_render_failed` / `path_invalid_chars`).
  */
 export declare function renderPathsBatch(template: string, records: Array<JsValue>): Array<string>
 /**
@@ -147,9 +146,8 @@ export interface JsConformanceReport {
 export declare function verifySheetContract(gitDir: string, treeRef: string, sheetName: string, configPath: string, openRoot: string, prefix: string, schema: string | JsValue, format?: string | undefined | null, mode?: string | undefined | null): JsConformanceReport
 /**
  * Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
- * run it once against `a`/`b`, returning its numeric result. The direct
- * comparator-parity entry point: a harness asserts this equals the same rule
- * run through `node:vm` for identical inputs.
+ * run it once against `a`/`b`, returning its numeric result — a direct probe
+ * of the definition realm a comparator runs in.
  */
 export declare function runComparator(rule: string, a: JsValue, b: JsValue): number
 /**
@@ -605,8 +603,10 @@ export declare function markdownRewriteH1(body: string, title: string): string
  * path template (and optional raw-JS sort comparator), **compiled once** at
  * construction and reused across every method call. Holds a `!Send` boa
  * context, so it is constructed and used on its owning JS thread — the
- * thread-confinement the spec requires. Exists to demonstrate the
- * compile-once-per-open / reuse-across-operations contract from JS.
+ * thread-confinement the spec requires (a JS worker thread builds its own).
+ * Backs the Node binding's exported `Template` (`render_path`, the
+ * per-component `render_component` behind `queryTree`, and the field-name
+ * lists), so no path-template expression runs in the host runtime.
  */
 export declare class CompiledDefinition {
   /**
@@ -628,6 +628,51 @@ export declare class CompiledDefinition {
    * not per `render_path` / `compare` call.
    */
   snippetCount(): number
+  /** Number of slash-separated components in the compiled template. */
+  componentCount(): number
+  /** Whether component `index` is the recursive (`field/**`) component. */
+  isRecursiveComponent(index: number): boolean
+  /**
+   * Render component `index` against a (possibly partial) query record in
+   * the core's non-strict query mode (`Template::render_component_partial`):
+   * the rendered segment, or `null` when the component is un-renderable
+   * against the query. An expression that throws (other than an undefined
+   * identifier) is `PathTemplateError(path_render_failed)`. The per-component
+   * step behind the Node `Template.queryTree` walk.
+   */
+  renderComponent(index: number, query: JsValue): string | null
+  /**
+   * The template's field names (`Template::get_field_names`): field and
+   * bucket references plus a best-effort identifier scan of expressions.
+   */
+  fieldNames(): Array<string>
+  /**
+   * The template's static field names (`Template::static_field_names`):
+   * plain / recursive references and date-bucket base fields only.
+   */
+  staticFieldNames(): Array<string>
+}
+/**
+ * A sheet definition's array-field sort plan compiled from its config TOML —
+ * the core's `SortPlan`, the exact normalization `Sheet::normalize_record`
+ * (and so every write) applies: declared array-field sorts (`sort = true` by
+ * the pinned ICU collator, directives and raw-JS comparators in the embedded
+ * engine), then the deep key sort. Lets the Node `Sheet.normalizeRecord` run
+ * the core's normalization without opening a sheet against a tree. Holds a
+ * `!Send` engine, so it lives on its owning JS thread.
+ */
+export declare class CompiledSortPlan {
+  /**
+   * Parse `config_toml` (a `.gitsheets/<name>.toml` document; `config_path`
+   * labels errors) and compile its sort rules once. A malformed config or a
+   * comparator that does not compile is `ConfigError(config_invalid)`.
+   */
+  constructor(configToml: string, configPath: string)
+  /**
+   * Normalize one record: array-field sorts, then the deep key sort. A
+   * comparator that throws is `ConfigError(config_invalid)` naming the field.
+   */
+  normalize(record: JsValue): JsValue
 }
 /**
  * A live transaction the JS boundary suite drives. Holds a `!Send`

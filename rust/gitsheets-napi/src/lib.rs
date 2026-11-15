@@ -34,6 +34,7 @@ use std::collections::HashSet;
 use gitsheets_core::engine::Engine;
 use gitsheets_core::index::{MultiIndex, UniqueIndex};
 use gitsheets_core::path_template::Template;
+use gitsheets_core::sheet::SortPlan;
 use gitsheets_core::query::{self, Filter, FilterPred};
 use gitsheets_core::validation::CompiledSchema;
 use gitsheets_core::{record, Datetime, Value};
@@ -379,8 +380,7 @@ fn issue_to_js(issue: gitsheets_core::ValidationIssue) -> JsValidationIssue {
 /// parsed and its expression components compiled into the embedded engine
 /// **once**, then reused across the whole batch — the bulk path crosses the FFI
 /// a single time. A render failure surfaces as a structured, typed
-/// `PathTemplateError` (`path_render_failed` / `path_invalid_chars`). This is the
-/// path-template half of the `node:vm` parity gate.
+/// `PathTemplateError` (`path_render_failed` / `path_invalid_chars`).
 #[napi]
 pub fn render_paths_batch(env: Env, template: String, records: Vec<JsValue>) -> Result<Vec<String>> {
     let mut engine = match Engine::new() {
@@ -659,9 +659,8 @@ pub fn verify_sheet_contract(
 }
 
 /// Compile a raw-JS sort comparator (`rule`, the body of `(a, b) => { … }`) and
-/// run it once against `a`/`b`, returning its numeric result. The direct
-/// comparator-parity entry point: a harness asserts this equals the same rule
-/// run through `node:vm` for identical inputs.
+/// run it once against `a`/`b`, returning its numeric result — a direct probe
+/// of the definition realm a comparator runs in.
 #[napi]
 pub fn run_comparator(env: Env, rule: String, a: JsValue, b: JsValue) -> Result<f64> {
     let mut engine = match Engine::new() {
@@ -707,8 +706,10 @@ pub fn collator_sort(strings: Vec<String>) -> Vec<String> {
 /// path template (and optional raw-JS sort comparator), **compiled once** at
 /// construction and reused across every method call. Holds a `!Send` boa
 /// context, so it is constructed and used on its owning JS thread — the
-/// thread-confinement the spec requires. Exists to demonstrate the
-/// compile-once-per-open / reuse-across-operations contract from JS.
+/// thread-confinement the spec requires (a JS worker thread builds its own).
+/// Backs the Node binding's exported `Template` (`render_path`, the
+/// per-component `render_component` behind `queryTree`, and the field-name
+/// lists), so no path-template expression runs in the host runtime.
 #[napi]
 pub struct CompiledDefinition {
     engine: Engine,
@@ -778,6 +779,86 @@ impl CompiledDefinition {
     #[napi]
     pub fn snippet_count(&self) -> u32 {
         self.engine.snippet_count() as u32
+    }
+
+    /// Number of slash-separated components in the compiled template.
+    #[napi]
+    pub fn component_count(&self) -> u32 {
+        self.template.component_count() as u32
+    }
+
+    /// Whether component `index` is the recursive (`field/**`) component.
+    #[napi]
+    pub fn is_recursive_component(&self, index: u32) -> bool {
+        self.template.is_recursive_component(index as usize)
+    }
+
+    /// Render component `index` against a (possibly partial) query record in
+    /// the core's non-strict query mode (`Template::render_component_partial`):
+    /// the rendered segment, or `null` when the component is un-renderable
+    /// against the query. An expression that throws (other than an undefined
+    /// identifier) is `PathTemplateError(path_render_failed)`. The per-component
+    /// step behind the Node `Template.queryTree` walk.
+    #[napi]
+    pub fn render_component(&mut self, env: Env, index: u32, query: JsValue) -> Result<Option<String>> {
+        self.template
+            .render_component_partial(index as usize, &query.0, &mut self.engine)
+            .map_err(|err| raise_core_error(&env, &err))
+    }
+
+    /// The template's field names (`Template::get_field_names`): field and
+    /// bucket references plus a best-effort identifier scan of expressions.
+    #[napi]
+    pub fn field_names(&self) -> Vec<String> {
+        self.template.get_field_names()
+    }
+
+    /// The template's static field names (`Template::static_field_names`):
+    /// plain / recursive references and date-bucket base fields only.
+    #[napi]
+    pub fn static_field_names(&self) -> Vec<String> {
+        self.template.static_field_names()
+    }
+}
+
+/// A sheet definition's array-field sort plan compiled from its config TOML —
+/// the core's `SortPlan`, the exact normalization `Sheet::normalize_record`
+/// (and so every write) applies: declared array-field sorts (`sort = true` by
+/// the pinned ICU collator, directives and raw-JS comparators in the embedded
+/// engine), then the deep key sort. Lets the Node `Sheet.normalizeRecord` run
+/// the core's normalization without opening a sheet against a tree. Holds a
+/// `!Send` engine, so it lives on its owning JS thread.
+#[napi]
+pub struct CompiledSortPlan {
+    engine: Engine,
+    plan: SortPlan,
+}
+
+#[napi]
+impl CompiledSortPlan {
+    /// Parse `config_toml` (a `.gitsheets/<name>.toml` document; `config_path`
+    /// labels errors) and compile its sort rules once. A malformed config or a
+    /// comparator that does not compile is `ConfigError(config_invalid)`.
+    #[napi(constructor)]
+    pub fn new(env: Env, config_toml: String, config_path: String) -> Result<Self> {
+        let compiled = (|| {
+            let raw = gitsheets_core::canonical::parse(&config_toml)?;
+            let config = gitsheets_core::config::parse_config(&raw, &config_path)?;
+            let mut engine = Engine::new()?;
+            let plan = SortPlan::compile(&config, &mut engine)?;
+            Ok::<_, gitsheets_core::Error>(CompiledSortPlan { engine, plan })
+        })();
+        compiled.map_err(|err| raise_core_error(&env, &err))
+    }
+
+    /// Normalize one record: array-field sorts, then the deep key sort. A
+    /// comparator that throws is `ConfigError(config_invalid)` naming the field.
+    #[napi]
+    pub fn normalize(&mut self, env: Env, record: JsValue) -> Result<JsValue> {
+        self.plan
+            .apply(&record.0, &mut self.engine)
+            .map(JsValue)
+            .map_err(|err| raise_core_error(&env, &err))
     }
 }
 

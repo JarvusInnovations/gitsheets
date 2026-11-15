@@ -91,11 +91,13 @@ Throws `NotFoundError` if the underlying blob is missing. Throws `TypeError` if 
 
 ### `sheet.pathForRecord(record)`
 
-Returns `Promise<string>` — the path the sheet's template would render this record to. Does not write.
+Returns `Promise<string>` — the path the sheet's template would render this record to (no extension). Does not write. Rendered by the core exactly as a write renders it ([behaviors/path-templates.md § Rendering](../behaviors/path-templates.md#rendering)), so the result is the path an upsert of the same record would commit to; throws `PathTemplateError` in exactly the cases a write would.
 
 ### `sheet.normalizeRecord(record)`
 
-Returns `Promise<T>` — the record with canonical normalization applied (sorted keys deep, array-field sorts per [behaviors/normalization.md](../behaviors/normalization.md)). Does not write, does not validate.
+Returns `Promise<T>` — the record with canonical normalization applied (sorted keys deep, array-field sorts per [behaviors/normalization.md](../behaviors/normalization.md)). Does not write, does not validate (no JSON Schema, no consumer validator).
+
+It runs the core's normalization — the same code the write path applies — on the record as marshalled into the core, and returns the core's value marshalled back. So the result is exactly the value an upsert would serialize: array order (`sort = true` by the pinned ICU collator, directives and raw-JS comparators in the core engine) and key order match the committed bytes. Marshalling applies both ways ([normalization.md § Normalization runs on the marshalled record](../behaviors/normalization.md#normalization-runs-on-the-marshalled-record)): the result is a fresh plain object, `null` / `undefined` keys are absent from it, and a record the core cannot represent — including a `null` / `undefined` record itself — throws `ValidationError` (`validation_failed`, no issues) naming the marshal failure. A raw-JS comparator that throws is `ConfigError` (`config_invalid`) naming the field, as on write.
 
 ## Writing
 

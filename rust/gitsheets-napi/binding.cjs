@@ -149,6 +149,9 @@ module.exports = {
   // Stateful compiled definition (compile-once / reuse). Raw class — its
   // structured errors carry `gitsheetsClass`; map with `mapCoreError` if needed.
   CompiledDefinition: addon.CompiledDefinition,
+  // A sheet config's compiled sort plan — the core's normalization
+  // (`normalize(record)`). Raw class, like CompiledDefinition.
+  CompiledSortPlan: addon.CompiledSortPlan,
   // Record CRUD over the holo-tree substrate (batch-first). Substrate / record
   // parse failures surface as typed core errors.
   recordRead: wrap(addon.recordRead),

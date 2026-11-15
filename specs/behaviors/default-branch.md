@@ -39,6 +39,8 @@ file the user names) and `merge --install-driver` (`.gitattributes`).
   branch of a transaction
 - [behaviors/push-sync.md](push-sync.md) — the branch `sync` and the daemon
   default to
+- [api/python-binding.md](../api/python-binding.md) — `resolve_binding` and
+  the defaults that follow it
 
 ## Details
 
@@ -432,10 +434,53 @@ committing them.
 
 ### Python binding
 
-The Python binding's batch surface takes an explicit `tree_ref` (reads) and
-`parent` (writes) on every call and does not consult the binding —
-`GITSHEETS_BRANCH` and `gitsheets.branch` are not read there. Callers pass
-`refs/heads/<branch>` themselves.
+The Python binding ([api/python-binding.md](../api/python-binding.md#default-branch-binding))
+honors the same binding with the same tiers, so a Python writer in a bound
+clone commits where `git sheet` does. Its batch-first surface has no
+`openRepo`, so the resolution is a function, `resolve_binding(git_dir,
+*, branch, submodule, stage_pointer)`, and the defaults that follow it are
+the arguments a batch call can leave out:
+
+- **Same resolution.** `branch=` / `submodule=` are the option tier, and
+  `False` is the explicit opt-out (`null` in Node, `--no-branch` /
+  `--no-submodule` on the CLI); omitting them (`None`) resolves
+  `GITSHEETS_*` → `gitsheets.*` git config → the default. Every rule under
+  [Resolution](#resolution) and [Submodule mode](#submodule-mode) applies
+  unchanged: a tag, commit, or remote-only branch is `ConfigError`
+  (`config_invalid`), an unborn branch is allowed, empty values are unset,
+  submodule paths normalize the same way, and the branch tiers resolve
+  inside the submodule. Config is read with `git config` against the
+  repository's git dir, under the same environment hygiene as Node (`GIT_DIR`
+  pinned, the redirecting variables cleared), so includes and the
+  local-over-global layering are git's own.
+- **Parity.** The same clone, environment, and git config bind identically
+  from both bindings: the same git dir, branch (or detached `None` / `null`),
+  and submodule path, and the same error class and code for a refused
+  binding. A cross-binding test asserts it.
+- **Defaults follow the binding.** `transact` with no `parent` starts from
+  the default branch's tip and advances it, bootstrapping an unborn default
+  branch with a root commit exactly as `repo.transact` does (a handler that
+  stages nothing commits nothing; a different existing `branch` is refused
+  while the default branch is unborn). Every read that takes a `tree_ref`
+  accepts `None` for the default branch's tree (the empty tree when it is
+  unborn, `HEAD`'s tree when bound to a detached `HEAD`), and `tag_set`
+  with no `target` tags the default branch's tip. In submodule mode a
+  default-started commit on a detached `HEAD` advances `HEAD` with the same
+  compare-and-swap, and `stage_pointer` stages the moved gitlink with the
+  same `pointer_stage_failed` contract.
+- **An explicit ref keeps its meaning.** A call that names its ref
+  (`tree_ref='HEAD'`, `parent='refs/heads/main'`) resolves it in the
+  repository it was given, as before. A plain-string `git_dir` is resolved
+  through the binding only when the call takes a default; a `Binding`
+  (what `resolve_binding` returns, itself a `str` holding the bound git dir)
+  always addresses the bound repository. Resolving per call costs a few
+  `git` subprocesses, so a long-lived process resolves once and passes the
+  `Binding`, the equivalent of Node's resolve-once-at-`openRepo`.
+- **Not mirrored.** `at` (a per-invocation pin) has no Python tier: pass
+  the gitlinked commit as an explicit `tree_ref`. `sync_branch` and
+  `merge_sheets` already take their branch explicitly and stage no pointer;
+  there is no push daemon. The Python surface has no live sheets, so there
+  is no rebind or auto-refresh to follow the branch.
 
 ## Principles
 

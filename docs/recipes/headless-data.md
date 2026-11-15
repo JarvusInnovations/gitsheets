@@ -334,9 +334,26 @@ existing config from the default branch and commit the new one there.
 
 ## Python
 
-The Python binding's batch functions take an explicit `tree_ref` on every
-call (`record_query(git_dir, tree_ref, …)`). `gitsheets.branch` and
-`GITSHEETS_BRANCH` do not apply there, and neither do `gitsheets.submodule` and
-`GITSHEETS_SUBMODULE`. Pass `'refs/heads/data'` (or the tree it resolves to)
-yourself, with the submodule's git dir (`.git/modules/data`) as `git_dir` in
-submodule mode.
+The Python binding reads the same binding. `gitsheets.resolve_binding()`
+resolves `branch=` / `submodule=` → `GITSHEETS_BRANCH` / `GITSHEETS_SUBMODULE`
+→ `gitsheets.branch` / `gitsheets.submodule` → `HEAD`, exactly as `openRepo`
+does, with `False` as the opt-out. In a bound clone, `transact` with no
+`parent` commits to the data branch (or the data submodule, advancing a
+detached `HEAD` and honoring `gitsheets.stagePointer`), and reads given
+`tree_ref=None` read it:
+
+```python
+import time
+
+import gitsheets
+
+repo = gitsheets.resolve_binding(".git")   # the clone's binding
+rows = gitsheets.record_query(repo, None, "people", "${{ slug }}", {})
+with gitsheets.transact(repo, "people: add jane", int(time.time())) as tx:
+    tx.open_sheet("people", ".gitsheets/people.toml")
+    tx.upsert("people", {"slug": "jane"})
+```
+
+An explicit ref still means what it says: `record_query(git_dir, "HEAD", …)`
+reads `HEAD`. `at` has no Python equivalent; pass the gitlinked commit as the
+`tree_ref`.

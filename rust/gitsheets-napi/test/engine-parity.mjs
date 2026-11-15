@@ -118,3 +118,39 @@ test('PROBE: localeCompare boundary (Intl) — reported, not gating', () => {
   }
   console.log(`  -> ${diverged}/${pairs.length} diverged (informational; not a gate)`);
 });
+
+// The surface the Node `Template` wrapper and `Sheet.normalizeRecord` use
+// (#373): per-component partial render, field-name lists, and the core's
+// SortPlan compiled from config text.
+test('CompiledDefinition: per-component partial render and field names', () => {
+  const def = new CompiledDefinition('${{ d: YYYY/MM }}/${{ kind }}-${{ slug.toUpperCase() }}/${{ rest/** }}');
+  assert.equal(def.componentCount(), 4);
+  assert.deepEqual(
+    [0, 1, 2, 3].map((i) => def.isRecursiveComponent(i)),
+    [false, false, false, true],
+  );
+  const q = { d: new Date('2026-03-09T12:00:00Z'), slug: 'ab' };
+  assert.deepEqual(
+    [0, 1, 2, 3].map((i) => def.renderComponent(i, q)),
+    ['2026', '03', null, null],
+  );
+  assert.equal(def.renderComponent(2, { kind: 'k', slug: 'ab' }), 'k-AB');
+  assert.deepEqual(def.fieldNames(), ['d', 'kind', 'slug', 'rest']);
+  assert.deepEqual(def.staticFieldNames(), ['d', 'kind', 'rest']);
+  assert.throws(() => new CompiledDefinition('${{ Date.now() }}').renderComponent(0, {}), /Date\.now\(\)/);
+});
+
+test('CompiledSortPlan: the core normalization from config text', () => {
+  const { CompiledSortPlan } = require('../binding.cjs');
+  const plan = new CompiledSortPlan(
+    "[gitsheet]\npath = '${{ slug }}'\n[gitsheet.fields.tags]\nsort = true\n[gitsheet.fields.nums]\nsort = 'return b - a;'\n",
+    '.gitsheets/x.toml',
+  );
+  const out = plan.normalize({ slug: 'x', nums: [1, 3, 2], tags: ['b', 'a10', 'a9'], z: { b: 1, a: 2 }, gone: null });
+  assert.deepEqual(out, { nums: [3, 2, 1], slug: 'x', tags: ['a9', 'a10', 'b'], z: { a: 2, b: 1 } });
+  assert.deepEqual(Object.keys(out), ['nums', 'slug', 'tags', 'z']);
+  assert.throws(
+    () => new CompiledSortPlan("[gitsheet]\npath = 'x'\n[gitsheet.fields.n]\nsort = 'return a - ;'\n", 'c.toml'),
+    (err) => err.code === 'config_invalid' && /"n"/.test(err.message),
+  );
+});

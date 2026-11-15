@@ -1,11 +1,11 @@
 //! Path-template parsing + rendering — record → on-disk path.
 //!
-//! A behavior-preserving Rust port of the host renderer
-//! (`packages/gitsheets/src/path-template/index.ts`), per
+//! The one path-template implementation, per
 //! [`specs/behaviors/path-templates.md`](../../../specs/behaviors/path-templates.md).
 //! The template determines where each record's file lives in the data tree, so
 //! it is bytes-determining and belongs in the core (every binding must render
-//! the same path for the same record).
+//! the same path for the same record). The Node binding's exported `Template`
+//! is a wrapper over this module, not a second renderer.
 //!
 //! ## What's native vs engine-backed
 //!
@@ -19,10 +19,12 @@
 //! - **Expression** components (`${{ publishedAt.getUTCFullYear() }}`) are the
 //!   escape hatch: compiled once into the embedded [`Engine`] and evaluated per
 //!   record. This is where partition derivations beyond the closed bucket enum
-//!   live, and it is the path-template half of the `node:vm` parity gate.
+//!   live.
 //!
 //! Query-tree traversal/pruning (the *other* job of a parsed template) is a
-//! record-engine concern and lands downstream; this module owns parse + render.
+//! record-engine concern ([`crate::query`]); this module owns parse + render
+//! and the per-component query planning ([`Template::plan_query`],
+//! [`Template::render_component_partial`]).
 
 use chrono::{Datelike, NaiveDate};
 
@@ -312,6 +314,38 @@ impl Template {
         Ok(Some(out))
     }
 
+    /// Render component `index` against a (possibly partial) `query`, in the
+    /// non-strict query mode [`Template::plan_query`] uses: `Ok(None)` when the
+    /// component is un-renderable against the query (a field or expression it
+    /// needs is absent, or a date-bucket field holds a non-date value) — the
+    /// walk then expands across every subtree at that level — and `Err` only
+    /// for a genuine expression throw (`path_render_failed`). Invalid-char
+    /// rejection is not applied, as in `plan_query`. This is the per-component
+    /// step of a binding's own tree walk (the Node `Template.queryTree`); it
+    /// does not plan range bounds. An out-of-range `index` is
+    /// [`Error::PathRenderFailed`].
+    pub fn render_component_partial(
+        &self,
+        index: usize,
+        query: &Value,
+        engine: &mut Engine,
+    ) -> Result<Option<String>> {
+        let component = self.components.get(index).ok_or_else(|| Error::PathRenderFailed {
+            message: format!(
+                "component index {index} is out of range for \"{}\" ({} components)",
+                self.source,
+                self.components.len()
+            ),
+        })?;
+        self.render_component(component, query, engine, false)
+    }
+
+    /// Whether component `index` is the recursive (`field/**`) component.
+    /// `false` for an out-of-range index.
+    pub fn is_recursive_component(&self, index: usize) -> bool {
+        self.components.get(index).is_some_and(|c| c.recursive)
+    }
+
     /// Names of record fields that contribute to rendering this template — the
     /// query auto-derivation set consumers use to identify a record by its
     /// rendered path (e.g. `Sheet.patch`'s query derivation in the CLI). A
@@ -470,10 +504,11 @@ fn extract_identifiers(source: &str) -> Vec<String> {
     out
 }
 
-/// Native stringification of a field value, matching the host `stringifyValue`:
-/// strings as-is; numbers/booleans via their JS `String(...)` form; everything
-/// that has no unambiguous path representation (`null`/absent, arrays, tables,
-/// and — see the divergence note in the plan — datetimes) → `None`.
+/// Native stringification of a field value for a path segment
+/// (`specs/behaviors/path-templates.md` "Rendering"): strings as-is; integers
+/// in decimal; floats by ECMAScript `Number::toString` ([`format_js_number`]);
+/// booleans as `true` / `false`; everything with no unambiguous path form
+/// (absent, arrays, tables, datetimes) → `None` (un-renderable).
 fn field_to_string(record: &Value, name: &str) -> Option<String> {
     let Value::Table(map) = record else {
         return None;
@@ -484,22 +519,51 @@ fn field_to_string(record: &Value, name: &str) -> Option<String> {
         Some(Value::Integer(i)) => Some(i.to_string()),
         Some(Value::Float(f)) => Some(format_js_number(*f)),
         Some(Value::Boolean(b)) => Some(if *b { "true".into() } else { "false".into() }),
-        // Datetime / Array / Table have no native path form here (a host Date
-        // field would stringify to a locale/TZ-dependent string — see the plan's
-        // enumerated divergence; nobody uses a raw Date as a path segment).
+        // Datetime / Array / Table have no portable path form; a date goes in
+        // a path through a bucket reference or an expression.
         Some(_) => None,
     }
 }
 
-/// Format an f64 the way JS `String(n)` does for the common cases: an integral
-/// float prints without a decimal (`1.0` → `"1"`), `1.5` → `"1.5"`. (Exotic
-/// scientific-notation thresholds differ from V8; an edge for a float used
-/// directly as a path segment, which is itself unusual.)
+/// ECMAScript `Number::toString(x)` (radix 10), so a float field renders the
+/// same string an expression `${{ String(x) }}` would — and two distinct
+/// floats never collapse to one path segment. Rust's `{:e}` formatting gives
+/// the shortest round-tripping digits (the spec's `k` digits of `s`); this
+/// lays them out by the spec's positional / exponential rules.
 fn format_js_number(f: f64) -> String {
-    if f.is_finite() && f.fract() == 0.0 && f.abs() < 1e21 {
-        format!("{}", f as i64)
+    if f.is_nan() {
+        return "NaN".into();
+    }
+    if f == 0.0 {
+        return "0".into(); // +0 and -0 alike
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+    }
+    if f < 0.0 {
+        return format!("-{}", format_js_number(-f));
+    }
+    // "d.ddddde±x" → the digit string (k digits) and n = x + 1, so that
+    // f = 0.<digits> × 10^n.
+    let sci = format!("{f:e}");
+    let (mantissa, exp) = sci.split_once('e').expect("{:e} has an exponent");
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let k = digits.len() as i32;
+    let n = exp.parse::<i32>().expect("{:e} exponent is an integer") + 1;
+    if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
     } else {
-        format!("{f}")
+        let e = n - 1;
+        let sign = if e < 0 { '-' } else { '+' };
+        if k == 1 {
+            format!("{digits}e{sign}{}", e.abs())
+        } else {
+            format!("{}.{}e{sign}{}", &digits[..1], &digits[1..], e.abs())
+        }
     }
 }
 
@@ -1325,6 +1389,102 @@ mod tests {
             field_names("${{ meta.publishedAt: YYYY/MM }}/${{ slug }}"),
             vec!["meta", "slug"]
         );
+    }
+
+    #[test]
+    fn a_thrown_value_is_reported_on_one_line_without_frames() {
+        let mut eng = Engine::new().unwrap();
+        for (body, expected) in [
+            (r#"throw "nope""#, r#"failed: "nope""#),
+            ("throw { a: 1, b: [2] }", "failed: { a: 1, b: Array(1) }"),
+            (r#"throw new Error("boom")"#, "failed: Error: boom"),
+            (r#"throw new RangeError("")"#, "failed: RangeError"),
+            ("return Date.now()", "failed: TypeError: Date.now() is not available"),
+        ] {
+            let t = Template::compile(&format!("${{{{ (() => {{ {body} }})() }}}}"), &mut eng).unwrap();
+            let Err(Error::PathRenderFailed { message }) = t.render(&table(&[]), &mut eng) else {
+                panic!("{body} rendered");
+            };
+            assert!(!message.contains('\n'), "{message:?}");
+            assert!(!message.contains(" at "), "{message:?}");
+            assert!(message.contains(expected), "{message:?} lacks {expected:?}");
+        }
+    }
+
+    #[test]
+    fn float_fields_render_as_ecmascript_number_to_string() {
+        let cases: &[(f64, &str)] = &[
+            (1.5, "1.5"),
+            (9_007_199_254_740_992.0, "9007199254740992"), // 2^53
+            (9_223_372_036_854_775_808.0, "9223372036854776000"), // 2^63
+            (1e19, "10000000000000000000"),
+            (1e20, "100000000000000000000"),
+            (999_999_999_999_999_900_000.0, "999999999999999900000"), // just under 1e21
+            (-1e20, "-100000000000000000000"),
+            (-9_223_372_036_854_775_808.0, "-9223372036854776000"),
+            (-0.0, "0"),
+            (1e21, "1e+21"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (0.000001, "0.000001"),
+            (1e-7, "1e-7"),
+            (1.5e-7, "1.5e-7"),
+            (5e-324, "5e-324"),
+            (0.1 + 0.2, "0.30000000000000004"),
+            (123.456, "123.456"),
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
+            (f64::NAN, "NaN"),
+        ];
+        let mut eng = Engine::new().unwrap();
+        let field = Template::compile("${{ x }}", &mut eng).unwrap();
+        let expr = Template::compile("${{ String(x) }}", &mut eng).unwrap();
+        for (f, expected) in cases {
+            let r = table(&[("x", Value::Float(*f))]);
+            assert_eq!(field.render(&r, &mut eng).unwrap(), *expected, "{f:?}");
+            // The engine's own ToString is the oracle.
+            assert_eq!(expr.render(&r, &mut eng).unwrap(), *expected, "String({f:?})");
+        }
+        // Distinct floats in the old saturating range get distinct paths.
+        let a = field.render(&table(&[("x", Value::Float(1e19))]), &mut eng).unwrap();
+        let b = field.render(&table(&[("x", Value::Float(1e20))]), &mut eng).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn render_component_partial_matches_plan_query_and_widens_on_absent_inputs() {
+        let mut eng = Engine::new().unwrap();
+        let t = Template::compile(
+            "${{ d: YYYY/MM }}/${{ kind }}-${{ (slug || '').toUpperCase() }}/${{ rest/** }}",
+            &mut eng,
+        )
+        .unwrap();
+        assert_eq!(t.component_count(), 4);
+        assert!(t.is_recursive_component(3));
+        assert!(!t.is_recursive_component(0));
+        assert!(!t.is_recursive_component(99));
+
+        // Partial query: the bucket and the expression render, `kind` is
+        // absent so component 2 is un-renderable, and so is `rest/**`.
+        let q = table(&[("d", dt("2026-03-09T12:00:00Z")), ("slug", Value::String("ab".into()))]);
+        let got: Vec<Option<String>> = (0..4)
+            .map(|i| t.render_component_partial(i, &q, &mut eng).unwrap())
+            .collect();
+        assert_eq!(got, vec![Some("2026".into()), Some("03".into()), None, None]);
+        let plan: Vec<Option<String>> =
+            t.plan_query(&q, &mut eng).unwrap().into_iter().map(|p| p.rendered).collect();
+        assert_eq!(got, plan);
+
+        // A non-date bucket value degrades (non-strict), it does not throw.
+        let q = table(&[("d", Value::Integer(5))]);
+        assert_eq!(t.render_component_partial(0, &q, &mut eng).unwrap(), None);
+
+        // An undefined identifier is un-renderable; any other throw is an error.
+        let t = Template::compile("${{ missing.x }}/${{ Date.now() }}", &mut eng).unwrap();
+        assert_eq!(t.render_component_partial(0, &table(&[]), &mut eng).unwrap(), None);
+        let err = t.render_component_partial(1, &table(&[]), &mut eng).unwrap_err();
+        assert!(matches!(err, Error::PathRenderFailed { .. }), "{err:?}");
+        let err = t.render_component_partial(2, &table(&[]), &mut eng).unwrap_err();
+        assert!(matches!(err, Error::PathRenderFailed { .. }), "{err:?}");
     }
 
     #[test]

@@ -124,12 +124,8 @@ pub struct Sheet {
     pub(crate) base: String,
     pub(crate) template: Template,
     pub(crate) schema: Option<CompiledSchema>,
-    /// Per-field array-sort plan, in config-field order. `All(false)` rules have
-    /// no entry (a no-op). Declarative `sort = true` ([`SortKind::Locale`]) is the
-    /// **native ICU collator** ([`crate::collator`]) — it does NOT route through
-    /// the boa engine; only raw-JS / relational-directive comparators
-    /// ([`SortKind::Engine`]) do.
-    sort_plan: Vec<(String, SortKind)>,
+    /// The array-field sort plan, compiled into `engine` — see [`SortPlan`].
+    sort_plan: SortPlan,
     indexes: Vec<IndexDef>,
     index_cache: Option<IndexCache>,
     pub(crate) engine: Engine,
@@ -235,29 +231,8 @@ impl Sheet {
             None => None,
         };
 
-        // Build the array-field sort plan once, in config-field order. `sort =
-        // true` is native ICU collation (no engine snippet); raw-JS and relational
-        // directives compile to a boa comparator; `sort = false` is a no-op.
-        let mut sort_plan: Vec<(String, SortKind)> = Vec::new();
-        for (field, fcfg) in &config.fields {
-            match &fcfg.sort {
-                Some(SortRule::All(true)) => {
-                    sort_plan.push((field.clone(), SortKind::Locale));
-                }
-                Some(SortRule::All(false)) | None => {}
-                Some(rule) => {
-                    if let Some(src) = comparator_source(rule) {
-                        let handle = engine.compile(&src).map_err(|e| Error::ConfigInvalid {
-                            message: format!(
-                                "array-field sort comparator for field {field:?} {}",
-                                e.message().trim_start_matches("embedded snippet ")
-                            ),
-                        })?;
-                        sort_plan.push((field.clone(), SortKind::Engine(handle)));
-                    }
-                }
-            }
-        }
+        // Build the array-field sort plan once, in config-field order.
+        let sort_plan = SortPlan::compile(&config, &mut engine)?;
 
         Ok(Sheet {
             name: name.to_string(),
@@ -323,18 +298,7 @@ impl Sheet {
     /// Apply canonical normalization — array-field sorts then deep key sort —
     /// without validating or writing. Matches `Sheet.normalizeRecord`.
     pub fn normalize_record(&mut self, record: &Value) -> Result<Value> {
-        let mut out = record.clone();
-        if let Value::Table(map) = &mut out {
-            for (field, kind) in &self.sort_plan {
-                if let Some(Value::Array(items)) = map.get_mut(field) {
-                    match kind {
-                        SortKind::Locale => collator::sort_array(items),
-                        SortKind::Engine(handle) => sort_array(&mut self.engine, *handle, field, items)?,
-                    }
-                }
-            }
-        }
-        Ok(canonical::normalize(&out))
+        self.sort_plan.apply(record, &mut self.engine)
     }
 
     // ── two-phase upsert ────────────────────────────────────────────────────
@@ -1001,15 +965,81 @@ impl Sheet {
     }
 }
 
-// ── comparator source generation (matches the JS `buildSorter`) ───────────────
+// ── the array-field sort plan ────────────────────────────────────────────────
+
+/// A sheet definition's array-field sort plan, compiled once from its
+/// [`SheetConfig`] into an [`Engine`] and applied by [`SortPlan::apply`] — the
+/// whole of canonical record normalization (array-field sorts, then the deep
+/// key sort). [`Sheet`] holds one; a binding that needs `normalizeRecord`
+/// without opening a sheet against a tree (the Node `Sheet.normalizeRecord`)
+/// compiles one from the same config, so both run exactly this code.
+pub struct SortPlan {
+    /// Per-field rules in config-field order. `All(false)` rules have no
+    /// entry (a no-op). Declarative `sort = true` ([`SortKind::Locale`]) is
+    /// the **native ICU collator** ([`crate::collator`]) — it does NOT route
+    /// through the boa engine; only raw-JS / relational-directive comparators
+    /// ([`SortKind::Engine`]) do.
+    entries: Vec<(String, SortKind)>,
+}
+
+impl SortPlan {
+    /// Compile `config`'s `[gitsheet.fields.<f>] sort` rules: `sort = true` is
+    /// native ICU collation (no engine snippet); raw-JS and relational
+    /// directives compile to boa comparators in `engine`; `sort = false` is a
+    /// no-op. A comparator that does not compile is [`Error::ConfigInvalid`]
+    /// naming the field.
+    pub fn compile(config: &SheetConfig, engine: &mut Engine) -> Result<Self> {
+        let mut entries: Vec<(String, SortKind)> = Vec::new();
+        for (field, fcfg) in &config.fields {
+            match &fcfg.sort {
+                Some(SortRule::All(true)) => {
+                    entries.push((field.clone(), SortKind::Locale));
+                }
+                Some(SortRule::All(false)) | None => {}
+                Some(rule) => {
+                    if let Some(src) = comparator_source(rule) {
+                        let handle = engine.compile(&src).map_err(|e| Error::ConfigInvalid {
+                            message: format!(
+                                "array-field sort comparator for field {field:?} {}",
+                                e.message().trim_start_matches("embedded snippet ")
+                            ),
+                        })?;
+                        entries.push((field.clone(), SortKind::Engine(handle)));
+                    }
+                }
+            }
+        }
+        Ok(SortPlan { entries })
+    }
+
+    /// Canonical normalization of `record`: each declared array-field sort
+    /// (top-level array fields), then the deep key sort — without validating
+    /// or writing. `engine` must be the engine the plan was compiled into. A
+    /// comparator that throws is [`Error::ConfigInvalid`] naming the field.
+    pub fn apply(&self, record: &Value, engine: &mut Engine) -> Result<Value> {
+        let mut out = record.clone();
+        if let Value::Table(map) = &mut out {
+            for (field, kind) in &self.entries {
+                if let Some(Value::Array(items)) = map.get_mut(field) {
+                    match kind {
+                        SortKind::Locale => collator::sort_array(items),
+                        SortKind::Engine(handle) => sort_array(engine, *handle, field, items)?,
+                    }
+                }
+            }
+        }
+        Ok(canonical::normalize(&out))
+    }
+}
+
+// ── comparator source generation ─────────────────────────────────────────────
 
 /// Generate the comparator JS source for an **engine** sort rule (raw JS or a
 /// relational `{field: dir}` / `[field]` directive), or `None` for the rules that
 /// never reach the engine. `All(true)` (declarative locale sort) is native ICU
 /// collation ([`crate::collator`]), so it returns `None` here and must not be
-/// engine-compiled; `All(false)` is a no-op. Mirrors `buildSorter` in `sheet.ts`
-/// for the cases that *do* run JS, so the engine runs the same comparator the
-/// host's `node:vm` path would.
+/// engine-compiled; `All(false)` is a no-op. The only comparator source
+/// generator: every binding normalizes through [`SortPlan`].
 fn comparator_source(rule: &SortRule) -> Option<String> {
     match rule {
         // Locale sort is native (handled in `Sheet::open` → `SortKind::Locale`);
@@ -1440,6 +1470,64 @@ mod tests {
             })
             .collect();
         assert_eq!(got, vec!["alpha", "bravo", "charlie"]);
+    }
+
+    #[test]
+    fn standalone_sort_plan_normalizes_exactly_like_the_open_sheet() {
+        // A binding compiles a SortPlan from the config text alone (no tree);
+        // it must produce the same value the opened Sheet does.
+        let text = r#"
+[gitsheet]
+root = "people"
+path = "${{ slug }}"
+
+[gitsheet.fields.tags]
+sort = true
+
+[gitsheet.fields.roles]
+sort = { rank = "DESC", name = "ASC" }
+
+[gitsheet.fields.nums]
+sort = "return b - a;"
+
+[gitsheet.fields.kept]
+sort = false
+"#;
+        let raw = canonical::parse(text).unwrap();
+        let cfg = config::parse_config(&raw, "people.toml").unwrap();
+        let mut eng = Engine::new().unwrap();
+        let plan = SortPlan::compile(&cfg, &mut eng).unwrap();
+
+        let (_d, repo) = temp_repo();
+        let mut tree = tree_with_config(&tctx(&repo), raw.clone());
+        let mut sheet = open(&tctx(&repo), &mut tree);
+
+        let role = |rank: i64, name: &str| rec(&[("rank", Value::Integer(rank)), ("name", s(name))]);
+        let r = rec(&[
+            ("slug", s("jane")),
+            ("tags", Value::Array(vec![s("b"), s("É"), s("a10"), s("a9"), s("e")])),
+            ("roles", Value::Array(vec![role(1, "z"), role(2, "b"), role(2, "a")])),
+            ("nums", Value::Array(vec![Value::Integer(1), Value::Integer(3), Value::Integer(2)])),
+            ("kept", Value::Array(vec![s("z"), s("a")])),
+            ("nested", rec(&[("z", Value::Integer(1)), ("a", Value::Integer(2))])),
+        ]);
+        let standalone = plan.apply(&r, &mut eng).unwrap();
+        assert_eq!(standalone, sheet.normalize_record(&r).unwrap());
+        let Value::Table(m) = &standalone else { panic!() };
+        assert_eq!(
+            m.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["kept", "nested", "nums", "roles", "slug", "tags"]
+        );
+        assert_eq!(m["tags"], Value::Array(vec![s("a9"), s("a10"), s("b"), s("É"), s("e")]));
+        assert_eq!(m["kept"], Value::Array(vec![s("z"), s("a")]));
+        assert_eq!(
+            m["nums"],
+            Value::Array(vec![Value::Integer(3), Value::Integer(2), Value::Integer(1)])
+        );
+        assert_eq!(
+            m["roles"],
+            Value::Array([role(2, "a"), role(2, "b"), role(1, "z")].iter().map(canonical::normalize).collect())
+        );
     }
 
     #[test]

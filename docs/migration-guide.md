@@ -381,6 +381,42 @@ Path-template expression components (`${{ … }}`) and raw-JS sort comparators (
 
 **Fix:** spell the accessor you mean in UTC (`getUTCFullYear()`, `getUTCHours()`), or better, use the declarative date-bucket form (`${{ publishedAt: YYYY/MM }}`), which has always rendered at UTC. Then run `git sheet normalize <sheet>` once: it re-upserts every record through the current template in a single commit, so any record whose rendered path changed shows up there as a rename you can review. Derive anything time-based from a record field rather than the clock.
 
+## v2.13 → v2.14
+
+### `Template` and `normalizeRecord` run in the core
+
+The exported `Template` (`render`, `queryTree`), and so `sheet.pathForRecord`, and `sheet.normalizeRecord` now call the core — the same renderer and normalizer a write uses — instead of evaluating snippets in a Node `node:vm` realm. What they return is now exactly what an upsert of the same record commits. Most records see no difference; these do:
+
+- **A bare datetime field in a path** (`${{ publishedAt }}`) fails with a different code: `Template.render` / `pathForRecord` used to stringify it with `Date#toString()`, whose `:` made the render throw `PathTemplateError` (`path_invalid_chars`); it now throws `PathTemplateError` (`path_render_failed`), as a write always did. Use a [date bucket](path-templates.md#date-buckets) or an expression such as `${{ publishedAt.toISOString().slice(0, 10) }}`.
+- **A `bigint` outside i64 in a path field** is a render failure (`path_render_failed`); it used to render its digits. Writes already rejected it.
+- **Records the core can't represent** — a function or symbol value anywhere in the record, a `null` array element, a `bigint` outside i64 — make `Template.render` / `pathForRecord` throw `PathTemplateError` (`path_render_failed`) and `normalizeRecord` throw `ValidationError` (`validation_failed`), even when the template or sort rules don't touch that field. Before, the field was ignored.
+- **`normalizeRecord` returns the core's value**: a fresh plain object with `null` / `undefined` keys removed (at every depth), class instances flattened to plain objects, `bigint`s within ±(2^53−1) as `number`s, and new `Date` objects. Before, it kept your values and nulls as they were.
+- **`sort = true` order** in `normalizeRecord` comes from the core's pinned ICU collator (as on write) rather than the host's `localeCompare`. They agree for ordinary input; if your Node's ICU differs from the pinned one, `normalizeRecord` now follows the bytes you commit.
+- **Comparators** in `normalizeRecord` run in the core's stable insertion sort instead of V8's `Array#sort`. A consistent comparator gives the same order; an inconsistent one now gives the order a write gives.
+- **An invalid `Date`** (`new Date(NaN)`) crosses into the core as the epoch, `1970-01-01T00:00:00Z` — what a write already stored for it. A date-bucket template that used to fail on it now renders `1970/01/01`. Validate dates before writing; this marshalling is a known bug and will become an error.
+- **`normalizeRecord(null)`** (or `undefined`) throws `ValidationError` (`validation_failed`); it used to return `{}`.
+- **Snippet error messages** are one line. A path expression or comparator that throws now reports `Kind: message` for an `Error` (`failed: TypeError: Date.now() is not available …`) or the thrown value itself (`throw "nope"` → `failed: "nope"`), with no source position or stack frames. The error class and code are unchanged; match on those, not the message.
+- **`queryTree`** drops function-valued query entries (they never pruned), and a query holding another value the core can't represent throws `PathTemplateError` (`path_render_failed`).
+
+The `sort-keys` dependency is gone.
+
+### Float path segments render as JavaScript does (write path)
+
+A path field holding a **float** (a TOML float, or a Python `float`; a JS `number` with an integral value within ±(2^53−1) is an integer and is unaffected) now renders exactly as JavaScript's `String(x)` — on write, `pathForRecord`, and queries, in every binding. Before, the core cast integral floats to a 64-bit integer, which **saturated**: `1e19` and `1e20` both rendered `9223372036854775807`, so two records could silently land in the same file. Changes:
+
+| Float value | Was | Now |
+| --- | --- | --- |
+| `1e19` | `9223372036854775807` | `10000000000000000000` |
+| `1e20` | `9223372036854775807` | `100000000000000000000` |
+| `2**60` | `1152921504606846976` | `1152921504606847000` |
+| `-1e20` | `-9223372036854775808` | `-100000000000000000000` |
+| `1e21` | `1000000000000000000000` | `1e+21` |
+| `1e-7` | `0.0000001` | `1e-7` |
+| `5e-324` | `0.000…0005` (324 digits) | `5e-324` |
+| `Infinity` | `inf` | `Infinity` |
+
+Ordinary floats (`1.5`, `2026.0`, `0.1`) render as before. **Who is affected:** a sheet whose path template references a float field holding an integral value of magnitude 2^53 or more, a value of 1e21 or more, a nonzero value below 1e-6, or an infinity. Such records may now live at a path the template no longer renders. **Fix:** run `git sheet normalize <sheet>` once; records whose path changed show up as renames in that commit (and any that had collided were already overwritten — check history if you stored such values).
+
 ## Going forward
 
 Once migrated, the recipes are the fastest path to common patterns:

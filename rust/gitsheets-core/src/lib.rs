@@ -57,7 +57,7 @@ pub use record::{
     write_blob, write_blob_at_dir, DeleteOutcome, RecordChange, RecordDiff, RecordStatus,
     WriteOutcome, EMPTY_TREE_HASH, TOML_EXTENSION,
 };
-pub use sheet::{Sheet, StageOutcome, UpsertCandidate, WillChange};
+pub use sheet::{Sheet, SortPlan, StageOutcome, UpsertCandidate, WillChange};
 pub use sync::{is_ancestor, sync_branch, ConflictPolicy, SyncOptions, SyncOutcome, SyncResult};
 pub use transaction::{Author, Transaction, TransactionOptions, TransactionResult};
 pub use value::{null_array_element_msg, null_value_msg, Datetime, DatetimeKind, Value};

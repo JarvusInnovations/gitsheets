@@ -68,6 +68,37 @@ email = "jane@example.org"
 slug = "jane"
 ```
 
+## Default branch and data submodules
+
+The binding honors the same
+[default-branch binding](https://jarvusinnovations.github.io/gitsheets/recipes/headless-data/)
+as the CLI and the Node package, so a clone bound with
+`git config gitsheets.branch data` (or `GITSHEETS_BRANCH`, or
+`gitsheets.submodule` / `GITSHEETS_SUBMODULE` for a data submodule) gets the
+same answer from every tool. Resolve it once:
+
+```python
+repo = gitsheets.resolve_binding(".git")   # or branch="data", submodule="data"
+repo.branch      # 'data'  (None when bound to a detached HEAD)
+repo.submodule   # None    (the path, in submodule mode)
+```
+
+`branch=` / `submodule=` set the binding, `False` opts out (the CLI's
+`--no-branch` / `--no-submodule`), and leaving them out resolves the
+environment variable, then git config, then `HEAD`. The result is a
+`Binding`: a `str` holding the bound git dir, so it goes anywhere a
+`git_dir` does. With it (or a plain git dir, resolved per call):
+
+- `transact(repo, ...)` with no `parent` commits to the default branch, and
+  creates it with a root commit when it doesn't exist yet.
+- Reads take `None` for the default branch's tree:
+  `gitsheets.record_query(repo, None, "people", "${{ slug }}", {})`.
+- `tag_set(repo, "v1")` tags the default branch's tip.
+
+An explicit ref (`"HEAD"`, `parent="refs/heads/main"`) means what it always
+did. Resolution runs `git`, so `git` must be on `PATH` when a call takes a
+default; resolve once and reuse the `Binding` in a loop.
+
 ## Type fidelity
 
 The binding marshals Python natives ↔ the core's TOML-faithful value type:

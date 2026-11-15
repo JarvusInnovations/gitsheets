@@ -89,7 +89,7 @@ sort = '''
 
 The string is the *body* of a sort comparator — `(a, b) => { <body> }`. Used when the comparison is non-trivial.
 
-The comparator decides canonical bytes, so it runs in the deterministic realm every definition snippet shares — no clock, no randomness, local time is UTC: [rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets). A comparator that throws — including one calling a forbidden `Date.now()` / `Math.random()` / argument-less `new Date()` — fails the normalization with `ConfigError` (`config_invalid`) naming the field, on write and in `normalizeRecord` alike. It is only called for an array of two or more elements, so the failure appears with the first such record, not at sheet open. A body that does not compile is also `config_invalid` naming the field — at sheet open in the core, and when the Node host's `normalizeRecord` first compiles it. Raw-JS `localeCompare` in a comparator is code-unit order in every realm (no locale); locale-aware ordering is `sort = true` below.
+The comparator decides canonical bytes, so it runs in the deterministic realm every definition snippet shares — no clock, no randomness, local time is UTC: [rust-core.md § Determinism rule for definition snippets](../rust-core.md#determinism-rule-for-definition-snippets). A comparator that throws — including one calling a forbidden `Date.now()` / `Math.random()` / argument-less `new Date()` — fails the normalization with `ConfigError` (`config_invalid`) naming the field, on write and in `normalizeRecord` alike. It is only called for an array of two or more elements, so the failure appears with the first such record, not at sheet open. A body that does not compile is also `config_invalid` naming the field, at sheet open. Comparators run only in the core engine, in every binding — `normalizeRecord` included. Raw-JS `localeCompare` in a comparator is code-unit order in every realm (no locale); locale-aware ordering is `sort = true` below.
 
 **Bare boolean** (sort scalars):
 
@@ -98,7 +98,7 @@ The comparator decides canonical bytes, so it runs in the deterministic realm ev
 sort = true
 ```
 
-Sorts an array of strings using locale-aware comparison (`localeCompare` with `sensitivity: 'base'`, `numeric: true`, `ignorePunctuation: true`).
+Sorts an array of strings using locale-aware comparison — the core's pinned ICU collator, configured as V8's `localeCompare` with `sensitivity: 'base'`, `numeric: true`, `ignorePunctuation: true`. The sort is stable (base-equal elements keep their input order) and is the same in every binding and on every path (write and `normalizeRecord` alike); no binding sorts with its host runtime's `localeCompare`.
 
 ### TOML serialization details
 
@@ -146,6 +146,39 @@ byte-identical whether written from Node or Python (and byte-identical to what
 1.x `@iarna/toml` produced, which dropped null keys at serialize time).
 
 > **Substrate note.** The canonical form above is now in effect on the Node binding: TOML serialization (and the whole tree/commit substrate) runs through `gitsheets-core`, and the `@iarna/toml` / `smol-toml` dependencies are dropped (`node-binding-thin`). Existing repos re-normalize once via `git sheet normalize` per the [Canonical-form re-baseline](#canonical-form-re-baseline-the-rust-serializer).
+
+### Normalization runs on the marshalled record
+
+Normalization (array sorts, then the deep key sort) is the core's, applied to
+the record **after** it crosses the binding's marshal boundary — on write and
+in `Sheet.normalizeRecord` alike, which run the same code on the same
+compiled sort plan. What `normalizeRecord` returns is therefore the core's
+value marshalled back to the host, never the caller's objects; on Node:
+
+- a fresh plain object; table keys in sorted order (a JS object still lists
+  integer-like keys such as `"2"`, `"10"` first, in numeric order — a property
+  of JS objects, not of the canonical form, whose TOML bytes sort them as
+  strings);
+- `null` / `undefined`-valued keys are absent (rule 1 above), at every depth;
+- a `Date` comes back as a new `Date` of the same instant (millisecond
+  precision) — an invalid `Date` currently marshals as the epoch
+  (`1970-01-01T00:00:00Z`) on every path, writes included, a known defect
+  that is to become a marshal error; an integer within ±(2^53−1) as a `number` (a `bigint` input
+  included), beyond that as a `bigint`; `-0` as `0`; `NaN` / `Infinity` stay
+  floats;
+- a non-plain object is copied as a table of its enumerable string-keyed
+  properties, inherited ones included (a class instance becomes a plain
+  object; a `Map`, `Set`, or `RegExp` becomes `{}`; a typed array or `String`
+  object becomes an index-keyed table); symbol-keyed properties are dropped;
+- a value the core cannot represent anywhere in the record — a function, a
+  symbol, a `null` / `undefined` array element (rule 2), a `bigint` outside
+  i64 — makes the record un-normalizable: `normalizeRecord` throws
+  `ValidationError` (`validation_failed`, empty `issues`) carrying the
+  marshal failure as its message and `cause`. (The write path rejects the
+  same records; see [rust-core.md § Type-fidelity rules](../rust-core.md#type-fidelity-rules).)
+
+Only top-level fields with a declared `sort` rule are array-sorted; nested
+arrays keep their order.
 
 ### File bytes
 

@@ -149,9 +149,9 @@ jobs:
         run: npm run build -w @gitsheets/core-napi
 
       # The host leg of test_cross_binding.py's local-time path-expression
-      # parity: _node_writer.mjs renders through the package's node:vm
+      # parity: _node_writer.mjs renders through the package's exported
       # Template (packages/gitsheets/dist) as well as the napi core.
-      - name: Build the gitsheets package (dist) — the host Template parity peer
+      - name: Build the gitsheets package (dist) — the exported Template parity peer
         run: npm run build -w gitsheets
 
       - name: Build + install the gitsheets-py wheel (maturin/abi3)
