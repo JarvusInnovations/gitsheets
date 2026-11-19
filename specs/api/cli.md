@@ -102,6 +102,14 @@ git sheet --branch data head | jq -r '.trailers[] | select(.key == "Cycle-Id") |
 
 An unborn default branch prints `null` and exits 0. A `--ref` that does not resolve exits 65.
 
+### `git sheet push [--remote <r>] [--to <commit>]`
+
+Push the default branch (or `--branch`) to `--remote` (default `origin`) through [`repo.push`](repository.md#repopushopts): up to `--to` when given (the tip or a first-parent ancestor of it), never forced. Prints `<outcome> <commit>` (`pushed` / `up-to-date`). A rejected push exits 1 with git's message on stderr (`non-fast-forward` or `failed`); `--to` that does not resolve, or is not a first-parent ancestor of the tip, exits 65.
+
+```bash
+git sheet --branch log push --to "$(git rev-parse log~1)"   # publish all but the open tip
+```
+
 ### `git sheet query <sheet>`
 
 Read records.

@@ -57,6 +57,10 @@ The replay is pure object-database work (no working tree, no index, nothing to a
 
 A commit may carry [lineage parents](transactions.md#lineage-parents): extra parents gitsheets wrote with a `Gitsheets-Lineage` marker to record provenance, not a merge. Sync does not follow the edge from a commit to its lineage parents. The merge base `B`, the `ahead` / `behind` counts, and the replay set `B..L` are all computed over the history with those edges removed; first-parent edges and unmarked (merge) parent edges are followed exactly as before, so a history with no lineage parents classifies and replays as it always has.
 
+**The existing path is the default path.** The lineage-aware walk engages only when a `Gitsheets-Lineage`-marked commit is actually present in the range being walked: the commits reachable from either tip but not from their git merge base (the base gix computes today, following every parent). When no commit in that range carries the marker, sync runs exactly the code it ran before this feature (gix's `merge_base` and rev walks), so no history without lineage parents can sync differently. A marker strictly below the git merge base does not engage it: everything at or below the base is history both sides share, so nothing there is replayed or merged either way.
+
+**Fail closed, never guess.** On the lineage-aware path, if the history with lineage edges removed has more than one best common ancestor (a criss-cross), or none, sync stops with `RefError` (`lineage_unsupported`) and moves nothing. gix picks one base among several for a plain history; the lineage path does not pretend to know which one git would have picked once edges are removed.
+
 - **Why.** Followed like a merge parent, a lineage parent that points into another history pulls that history into `B..L`: a diverged sync would replay every commit behind the lineage parent onto the remote tip, and a lineage parent that happens to be a remote commit would move the merge base past remote work the local branch never merged.
 - **Replay keeps lineage.** A replayed commit is written with parents `[new tip, ...its lineage parents]` and its original message, so its `Gitsheets-Lineage` trailers still name exactly the lineage parents it carries. Merge parents are not kept: a local merge commit is replayed linearized, as before.
 - **The rollup pass** for a replayed commit diffs against its new first parent and its original first parent only ([rollups.md](rollups.md#merge-and-sync)).
@@ -64,7 +68,22 @@ A commit may carry [lineage parents](transactions.md#lineage-parents): extra par
 
 ### Replaced commits and the remote
 
-A transaction in [replace mode](transactions.md#replacing-the-tip) refuses to replace a tip that any remote-tracking ref already contains (`tip_published`), so a single writer that pushes through gitsheets never creates a commit its remote would reject. When the check cannot see the push (the tip reached the remote some other way, or a daemon push of the old tip was in flight when the replacement landed), the next push is rejected as non-fast-forward and reported as below; nothing is forced. `sync` after a replacement treats the replaced commit like any other unreferenced object: it is not in `B..L`.
+A transaction in [replace mode](transactions.md#replacing-the-tip) refuses to replace a tip that any remote-tracking ref already contains (`tip_published`), so a single writer that pushes through gitsheets never creates a commit its remote would reject. When the check cannot see the push (the tip reached the remote some other way), the next push is rejected as non-fast-forward and reported as below; nothing is forced. `sync` after a replacement treats the replaced commit like any other unreferenced object: it is not in `B..L`.
+
+### Pushing part of a branch
+
+A single writer that keeps an **open tip** (a commit it is still replacing) on top of published history publishes everything below that tip with an explicit, partial push: `repo.push({ to })` / `git sheet push --to <commit>` / `gitsheets-axi push --to <commit>` ([api/repository.md](../api/repository.md#repopushopts)).
+
+- `to` must be the branch tip or reachable from it **by first parents** (`RefError` `not_an_ancestor` otherwise; `ref_not_found` when it does not resolve). A commit reachable only through a merge or lineage parent is not part of the branch's own line and is refused.
+- The push is `git push <remote> <to>:refs/heads/<branch>`: a plain fast-forward, never forced. A rejection is the `non-fast-forward` outcome, as for the daemon.
+- On success the remote-tracking ref `refs/remotes/<remote>/<branch>` is set to `to` (git does this itself only when a fetch refspec maps the branch; gitsheets does it regardless), so `tip_published` sees exactly what reached the remote: the published commit can no longer be replaced, and the open tip above it still can.
+- The push runs under the write lock, so no transaction (a replacement in particular) can move the branch between the ancestry check and the tracking-ref update.
+
+The loop that results: append or replace the open tip as often as needed; when a state is final, commit the next open tip on top of it and `push --to` the final one.
+
+### The push daemon and an open tip
+
+The push daemon pushes every commit as it lands, so it would publish an open tip moments after each replacement, and the next replacement would be `tip_published` (or, if it raced the push, a terminal `non-fast-forward`). **The daemon is not for this pattern.** A transaction with `replace` on a `Repository` whose push daemon is running is refused up front with `TransactionError` (`replace_daemon_running`), nothing changed. A writer that replaces its tip pushes with `push --to` instead. The refusal is explicit rather than a documented hazard because the hazard ends in a terminal daemon error that needs a person, and the check is free: the library knows whether it started a daemon. (A daemon in another process is invisible to it; `tip_published` and the never-force rule still hold there.)
 
 ### `repo.isAncestor(a, b)`
 

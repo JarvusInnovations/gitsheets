@@ -214,6 +214,28 @@ interface SyncResult {
 
 `git fetch --prune <remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>` on its own — `sync`'s first step, without the lock. `opts.remote` defaults to `origin`, `opts.branch` to the default branch (`RefError` when that is a detached `HEAD`). Returns `Promise<{ ok: true, remoteRef, remoteCommit } | { ok: false, remoteRef, error }>`; a network or auth failure is a value, not a throw. Pair with `sync({ fetch: false })`. See [behaviors/push-sync.md](../behaviors/push-sync.md#sync-opt-in-explicit).
 
+### `repo.push(opts?)`
+
+Push the branch, or the part of it up to `opts.to`, to a remote: `git push <remote> <to>:refs/heads/<branch>`, never forced ([behaviors/push-sync.md § Pushing part of a branch](../behaviors/push-sync.md#pushing-part-of-a-branch)). Runs under the write lock.
+
+```typescript
+interface PushOptions {
+  remote?: string;   // default 'origin'
+  branch?: string;   // default: the default branch; RefError when that is a detached HEAD
+  to?: string;       // default: the branch tip; must be the tip or a first-parent ancestor of it
+}
+interface PushResult {
+  outcome: 'pushed' | 'up-to-date' | 'non-fast-forward' | 'failed';
+  remote: string;
+  branch: string;    // the short branch name
+  commit: string;    // the commit pushed (`to`, resolved)
+  error?: string;    // 'non-fast-forward' / 'failed': git's message
+}
+```
+
+- A rejection or a network / auth failure is a value (`non-fast-forward` / `failed`), not a throw, as for `fetch`. On `pushed` and `up-to-date` the remote-tracking ref `refs/remotes/<remote>/<branch>` is set to `commit`.
+- Throws `RefError` (`ref_not_found`) when `to` does not resolve to a commit, `RefError` (`not_an_ancestor`) when it is not the tip or a first-parent ancestor of it, and `TransactionError` (`lock_held`) inside a transaction or `withLock`.
+
 ### `repo.tag(name, target?, opts?)`
 
 Point the lightweight tag `refs/tags/<name>` at `target` (any commit-ish; default: the default branch's tip, or `HEAD` when bound to a detached `HEAD` — [behaviors/default-branch.md](../behaviors/default-branch.md)), in the core with no subprocess. Returns `Promise<string>`, the object id tagged. An existing tag is refused with `TransactionError` (`commit_failed`) unless `opts.force` is `true`, in which case it is moved (the `git tag -f` equivalent). `RefError` (`ref_not_found`) when `target` does not resolve. Annotated tags are out of scope.
@@ -346,6 +368,8 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | `RefError` | `parent_not_found` | An `alsoParents` entry does not resolve to a commit |
 | `TransactionError` | `tip_mismatch` | `replace`: the branch tip is not the expected commit |
 | `TransactionError` | `tip_published` | `replace`: a remote-tracking ref already contains the tip |
+| `TransactionError` | `replace_daemon_running` | `replace` while this repository's push daemon is running |
+| `RefError` | `lineage_unsupported` | `sync` / `merge` on the lineage-aware path with no single best common ancestor |
 | `ConfigError` | `config_missing` | No git repository at `gitDir` / `cwd` (`openRepo`); `.gitsheets/<name>.toml` not found in `openSheet`; `openRepo({ submodule })` finds neither `<path>/.git` nor `modules/<name>` (message names `git sheet submodule init <path>`) |
 | `ConfigError` | `config_invalid` | Sheet config TOML is malformed; `openRepo({ submodule })` names a path with no `.gitmodules` entry ("not a submodule of this repository"); `openRepo({ at })` without `submodule` (and no `GITSHEETS_SUBMODULE` / `gitsheets.submodule`), or with `submodule: null` — `at` pins a data submodule |
 | `ContractError` | `contract_missing` | `implements` names a contract with no vendored document in the committed tree |

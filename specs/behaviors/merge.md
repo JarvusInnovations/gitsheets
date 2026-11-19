@@ -25,6 +25,7 @@ With `O` = ours (the branch being merged into), `T` = theirs, `B` = their merge 
 | `O` reachable from `T` | `fast-forward` | `O`'s branch moves to `T` (no merge commit) |
 | otherwise | `merged` / `conflict` / `dry-run` | below |
 | no common history | throws `RefError` (`not_an_ancestor`) | nothing |
+| lineage-aware path finds no single best base ([Lineage parents](#lineage-parents)) | throws `RefError` (`lineage_unsupported`) | nothing |
 
 ### The merge
 
@@ -47,6 +48,10 @@ Rollup records ([rollups.md](rollups.md)) are not merged at all: whatever the tr
 ### Lineage parents
 
 A commit gitsheets wrote with [lineage parents](transactions.md#lineage-parents) (marked by `Gitsheets-Lineage` trailers) records provenance, not a merge. The classification above and the merge base `B` are computed without following the edge from a commit to its lineage parents; first-parent and unmarked merge-parent edges are followed as before. So a branch whose log names a commit of `theirs` as a lineage parent is not "up to date" with `theirs` because of it, and the 3-way merge does not treat the work behind that lineage parent as already merged. The merge commit itself has parents `[O, T]` and no lineage marker: `T` is a merge parent.
+
+**The existing path is the default path.** The lineage-aware walk engages only when a `Gitsheets-Lineage`-marked commit is actually present in the range being walked: the commits reachable from either tip but not from their git merge base (the base gix computes today, following every parent). When no commit in that range carries the marker, `merge` runs exactly the code it ran before this feature (gix's `merge_base` and rev walks), so no history without lineage parents can merge differently. A marker strictly below the git merge base does not engage it: everything at or below the base is history both sides share, so nothing there is replayed or merged either way.
+
+**Fail closed, never guess.** On the lineage-aware path, if the history with lineage edges removed has more than one best common ancestor (a criss-cross), or none, `merge` stops with `RefError` (`lineage_unsupported`) and moves nothing. gix picks one base among several for a plain history; the lineage path does not pretend to know which one git would have picked once edges are removed.
 
 The merge driver is unaffected: git, not gitsheets, picks the base for a plain `git merge`, and git follows every parent edge.
 

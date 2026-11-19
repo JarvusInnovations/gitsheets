@@ -219,7 +219,7 @@ parents[2]{hash,role}:
 
 #### `head`
 
-`head [--json-out[=path]]` shows the tip commit of the bound branch (the default branch; under `--at`, the pinned data commit) from `repo.readCommit()` ([api/repository.md](repository.md#reporeadcommitrev)): `branch`, `commit`, `tree`, `author` (name, email, date), `subject`, `body` (omitted when empty), a `parents` table (`hash`, `role`: `first` / `lineage` / `merge`), and a `trailers` table (`key`, `value`, in order, repeated keys kept). With `--json-out` it also writes the `CommitInfo` object as JSON (a bare flag: an owner-only file under the OS temp dir; `=path`: there) and reports `wrote`; stdout stays TOON. An unborn branch prints `branch` and `commit: null` with a hint, exits `0`, and `--json-out` writes `null`.
+`head [<commit>] [--json-out[=path]]` shows the tip commit of the bound branch, or `<commit>` when given (`REF_ERROR` when it does not resolve), (the default branch; under `--at`, the pinned data commit) from `repo.readCommit()` ([api/repository.md](repository.md#reporeadcommitrev)): `branch`, `commit`, `tree`, `author` (name, email, date), `subject`, `body` (omitted when empty), a `parents` table (`hash`, `role`: `first` / `lineage` / `merge`), and a `trailers` table (`key`, `value`, one row per trailer, in order, repeated keys kept). The roles and trailers come from the core's reading of the commit; a caller never parses the message. With `--json-out` it also writes the `CommitInfo` object as JSON (a bare flag: an owner-only file under the OS temp dir; `=path`: there) and reports `wrote`; stdout stays TOON. An unborn branch prints `branch` and `commit: null` with a hint, exits `0`, and `--json-out` writes `null`.
 
 This is the read-back for a caller that resumes from what it last wrote. There is no `log`: one commit is what resuming needs.
 
@@ -240,7 +240,15 @@ trailers[2]{key,value}:
 
 #### `push`
 
-`push [--remote r]` runs `git push <remote> <default branch>` once (remote default `origin`). Already up to date is `result: no-op`; success is `result: pushed`. A rejected non-fast-forward is `NON_FAST_FORWARD` (never force-pushes); any other failure is `PUSH_FAILED`; a detached-`HEAD` binding is `REF_ERROR`. Not a daemon: retry-with-backoff belongs to `repo.startPushDaemon` ([behaviors/push-sync.md](../behaviors/push-sync.md)).
+`push [--remote r] [--to <commit>]` pushes the bound branch once through `repo.push` (remote default `origin`): the whole branch, or with `--to` the branch up to that commit, which must be the tip or a first-parent ancestor of it ([behaviors/push-sync.md § Pushing part of a branch](../behaviors/push-sync.md#pushing-part-of-a-branch)). Output: `result` (`pushed`, or `no-op` when already up to date), `remote`, `branch`, `commit`. A rejected non-fast-forward is `NON_FAST_FORWARD` (never force-pushes); any other failure is `PUSH_FAILED`; a detached-`HEAD` binding, or a `--to` that does not resolve or is not a first-parent ancestor of the tip, is `REF_ERROR`. On success the remote-tracking ref is updated, so `--replace` on the published commit is then `TIP_PUBLISHED` while the open tip above it can still be replaced. Not a daemon: retry-with-backoff belongs to `repo.startPushDaemon` ([behaviors/push-sync.md](../behaviors/push-sync.md)).
+
+```text
+$ gitsheets-axi --branch log push --to 9f3e…
+result: pushed
+remote: origin
+branch: log
+commit: 9f3e…
+```
 
 #### `setup hooks`
 

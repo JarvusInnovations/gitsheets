@@ -77,6 +77,8 @@ try {
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
 | `RefError` | `not_an_ancestor` | 409 | Merge-like operation where src is not an ancestor of dst |
+| `RefError` | `lineage_unsupported` | 409 | `sync` / `merge` met a `Gitsheets-Lineage`-marked commit in the range it walks and, with lineage edges removed, the two sides have no single best common ancestor; nothing moved ([behaviors/push-sync.md](../behaviors/push-sync.md#lineage-parents-in-sync)) |
+| `TransactionError` | `replace_daemon_running` | 409 | A `replace` transaction on a `Repository` whose push daemon is running: the daemon would publish the open tip ([behaviors/push-sync.md](../behaviors/push-sync.md#the-push-daemon-and-an-open-tip)) |
 | `RefError` | `parent_not_found` | 404 | A lineage parent (`alsoParents` entry) does not resolve to a commit in the repository ([behaviors/transactions.md](../behaviors/transactions.md#lineage-parents)) |
 | `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.), or an expression component threw (including a call the [deterministic realm](../rust-core.md#determinism-rule-for-definition-snippets) forbids) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
