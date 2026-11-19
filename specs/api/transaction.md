@@ -82,15 +82,15 @@ Another-Trailer: another-value
 - **Body** = anything after the first line of `message`.
 - **Trailers** = appended per `git interpret-trailers` rules. See [behaviors/transactions.md](../behaviors/transactions.md) for the format.
 
-Trailer keys use HTTP-header style: first letter capitalized, multi-word hyphenated, rest lowercase (`Subject-Id`, `User-Agent`, `Action`). A malformed key or value, or the reserved key `Gitsheets-Lineage`, is `TransactionError` (`trailer_invalid`) before any tree work.
+Trailer keys use HTTP-header style: first letter capitalized, multi-word hyphenated, rest lowercase (`Subject-Id`, `User-Agent`, `Action`). A malformed key or value is `TransactionError` (`trailer_invalid`) before any tree work.
 
-## Commit shape: lineage parents, replace, empty
+## Commit shape: additional parents, replace, empty
 
 Three options shape the commit itself rather than its tree. Each is off by default, and a transaction that sets none of them behaves exactly as described above. The rules live in [behaviors/transactions.md](../behaviors/transactions.md); this is the surface.
 
 | Option | Type | Effect |
 | --- | --- | --- |
-| `alsoParents` | `string[]` | Extra parents after the first, each a commit-ish that must resolve to a commit. Recorded as **lineage** parents (provenance, not a merge) and marked with one `Gitsheets-Lineage: <hash>` trailer each ([Lineage parents](../behaviors/transactions.md#lineage-parents)). In replace mode, replaces the replaced tip's extra parents; `[]` drops them |
+| `alsoParents` | `string[]` | Extra parents after the first, each a commit-ish that must resolve to a commit. A caller uses them to record provenance; gitsheets attaches no behaviour to them ([Additional parents](../behaviors/transactions.md#additional-parents)). In replace mode, replaces the replaced tip's extra parents; `[]` drops them |
 | `replace` | `string` | Replace the branch's tip instead of committing on top of it. The value is the tip the caller expects; anything else is `tip_mismatch` and nothing changes. A tip that a remote-tracking ref already contains is `tip_published` ([Replacing the tip](../behaviors/transactions.md#replacing-the-tip)) |
 | `allowEmpty` | `boolean` | Commit even when the tree equals the first parent's tree ([Empty commits](../behaviors/transactions.md#empty-commits)) |
 
@@ -109,7 +109,7 @@ await repo.transact(
   async () => {},
 );
 
-// Record what this state was built from, without merging it.
+// Record what this state was built on, as an extra parent.
 await repo.transact(
   { message: 'cycle 43: start', alsoParents: [snapshotCommit], allowEmpty: true },
   async () => {},
@@ -172,7 +172,7 @@ In replace mode the parent in this comparison is the **new** first parent (the r
 - `delete(path)` + `upsert` of an identical record at the same path
 - An explicit `tx.markMutated()` call that isn't accompanied by an actual tree mutation
 
-The last bullet is a behavior change from v1.3.0, where `markMutated()` alone forced a commit. Real consumers of `markMutated` (internal callers like `upsert`/`delete`/`setAttachments`) always pair it with an actual mutation, so this isn't expected to break anyone. Consumers who genuinely want an empty commit pass `allowEmpty: true` ([Commit shape](#commit-shape-lineage-parents-replace-empty)), which skips both no-op checks.
+The last bullet is a behavior change from v1.3.0, where `markMutated()` alone forced a commit. Real consumers of `markMutated` (internal callers like `upsert`/`delete`/`setAttachments`) always pair it with an actual mutation, so this isn't expected to break anyone. Consumers who genuinely want an empty commit pass `allowEmpty: true` ([Commit shape](#commit-shape-additional-parents-replace-empty)), which skips both no-op checks.
 
 ## Rollup pass
 
@@ -246,7 +246,7 @@ await repo.transact({ message: '...' }, async (tx) => {
 | `TransactionError` | `transaction_required` | Mutation outside a transaction in strict mode |
 | `TransactionError` | `parent_moved` | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | `git commit-tree` / `update-ref` returned non-zero |
-| `TransactionError` | `trailer_invalid` | A malformed trailer key/value was rejected at option-normalization time (HTTP-header-style key, string value with no newlines), or a caller-supplied trailer used the reserved key `Gitsheets-Lineage`. Was `commit_failed` before this release ([errors.md](errors.md#malformed-trailers-were-commit_failed)) |
+| `TransactionError` | `trailer_invalid` | A malformed trailer key/value was rejected at option-normalization time (HTTP-header-style key, string value with no newlines). Was `commit_failed` before this release ([errors.md](errors.md#malformed-trailers-were-commit_failed)) |
 | `RefError` | `ref_not_found` | `opts.parent` is a branch name that doesn't exist |
 | `RefError` | `parent_not_found` | An `alsoParents` entry does not resolve to a commit in the repository |
 | `TransactionError` | `commit_failed` | `opts.parent: null` with an `opts.branch` that already exists (an orphan only creates a branch); or `opts.branch` (≠ parent ref) moved between open and commit; or, at open, an invalid combination: `alsoParents` with `parent: null`, an `alsoParents` entry equal to the first parent or repeated, `replace` with `parent: null`, a commit-hash `parent`, or an `opts.branch` other than the parent ref |

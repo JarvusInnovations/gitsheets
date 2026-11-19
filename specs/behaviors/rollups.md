@@ -231,8 +231,8 @@ permissive-mode auto-transaction, `repo.merge`'s merge commit, each commit
    tree and stage it (or its deletion, when the partition is gone or empty)
    at `<rollup root>/<prefix>/…` in the same tree.
 
-The "parent tree" of a transaction is its first parent's: lineage parents
-never feed the pass. A transaction that [replaces the
+The "parent tree" of a transaction is its first parent's: additional
+parents never feed the pass. A transaction that [replaces the
 tip](transactions.md#replacing-the-tip) diffs both the result and the
 replaced tip against the new first parent and regenerates the union, so a
 partition the replaced commit changed and the replacement put back is

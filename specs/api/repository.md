@@ -97,7 +97,7 @@ const result = await repo.transact(
     message: string,                 // commit subject + body
     trailers?: Record<string, string>, // appended per `git interpret-trailers` rules
     branch?: string,                  // ref to update on success (created if absent); default: the parent ref if it was a branch (so, the default branch when `parent` is omitted)
-    alsoParents?: string[],           // lineage parents after the first; each must resolve to a commit (behaviors/transactions.md#lineage-parents)
+    alsoParents?: string[],           // additional parents after the first; each must resolve to a commit (behaviors/transactions.md#additional-parents)
     replace?: string,                 // replace the branch tip, which must be this commit (behaviors/transactions.md#replacing-the-tip)
     allowEmpty?: boolean,             // default false; commit even when no record changed (behaviors/transactions.md#empty-commits)
   },
@@ -109,7 +109,7 @@ const result = await repo.transact(
 // result: { value, commitHash, treeHash, ref, parentCommitHash, replacedCommitHash }
 ```
 
-See [behaviors/transactions.md](../behaviors/transactions.md) for semantics (mutex, commit-on-success, trailer formatting, lineage parents, replace mode, empty commits) and [api/transaction.md](transaction.md#commit-shape-lineage-parents-replace-empty) for the commit-shape options.
+See [behaviors/transactions.md](../behaviors/transactions.md) for semantics (mutex, commit-on-success, trailer formatting, additional parents, replace mode, empty commits) and [api/transaction.md](transaction.md#commit-shape-additional-parents-replace-empty) for the commit-shape options.
 
 **Auto-refresh on commit.** When the transaction produces a commit, `repo.transact` rebinds every live `Sheet` this repository has issued to the default branch's current tree before resolving (only when the commit advanced the default branch — [behaviors/default-branch.md](../behaviors/default-branch.md)) — reads through standing sheets (including `store.<sheet>`) immediately reflect the committed state. A no-op or discarded transaction rebinds nothing. See [behaviors/freshness.md](../behaviors/freshness.md).
 
@@ -206,7 +206,7 @@ interface SyncResult {
 ```
 
 - Throws `TransactionError` (`lock_held`) inside a transaction handler or a `withLock` callback; `RefError` (`ref_not_found`) when the branch or its remote-tracking ref does not exist after the fetch; `RefError` (`not_an_ancestor`) when the two histories are unrelated.
-- History is walked without following edges to [lineage parents](../behaviors/transactions.md#lineage-parents); a replayed commit keeps its lineage parents ([behaviors/push-sync.md](../behaviors/push-sync.md#lineage-parents-in-sync)).
+- Not for a branch with [additional parents](../behaviors/transactions.md#additional-parents): sync gives every parent git's meaning.
 - A running push daemon is handed the new tip after `ahead` / `rebased` (it pushes; `sync` itself never pushes the branch).
 - `afterMove` runs only when the branch moved, under the write lock and after live sheets were rebound, so no transaction can interleave between the move and the caller's rebuild; inside it `transact` / `withLock` are `lock_held`. Its throw propagates after the lock is released; the ref stays moved.
 
@@ -246,7 +246,7 @@ The direct entries of the tree at `<ref>:<path>` (`path` defaults to the root), 
 
 ### `repo.isAncestor(a, b)`
 
-`Promise<boolean>` — whether commit `a` is reachable from commit `b` (or equal). `RefError` (`ref_not_found`) when either does not resolve to a commit. Every parent edge counts, [lineage parents](../behaviors/transactions.md#lineage-parents) included: this is git's reachability, unchanged.
+`Promise<boolean>` — whether commit `a` is reachable from commit `b` (or equal). `RefError` (`ref_not_found`) when either does not resolve to a commit.
 
 ### `repo.readCommit(rev?)`
 
@@ -257,18 +257,18 @@ interface CommitInfo {
   hash: string;
   tree: string;
   branch: string | null;           // the qualified ref read when `rev` was omitted; null when `rev` was given or HEAD is detached
-  parents: Array<{ hash: string; role: 'first' | 'lineage' | 'merge' }>;
+  parents: string[];               // full hashes, first parent first
   author: { name: string; email: string; date: string };     // date: ISO 8601 with the commit's own offset
   committer: { name: string; email: string; date: string };
   subject: string;
   body: string;                    // '' when there is none; trailers excluded
-  trailers: Array<{ key: string; value: string }>;           // in order; duplicates kept; Gitsheets-Lineage included
+  trailers: Array<{ key: string; value: string }>;           // in order; repeated keys kept
 }
 const head = await repo.readCommit();          // → CommitInfo, or null when the default branch is unborn
 const c = await repo.readCommit('01ab2c');     // any commit-ish
 ```
 
-`RefError` (`ref_not_found`) when an explicit `rev` does not resolve to a commit. Trailers are an array, not a record, because a commit may repeat a key (one `Gitsheets-Lineage` per lineage parent).
+`RefError` (`ref_not_found`) when an explicit `rev` does not resolve to a commit. Trailers are an array, not a record, because a commit may repeat a key.
 
 ### `repo.merge(opts)`
 
@@ -296,7 +296,7 @@ interface MergeResult {
 ```
 
 - `ours` may be a commit hash, in which case no ref moves and `commit` is the detached merge commit.
-- The classification and the merge base are computed without following edges to [lineage parents](../behaviors/transactions.md#lineage-parents) ([behaviors/merge.md](../behaviors/merge.md#lineage-parents)).
+- Not for a branch with [additional parents](../behaviors/transactions.md#additional-parents): merge gives every parent git's meaning.
 - Throws `RefError` (`ref_not_found`) when a side does not resolve, `RefError` (`not_an_ancestor`) when the histories are unrelated, `TransactionError` (`lock_held`) inside a transaction or `withLock`. Runs under the write lock; a moved default branch rebinds live sheets.
 
 ### `repo.requireExplicitTransactions()`
@@ -364,12 +364,11 @@ When the handler stages no mutations, the transaction does **not** commit — `c
 | `RefError` | `not_an_ancestor` | `sync`: the local branch and the remote-tracking branch share no history |
 | `TransactionError` | `commit_failed` | The underlying `git commit-tree` or `update-ref` failed; an invalid combination of commit-shape options ([api/transaction.md](transaction.md#errors)) |
 | `TransactionError` | `parent_moved` | Optimistic concurrency: parent ref moved between transaction start and commit (never in replace mode) |
-| `TransactionError` | `trailer_invalid` | A malformed trailer, or the reserved key `Gitsheets-Lineage` |
+| `TransactionError` | `trailer_invalid` | A malformed trailer |
 | `RefError` | `parent_not_found` | An `alsoParents` entry does not resolve to a commit |
 | `TransactionError` | `tip_mismatch` | `replace`: the branch tip is not the expected commit |
 | `TransactionError` | `tip_published` | `replace`: a remote-tracking ref already contains the tip |
 | `TransactionError` | `replace_daemon_running` | `replace` while this repository's push daemon is running |
-| `RefError` | `lineage_unsupported` | `sync` / `merge` on the lineage-aware path with no single best common ancestor |
 | `ConfigError` | `config_missing` | No git repository at `gitDir` / `cwd` (`openRepo`); `.gitsheets/<name>.toml` not found in `openSheet`; `openRepo({ submodule })` finds neither `<path>/.git` nor `modules/<name>` (message names `git sheet submodule init <path>`) |
 | `ConfigError` | `config_invalid` | Sheet config TOML is malformed; `openRepo({ submodule })` names a path with no `.gitmodules` entry ("not a submodule of this repository"); `openRepo({ at })` without `submodule` (and no `GITSHEETS_SUBMODULE` / `gitsheets.submodule`), or with `submodule: null` — `at` pins a data submodule |
 | `ContractError` | `contract_missing` | `implements` names a contract with no vendored document in the committed tree |

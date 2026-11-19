@@ -53,18 +53,9 @@ The fetch step is also available on its own as **`repo.fetch({ remote?, branch? 
 
 The replay is pure object-database work (no working tree, no index, nothing to abort), done in the core; only the fetch and the conflict-branch push spawn git, because the network layer stays with git's own auth and transport. `sync` never force-pushes and never rewrites the remote: the only remote writes are the push daemon's fast-forward pushes and the conflict branch.
 
-### Lineage parents in sync
+### Additional parents
 
-A commit may carry [lineage parents](transactions.md#lineage-parents): extra parents gitsheets wrote with a `Gitsheets-Lineage` marker to record provenance, not a merge. Sync does not follow the edge from a commit to its lineage parents. The merge base `B`, the `ahead` / `behind` counts, and the replay set `B..L` are all computed over the history with those edges removed; first-parent edges and unmarked (merge) parent edges are followed exactly as before, so a history with no lineage parents classifies and replays as it always has.
-
-**The existing path is the default path.** The lineage-aware walk engages only when a `Gitsheets-Lineage`-marked commit is actually present in the range being walked: the commits reachable from either tip but not from their git merge base (the base gix computes today, following every parent). When no commit in that range carries the marker, sync runs exactly the code it ran before this feature (gix's `merge_base` and rev walks), so no history without lineage parents can sync differently. A marker strictly below the git merge base does not engage it: everything at or below the base is history both sides share, so nothing there is replayed or merged either way.
-
-**Fail closed, never guess.** On the lineage-aware path, if the history with lineage edges removed has more than one best common ancestor (a criss-cross), or none, sync stops with `RefError` (`lineage_unsupported`) and moves nothing. gix picks one base among several for a plain history; the lineage path does not pretend to know which one git would have picked once edges are removed.
-
-- **Why.** Followed like a merge parent, a lineage parent that points into another history pulls that history into `B..L`: a diverged sync would replay every commit behind the lineage parent onto the remote tip, and a lineage parent that happens to be a remote commit would move the merge base past remote work the local branch never merged.
-- **Replay keeps lineage.** A replayed commit is written with parents `[new tip, ...its lineage parents]` and its original message, so its `Gitsheets-Lineage` trailers still name exactly the lineage parents it carries. Merge parents are not kept: a local merge commit is replayed linearized, as before.
-- **The rollup pass** for a replayed commit diffs against its new first parent and its original first parent only ([rollups.md](rollups.md#merge-and-sync)).
-- **`isAncestor` is not affected.** It is plain reachability, lineage edges included.
+`sync` gives a commit's parents git's own meaning: every parent is history, counted in `ahead` / `behind` and replayed. It is not for a branch on which a writer records [additional parents](transactions.md#additional-parents); such a branch is single-writer and append-only, and is published with [`push`](#pushing-part-of-a-branch).
 
 ### Replaced commits and the remote
 
@@ -74,7 +65,7 @@ A transaction in [replace mode](transactions.md#replacing-the-tip) refuses to re
 
 A single writer that keeps an **open tip** (a commit it is still replacing) on top of published history publishes everything below that tip with an explicit, partial push: `repo.push({ to })` / `git sheet push --to <commit>` / `gitsheets-axi push --to <commit>` ([api/repository.md](../api/repository.md#repopushopts)).
 
-- `to` must be the branch tip or reachable from it **by first parents** (`RefError` `not_an_ancestor` otherwise; `ref_not_found` when it does not resolve). A commit reachable only through a merge or lineage parent is not part of the branch's own line and is refused.
+- `to` must be the branch tip or reachable from it **by first parents** (`RefError` `not_an_ancestor` otherwise; `ref_not_found` when it does not resolve). A commit reachable only through a later parent is not part of the branch's own line and is refused.
 - The push is `git push <remote> <to>:refs/heads/<branch>`: a plain fast-forward, never forced. A rejection is the `non-fast-forward` outcome, as for the daemon.
 - On success the remote-tracking ref `refs/remotes/<remote>/<branch>` is set to `to` (git does this itself only when a fetch refspec maps the branch; gitsheets does it regardless), so `tip_published` sees exactly what reached the remote: the published commit can no longer be replaced, and the open tip above it still can.
 - The push runs under the write lock, so no transaction (a replacement in particular) can move the branch between the ancestry check and the tracking-ref update.
@@ -116,7 +107,7 @@ If the remote rejects the push (non-fast-forward, "remote contains work that you
 
 The daemon does *not* attempt to merge or rebase. The local commit history is the source of truth.
 
-The push transfers every object reachable from the branch, including the history behind any [lineage parent](transactions.md#lineage-parents). A tip replaced locally after the remote already had it (see [Replaced commits and the remote](#replaced-commits-and-the-remote)) lands here as a `non-fast-forward` error.
+The push transfers every object reachable from the branch, including the history behind any [additional parent](transactions.md#additional-parents). A tip replaced locally after the remote already had it (see [Replaced commits and the remote](#replaced-commits-and-the-remote)) lands here as a `non-fast-forward` error.
 
 Subsequent `repo.transact` commits will trigger fresh push attempts. If the remote is still ahead, those attempts also fail and emit their own `non-fast-forward` errors — each commit gets one classified error, never a retry storm.
 

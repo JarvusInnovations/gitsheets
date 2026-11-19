@@ -34,12 +34,12 @@ These options unify what [#106](https://github.com/JarvusInnovations/gitsheets/i
 
 ### Commit-shape flags
 
-Every mutating command also accepts the commit-shape options of [api/transaction.md](transaction.md#commit-shape-lineage-parents-replace-empty):
+Every mutating command also accepts the commit-shape options of [api/transaction.md](transaction.md#commit-shape-additional-parents-replace-empty):
 
 | Flag | Library option | Meaning |
 | --- | --- | --- |
 | `--trailer <Key: value>` / `--trailer <Key=value>` | `trailers` | Repeatable. Split at the first `:` or `=`; in the `:` form, leading whitespace in the value is dropped ([behaviors/transactions.md](../behaviors/transactions.md#trailers-from-the-command-line)). A value with neither separator is an argument-parsing error (exit 2); a key or value the library rejects is `trailer_invalid` (exit 69). A key given twice keeps the last value, as it always has |
-| `--also-parent <commit>` | `alsoParents` | Repeatable, in order. A [lineage parent](../behaviors/transactions.md#lineage-parents) for the commit; one that does not resolve to a commit is `parent_not_found` (exit 65) |
+| `--also-parent <commit>` | `alsoParents` | Repeatable, in order. An [additional parent](../behaviors/transactions.md#additional-parents) for the commit; one that does not resolve to a commit is `parent_not_found` (exit 65) |
 | `--replace <commit>` | `replace` | [Replace the tip](../behaviors/transactions.md#replacing-the-tip) of the branch being written, which must be `<commit>`; otherwise `tip_mismatch` (exit 69) and nothing changes. A tip a remote-tracking ref already contains is `tip_published` (exit 69). With `--replace`, `--also-parent` replaces the tip's extra parents instead of adding to them |
 
 `--allow-empty` is accepted by [`commit`](#git-sheet-commit) only: a record command that changes nothing has nothing to say in an empty commit that `commit` cannot say.

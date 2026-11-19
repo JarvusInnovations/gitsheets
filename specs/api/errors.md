@@ -65,7 +65,7 @@ try {
 | `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode, or a permissive-mode write on a ref-pinned (read-only) sheet |
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
 | `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero, or an invalid combination of transaction options at open |
-| `TransactionError` | `trailer_invalid` | 422 | A trailer key not in HTTP-header style, a value that is not a single-line string, or a caller-supplied trailer with the reserved key `Gitsheets-Lineage`; rejected before any tree work ([behaviors/transactions.md](../behaviors/transactions.md#trailer-convention)) |
+| `TransactionError` | `trailer_invalid` | 422 | A trailer key not in HTTP-header style, or a value that is not a single-line string; rejected before any tree work ([behaviors/transactions.md](../behaviors/transactions.md#trailer-convention)) |
 | `TransactionError` | `tip_mismatch` | 409 | Replace mode: the branch tip is not the commit the caller expected to replace — at open, or moved before the compare-and-swap at commit; carries `expected` and `actual`. Do not retry blindly: re-read the tip first ([behaviors/transactions.md](../behaviors/transactions.md#replacing-the-tip)) |
 | `TransactionError` | `tip_published` | 409 | Replace mode: the tip is reachable from a remote-tracking ref, so replacing it would make the branch non-fast-forward on that remote; nothing changed ([behaviors/transactions.md](../behaviors/transactions.md#replacing-the-tip)) |
 | `TransactionError` | `pointer_stage_failed` | 500 | Submodule mode with `stagePointer`: the data commit **landed** but the superproject's index could not be updated; carries `commitHash`. Stage by hand (`git add <path>`); do not retry the write. A distinct code because callers treat `commit_failed` as "nothing landed" and retry, and a retry here would write a second commit ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)) |
@@ -77,9 +77,8 @@ try {
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
 | `RefError` | `not_an_ancestor` | 409 | Merge-like operation where src is not an ancestor of dst |
-| `RefError` | `lineage_unsupported` | 409 | `sync` / `merge` met a `Gitsheets-Lineage`-marked commit in the range it walks and, with lineage edges removed, the two sides have no single best common ancestor; nothing moved ([behaviors/push-sync.md](../behaviors/push-sync.md#lineage-parents-in-sync)) |
 | `TransactionError` | `replace_daemon_running` | 409 | A `replace` transaction on a `Repository` whose push daemon is running: the daemon would publish the open tip ([behaviors/push-sync.md](../behaviors/push-sync.md#the-push-daemon-and-an-open-tip)) |
-| `RefError` | `parent_not_found` | 404 | A lineage parent (`alsoParents` entry) does not resolve to a commit in the repository ([behaviors/transactions.md](../behaviors/transactions.md#lineage-parents)) |
+| `RefError` | `parent_not_found` | 404 | An additional parent (`alsoParents` entry) does not resolve to a commit in the repository ([behaviors/transactions.md](../behaviors/transactions.md#additional-parents)) |
 | `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.), or an expression component threw (including a call the [deterministic realm](../rust-core.md#determinism-rule-for-definition-snippets) forbids) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
 | `NotFoundError` | `record_not_found` | 404 | `delete` / `patch` / etc. against a path that doesn't exist |
