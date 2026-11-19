@@ -26,6 +26,7 @@ pub mod contract;
 pub mod diff;
 pub mod engine;
 pub mod error;
+pub mod history;
 pub mod index;
 pub mod merge;
 pub mod path_template;
@@ -99,6 +100,15 @@ pub fn example_error(code: &str) -> Option<Error> {
         "push_daemon_running" => Error::PushDaemonRunning { message: msg },
         "transaction_closed" => Error::TransactionClosed { message: msg },
         "sheet_derived" => Error::SheetDerived { message: msg },
+        "trailer_invalid" => Error::TrailerInvalid { message: msg },
+        "tip_mismatch" => Error::TipMismatch {
+            message: msg,
+            expected: "0000000000000000000000000000000000000001".into(),
+            actual: None,
+        },
+        "tip_published" => Error::TipPublished { message: msg },
+        "replace_daemon_running" => Error::ReplaceDaemonRunning { message: msg },
+        "parent_not_found" => Error::ParentNotFound { message: msg },
         "index_unique_conflict" => Error::IndexUniqueConflict {
             message: msg,
             conflicting_paths: vec!["people/by-email/a@b.com".into()],
@@ -185,3 +195,6 @@ mod tests {
         assert!(example_error("nope").is_none());
     }
 }
+
+#[cfg(test)]
+mod commit_shape_tests;

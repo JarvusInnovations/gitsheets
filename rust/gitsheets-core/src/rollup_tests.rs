@@ -69,6 +69,7 @@ fn opts() -> TransactionOptions {
         trailers: vec![],
         time_seconds: 1_700_000_000,
         offset_minutes: 0,
+        ..Default::default()
     }
 }
 
@@ -999,4 +1000,75 @@ fn rollup_commit_timing() {
         roll_med / base_med
     );
     assert!(roll_med <= base_med * 2.0, "rollup commit {roll_med:.2} ms > 2x baseline {base_med:.2} ms");
+}
+
+/// One transaction with explicit options (replace mode included).
+fn transact_with(git_dir: &str, o: TransactionOptions, ops: &[Op<'_>]) -> Result<Option<String>> {
+    let mut tx = Transaction::begin(git_dir, o)?;
+    let mut sheets: BTreeMap<String, Sheet> = BTreeMap::new();
+    for op in ops {
+        let (ctx, tree) = tx.split();
+        match op {
+            Op::Upsert(n, text) => {
+                if !sheets.contains_key(*n) {
+                    let s = Sheet::open(&ctx, tree, n, &format!(".gitsheets/{n}.toml"), ".", "")?;
+                    sheets.insert(n.to_string(), s);
+                }
+                let sheet = sheets.get_mut(*n).unwrap();
+                let c = sheet.prepare_upsert(&ctx, tree, &canonical::parse(text)?, None, false)?;
+                sheet.stage_upsert(&ctx, tree, &c)?;
+            }
+            Op::Delete(n, path) => {
+                if !sheets.contains_key(*n) {
+                    let s = Sheet::open(&ctx, tree, n, &format!(".gitsheets/{n}.toml"), ".", "")?;
+                    sheets.insert(n.to_string(), s);
+                }
+                sheets.get_mut(*n).unwrap().delete_at_path(&ctx, tree, path)?
+            }
+            Op::RawWrite(path, text) => {
+                tree.write_child(&ctx, path, text).map_err(record::map_ht)?;
+            }
+        }
+    }
+    tx.mark_mutated();
+    Ok(tx.finalize()?.commit_hash)
+}
+
+/// Replace mode (specs/behaviors/transactions.md "Replacing the tip"): the
+/// pass regenerates the union of the replaced tip's partitions and the
+/// replacement's, so a reverted change leaves no stale rollup.
+#[test]
+fn replace_regenerates_the_union_of_replaced_and_replacement_partitions() {
+    let (_d, git_dir, repo) = base_fixture();
+    seed_three_months(&git_dir);
+    let base = head(&repo);
+    // The tip adds an April record (a new partition).
+    transact(&git_dir, "", &[Op::Upsert("transactions", txn("e", "2026-04-02T09:00:00Z", 500, "posted", "rent"))])
+        .unwrap()
+        .unwrap();
+    let t1 = head(&repo);
+    assert!(blob_at(&repo, t1, "transactions-monthly/2026/04.toml").is_some());
+
+    // Replace it with a transaction that reverts April and touches May.
+    let mut o = opts();
+    o.replace = Some(t1.to_string());
+    transact_with(
+        &git_dir,
+        o,
+        &[
+            Op::Delete("transactions", "2026/04/e"),
+            Op::Upsert("transactions", txn("f", "2026-05-02T09:00:00Z", 700, "posted", "rent")),
+        ],
+    )
+    .unwrap()
+    .unwrap();
+    let t2 = head(&repo);
+    assert_eq!(repo.find_commit(t2).unwrap().parent_ids().next().unwrap().detach(), base);
+    assert_eq!(blob_at(&repo, t2, "transactions-monthly/2026/04.toml"), None, "no stale April rollup");
+    assert!(blob_at(&repo, t2, "transactions-monthly/2026/05.toml").unwrap().contains("total = 700"));
+    // Untouched partitions are identical to the base's.
+    assert_eq!(
+        blob_at(&repo, t2, "transactions-monthly/2026/03.toml"),
+        blob_at(&repo, base, "transactions-monthly/2026/03.toml")
+    );
 }

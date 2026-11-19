@@ -47,7 +47,7 @@ pub struct Author {
 /// Options for opening a transaction. `time_seconds` / `offset_minutes` carry
 /// the host's wall-clock + local-timezone offset for the commit signature (a
 /// host concern, exactly as the JS `commitTreeWithRepo` computes them).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionOptions {
     pub parent: Option<String>,
     /// Orphan root commit: ignore `parent`, start from the empty tree, commit
@@ -62,6 +62,15 @@ pub struct TransactionOptions {
     pub trailers: Vec<(String, String)>,
     pub time_seconds: i64,
     pub offset_minutes: i32,
+    /// Additional parents after the first (`specs/behaviors/transactions.md`
+    /// "Additional parents"). `None` = not given; in replace mode `Some(vec![])`
+    /// drops the replaced tip's extra parents.
+    pub also_parents: Option<Vec<String>>,
+    /// Replace mode: the tip the caller expects to replace
+    /// ("Replacing the tip").
+    pub replace: Option<String>,
+    /// Commit even when nothing changed ("Empty commits").
+    pub allow_empty: bool,
 }
 
 /// The outcome of [`Transaction::finalize`]. A no-op (no mutation, or resulting
@@ -73,6 +82,8 @@ pub struct TransactionResult {
     pub tree_hash: Option<String>,
     pub ref_name: Option<String>,
     pub parent_commit_hash: Option<String>,
+    /// Replace mode: the tip that was replaced (`None` otherwise, and on a no-op).
+    pub replaced_commit_hash: Option<String>,
 }
 
 // ── process-wide open-transaction registry ────────────────────────────────────
@@ -115,6 +126,12 @@ pub struct Transaction {
     offset_minutes: i32,
     any_mutation: bool,
     closed: bool,
+    /// Parents after the first, in order.
+    /// merge (`false`).
+    extra_parents: Vec<ObjectId>,
+    /// Replace mode: the tip being replaced and its tree.
+    replace_tip: Option<(ObjectId, ObjectId)>,
+    allow_empty: bool,
 }
 
 impl Transaction {
@@ -140,11 +157,78 @@ impl Transaction {
 
         // From here on, any early return must release the slot.
         let result = (|| {
-            let (parent_ref, parent_commit_hash, branch_ref) = if opts.orphan {
+            if opts.orphan && opts.replace.is_some() {
+                return Err(Error::CommitFailed {
+                    message: "replace cannot be combined with an orphan commit (parent: null)".into(),
+                });
+            }
+            if opts.orphan && opts.also_parents.as_ref().is_some_and(|v| !v.is_empty()) {
+                return Err(Error::CommitFailed {
+                    message: "alsoParents cannot be combined with an orphan commit (parent: null): there is no first parent to add parents after".into(),
+                });
+            }
+            let (parent_ref, mut parent_commit_hash, branch_ref) = if opts.orphan {
                 (None, None, opts.branch.as_deref().map(qualify_ref))
             } else {
                 resolve_parent(&repo, opts.parent.as_deref(), opts.branch.as_deref())?
             };
+
+            // Replace mode: the parent ref must be the branch the tip is on
+            // (or a detached HEAD the host advances), and its tip must be the
+            // commit the caller named.
+            let mut replace_tip: Option<(ObjectId, ObjectId)> = None;
+            let mut extra_parents: Vec<ObjectId> = Vec::new();
+            if let Some(expected) = opts.replace.as_deref() {
+                if opts.parent.is_some() && parent_ref.is_none() {
+                    return Err(Error::CommitFailed {
+                        message: "replace needs a branch to move: parent names a commit, not a branch".into(),
+                    });
+                }
+                if branch_ref.is_some() && branch_ref != parent_ref {
+                    return Err(Error::CommitFailed {
+                        message: "replace moves the parent ref; opts.branch must be omitted or equal to it".into(),
+                    });
+                }
+                let tip = check_tip(&repo, expected, parent_commit_hash)?;
+                check_unpublished(&repo, tip)?;
+                let commit = repo.find_commit(tip).map_err(|e| Error::CommitFailed {
+                    message: format!("find commit {tip}: {e}"),
+                })?;
+                let tip_tree = commit
+                    .tree_id()
+                    .map_err(|e| Error::CommitFailed {
+                        message: format!("tree of {tip}: {e}"),
+                    })?
+                    .detach();
+                let tip_parents: Vec<ObjectId> = commit.parent_ids().map(|p| p.detach()).collect();
+                parent_commit_hash = tip_parents.first().copied();
+                if opts.also_parents.is_none() {
+                    extra_parents = tip_parents.iter().skip(1).copied().collect();
+                }
+                replace_tip = Some((tip, tip_tree));
+            }
+
+            if let Some(also) = opts.also_parents.as_ref() {
+                for spec in also {
+                    let id = resolve_parent_commit(&repo, spec)?;
+                    if Some(id) == parent_commit_hash {
+                        return Err(Error::CommitFailed {
+                            message: format!("alsoParents entry {spec} is the first parent"),
+                        });
+                    }
+                    if extra_parents.contains(&id) {
+                        return Err(Error::CommitFailed {
+                            message: format!("alsoParents names {id} twice"),
+                        });
+                    }
+                    extra_parents.push(id);
+                }
+                if !also.is_empty() && parent_commit_hash.is_none() {
+                    return Err(Error::CommitFailed {
+                        message: "alsoParents needs a first parent: the branch is unborn (or the replaced tip is a root commit); make a first commit without additional parents".into(),
+                    });
+                }
+            }
 
             // A branch other than the parent ref: capture its tip (the CAS
             // expectation at commit); absent means "create". An orphan only
@@ -168,7 +252,11 @@ impl Transaction {
             let author = resolve_author(&repo, opts.author);
             let committer = opts.committer.unwrap_or_else(|| author.clone());
 
-            let root = match &parent_commit_hash {
+            let start = match replace_tip {
+                Some((tip, _)) => Some(tip),
+                None => parent_commit_hash,
+            };
+            let root = match &start {
                 Some(hash) => holo_repo::create_tree_from_ref(&repo, &hash.to_string())
                     .map_err(record::map_ht)?,
                 None => MutableTree::empty(),
@@ -192,6 +280,9 @@ impl Transaction {
                 offset_minutes: opts.offset_minutes,
                 any_mutation: false,
                 closed: false,
+                extra_parents,
+                replace_tip,
+                allow_empty: opts.allow_empty,
             })
         })();
 
@@ -262,15 +353,36 @@ impl Transaction {
             tree_hash: None,
             ref_name: None,
             parent_commit_hash: parent_str.clone(),
+            replaced_commit_hash: None,
         };
 
-        if !self.any_mutation && !self.orphan {
+        if !self.any_mutation && !self.orphan && !self.allow_empty && self.replace_tip.is_none() {
             self.release();
             return Ok(no_change);
         }
 
+        // Replace mode: the tip must still be the one replaced, and still
+        // unpublished. `parent_moved` never applies here.
+        if let Some((tip, _)) = self.replace_tip {
+            let current = match self.current_tip() {
+                Ok(c) => c,
+                Err(e) => {
+                    self.release();
+                    return Err(e);
+                }
+            };
+            if current != Some(tip) {
+                self.release();
+                return Err(tip_mismatch(&tip.to_string(), current));
+            }
+            if let Err(e) = check_unpublished(&self.repo, tip) {
+                self.release();
+                return Err(e);
+            }
+        }
+
         // Optimistic concurrency: re-check the parent ref hasn't moved.
-        if let Some(parent_ref) = &self.parent_ref {
+        if let (Some(parent_ref), None) = (&self.parent_ref, self.replace_tip) {
             let current = holo_repo::resolve_ref(&self.repo, parent_ref).map_err(record::map_ht)?;
             if current != self.parent_commit_hash {
                 self.release();
@@ -300,8 +412,8 @@ impl Transaction {
             }
         };
 
-        // No-op detection: resulting tree equals the parent commit's tree.
-        if let Some(parent) = self.parent_commit_hash {
+        // No-op detection: resulting tree equals the (new) first parent's tree.
+        if let (Some(parent), false) = (self.parent_commit_hash, self.allow_empty) {
             let mut parent_tree =
                 match holo_repo::create_tree_from_ref(&self.repo, &parent.to_string()) {
                     Ok(t) => t,
@@ -340,7 +452,8 @@ impl Transaction {
                 }
             };
 
-        let parents: Vec<ObjectId> = self.parent_commit_hash.into_iter().collect();
+        let mut parents: Vec<ObjectId> = self.parent_commit_hash.into_iter().collect();
+        parents.extend(self.extra_parents.iter().copied());
         let commit_id = match holo_repo::commit_tree(
             &self.repo,
             tree_hash,
@@ -361,12 +474,21 @@ impl Transaction {
         if let Some(branch) = &self.branch_ref {
             // The parent ref advances from the parent commit; any other branch
             // from the tip captured at open (`None` → created).
-            let expected = if self.parent_ref.as_deref() == Some(branch.as_str()) {
+            let expected = if let Some((tip, _)) = self.replace_tip {
+                Some(tip)
+            } else if self.parent_ref.as_deref() == Some(branch.as_str()) {
                 self.parent_commit_hash
             } else {
                 self.branch_old
             };
             if let Err(e) = holo_repo::update_ref(&self.repo, branch, commit_id, expected) {
+                if let Some((tip, _)) = self.replace_tip {
+                    let current = self.current_tip().ok().flatten();
+                    if current != Some(tip) {
+                        self.release();
+                        return Err(tip_mismatch(&tip.to_string(), current));
+                    }
+                }
                 self.release();
                 return Err(Error::CommitFailed {
                     message: format!("holo-tree update_ref {branch} failed: {e}"),
@@ -381,7 +503,20 @@ impl Transaction {
             tree_hash: Some(tree_hash.to_string()),
             ref_name,
             parent_commit_hash: parent_str,
+            replaced_commit_hash: self.replace_tip.map(|(t, _)| t.to_string()),
         })
+    }
+
+    /// The current tip of the ref this transaction moves: the parent ref, or
+    /// `HEAD` when it is detached (the host advances it).
+    fn current_tip(&self) -> Result<Option<ObjectId>> {
+        let name = self.parent_ref.as_deref().unwrap_or("HEAD");
+        holo_repo::resolve_ref(&self.repo, name).map_err(record::map_ht)
+    }
+
+    /// Replace mode: the tip being replaced.
+    pub fn replaced_tip(&self) -> Option<String> {
+        self.replace_tip.map(|(t, _)| t.to_string())
     }
 
     /// The commit-time rollup pass over the private tree, against the parent
@@ -397,7 +532,18 @@ impl Transaction {
             ),
             None => None,
         };
-        crate::rollup::run_pass(&ctx, &mut self.root, &[(parent_tree, current)], ".", false)
+        match self.replace_tip {
+            // Replace mode: the union of what the replaced tip and the
+            // replacement changed against the new first parent.
+            Some((_, tip_tree)) => crate::rollup::run_pass(
+                &ctx,
+                &mut self.root,
+                &[(parent_tree, current), (parent_tree, tip_tree)],
+                ".",
+                false,
+            ),
+            None => crate::rollup::run_pass(&ctx, &mut self.root, &[(parent_tree, current)], ".", false),
+        }
     }
 
     /// Discard the transaction without committing (handler threw). Releases the
@@ -428,6 +574,74 @@ impl Drop for Transaction {
 
 fn opt_hash(h: &Option<ObjectId>) -> String {
     h.map(|h| h.to_string()).unwrap_or_else(|| "null".into())
+}
+
+fn tip_mismatch(expected: &str, actual: Option<ObjectId>) -> Error {
+    let actual = actual.map(|a| a.to_string());
+    Error::TipMismatch {
+        message: format!(
+            "the branch tip is {}, not {expected}: refusing to replace a commit the caller has not seen",
+            actual.as_deref().unwrap_or("unborn (no commits)")
+        ),
+        expected: expected.to_string(),
+        actual,
+    }
+}
+
+/// Replace mode at open: resolve the expected tip and compare it with the
+/// ref's tip. Returns the tip.
+fn check_tip(repo: &gix::Repository, expected: &str, tip: Option<ObjectId>) -> Result<ObjectId> {
+    let resolved = repo
+        .rev_parse_single(expected)
+        .ok()
+        .and_then(|id| id.object().ok())
+        .and_then(|o| o.peel_to_commit().ok())
+        .map(|c| c.id);
+    match (resolved, tip) {
+        (Some(e), Some(t)) if e == t => Ok(t),
+        _ => Err(tip_mismatch(expected, tip)),
+    }
+}
+
+/// `tip_published` when any remote-tracking ref contains `tip` (plain
+/// reachability, every parent edge).
+pub(crate) fn check_unpublished(repo: &gix::Repository, tip: ObjectId) -> Result<()> {
+    let platform = repo.references().map_err(|e| Error::CommitFailed {
+        message: format!("list refs: {e}"),
+    })?;
+    let iter = platform.prefixed("refs/remotes/").map_err(|e| Error::CommitFailed {
+        message: format!("list remote-tracking refs: {e}"),
+    })?;
+    for r in iter {
+        let Ok(mut r) = r else { continue };
+        let name = r.name().as_bstr().to_string();
+        let Ok(id) = r.peel_to_id() else { continue };
+        let id = id.detach();
+        let contains = id == tip || matches!(repo.merge_base(tip, id), Ok(b) if b.detach() == tip);
+        if contains {
+            return Err(Error::TipPublished {
+                message: format!(
+                    "the tip {tip} is already on a remote ({name} contains it); replacing it would make the branch non-fast-forward there, and gitsheets never force-pushes"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Resolve an additional parent to a commit, or `parent_not_found`.
+fn resolve_parent_commit(repo: &gix::Repository, spec: &str) -> Result<ObjectId> {
+    let not_found = |why: String| Error::ParentNotFound {
+        message: format!("additional parent {spec:?} {why}"),
+    };
+    let id = repo
+        .rev_parse_single(spec)
+        .map_err(|e| not_found(format!("does not resolve: {e}")))?;
+    let obj = id.object().map_err(|e| not_found(format!("could not be loaded: {e}")))?;
+    if obj.kind != gix::object::Kind::Commit {
+        return Err(not_found(format!("is a {}, not a commit", obj.kind)));
+    }
+    Ok(obj.id)
 }
 
 // ── parent resolution (port of Repository.#resolveParent) ─────────────────────
@@ -521,12 +735,12 @@ const TRAILER_KEY_ERR: &str =
 fn validate_trailers(trailers: &[(String, String)]) -> Result<()> {
     for (key, value) in trailers {
         if !is_http_header_key(key) {
-            return Err(Error::CommitFailed {
+            return Err(Error::TrailerInvalid {
                 message: format!("trailer key {key:?} {TRAILER_KEY_ERR}"),
             });
         }
         if value.contains('\r') || value.contains('\n') {
-            return Err(Error::CommitFailed {
+            return Err(Error::TrailerInvalid {
                 message: format!(
                     "trailer {key:?} has invalid value (must be string with no newlines): {value:?}"
                 ),
@@ -715,6 +929,7 @@ mod tests {
             trailers: vec![],
             time_seconds: 1_700_000_000,
             offset_minutes: -300,
+            ..Default::default()
         }
     }
 
@@ -1097,7 +1312,7 @@ mod tests {
         let mut opts = default_opts("x");
         opts.trailers = vec![("not a header".into(), "v".into())];
         let err = begin_err(&git_dir, opts);
-        assert_eq!(err.code(), "commit_failed");
+        assert_eq!(err.code(), "trailer_invalid");
     }
 
     #[test]
