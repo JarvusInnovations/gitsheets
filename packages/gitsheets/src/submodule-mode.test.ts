@@ -111,6 +111,23 @@ describe('openRepo({ submodule })', () => {
     expect(await status(fx)).toContain('modified:   data (new commits)');
   });
 
+  it('replace on a detached HEAD moves HEAD from the replaced tip, and refuses a mismatched tip', async () => {
+    const fx = await withSubmodule();
+    await sub(fx, 'checkout', '--quiet', '--detach');
+    const main = await sub(fx, 'rev-parse', 'refs/heads/main');
+    const repo = await open(fx);
+    const bob = await upsert(repo, 'bob');
+    const err = await repo.transact({ message: 'x', replace: main, allowEmpty: true }, async () => undefined).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'tip_mismatch', expected: main, actual: bob });
+    expect(await sub(fx, 'rev-parse', 'HEAD')).toBe(bob);
+    const r = await repo.transact({ message: 'add bob (reworded)', replace: bob }, async () => undefined);
+    expect(r.ref).toBe('HEAD');
+    expect(r.replacedCommitHash).toBe(bob);
+    expect(r.parentCommitHash).toBe(main);
+    expect(await sub(fx, 'rev-parse', 'HEAD')).toBe(r.commitHash);
+    expect(await sub(fx, 'rev-parse', 'refs/heads/main')).toBe(main);
+  });
+
   it('the detached-HEAD advance is a strict compare-and-swap', async () => {
     const fx = await withSubmodule();
     await sub(fx, 'checkout', '--quiet', '--detach');
