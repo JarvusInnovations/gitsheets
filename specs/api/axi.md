@@ -6,7 +6,7 @@
 
 - **TOON on stdout.** Every result, list, and error is [TOON](https://toonformat.dev/) (Token-Oriented Object Notation): `key: value` objects, `name[N]{col,…}:` tables, and a trailing `help[N]:` list of suggested next commands.
 - **Errors on stdout** as `error:` / `code:` / `help[N]:`, with a stable code and a non-zero exit.
-- **Idempotent mutations.** Every write pre-flights through `Sheet.willChange` (or an equivalent bytes comparison). When nothing would change, the command exits `0` with `result: no-op` and produces no commit.
+- **Idempotent mutations.** Every write pre-flights through `Sheet.willChange` (or an equivalent bytes comparison). When nothing would change, the command exits `0` with `result: no-op` and produces no commit. Two opt-ins step outside this on purpose: `--replace` (the comparison that matters is against the replaced tip's parent, which the library makes) and `commit --allow-empty` (a commit is the point).
 - **Minimal default schemas.** List views show a few format-aware columns; `--fields` opts in to more.
 - **Live content on bare invocation.** `gitsheets-axi` with no command renders the home view, not usage.
 
@@ -40,12 +40,28 @@ Per-command flags shared by most commands:
 | Flag | Commands | Meaning |
 | --- | --- | --- |
 | `--prefix <p>` | every command that opens a sheet (`query`, `count`, `distinct`, `aggregate`, `read`, `upsert`, `patch`, `delete`, `rename`, `diff`, `normalize`, `rollup`, `check`, `infer`, `attachment`) | Tenant sub-tree scope, as `openSheet({ prefix })` ([api/repository.md](repository.md#repoopensheetname-opts)) |
-| `--message <m>` | every committing command | Commit message; each command has a default naming the sheet and operation |
+| `--message <m>` | every committing command | Commit message; each command has a default naming the sheet and operation (`commit` has none: it is required) |
+| `--trailer <Key: value>` | every committing command | Repeatable commit trailer, `Key: value` or `Key=value` ([Commit-shape flags](#commit-shape-flags)) |
+| `--also-parent <commit>` | every committing command | Repeatable lineage parent ([Commit-shape flags](#commit-shape-flags)) |
+| `--replace <commit>` | every committing command | Replace the branch tip, which must be `<commit>` ([Commit-shape flags](#commit-shape-flags)) |
+| `--allow-empty` | `commit` | Commit even though no record changes |
 | `--json-out[=path]`, `--ndjson-out[=path]`, `--csv-out[=path]` | `query` | Side-channel export; see [`query`](#query) |
+| `--json-out[=path]` | `head` | The commit as JSON; see [`head`](#head) |
 
 There is no `--format` flag: stdout is always TOON. A malformed value for any global flag is `VALIDATION_ERROR` (exit 2).
 
 ## Semantics
+
+### Commit-shape flags
+
+The committing commands are `upsert`, `patch`, `delete`, `rename`, `normalize`, `rollup` (without `--check`), `init`, `infer`, `migrate-config`, `attachment set`, `attachment delete`, and `commit`. Each takes the commit-shape options of [api/transaction.md](transaction.md#commit-shape-lineage-parents-replace-empty) as flags; a flag a command does not take is `VALIDATION_ERROR`, like any unknown flag.
+
+- **`--trailer <Key: value>`** (repeatable) → `trailers`. The value is split at the first `:` or `=`; in the `:` form leading whitespace in the value is dropped ([behaviors/transactions.md](../behaviors/transactions.md#trailers-from-the-command-line)). No separator, an empty key, a key that is not HTTP-header style, the reserved key `Gitsheets-Lineage`, or the **same key twice** is `TRAILER_INVALID` (exit `2`), before the repository is touched. (The human CLI keeps its older last-value-wins rule for a repeated key; this CLI fails closed instead, because a silently dropped trailer is a lost fact.)
+- **`--also-parent <commit>`** (repeatable, in order) → `alsoParents`: a [lineage parent](../behaviors/transactions.md#lineage-parents). One that does not resolve to a commit is `PARENT_NOT_FOUND`. On a record command whose write turns out to be a no-op, no commit is made and the lineage parent is not recorded: it rides on a commit, it does not cause one.
+- **`--replace <commit>`** → `replace`: [replace the tip](../behaviors/transactions.md#replacing-the-tip) of the bound branch, which must be `<commit>`. Anything else is `TIP_MISMATCH` and nothing changes; a tip that a remote-tracking ref already contains is `TIP_PUBLISHED`. With `--replace`, the command skips its own no-op preflight and lets the library decide, and `--also-parent` replaces the tip's extra parents instead of adding to them. A successful replacement adds `replaced: <old tip>` to the output.
+- **`--allow-empty`** (`commit` only) → `allowEmpty`.
+
+These are per-call options: flags only, with no environment variable and no git config ([principles.md](../principles.md#behave-like-a-first-party-git-extension)). They work the same under `--branch`, `--submodule` (the ref replaced is the submodule's branch, or its `HEAD` when detached), and their environment and config tiers, and they never touch a working tree. Under `--at` every committing command is refused, as before.
 
 ### Sheet resolution
 
@@ -183,6 +199,45 @@ Read-only views of [contracts](../behaviors/contracts.md); adopting, syncing, or
 
 `check <sheet> <file> [--fix] [--prefix p]` verifies a **working-tree** record file: parse it with the sheet's format, validate it against the schema, and compare it with its canonical serialization. Canonical is `result: ok`; with `--fix` a non-canonical file is rewritten in place (`result: fixed`); without it, `NOT_CANONICAL`. Never commits. Built as a post-edit hook for agents that wrote a record file directly. A file that fails to parse is `CONFIG_INVALID`; a schema failure is `VALIDATION_FAILED`; an unreadable file is `NOT_FOUND`; a failed rewrite is `WRITE_ERROR`.
 
+#### `commit`
+
+`commit --message <m> [--allow-empty] [--replace <commit>] [--also-parent <commit> …] [--trailer <Key: value> …]` makes a commit that writes no record: an empty commit on top of the tip, or a replacement of the tip that changes only its message, trailers, or parents. At least one of `--allow-empty` / `--replace` is required, and `--message` is required; either missing is `VALIDATION_ERROR`.
+
+Output: `result: committed`, `commit`, `branch`, `replaced` (with `--replace`), and a `parents` table (`hash`, `role`). A replacement that would leave the tree equal to the new first parent's tree, without `--allow-empty`, commits nothing: `result: no-op` with the unchanged `tip`.
+
+It is a command rather than a flag on `upsert` because an empty commit has no record to upsert; giving every record command a "no input" mode would loosen their input rules for one case. The shape is `git commit --allow-empty` / `git commit --amend`, with the amend made safe by naming the tip.
+
+```text
+$ gitsheets-axi --branch log commit --allow-empty --message 'cycle 42: end' --trailer 'Cycle-Id: 42' --also-parent 01ab2c…
+result: committed
+commit: 7c1d…
+branch: refs/heads/log
+parents[2]{hash,role}:
+  9f3e…,first
+  01ab…,lineage
+```
+
+#### `head`
+
+`head [--json-out[=path]]` shows the tip commit of the bound branch (the default branch; under `--at`, the pinned data commit) from `repo.readCommit()` ([api/repository.md](repository.md#reporeadcommitrev)): `branch`, `commit`, `tree`, `author` (name, email, date), `subject`, `body` (omitted when empty), a `parents` table (`hash`, `role`: `first` / `lineage` / `merge`), and a `trailers` table (`key`, `value`, in order, repeated keys kept). With `--json-out` it also writes the `CommitInfo` object as JSON (a bare flag: an owner-only file under the OS temp dir; `=path`: there) and reports `wrote`; stdout stays TOON. An unborn branch prints `branch` and `commit: null` with a hint, exits `0`, and `--json-out` writes `null`.
+
+This is the read-back for a caller that resumes from what it last wrote. There is no `log`: one commit is what resuming needs.
+
+```text
+$ gitsheets-axi --branch log head
+branch: refs/heads/log
+commit: 7c1d…
+tree: 4b80…
+author: Loop <loop@example.org> 2026-11-19T10:02:11-05:00
+subject: cycle 42: end
+parents[2]{hash,role}:
+  9f3e…,first
+  01ab…,lineage
+trailers[2]{key,value}:
+  Cycle-Id,42
+  Gitsheets-Lineage,01ab…
+```
+
 #### `push`
 
 `push [--remote r]` runs `git push <remote> <default branch>` once (remote default `origin`). Already up to date is `result: no-op`; success is `result: pushed`. A rejected non-fast-forward is `NON_FAST_FORWARD` (never force-pushes); any other failure is `PUSH_FAILED`; a detached-`HEAD` binding is `REF_ERROR`. Not a daemon: retry-with-backoff belongs to `repo.startPushDaemon` ([behaviors/push-sync.md](../behaviors/push-sync.md)).
@@ -196,7 +251,7 @@ Read-only views of [contracts](../behaviors/contracts.md); adopting, syncing, or
 | Exit | When |
 | --- | --- |
 | `0` | Success, including `result: no-op`, `result: fresh`, `check` ok / fixed, and home outside a repository |
-| `2` | `VALIDATION_ERROR` — a usage error: unknown command or flag, missing argument, malformed `--filter` / `--agg`, a command applied to the wrong kind of sheet |
+| `2` | `VALIDATION_ERROR` — a usage error: unknown command or flag, missing argument, malformed `--filter` / `--agg`, a command applied to the wrong kind of sheet; and `TRAILER_INVALID` |
 | `1` | Every other error code |
 
 ## Errors
@@ -217,8 +272,12 @@ Every error prints `error: <message>`, `code: <CODE>`, and an optional `help[N]:
 | `NOT_CANONICAL` | `check` without `--fix` on a non-canonical file |
 | `INDEX_CONFLICT` | `IndexError` |
 | `PATH_TEMPLATE_ERROR` | `PathTemplateError` |
-| `REF_ERROR` | `RefError`; `push` on a detached-`HEAD` binding |
+| `REF_ERROR` | Any other `RefError`; `push` on a detached-`HEAD` binding |
 | `SHEET_DERIVED` | A write to a rollup sheet (`TransactionError` `sheet_derived`) |
+| `TRAILER_INVALID` | A malformed or repeated `--trailer`, or the reserved key (exit `2`); also `TransactionError` `trailer_invalid` |
+| `PARENT_NOT_FOUND` | An `--also-parent` that does not resolve to a commit (`RefError` `parent_not_found`) |
+| `TIP_MISMATCH` | `--replace` named a commit that is not the branch tip (`TransactionError` `tip_mismatch`); the message names the expected and actual tips, and the help suggests `gitsheets-axi head` |
+| `TIP_PUBLISHED` | `--replace` on a tip a remote-tracking ref already contains (`TransactionError` `tip_published`) |
 | `TRANSACTION_ERROR` | Any other `TransactionError` |
 | `ROLLUP_STALE` | `rollup --check` found partitions that are not fresh |
 | `AGGREGATION_FAILED` | `AggregationError` |

@@ -53,6 +53,19 @@ The fetch step is also available on its own as **`repo.fetch({ remote?, branch? 
 
 The replay is pure object-database work (no working tree, no index, nothing to abort), done in the core; only the fetch and the conflict-branch push spawn git, because the network layer stays with git's own auth and transport. `sync` never force-pushes and never rewrites the remote: the only remote writes are the push daemon's fast-forward pushes and the conflict branch.
 
+### Lineage parents in sync
+
+A commit may carry [lineage parents](transactions.md#lineage-parents): extra parents gitsheets wrote with a `Gitsheets-Lineage` marker to record provenance, not a merge. Sync does not follow the edge from a commit to its lineage parents. The merge base `B`, the `ahead` / `behind` counts, and the replay set `B..L` are all computed over the history with those edges removed; first-parent edges and unmarked (merge) parent edges are followed exactly as before, so a history with no lineage parents classifies and replays as it always has.
+
+- **Why.** Followed like a merge parent, a lineage parent that points into another history pulls that history into `B..L`: a diverged sync would replay every commit behind the lineage parent onto the remote tip, and a lineage parent that happens to be a remote commit would move the merge base past remote work the local branch never merged.
+- **Replay keeps lineage.** A replayed commit is written with parents `[new tip, ...its lineage parents]` and its original message, so its `Gitsheets-Lineage` trailers still name exactly the lineage parents it carries. Merge parents are not kept: a local merge commit is replayed linearized, as before.
+- **The rollup pass** for a replayed commit diffs against its new first parent and its original first parent only ([rollups.md](rollups.md#merge-and-sync)).
+- **`isAncestor` is not affected.** It is plain reachability, lineage edges included.
+
+### Replaced commits and the remote
+
+A transaction in [replace mode](transactions.md#replacing-the-tip) refuses to replace a tip that any remote-tracking ref already contains (`tip_published`), so a single writer that pushes through gitsheets never creates a commit its remote would reject. When the check cannot see the push (the tip reached the remote some other way, or a daemon push of the old tip was in flight when the replacement landed), the next push is rejected as non-fast-forward and reported as below; nothing is forced. `sync` after a replacement treats the replaced commit like any other unreferenced object: it is not in `B..L`.
+
 ### `repo.isAncestor(a, b)`
 
 `true` when commit `a` is reachable from commit `b` (or `a == b`). The short-circuit consumers use before a sync or a hot reload ("do I already have this commit?"). `RefError` (`ref_not_found`) if either does not resolve to a commit.
@@ -83,6 +96,8 @@ The underlying operation is `git push <remote> <branch>` with no `--force`. **Re
 If the remote rejects the push (non-fast-forward, "remote contains work that you do not have"), the daemon does not retry — it emits an `error` event with `reason: 'non-fast-forward'` and surfaces a hard error in `daemon.status()` (also with `lastError.reason === 'non-fast-forward'`). The consumer needs to intervene; a never-force-push policy is non-negotiable.
 
 The daemon does *not* attempt to merge or rebase. The local commit history is the source of truth.
+
+The push transfers every object reachable from the branch, including the history behind any [lineage parent](transactions.md#lineage-parents). A tip replaced locally after the remote already had it (see [Replaced commits and the remote](#replaced-commits-and-the-remote)) lands here as a `non-fast-forward` error.
 
 Subsequent `repo.transact` commits will trigger fresh push attempts. If the remote is still ahead, those attempts also fail and emit their own `non-fast-forward` errors — each commit gets one classified error, never a retry storm.
 

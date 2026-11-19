@@ -17,6 +17,8 @@ export class ValidationError extends GitsheetsError {
 }
 export class TransactionError extends GitsheetsError {
   readonly commitHash?: string;     // pointer_stage_failed: the data commit that landed
+  readonly expected?: string;       // tip_mismatch: the tip the caller passed as `replace`
+  readonly actual?: string | null;  // tip_mismatch: the tip found (null when the branch is unborn)
 }
 export class IndexError extends GitsheetsError {
   readonly conflictingPaths?: string[];
@@ -62,7 +64,10 @@ try {
 | `TransactionError` | `transaction_in_progress` | 409 | Concurrent `repo.transact` attempt |
 | `TransactionError` | `transaction_required` | 409 | Mutation outside a transaction in strict mode, or a permissive-mode write on a ref-pinned (read-only) sheet |
 | `TransactionError` | `parent_moved` | 409 | Optimistic-concurrency conflict at commit |
-| `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero |
+| `TransactionError` | `commit_failed` | 500 | `git commit-tree` / `update-ref` non-zero, or an invalid combination of transaction options at open |
+| `TransactionError` | `trailer_invalid` | 422 | A trailer key not in HTTP-header style, a value that is not a single-line string, or a caller-supplied trailer with the reserved key `Gitsheets-Lineage`; rejected before any tree work ([behaviors/transactions.md](../behaviors/transactions.md#trailer-convention)) |
+| `TransactionError` | `tip_mismatch` | 409 | Replace mode: the branch tip is not the commit the caller expected to replace — at open, or moved before the compare-and-swap at commit; carries `expected` and `actual`. Do not retry blindly: re-read the tip first ([behaviors/transactions.md](../behaviors/transactions.md#replacing-the-tip)) |
+| `TransactionError` | `tip_published` | 409 | Replace mode: the tip is reachable from a remote-tracking ref, so replacing it would make the branch non-fast-forward on that remote; nothing changed ([behaviors/transactions.md](../behaviors/transactions.md#replacing-the-tip)) |
 | `TransactionError` | `pointer_stage_failed` | 500 | Submodule mode with `stagePointer`: the data commit **landed** but the superproject's index could not be updated; carries `commitHash`. Stage by hand (`git add <path>`); do not retry the write. A distinct code because callers treat `commit_failed` as "nothing landed" and retry, and a retry here would write a second commit ([behaviors/default-branch.md](../behaviors/default-branch.md#submodule-mode)) |
 | `TransactionError` | `push_daemon_running` | 409 | `repo.startPushDaemon` while one is already active |
 | `TransactionError` | `transaction_closed` | 409 | `tx.sheet(...)` / `tx.writeFile` / `tx.deleteFile` after the transaction has been finalized or discarded |
@@ -72,6 +77,7 @@ try {
 | `IndexError` | `index_not_defined` | 500 | `findByIndex` for an undeclared index |
 | `RefError` | `ref_not_found` | 404 | Resolution of a ref / commit-hash failed |
 | `RefError` | `not_an_ancestor` | 409 | Merge-like operation where src is not an ancestor of dst |
+| `RefError` | `parent_not_found` | 404 | A lineage parent (`alsoParents` entry) does not resolve to a commit in the repository ([behaviors/transactions.md](../behaviors/transactions.md#lineage-parents)) |
 | `PathTemplateError` | `path_render_failed` | 422 | Template can't render against the record (missing fields, etc.), or an expression component threw (including a call the [deterministic realm](../rust-core.md#determinism-rule-for-definition-snippets) forbids) |
 | `PathTemplateError` | `path_invalid_chars` | 422 | Rendered path contains characters disallowed by the filesystem (Windows, etc.) |
 | `NotFoundError` | `record_not_found` | 404 | `delete` / `patch` / etc. against a path that doesn't exist |
@@ -81,6 +87,10 @@ try {
 | `AggregationError` | `aggregation_failed` | 422 | An aggregate could not be computed (mixed value kinds under `min`/`max`/`distinct`, an integer `sum`/`avg` total outside the signed 64-bit range, a `reduce`/`finalize` that threw, exceeded the engine's runtime limits, or returned a non-TOML value); carries sheet and aggregate name, plus the partition for a persisted rollup ([behaviors/aggregation.md](../behaviors/aggregation.md), [behaviors/rollups.md](../behaviors/rollups.md)) |
 
 The `code` strings are stable. New scenarios get new codes; existing codes never change meaning.
+
+### Malformed trailers were `commit_failed`
+
+Before this release a malformed trailer threw `TransactionError` with code `commit_failed`. It now throws `trailer_invalid`. This is the one place a scenario moved from an existing code to a new one, and it is deliberate: `commit_failed` means "nothing landed, a retry may work" (see `pointer_stage_failed` above for why that reading matters), while a malformed trailer fails identically on every retry. The class is unchanged, so `instanceof TransactionError` still catches it; only a caller that switched on `code === 'commit_failed'` for this case sees a difference.
 
 ## ValidationIssue
 

@@ -32,6 +32,22 @@ A `--working` flag — read/write the working tree state instead of a committed 
 
 These options unify what [#106](https://github.com/JarvusInnovations/gitsheets/issues/106) asked for. Every mutating command implicitly uses `repo.transact` and accepts `--message`, `--author-name`, `--author-email`, and one or more `--trailer Key=Value` flags (repeatable).
 
+### Commit-shape flags
+
+Every mutating command also accepts the commit-shape options of [api/transaction.md](transaction.md#commit-shape-lineage-parents-replace-empty):
+
+| Flag | Library option | Meaning |
+| --- | --- | --- |
+| `--trailer <Key: value>` / `--trailer <Key=value>` | `trailers` | Repeatable. Split at the first `:` or `=`; in the `:` form, leading whitespace in the value is dropped ([behaviors/transactions.md](../behaviors/transactions.md#trailers-from-the-command-line)). A value with neither separator is an argument-parsing error (exit 2); a key or value the library rejects is `trailer_invalid` (exit 69). A key given twice keeps the last value, as it always has |
+| `--also-parent <commit>` | `alsoParents` | Repeatable, in order. A [lineage parent](../behaviors/transactions.md#lineage-parents) for the commit; one that does not resolve to a commit is `parent_not_found` (exit 65) |
+| `--replace <commit>` | `replace` | [Replace the tip](../behaviors/transactions.md#replacing-the-tip) of the branch being written, which must be `<commit>`; otherwise `tip_mismatch` (exit 69) and nothing changes. A tip a remote-tracking ref already contains is `tip_published` (exit 69). With `--replace`, `--also-parent` replaces the tip's extra parents instead of adding to them |
+
+`--allow-empty` is accepted by [`commit`](#git-sheet-commit) only: a record command that changes nothing has nothing to say in an empty commit that `commit` cannot say.
+
+`--replace` with a `--ref` that is a commit hash, or with a `--commit-to` naming a branch other than the one `--ref` (or the default branch) names, is an argument-parsing error (exit 2): replace mode moves the branch it reads from.
+
+These are per-call options ([principles.md](../principles.md#behave-like-a-first-party-git-extension)): command flags only. They have no `GITSHEETS_*` environment variable and no git config tier, and the CLI's environment folding must not give them one (`GITSHEETS_REPLACE` in the environment is ignored).
+
 ## Commands
 
 ### `git sheet upsert <sheet> [input]`
@@ -58,6 +74,33 @@ Output (per record, to stdout):
 ```text
 <blob-hash> <rendered-path>
 ```
+
+### `git sheet commit`
+
+Commit without writing any record: an empty commit, or a replacement of the tip that changes only its message, trailers, or parents.
+
+```bash
+git sheet commit --allow-empty --message 'cycle 42: end' --trailer 'Cycle-Id: 42'
+git sheet commit --allow-empty --message 'cycle 43: start' --also-parent 01ab2c…
+git sheet commit --replace 9f3e…  --message 'cycle 42: end (corrected)' --trailer 'Cycle-Id: 42'
+```
+
+Flags: `--message <msg>` (required; exit 2 without it), `--allow-empty`, `--replace <commit>`, `--also-parent <commit>` (repeatable), `--trailer` (repeatable), `--author-name`, `--author-email`, and the binding flags. At least one of `--allow-empty` / `--replace` is required: without either there is nothing to commit, which is an argument-parsing error (exit 2).
+
+Runs `repo.transact` with a handler that stages nothing. Prints the new commit hash on one line. A replacement that leaves the tree equal to the new first parent's tree without `--allow-empty` commits nothing ([behaviors/transactions.md](../behaviors/transactions.md#replacing-the-tip)), prints nothing, and exits 0.
+
+Why a command and not a flag on `upsert`: an empty commit has no record to upsert, so every record command would need a "no input" mode; one small command that does only this keeps the record commands' input rules as they are, and it mirrors `git commit --allow-empty`.
+
+### `git sheet head`
+
+Print the tip commit of the branch being read (`--ref`, default the default branch) as JSON: [`repo.readCommit`](repository.md#reporeadcommitrev)'s `CommitInfo`, pretty-printed. A `--ref` naming a commit prints that commit.
+
+```bash
+git sheet head
+git sheet --branch data head | jq -r '.trailers[] | select(.key == "Cycle-Id") | .value'
+```
+
+An unborn default branch prints `null` and exits 0. A `--ref` that does not resolve exits 65.
 
 ### `git sheet query <sheet>`
 
@@ -259,11 +302,11 @@ List (and with confirmation, remove) vendored documents no sheet declares.
 | --- | --- |
 | 0 | Success |
 | 1 | Generic error (unhandled exception) |
-| 2 | Argument-parsing error — unknown flag or command, a missing positional, a malformed flag value (`--filter`, `--agg`, `--trailer`, `--attachment`, `--encoding`), or an invalid flag combination |
+| 2 | Argument-parsing error — unknown flag or command, a missing positional, a malformed flag value (`--filter`, `--agg`, `--trailer`, `--attachment`, `--encoding`), or an invalid flag combination (including `--replace` with a commit-hash `--ref` or a different `--commit-to`, and `commit` with neither `--allow-empty` nor `--replace`) |
 | 22 | `ValidationError` |
 | 23 | `AggregationError` |
 | 64 | `ConfigError` |
-| 65 | `RefError` (not-found) |
+| 65 | `RefError` (not-found, including `parent_not_found`) |
 | 66 | `NotFoundError` |
 | 67 | `ContractError` |
 | 69 | `TransactionError` |
