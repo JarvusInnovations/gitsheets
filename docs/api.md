@@ -254,7 +254,13 @@ total = { sum = 'amountCents' }
 | `tx.writeFile(path, content)` | Stage a raw file (repo-root-relative; `string` as UTF-8 or `Buffer`/`Uint8Array`) in the same commit as record changes — sheet configs, contracts, fixtures. Returns a `BlobHandle`. Not validated or normalized |
 | `tx.deleteFile(path)` | Remove a raw file; returns whether it existed (a miss leaves the tx unmutated) |
 
-`repo.transact` options: `parent` (ref or hash; default HEAD; **`null` for an orphan root commit** — empty start, no parents, always commits, `branch` created and must not exist), `branch` (ref to advance; **created if absent**), `author`, `committer`, `message`, `trailers`.
+`repo.transact` options: `parent` (ref or hash; default HEAD; **`null` for an orphan root commit** — empty start, no parents, always commits, `branch` created and must not exist), `branch` (ref to advance; **created if absent**), `author`, `committer`, `message`, `trailers`, and three that shape the commit itself:
+
+- `alsoParents: string[]` — extra parents after the first (each must be a commit; `parent_not_found` otherwise). A later parent here records lineage, "this truth was built on top of the world of that truth"; gitsheets attaches no behaviour to it, and `sync` / `merge` are not for a branch that carries them.
+- `replace: string` — commit in place of the branch tip, which must be this commit (`tip_mismatch`, carrying `expected` / `actual`). Refused when a remote-tracking ref already has the tip (`tip_published`) or this repository's push daemon is running (`replace_daemon_running`). Starts from the tip's tree and keeps its parents unless `alsoParents` is given.
+- `allowEmpty: boolean` — commit even when nothing changed.
+
+`repo.readCommit(rev?)` returns a commit as data (`hash`, `tree`, `branch`, `parents` (hashes), `author`, `committer`, `subject`, `body`, `trailers` as `[{ key, value }]`), or `null` on an unborn default branch. `repo.push({ remote?, branch?, to? })` pushes the branch, or only up to `to` (the tip or a first-parent ancestor of it), never forced, and updates the remote-tracking ref; a rejection is a value (`outcome: 'non-fast-forward' | 'failed'`).
 
 Consumers don't construct `Transaction` directly — it comes from `repo.transact`'s handler. `tx.sheet(name)` may be called any number of times; writes are atomic within the handler.
 
@@ -269,6 +275,7 @@ interface TransactionResult<T> {
   readonly treeHash: string | null;
   readonly ref: string | null;
   readonly parentCommitHash: string | null;
+  readonly replacedCommitHash: string | null; // replace mode: the tip that was replaced
 }
 ```
 
