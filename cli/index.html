@@ -846,6 +846,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gitsheets-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-head" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets head
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-push-remote-r-to-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets push [--remote r] [--to &lt;commit&gt;]
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1487,6 +1520,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gitsheets-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-head" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets head
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitsheets-push-remote-r-to-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gitsheets push [--remote r] [--to &lt;commit&gt;]
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1912,6 +1978,20 @@ gitsheets<span class="w"> </span>submodule<span class="w"> </span>init<span clas
 <p><code>ignore = dirty</code> keeps the empty working tree from showing as
 <code>modified content</code>; it also hides hand edits under <code>&lt;path&gt;/</code>. See
 <a href="../recipes/headless-data/#data-submodule">Headless data</a>.</p>
+<h3 id="gitsheets-commit"><code>gitsheets commit</code><a class="headerlink" href="#gitsheets-commit" title="Permanent link"> ¶</a></h3>
+<p>Commit without writing a record: <code>--allow-empty</code> for an empty commit, <code>--replace &lt;tip&gt;</code> to
+commit in place of the branch tip (which must be <code>&lt;tip&gt;</code>), or both. <code>--message</code> is required.
+Every mutating command also takes <code>--trailer 'Key: value'</code> (or <code>Key=Value</code>),
+<code>--also-parent &lt;commit&gt;</code> (an extra parent; gitsheets attaches no behaviour to it), and
+<code>--replace &lt;tip&gt;</code>. These have no environment variable.</p>
+<div class="highlight"><pre><span></span><code>gitsheets<span class="w"> </span>--branch<span class="w"> </span>log<span class="w"> </span>commit<span class="w"> </span>--allow-empty<span class="w"> </span>--message<span class="w"> </span><span class="s1">'cycle 1'</span><span class="w"> </span>--trailer<span class="w"> </span><span class="s1">'Cycle-Id: 1'</span>
+</code></pre></div>
+<h3 id="gitsheets-head"><code>gitsheets head</code><a class="headerlink" href="#gitsheets-head" title="Permanent link"> ¶</a></h3>
+<p>The tip commit of the branch being read (<code>--ref</code>, default the default branch) as JSON:
+hash, tree, parents, author, committer, subject, body, trailers. <code>null</code> on an unborn branch.</p>
+<h3 id="gitsheets-push-remote-r-to-commit"><code>gitsheets push [--remote r] [--to &lt;commit&gt;]</code><a class="headerlink" href="#gitsheets-push-remote-r-to-commit" title="Permanent link"> ¶</a></h3>
+<p>Push the default branch, or only up to <code>--to</code> (the tip or a first-parent ancestor), never
+forced. Prints <code>pushed &lt;hash&gt;</code> or <code>up-to-date &lt;hash&gt;</code>.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link"> ¶</a></h2>
 <table>
 <thead>

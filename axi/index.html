@@ -782,6 +782,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#commit-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commit shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#default-branch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1257,6 +1268,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#commit-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commit shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#default-branch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1469,13 +1491,40 @@ gitsheets-axi infer &lt;sheet&gt;              # observe records → schema
 gitsheets-axi migrate-config &lt;sheet&gt;     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment &lt;list|get|set|delete&gt; &lt;sheet&gt; &lt;path&gt; [&lt;name&gt;]
 gitsheets-axi contracts [list|verify|test] # schema contracts
-gitsheets-axi push                       # one-shot git push
+gitsheets-axi push [--to &lt;commit&gt;]      # one-shot git push (optionally only up to a commit)
+gitsheets-axi commit --message m …       # empty commit / replace the tip, no record written
+gitsheets-axi head [&lt;commit&gt;]            # the tip commit: parents, trailers (TOON; --json-out)
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 gitsheets-axi rollup &lt;sheet&gt; [--check]   # materialize / check a rollup sheet
 </code></pre></div>
 <p>Every command supports <code>--help</code> with its specific flags and 2-3 examples.
 The full contract — every command, flag, and error code — is specified in
 <a href="../specs/api/axi.md"><code>specs/api/axi.md</code></a>.</p>
+<h3 id="commit-shape">Commit shape<a class="headerlink" href="#commit-shape" title="Permanent link"> ¶</a></h3>
+<p>Every committing command takes <code>--trailer 'Key: value'</code> (repeatable; <code>Key=value</code>
+also works), <code>--also-parent &lt;commit&gt;</code> (repeatable), and <code>--replace &lt;commit&gt;</code>.</p>
+<ul>
+<li><strong>Trailers</strong> land at the end of the commit message. A malformed or repeated key is <code>TRAILER_INVALID</code>.</li>
+<li><strong><code>--also-parent</code></strong> adds a parent after the first. What it means is the caller&rsquo;s: a
+  later parent here records lineage, &ldquo;this truth was built on top of the world of that
+  truth&rdquo;. gitsheets attaches no behaviour to it, and <code>sync</code> / <code>merge</code> are not for a
+  branch that carries them: keep such a branch single-writer and append-only, and
+  publish it with <code>push</code>.</li>
+<li><strong><code>--replace &lt;tip&gt;</code></strong> commits in place of the branch tip, which must be <code>&lt;tip&gt;</code>
+  (<code>TIP_MISMATCH</code> otherwise) and must not be on a remote yet (<code>TIP_PUBLISHED</code>). The new
+  commit keeps the tip&rsquo;s parents unless <code>--also-parent</code> is given.</li>
+<li><strong><code>commit --allow-empty</code></strong> commits with no record change.</li>
+</ul>
+<p>A single writer that keeps a running record on a headless branch can rewrite its
+latest entry until it is final, then publish everything below it:</p>
+<div class="highlight"><pre><span></span><code>gitsheets-axi --branch log commit --allow-empty --message 'cycle 42' \
+    --also-parent &lt;snapshot&gt; --trailer 'State: running'          # open entry
+gitsheets-axi --branch log commit --allow-empty --replace &lt;tip&gt; \
+    --message 'cycle 42' --trailer 'State: done'                  # rewrite it (keeps its parents)
+gitsheets-axi --branch log commit --allow-empty --message 'cycle 43'   # next open entry
+gitsheets-axi --branch log push --to &lt;cycle 42 commit&gt;            # publish all but the open one
+gitsheets-axi --branch log head --json-out=/tmp/tip.json          # read back: parents, trailers
+</code></pre></div>
 <h3 id="default-branch">Default branch<a class="headerlink" href="#default-branch" title="Permanent link"> ¶</a></h3>
 <p>Every command reads and writes the repository&rsquo;s <strong>default branch</strong>: the
 global <code>--branch &lt;name&gt;</code> flag (accepted on any command, e.g.
@@ -1564,7 +1613,7 @@ help[1]: Run `gitsheets-axi sheets view users` to see the schema
 <ul>
 <li><code>VALIDATION_ERROR</code> — a usage error: unknown command or flag, missing argument, malformed <code>--filter</code> / <code>--agg</code> or global flag, a command applied to the wrong kind of sheet. The only code that exits <code>2</code>.</li>
 <li><code>VALIDATION_FAILED</code> — a record failed the sheet&rsquo;s JSON Schema or a contract (a data error, not a usage error).</li>
-<li><code>NOT_FOUND</code>, <code>CONFIG_MISSING</code> (the data submodule is not set up), <code>CONFIG_INVALID</code>, <code>CONFIG_EXISTS</code>, <code>INVALID_JSON</code>, <code>NO_RECORDS</code>, <code>NOT_A_REPOSITORY</code>, <code>NOT_CANONICAL</code>, <code>INDEX_CONFLICT</code>, <code>PATH_TEMPLATE_ERROR</code>, <code>REF_ERROR</code>, <code>SHEET_DERIVED</code>, <code>TRANSACTION_ERROR</code>, <code>ROLLUP_STALE</code>, <code>AGGREGATION_FAILED</code>, <code>CONTRACT_MISSING</code> / <code>CONTRACT_INVALID</code> / <code>CONTRACT_UNSATISFIED</code>, <code>WRITE_ERROR</code>, <code>NON_FAST_FORWARD</code>, <code>PUSH_FAILED</code>, <code>HOOK_INSTALL_FAILED</code>, <code>UNKNOWN_ERROR</code>.</li>
+<li><code>NOT_FOUND</code>, <code>CONFIG_MISSING</code> (the data submodule is not set up), <code>CONFIG_INVALID</code>, <code>CONFIG_EXISTS</code>, <code>INVALID_JSON</code>, <code>NO_RECORDS</code>, <code>NOT_A_REPOSITORY</code>, <code>NOT_CANONICAL</code>, <code>INDEX_CONFLICT</code>, <code>PATH_TEMPLATE_ERROR</code>, <code>REF_ERROR</code>, <code>SHEET_DERIVED</code>, <code>TRANSACTION_ERROR</code>, <code>ROLLUP_STALE</code>, <code>AGGREGATION_FAILED</code>, <code>CONTRACT_MISSING</code> / <code>CONTRACT_INVALID</code> / <code>CONTRACT_UNSATISFIED</code>, <code>WRITE_ERROR</code>, <code>NON_FAST_FORWARD</code>, <code>PUSH_FAILED</code>, <code>HOOK_INSTALL_FAILED</code>, <code>TRAILER_INVALID</code>, <code>PARENT_NOT_FOUND</code>, <code>TIP_MISMATCH</code>, <code>TIP_PUBLISHED</code>, <code>UNKNOWN_ERROR</code>.</li>
 </ul>
 <p>Exit codes are stable: <code>0</code> for success (incl. no-ops), <code>2</code> for <code>VALIDATION_ERROR</code>, <code>1</code> for every other code. See <a href="../specs/api/axi.md#errors"><code>specs/api/axi.md</code></a> for what raises each code.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link"> ¶</a></h2>
