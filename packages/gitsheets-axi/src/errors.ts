@@ -69,8 +69,30 @@ export function translateError(error: unknown): AxiError {
     ]);
   }
 
+  if (error instanceof RefError && error.code === 'parent_not_found') {
+    return new AxiError(error.message, 'PARENT_NOT_FOUND', ['--also-parent must name a commit in this repository']);
+  }
+
   if (error instanceof RefError) {
     return new AxiError(error.message, 'REF_ERROR', []);
+  }
+
+  if (error instanceof TransactionError && error.code === 'trailer_invalid') {
+    return new AxiError(error.message, 'TRAILER_INVALID', ["Trailers are 'Key: value' with an HTTP-header-style key and a one-line value"]);
+  }
+
+  if (error instanceof TransactionError && error.code === 'tip_mismatch') {
+    return new AxiError(
+      `${error.message} (expected ${error.expected ?? '?'}, actual ${error.actual ?? 'none'})`,
+      'TIP_MISMATCH',
+      ['Run `gitsheets-axi head` to see the current tip; nothing was changed'],
+    );
+  }
+
+  if (error instanceof TransactionError && error.code === 'tip_published') {
+    return new AxiError(error.message, 'TIP_PUBLISHED', [
+      'A remote already has this commit; commit on top of it instead (gitsheets never force-pushes)',
+    ]);
   }
 
   if (error instanceof TransactionError && error.code === 'sheet_derived') {

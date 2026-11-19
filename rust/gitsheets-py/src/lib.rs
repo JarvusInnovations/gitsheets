@@ -134,6 +134,10 @@ fn raise_core_error(py: Python<'_>, err: &gitsheets_core::Error) -> PyErr {
     if let Some(contract) = err.contract() {
         let _ = value.setattr("contract", contract);
     }
+    if let Some((expected, actual)) = err.tip() {
+        let _ = value.setattr("expected", expected);
+        let _ = value.setattr("actual", actual);
+    }
     if let Some((sheet, aggregate, partition)) = err.aggregation() {
         let _ = value.setattr("sheet", sheet);
         let _ = value.setattr("aggregate", aggregate);
@@ -959,6 +963,38 @@ fn tag_set(py: Python<'_>, git_dir: String, name: String, target: &str, force: b
     record::set_tag(&repo, &name, target, force).map_err(|e| raise_core_error(py, &e))
 }
 
+/// One commit as a dict (specs/behaviors/transactions.md "Reading a commit
+/// back"): `hash`, `tree`, `parents` as a list of hashes, `author` /
+/// `committer` as `{name, email, date}`, `subject`, `body`, `trailers` as
+/// `[{key, value}]`.
+#[pyfunction]
+fn commit_read<'py>(py: Python<'py>, git_dir: String, rev: String) -> PyResult<Bound<'py, PyDict>> {
+    let repo = record::open_repo(&git_dir).map_err(|e| raise_core_error(py, &e))?;
+    let info = gitsheets_core::history::commit_info(&repo, &rev).map_err(|e| raise_core_error(py, &e))?;
+    let d = PyDict::new(py);
+    d.set_item("hash", info.hash)?;
+    d.set_item("tree", info.tree)?;
+    d.set_item("parents", info.parents)?;
+    for (key, sig) in [("author", info.author), ("committer", info.committer)] {
+        let s = PyDict::new(py);
+        s.set_item("name", sig.name)?;
+        s.set_item("email", sig.email)?;
+        s.set_item("date", sig.date)?;
+        d.set_item(key, s)?;
+    }
+    d.set_item("subject", info.subject)?;
+    d.set_item("body", info.body)?;
+    let trailers = PyList::empty(py);
+    for (key, value) in info.trailers {
+        let t = PyDict::new(py);
+        t.set_item("key", key)?;
+        t.set_item("value", value)?;
+        trailers.append(t)?;
+    }
+    d.set_item("trailers", trailers)?;
+    Ok(d)
+}
+
 /// Whether commit `a` is reachable from commit `b` (or equal).
 #[pyfunction]
 fn is_ancestor(py: Python<'_>, git_dir: String, a: String, b: String) -> PyResult<bool> {
@@ -1570,7 +1606,7 @@ impl CoreTransaction {
     /// `(name, email)` tuples; `trailers` a list of `(key, value)` tuples. A
     /// concurrent open on the same repo raises `TransactionError`.
     #[staticmethod]
-    #[pyo3(signature = (git_dir, message, time_seconds, offset_minutes=0, parent=None, branch=None, author=None, committer=None, trailers=None, orphan=false))]
+    #[pyo3(signature = (git_dir, message, time_seconds, offset_minutes=0, parent=None, branch=None, author=None, committer=None, trailers=None, orphan=false, also_parents=None, replace=None, allow_empty=false))]
     #[allow(clippy::too_many_arguments)]
     fn begin(
         py: Python<'_>,
@@ -1584,6 +1620,9 @@ impl CoreTransaction {
         committer: Option<(String, String)>,
         trailers: Option<Vec<(String, String)>>,
         orphan: bool,
+        also_parents: Option<Vec<String>>,
+        replace: Option<String>,
+        allow_empty: bool,
     ) -> PyResult<Self> {
         let core_opts = TransactionOptions {
             parent,
@@ -1595,6 +1634,9 @@ impl CoreTransaction {
             trailers: trailers.unwrap_or_default(),
             time_seconds,
             offset_minutes,
+            also_parents,
+            replace,
+            allow_empty,
         };
         match Transaction::begin(&git_dir, core_opts) {
             Ok(tx) => Ok(CoreTransaction {
@@ -2026,6 +2068,7 @@ impl CoreTransaction {
                 d.set_item("tree_hash", r.tree_hash)?;
                 d.set_item("ref_name", r.ref_name)?;
                 d.set_item("parent_commit_hash", r.parent_commit_hash)?;
+                d.set_item("replaced_commit_hash", r.replaced_commit_hash)?;
                 Ok(d)
             }
             Err(err) => Err(raise_core_error(py, &err)),
@@ -2103,6 +2146,7 @@ fn _gitsheets(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(blob_header, m)?)?;
     m.add_function(wrap_pyfunction!(sync_branch, m)?)?;
     m.add_function(wrap_pyfunction!(is_ancestor, m)?)?;
+    m.add_function(wrap_pyfunction!(commit_read, m)?)?;
     m.add_function(wrap_pyfunction!(tree_list, m)?)?;
     m.add_function(wrap_pyfunction!(tag_set, m)?)?;
     m.add_function(wrap_pyfunction!(merge_sheets, m)?)?;

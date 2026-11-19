@@ -28,6 +28,7 @@ import {
   TransactionError,
   ValidationError,
   type GitsheetsErrorCode,
+  type RefErrorCode,
   type ValidationIssue,
 } from './errors.js';
 
@@ -169,6 +170,8 @@ interface StructuredCoreError {
   readonly sheet?: string;
   readonly aggregate?: string;
   readonly partition?: string;
+  readonly expected?: string;
+  readonly actual?: string | null;
 }
 
 function isStructuredCoreError(raw: unknown): raw is StructuredCoreError {
@@ -198,7 +201,10 @@ export function mapCoreError(raw: StructuredCoreError): GitsheetsError {
         cause: raw,
       });
     case 'TransactionError':
-      return new TransactionError(code as never, raw.message, { cause: raw });
+      return new TransactionError(code as never, raw.message, {
+        cause: raw,
+        ...(raw.expected !== undefined ? { expected: raw.expected, actual: raw.actual ?? null } : {}),
+      });
     case 'IndexError':
       return new IndexError(
         code as 'index_unique_conflict' | 'index_not_defined',
@@ -208,7 +214,7 @@ export function mapCoreError(raw: StructuredCoreError): GitsheetsError {
           : { cause: raw },
       );
     case 'RefError':
-      return new RefError(code as 'ref_not_found' | 'not_an_ancestor', raw.message, {
+      return new RefError(code as RefErrorCode, raw.message, {
         cause: raw,
       });
     case 'PathTemplateError':

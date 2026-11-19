@@ -82,7 +82,39 @@ Another-Trailer: another-value
 - **Body** = anything after the first line of `message`.
 - **Trailers** = appended per `git interpret-trailers` rules. See [behaviors/transactions.md](../behaviors/transactions.md) for the format.
 
-Trailer keys use HTTP-header style: first letter capitalized, multi-word hyphenated, rest lowercase (`Subject-Id`, `User-Agent`, `Action`).
+Trailer keys use HTTP-header style: first letter capitalized, multi-word hyphenated, rest lowercase (`Subject-Id`, `User-Agent`, `Action`). A malformed key or value is `TransactionError` (`trailer_invalid`) before any tree work.
+
+## Commit shape: additional parents, replace, empty
+
+Three options shape the commit itself rather than its tree. Each is off by default, and a transaction that sets none of them behaves exactly as described above. The rules live in [behaviors/transactions.md](../behaviors/transactions.md); this is the surface.
+
+| Option | Type | Effect |
+| --- | --- | --- |
+| `alsoParents` | `string[]` | Extra parents after the first, each a commit-ish that must resolve to a commit. A caller uses them to record provenance; gitsheets attaches no behaviour to them ([Additional parents](../behaviors/transactions.md#additional-parents)). In replace mode, replaces the replaced tip's extra parents; `[]` drops them |
+| `replace` | `string` | Replace the branch's tip instead of committing on top of it. The value is the tip the caller expects; anything else is `tip_mismatch` and nothing changes. A tip that a remote-tracking ref already contains is `tip_published` ([Replacing the tip](../behaviors/transactions.md#replacing-the-tip)) |
+| `allowEmpty` | `boolean` | Commit even when the tree equals the first parent's tree ([Empty commits](../behaviors/transactions.md#empty-commits)) |
+
+In replace mode the transaction starts from the replaced tip's tree, the new commit takes the tip's first parent, and the ref moves from the old tip to the new commit by compare-and-swap. The result's `replacedCommitHash` names the commit that was replaced (`null` outside replace mode, and on a no-op).
+
+```typescript
+// A heartbeat that rewrites its own last entry while it is still local.
+const head = await repo.readCommit();
+await repo.transact(
+  {
+    message: 'cycle 42: in progress',
+    trailers: { 'Cycle-Id': '42', State: 'running' },
+    replace: head!.hash,
+    allowEmpty: true,
+  },
+  async () => {},
+);
+
+// Record what this state was built on, as an extra parent.
+await repo.transact(
+  { message: 'cycle 43: start', alsoParents: [snapshotCommit], allowEmpty: true },
+  async () => {},
+);
+```
 
 ## Author and committer
 
@@ -131,6 +163,8 @@ Two conditions must both hold to detect the no-op:
 
 When both conditions hold, the return shape matches the existing `!anyMutation` short-circuit (`commitHash: null`, `treeHash: null`, `ref: null`). Consumers detect a no-op via `result.commitHash === null`.
 
+In replace mode the parent in this comparison is the **new** first parent (the replaced tip's first parent), and the `anyMutation` short-circuit is not used. With `allowEmpty: true` neither check runs.
+
 **This means the following all produce no commit:**
 
 - `upsert(record)` where the record's canonical bytes match the existing blob
@@ -138,7 +172,7 @@ When both conditions hold, the return shape matches the existing `!anyMutation` 
 - `delete(path)` + `upsert` of an identical record at the same path
 - An explicit `tx.markMutated()` call that isn't accompanied by an actual tree mutation
 
-The last bullet is a behavior change from v1.3.0, where `markMutated()` alone forced a commit. Real consumers of `markMutated` (internal callers like `upsert`/`delete`/`setAttachments`) always pair it with an actual mutation, so this isn't expected to break anyone. Consumers who genuinely want empty commits should use `git commit --allow-empty` outside the library.
+The last bullet is a behavior change from v1.3.0, where `markMutated()` alone forced a commit. Real consumers of `markMutated` (internal callers like `upsert`/`delete`/`setAttachments`) always pair it with an actual mutation, so this isn't expected to break anyone. Consumers who genuinely want an empty commit pass `allowEmpty: true` ([Commit shape](#commit-shape-additional-parents-replace-empty)), which skips both no-op checks.
 
 ## Rollup pass
 
@@ -211,9 +245,13 @@ await repo.transact({ message: '...' }, async (tx) => {
 | `TransactionError` | `transaction_in_progress` | Nested `repo.transact` inside an open transaction's handler (independent-context calls queue instead — see [Concurrency](#concurrency)) |
 | `TransactionError` | `transaction_required` | Mutation outside a transaction in strict mode |
 | `TransactionError` | `parent_moved` | Optimistic-concurrency conflict at commit |
-| `TransactionError` | `commit_failed` | `git commit-tree` / `update-ref` returned non-zero, **or** a malformed trailer key/value was rejected at option-normalization time (HTTP-header-style key, string value with no newlines) |
+| `TransactionError` | `commit_failed` | `git commit-tree` / `update-ref` returned non-zero |
+| `TransactionError` | `trailer_invalid` | A malformed trailer key/value was rejected at option-normalization time (HTTP-header-style key, string value with no newlines). Was `commit_failed` before this release ([errors.md](errors.md#malformed-trailers-were-commit_failed)) |
 | `RefError` | `ref_not_found` | `opts.parent` is a branch name that doesn't exist |
-| `TransactionError` | `commit_failed` | `opts.parent: null` with an `opts.branch` that already exists (an orphan only creates a branch); or `opts.branch` (≠ parent ref) moved between open and commit |
+| `RefError` | `parent_not_found` | An `alsoParents` entry does not resolve to a commit in the repository |
+| `TransactionError` | `commit_failed` | `opts.parent: null` with an `opts.branch` that already exists (an orphan only creates a branch); or `opts.branch` (≠ parent ref) moved between open and commit; or, at open, an invalid combination: `alsoParents` with `parent: null`, an `alsoParents` entry equal to the first parent or repeated, `replace` with `parent: null`, a commit-hash `parent`, or an `opts.branch` other than the parent ref |
+| `TransactionError` | `tip_mismatch` | `replace`: the ref's tip is not the expected commit (at open, or a move before the compare-and-swap at commit); also when `replace` does not resolve or the branch is unborn. Carries `expected` and `actual`. Replaces `parent_moved` in replace mode |
+| `TransactionError` | `tip_published` | `replace`: the tip is reachable from a remote-tracking ref (`refs/remotes/**`), checked at open and at commit |
 | `TransactionError` | `lock_held` | `repo.transact` (or a permissive-mode write) from inside a `repo.withLock` callback, or a nested `withLock` / `sync` / `merge` from inside a handler — the write lock is not reentrant |
 | `TransactionError` | `transaction_closed` | `tx.sheet(…)`, `tx.writeFile`, or `tx.deleteFile` on a `Transaction` captured past its handler (already finalized or discarded) |
 | `TransactionError` | `sheet_derived` | A write (`upsert`, `delete`, `patch`, `clear`, attachment writers) to a rollup sheet through `tx.sheet(name)` |

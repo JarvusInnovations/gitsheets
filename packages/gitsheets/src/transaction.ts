@@ -47,6 +47,21 @@ export interface TransactionOptions {
   readonly message: string;
   /** Git-style trailers appended per `git interpret-trailers`. */
   readonly trailers?: Readonly<Record<string, string>>;
+  /**
+   * Additional parents after the first: each must resolve to a commit.
+   * gitsheets attaches no behaviour to them. In replace mode, replaces the
+   * replaced tip's extra parents (`[]` drops them). See
+   * specs/behaviors/transactions.md "Additional parents".
+   */
+  readonly alsoParents?: readonly string[];
+  /**
+   * Replace the branch tip, which must be this commit (`tip_mismatch`
+   * otherwise; `tip_published` when a remote-tracking ref contains it). See
+   * specs/behaviors/transactions.md "Replacing the tip".
+   */
+  readonly replace?: string;
+  /** Commit even when nothing changed (specs/behaviors/transactions.md "Empty commits"). */
+  readonly allowEmpty?: boolean;
 }
 
 export interface TransactionResult<T> {
@@ -55,6 +70,8 @@ export interface TransactionResult<T> {
   readonly treeHash: string | null;
   readonly ref: string | null;
   readonly parentCommitHash: string | null;
+  /** Replace mode: the tip that was replaced; otherwise `null`. */
+  readonly replacedCommitHash: string | null;
 }
 
 export type TransactionHandler<T> = (tx: Transaction) => Promise<T>;
@@ -64,19 +81,18 @@ export const transactionContext = new AsyncLocalStorage<Transaction>();
 
 const HTTP_HEADER_KEY_RE = /^[A-Z][a-z0-9]*(-[A-Z][a-z0-9]*)*$|^[A-Z][a-z]+$/;
 const TRAILER_VALUE_RE = /[\r\n]/;
-
 function validateTrailers(trailers: Readonly<Record<string, string>> | undefined): void {
   if (!trailers) return;
   for (const [key, value] of Object.entries(trailers)) {
     if (!HTTP_HEADER_KEY_RE.test(key)) {
       throw new TransactionError(
-        'commit_failed',
+        'trailer_invalid',
         `trailer key ${JSON.stringify(key)} does not match HTTP-header style (e.g., "Subject-Id", "Action")`,
       );
     }
     if (typeof value !== 'string' || TRAILER_VALUE_RE.test(value)) {
       throw new TransactionError(
-        'commit_failed',
+        'trailer_invalid',
         `trailer ${JSON.stringify(key)} has invalid value (must be string with no newlines): ${JSON.stringify(value)}`,
       );
     }
@@ -247,7 +263,8 @@ export class Transaction {
       commitHash: r.commitHash ?? null,
       treeHash: r.treeHash ?? null,
       ref: r.refName ?? null,
-      parentCommitHash: r.parentCommitHash ?? this.#parentCommitHash,
+      parentCommitHash: r.replacedCommitHash != null ? (r.parentCommitHash ?? null) : (r.parentCommitHash ?? this.#parentCommitHash),
+      replacedCommitHash: r.replacedCommitHash ?? null,
     };
   }
 
@@ -266,6 +283,9 @@ export class Transaction {
     committer: Author | undefined;
     message: string;
     trailers: Readonly<Record<string, string>>;
+    alsoParents: string[] | undefined;
+    replace: string | undefined;
+    allowEmpty: boolean;
   } {
     validateTrailers(opts.trailers);
     return {
@@ -276,6 +296,9 @@ export class Transaction {
       committer: opts.committer ?? opts.author,
       message: opts.message,
       trailers: opts.trailers ?? {},
+      alsoParents: opts.alsoParents ? [...opts.alsoParents] : undefined,
+      replace: opts.replace,
+      allowEmpty: opts.allowEmpty === true,
     };
   }
 }

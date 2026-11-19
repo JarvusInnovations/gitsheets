@@ -15,6 +15,9 @@ export type {
   MergeResult,
   FetchOptions,
   FetchResult,
+  PushOptions,
+  PushResult,
+  CommitInfo,
   TreeEntry,
 } from './repository.js';
 

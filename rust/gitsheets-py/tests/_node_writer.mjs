@@ -159,6 +159,32 @@ if (op === 'record-write') {
     tx.discard();
     throw err;
   }
+} else if (op === 'commit-shape') {
+  // An empty commit with an additional parent, then a replacement of it with
+  // new trailers (specs/behaviors/transactions.md "Additional parents" /
+  // "Replacing the tip" / "Empty commits"). Mirrored in test_cross_binding.py.
+  const [gitDir, extra] = args;
+  const base = {
+    branch: 'refs/heads/main',
+    author: { name: 'Loop', email: 'loop@x.org' },
+    timeSeconds: 1_700_000_000,
+    offsetMinutes: -300,
+  };
+  const first = binding.CoreTransaction.begin(gitDir, {
+    ...base,
+    message: 'cycle 1',
+    trailers: [{ key: 'State', value: '0' }],
+    alsoParents: [extra],
+    allowEmpty: true,
+  }).finalize();
+  const second = binding.CoreTransaction.begin(gitDir, {
+    ...base,
+    message: 'cycle 1',
+    trailers: [{ key: 'State', value: '1' }],
+    replace: first.commitHash,
+    allowEmpty: true,
+  }).finalize();
+  out({ first: first.commitHash, second: second.commitHash, replaced: second.replacedCommitHash });
 } else if (op === 'comparator') {
   const rule = args[0];
   const a = JSON.parse(args[1]);

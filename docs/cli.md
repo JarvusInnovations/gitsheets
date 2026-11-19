@@ -401,6 +401,28 @@ gitsheets submodule init data        # fresh clone of the superproject
 `modified content`; it also hides hand edits under `<path>/`. See
 [Headless data](recipes/headless-data.md#data-submodule).
 
+### `gitsheets commit`
+
+Commit without writing a record: `--allow-empty` for an empty commit, `--replace <tip>` to
+commit in place of the branch tip (which must be `<tip>`), or both. `--message` is required.
+Every mutating command also takes `--trailer 'Key: value'` (or `Key=Value`),
+`--also-parent <commit>` (an extra parent; gitsheets attaches no behaviour to it), and
+`--replace <tip>`. These have no environment variable.
+
+```bash
+gitsheets --branch log commit --allow-empty --message 'cycle 1' --trailer 'Cycle-Id: 1'
+```
+
+### `gitsheets head`
+
+The tip commit of the branch being read (`--ref`, default the default branch) as JSON:
+hash, tree, parents, author, committer, subject, body, trailers. `null` on an unborn branch.
+
+### `gitsheets push [--remote r] [--to <commit>]`
+
+Push the default branch, or only up to `--to` (the tip or a first-parent ancestor), never
+forced. Prints `pushed <hash>` or `up-to-date <hash>`.
+
 ## Exit codes
 
 | Code | Meaning |

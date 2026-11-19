@@ -117,6 +117,21 @@ pub enum Error {
     /// regenerated from the source and never written by consumers
     /// (`specs/behaviors/rollups.md`).
     SheetDerived { message: String },
+    /// `trailer_invalid` — a malformed trailer key or value.
+    TrailerInvalid { message: String },
+    /// `tip_mismatch` — replace mode: the branch tip is not the commit the
+    /// caller expected to replace. `actual` is `None` for an unborn branch.
+    TipMismatch {
+        message: String,
+        expected: String,
+        actual: Option<String>,
+    },
+    /// `tip_published` — replace mode: a remote-tracking ref already contains
+    /// the tip.
+    TipPublished { message: String },
+    /// `replace_daemon_running` — replace mode on a repository whose push
+    /// daemon is running (raised by the host, which owns the daemon).
+    ReplaceDaemonRunning { message: String },
 
     // ── IndexError ───────────────────────────────────────────────────────
     /// `index_unique_conflict` — a unique index would be violated.
@@ -132,6 +147,8 @@ pub enum Error {
     RefNotFound { message: String },
     /// `not_an_ancestor` — merge-like op where src is not an ancestor of dst.
     NotAnAncestor { message: String },
+    /// `parent_not_found` — an additional parent does not resolve to a commit.
+    ParentNotFound { message: String },
 
     // ── PathTemplateError ────────────────────────────────────────────────
     /// `path_render_failed` — template can't render against the record.
@@ -195,10 +212,15 @@ impl Error {
             Error::PushDaemonRunning { .. } => "push_daemon_running",
             Error::TransactionClosed { .. } => "transaction_closed",
             Error::SheetDerived { .. } => "sheet_derived",
+            Error::TrailerInvalid { .. } => "trailer_invalid",
+            Error::TipMismatch { .. } => "tip_mismatch",
+            Error::TipPublished { .. } => "tip_published",
+            Error::ReplaceDaemonRunning { .. } => "replace_daemon_running",
             Error::IndexUniqueConflict { .. } => "index_unique_conflict",
             Error::IndexNotDefined { .. } => "index_not_defined",
             Error::RefNotFound { .. } => "ref_not_found",
             Error::NotAnAncestor { .. } => "not_an_ancestor",
+            Error::ParentNotFound { .. } => "parent_not_found",
             Error::PathRenderFailed { .. } => "path_render_failed",
             Error::PathInvalidChars { .. } => "path_invalid_chars",
             Error::RecordNotFound { .. } => "record_not_found",
@@ -220,11 +242,17 @@ impl Error {
             | Error::CommitFailed { .. }
             | Error::PushDaemonRunning { .. }
             | Error::TransactionClosed { .. }
-            | Error::SheetDerived { .. } => ErrorClass::TransactionError,
+            | Error::SheetDerived { .. }
+            | Error::TrailerInvalid { .. }
+            | Error::TipMismatch { .. }
+            | Error::TipPublished { .. }
+            | Error::ReplaceDaemonRunning { .. } => ErrorClass::TransactionError,
             Error::IndexUniqueConflict { .. } | Error::IndexNotDefined { .. } => {
                 ErrorClass::IndexError
             }
-            Error::RefNotFound { .. } | Error::NotAnAncestor { .. } => ErrorClass::RefError,
+            Error::RefNotFound { .. }
+            | Error::NotAnAncestor { .. }
+            | Error::ParentNotFound { .. } => ErrorClass::RefError,
             Error::PathRenderFailed { .. } | Error::PathInvalidChars { .. } => {
                 ErrorClass::PathTemplateError
             }
@@ -249,7 +277,8 @@ impl Error {
             | Error::PathRenderFailed { .. }
             | Error::PathInvalidChars { .. }
             | Error::ContractUnsatisfied { .. }
-            | Error::AggregationFailed { .. } => 422,
+            | Error::AggregationFailed { .. }
+            | Error::TrailerInvalid { .. } => 422,
             Error::TransactionInProgress { .. }
             | Error::TransactionRequired { .. }
             | Error::ParentMoved { .. }
@@ -257,8 +286,11 @@ impl Error {
             | Error::TransactionClosed { .. }
             | Error::SheetDerived { .. }
             | Error::IndexUniqueConflict { .. }
-            | Error::NotAnAncestor { .. } => 409,
-            Error::RefNotFound { .. } | Error::RecordNotFound { .. } => 404,
+            | Error::NotAnAncestor { .. }
+            | Error::TipMismatch { .. }
+            | Error::TipPublished { .. }
+            | Error::ReplaceDaemonRunning { .. } => 409,
+            Error::RefNotFound { .. } | Error::RecordNotFound { .. } | Error::ParentNotFound { .. } => 404,
         }
     }
 
@@ -275,6 +307,11 @@ impl Error {
             | Error::PushDaemonRunning { message }
             | Error::TransactionClosed { message }
             | Error::SheetDerived { message }
+            | Error::TrailerInvalid { message }
+            | Error::TipMismatch { message, .. }
+            | Error::TipPublished { message }
+            | Error::ReplaceDaemonRunning { message }
+            | Error::ParentNotFound { message }
             | Error::IndexUniqueConflict { message, .. }
             | Error::IndexNotDefined { message }
             | Error::RefNotFound { message }
@@ -321,6 +358,14 @@ impl Error {
                 partition,
                 ..
             } => Some((sheet, aggregate, partition.as_deref())),
+            _ => None,
+        }
+    }
+
+    /// `(expected, actual)` for [`Error::TipMismatch`]; `None` otherwise.
+    pub fn tip(&self) -> Option<(&str, Option<&str>)> {
+        match self {
+            Error::TipMismatch { expected, actual, .. } => Some((expected, actual.as_deref())),
             _ => None,
         }
     }

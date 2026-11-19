@@ -44,6 +44,10 @@ When `ours` is omitted, the default branch is passed to the core fully qualified
 
 Rollup records ([rollups.md](rollups.md)) are not merged at all: whatever the tree merge produced for a rollup path is discarded, and the rollup pass regenerates every partition changed on either side since the base into the merge tree, so a merge commit carries rollups that match its records. The merge driver, working one file at a time, cannot do this — rollup files it merges carry stale stamps that reads self-heal and `git sheet rollup` repairs.
 
+### Additional parents
+
+`merge` gives a commit's parents git's own meaning: every parent is history behind the merge base. It is not for a branch on which a writer records [additional parents](transactions.md#additional-parents); such a branch is single-writer and append-only, and is published with [`push`](push-sync.md#pushing-part-of-a-branch).
+
 ### Which paths are records
 
 A path is a record path when it lies under a discovered sheet's root (`<openRoot>/<config.root>/…`) and ends with that sheet's format extension (`.toml`, `.md`, `.mdx`). An attachment that happens to carry the extension is parsed as a record; if it does not parse, the tree merge's result stands and the path is reported as a `blob` conflict only if git could not merge it either.
