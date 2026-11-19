@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: []
 specs:
   - specs/behaviors/transactions.md
@@ -30,8 +30,10 @@ library, and both CLIs:
    its own code, `trailer_invalid` (was `commit_failed`).
 2. **Lineage parents.** `alsoParents` / `--also-parent`: extra parents
    marked with `Gitsheets-Lineage` trailers. `sync` and `merge` walk
-   history without following edges to lineage parents; a replayed commit
-   keeps its lineage parents.
+   history without following edges to lineage parents, but only when a
+   marked commit is in the range they walk (otherwise their existing gix
+   code runs unchanged); a replayed commit keeps its lineage parents; no
+   single best base on that path is `lineage_unsupported`.
 3. **Replace the tip.** `replace: '<expected tip>'` / `--replace <commit>`:
    compare-and-swap amend. `tip_mismatch` when the tip is anything else,
    `tip_published` when a remote-tracking ref already contains it. The
@@ -41,7 +43,12 @@ library, and both CLIs:
    CLIs (`--allow-empty`, `--replace`, `--also-parent`, `--trailer`,
    `--message`).
 5. **Read-back.** `repo.readCommit(rev?)`, `commit_read` (Python),
-   `git sheet head`, `gitsheets-axi head [--json-out]`.
+   `git sheet head`, `gitsheets-axi head [<commit>] [--json-out]`.
+6. **Partial push** (review round 1). `repo.push({ remote, branch, to })`,
+   `git sheet push [--to]`, `gitsheets-axi push --to`: publish the branch up
+   to a first-parent ancestor of the tip, never forced, updating the
+   remote-tracking ref. `replace` with a running push daemon is
+   `replace_daemon_running`.
 
 Out of scope: a `log` command, `--allow-empty` on record commands, a way to
 drop a replaced tip's extra parents from the CLI (the library's
@@ -54,22 +61,24 @@ drop a replaced tip's extra parents from the CLI (the library's
   from the command line, Lineage parents, Replacing the tip, Empty commits,
   Reading a commit back, the rollup-pass and optimistic-concurrency notes,
   Principles.
-- `specs/behaviors/push-sync.md` — Lineage parents in sync; Replaced
-  commits and the remote; lineage history in the push.
-- `specs/behaviors/merge.md` — Lineage parents.
+- `specs/behaviors/push-sync.md` — Lineage parents in sync (the gate and
+  fail-closed rules); Replaced commits and the remote; Pushing part of a
+  branch; The push daemon and an open tip; lineage history in the push.
+- `specs/behaviors/merge.md` — Lineage parents (gate, fail closed).
 - `specs/behaviors/rollups.md` — first-parent rule and the replace-mode
   union in "Maintenance at commit".
 - `specs/api/transaction.md` — Commit shape section, no-op detection
   notes, errors.
 - `specs/api/repository.md` — `transact` options, `TransactionResult.replacedCommitHash`,
-  `readCommit`, sync/merge notes, errors.
+  `readCommit`, `push`, sync/merge notes, errors.
 - `specs/api/errors.md` — `trailer_invalid`, `parent_not_found`,
-  `tip_mismatch`, `tip_published`; `TransactionError.expected` / `actual`;
+  `tip_mismatch`, `tip_published`, `replace_daemon_running`,
+  `lineage_unsupported`; `TransactionError.expected` / `actual`;
   the migration note.
 - `specs/api/cli.md` — Commit-shape flags, `git sheet commit`,
-  `git sheet head`, exit codes.
-- `specs/api/axi.md` — Commit-shape flags, `commit`, `head`, error codes,
-  exit codes.
+  `git sheet head`, `git sheet push`, exit codes.
+- `specs/api/axi.md` — Commit-shape flags, `commit`, `head`, `push --to`,
+  error codes, exit codes.
 - `specs/api/python-binding.md` — `transact` kwargs, `commit_read`.
 
 ## Approach
@@ -98,9 +107,11 @@ drop a replaced tip's extra parents from the CLI (the library's
 3. **Lineage-aware history** (new `rust/gitsheets-core/src/history.rs`).
    A trailer reader (the read-back rule) and a parent classifier; a walk
    that skips lineage edges; `commits_between` and `merge_base` over that
-   graph. Fast path: when no commit visited carries a `Gitsheets-Lineage`
-   trailer the result must equal gix's (asserted in tests), so a history
-   with no lineage parents behaves exactly as today. `sync.rs` uses it for
+   graph. **Gate:** `sync` and `merge` first compute gix's merge base and
+   walk `B..L` / `B..R` exactly as today; only if a commit in that range
+   carries a `Gitsheets-Lineage` trailer do they switch to the lineage-aware
+   functions (a test-visible counter records each switch). More than one
+   best filtered base, or none, is `lineage_unsupported`. `sync.rs` uses it for
    the base, counts, and replay set, and `replay` keeps lineage parents.
    `merge.rs` uses it for its `is_ancestor` checks and merge base.
    `repo.isAncestor` stays on gix.
@@ -134,10 +145,15 @@ drop a replaced tip's extra parents from the CLI (the library's
    `commands/head.ts` (TOON + `--json-out` through `util/export-file.ts`);
    `cli.ts` registration and help; `errors.ts` codes and the exit-2
    mapping for `TRAILER_INVALID`.
-10. **Docs and skill**: `docs/api.md`, `docs/cli.md`, `docs/axi.md`,
+10. **Push** (`packages/gitsheets/src/repository.ts`): `repo.push` under the
+    write lock (first-parent ancestry check in the core, `git push
+    <remote> <to>:refs/heads/<branch>`, tracking-ref update); `transact`
+    refuses `replace` while `#pushDaemon` is set. Human CLI `push`
+    command; `gitsheets-axi push` rewired onto `repo.push` with `--to`.
+11. **Docs and skill**: `docs/api.md`, `docs/cli.md`, `docs/axi.md`,
     `skills/gitsheets/SKILL.md` and its `references/` (the options, the two
     commands, the lineage rule, the replace guard).
-11. **Release** (after merge, not on this branch): additive surface plus one error-code refinement on an error path: a semver
+12. **Release** (after merge, not on this branch): additive surface plus one error-code refinement on an error path: a semver
     **minor** for `gitsheets` and `gitsheets-axi` (lockstep on `v*`). The core
     changes, so per CLAUDE.md's ordering rule: merge → tag `core-napi-v0.12.0`
     (minor; new napi options and exports) → sync manifests → run the
@@ -198,10 +214,20 @@ Core (`cargo test -p gitsheets-core`):
       commit of `theirs` as a lineage parent; `merge_sheets` is not
       `up-to-date`, its base is the true fork point, and `theirs`' changes
       before the lineage parent are merged.
-- [ ] A history with no lineage markers gives the same base, counts, and
-      replay set as gix's `merge_base` / `rev_walk` (property-style test over
-      linear, diverged, and real-merge histories), and an unmarked
-      multi-parent commit keeps its merge semantics.
+- [ ] **Existing path taken without markers**: `sync_branch` (ff, ahead,
+      rebased, conflict) and `merge_sheets` (up-to-date, ff, merged) over
+      histories with no marker leave the lineage-path counter at zero; the
+      marked-history tests above move it.
+- [ ] **Differential**: over generated histories with no markers (linear,
+      diverged, real merges, criss-cross), the lineage-aware merge-base
+      candidates contain gix's `merge_base` (and equal it when there is one
+      best base), and the lineage-aware `commits_between` equals gix's
+      `rev_walk().with_hidden()` set.
+- [ ] A marked history whose filtered graph has two best bases (or none)
+      makes `sync_branch` and `merge_sheets` fail with
+      `lineage_unsupported` and move nothing.
+- [ ] Two lineage parents give two `Gitsheets-Lineage` trailers, accepted
+      on write, kept on replace and on replay, and both read back.
 - [ ] `commit_info` round-trips subject, body, trailers (in order, repeated
       keys kept), parent roles `first` / `lineage` / `merge`, and ISO dates
       with the commit's offset; a message whose last paragraph is not all
@@ -230,6 +256,20 @@ JS library (vitest):
       updated) is a terminal `non-fast-forward` error, never forced.
 - [ ] `repo.readCommit()` on an unborn default branch is `null`; an
       unresolvable `rev` is `ref_not_found`.
+- [ ] `repo.push({ to })` with a first-parent ancestor pushes exactly that
+      commit to the remote branch and sets the tracking ref; `to` reachable
+      only through a lineage parent, or not at all, is `not_an_ancestor` /
+      `ref_not_found`; a remote ahead gives `non-fast-forward`, nothing
+      forced.
+- [ ] `replace` while this repository's push daemon runs is
+      `replace_daemon_running`, nothing changed.
+- [ ] **The main loop, library level**: an empty commit with a lineage
+      parent, replaced five times with new trailers and no `alsoParents`;
+      each replacement keeps the lineage parent and its marker, has the same
+      first parent, and the last trailers read back; then the next open tip
+      is committed on top, `push({ to: <the previous one> })` publishes it,
+      replacing the open tip still succeeds, and replacing the published one
+      is `tip_published`.
 
 Human CLI (vitest, `packages/gitsheets/src/cli/`):
 
@@ -275,6 +315,17 @@ gitsheets-axi (vitest, `packages/gitsheets-axi`):
       (no materialize hint), and an unborn `log` is bootstrapped by
       `commit --allow-empty` as other first writes are.
 - [ ] Under `--at`, `commit` and `--replace` are refused like every write.
+- [ ] **The main loop through the CLI** on a headless branch (`--branch
+      log`, working tree on `main`): `commit --allow-empty --also-parent <c>
+      --trailer …`, then `commit --allow-empty --replace <tip> --trailer …`
+      repeated without `--also-parent`; `head --json-out` shows the lineage
+      parent kept and the latest trailers; `commit --allow-empty` on top;
+      `push --to <previous>` (against a bare remote); `--replace <open tip>`
+      succeeds; `--replace <published>` is `TIP_PUBLISHED`.
+- [ ] `push --to` that is not a first-parent ancestor is `REF_ERROR`; plain
+      `push` keeps its existing outputs (`pushed`, `no-op`,
+      `NON_FAST_FORWARD`).
+- [ ] Human CLI `git sheet push --to` pushes and prints `pushed <hash>`.
 
 Housekeeping:
 
