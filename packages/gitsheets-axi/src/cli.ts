@@ -26,6 +26,9 @@ import { contractsCommand, CONTRACTS_HELP } from './commands/contracts.js';
 import { pushCommand, PUSH_HELP } from './commands/push.js';
 import { setupCommand, SETUP_HELP } from './commands/setup.js';
 import { rollupCommand, ROLLUP_HELP } from './commands/rollup.js';
+import { commitCommand, COMMIT_HELP } from './commands/commit.js';
+import { headCommand, HEAD_HELP } from './commands/head.js';
+import { withCommitShape } from './util/commit-flags.js';
 
 const DESCRIPTION =
   'gitsheets — agent-facing interface for the git-backed document store. ' +
@@ -34,12 +37,17 @@ const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: gitsheets-axi [command] [args] [flags]
-commands[22]:
+commands[24]:
   (none)=home, sheets, query, count,
   distinct, aggregate, read, upsert, patch, rename,
   delete, check, diff, normalize,
   init, infer, migrate-config,
-  attachment, contracts, push, setup, rollup
+  attachment, contracts, push, setup, rollup,
+  commit, head
+commit flags (every committing command):
+  --trailer 'Key: value'  Commit trailer (repeatable)
+  --also-parent <c>       Additional parent (repeatable): what this was built on
+  --replace <commit>      Replace the branch tip, which must be <commit>
 flags[6]:
   --help, -v/-V/--version
   --branch <name>  Default branch every command reads/writes (any command;
@@ -71,7 +79,7 @@ examples:
   gitsheets-axi rollup transactions-monthly --check
 `;
 
-const COMMAND_HELP: Record<string, string> = {
+export const COMMAND_HELP: Record<string, string> = {
   sheets: SHEETS_HELP,
   query: QUERY_HELP,
   count: COUNT_HELP,
@@ -93,32 +101,36 @@ const COMMAND_HELP: Record<string, string> = {
   push: PUSH_HELP,
   setup: SETUP_HELP,
   rollup: ROLLUP_HELP,
+  commit: COMMIT_HELP,
+  head: HEAD_HELP,
 };
 
 type CommandFn = (args: string[], ctx: GitsheetsContext) => Promise<string | Record<string, unknown>>;
 
-const COMMANDS: Record<string, CommandFn> = {
+export const COMMANDS: Record<string, CommandFn> = {
   sheets: sheetsCommand,
   query: queryCommand,
   count: countCommand,
   distinct: distinctCommand,
   aggregate: aggregateCommand,
   read: readCommand,
-  upsert: upsertCommand,
-  patch: patchCommand,
-  rename: renameCommand,
-  delete: deleteCommand,
+  upsert: withCommitShape(upsertCommand),
+  patch: withCommitShape(patchCommand),
+  rename: withCommitShape(renameCommand),
+  delete: withCommitShape(deleteCommand),
   check: checkCommand,
   diff: diffCommand,
-  normalize: normalizeCommand,
-  init: initCommand,
-  infer: inferCommand,
-  'migrate-config': migrateConfigCommand,
-  attachment: attachmentCommand,
+  normalize: withCommitShape(normalizeCommand),
+  init: withCommitShape(initCommand),
+  infer: withCommitShape(inferCommand),
+  'migrate-config': withCommitShape(migrateConfigCommand),
+  attachment: withCommitShape(attachmentCommand),
   contracts: contractsCommand,
   push: pushCommand,
   setup: setupCommand,
-  rollup: rollupCommand,
+  rollup: withCommitShape(rollupCommand),
+  commit: commitCommand,
+  head: headCommand,
 };
 
 export async function main(): Promise<void> {

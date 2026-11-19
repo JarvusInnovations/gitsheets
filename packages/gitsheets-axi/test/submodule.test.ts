@@ -222,6 +222,13 @@ describe('gitsheets-axi --stage-pointer / --at', () => {
     expect((await runCli(['query', 'users', '--submodule', 'data'], h.path)).stdout).not.toContain('bob');
     const write = await runCli(['upsert', 'users', '--data', '{"slug":"carol","email":"c@x.org"}', '--submodule', 'data'], h.path);
     expect(write.exitCode).not.toBe(0);
+    // commit and --replace are refused like every write; head shows the pinned commit.
+    const pinnedCommit = await runCli(['commit', '--allow-empty', '--message', 'x', '--submodule', 'data'], h.path);
+    expect(pinnedCommit.exitCode).not.toBe(0);
+    expect(pinnedCommit.stdout).toContain('TRANSACTION_ERROR');
+    const pinnedHead = await runCli(['head', '--submodule', 'data'], h.path);
+    expect(pinnedHead.exitCode).toBe(0);
+    expect(pinnedHead.stdout).toContain('branch: null');
     delete process.env['GITSHEETS_AT'];
 
     const noSubmodule = await runCli(['query', 'users', '--at', 'HEAD'], h.path);

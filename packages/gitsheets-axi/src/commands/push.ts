@@ -1,52 +1,56 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import { AxiError } from 'axi-sdk-js';
 
-import type { Repository } from 'gitsheets';
 
 import type { GitsheetsContext } from '../context.js';
+import { translateError } from '../errors.js';
 import { renderObject } from '../output/render.js';
 
-const exec = promisify(execFile);
-
-export const PUSH_HELP = `usage: gitsheets-axi push [--remote r] [--branch b]
+export const PUSH_HELP = `usage: gitsheets-axi push [--remote r] [--to <commit>]
 flags[2]:
   --remote <r>         Git remote to push to (default: origin)
-  --branch <b>         Branch to push — the global --branch (default: the
-                       repo's default branch: GITSHEETS_BRANCH,
-                       gitsheets.branch, else HEAD's branch)
+  --to <commit>        Push the branch only up to this commit: the tip or a
+                       first-parent ancestor of it (publish all but an open tip)
 examples:
   gitsheets-axi push
-  gitsheets-axi push --remote upstream --branch main
+  gitsheets-axi --branch log push --to <commit>
 behavior:
-  One-shot push via \`git push <remote> <branch>\`. For agent workflows
-  that want to publish after a mutation without spinning up a background
-  daemon. This is NOT a daemon lifecycle command — for retry-with-backoff
-  semantics, use Repository.startPushDaemon from a long-running consumer.
+  One-shot push of the bound branch (the global --branch), never forced. On
+  success the remote-tracking ref is updated, so --replace then refuses the
+  published commit (TIP_PUBLISHED) while the open tip above it stays
+  replaceable. Not a daemon: for retry-with-backoff use
+  Repository.startPushDaemon from a long-running consumer.
 idempotency:
-  When the remote is already up to date, exits 0 with
-  result: "no-op" — git's natural "Everything up-to-date" path.
+  When the remote is already up to date, exits 0 with result: "no-op".
 errors:
   NON_FAST_FORWARD     Remote has work the local doesn't — never force-pushed.
-                       Reconcile externally (pull or rebase), then re-run.
   PUSH_FAILED          Network / auth / other transient failure. Re-run later.
+  REF_ERROR            Detached HEAD binding, or --to not on the branch's first-parent line.
 `;
 
 interface PushFlags {
   remote: string;
+  to: string | undefined;
 }
 
 function parsePushFlags(args: string[]): PushFlags {
-  const flags: PushFlags = { remote: 'origin' };
+  const flags: PushFlags = { remote: 'origin', to: undefined };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) continue;
     const next = args[i + 1];
-    if (arg === '--remote') {
-      if (!next) throw new AxiError('--remote expects a name', 'VALIDATION_ERROR');
-      flags.remote = next;
+    if (arg === '--remote' || arg === '--to') {
+      if (!next) throw new AxiError(`${arg} expects a value`, 'VALIDATION_ERROR');
+      if (arg === '--remote') flags.remote = next;
+      else flags.to = next;
       i++;
+      continue;
+    }
+    if (arg.startsWith('--remote=')) {
+      flags.remote = arg.slice('--remote='.length);
+      continue;
+    }
+    if (arg.startsWith('--to=')) {
+      flags.to = arg.slice('--to='.length);
       continue;
     }
     if (arg === '--help') continue;
@@ -57,26 +61,6 @@ function parsePushFlags(args: string[]): PushFlags {
   return flags;
 }
 
-/** The repository's default branch (specs/behaviors/default-branch.md); REF_ERROR on a detached HEAD. */
-function resolveBranch(repo: Repository): string {
-  const branch = repo.branch;
-  if (!branch) {
-    throw new AxiError(
-      "Couldn't determine current branch (detached HEAD?)",
-      'REF_ERROR',
-      ['Pass --branch explicitly, e.g. `gitsheets-axi push --branch main`'],
-    );
-  }
-  return branch;
-}
-
-function classifyPushError(message: string): 'NON_FAST_FORWARD' | 'PUSH_FAILED' {
-  if (/!\s*\[rejected\]/.test(message) && /(non-fast-forward|fetch first)/i.test(message)) {
-    return 'NON_FAST_FORWARD';
-  }
-  return 'PUSH_FAILED';
-}
-
 export async function pushCommand(
   args: string[],
   ctx: GitsheetsContext,
@@ -85,53 +69,34 @@ export async function pushCommand(
 
   const flags = parsePushFlags(args);
   const repo = await ctx.repo();
-  const gitDir = repo.gitDir;
-  // `--branch` is the global flag: it binds the repo, so push the default branch.
-  const branch = resolveBranch(repo);
-
-  let stderr = '';
-  try {
-    const result = await exec(
-      'git',
-      ['push', flags.remote, branch],
-      { cwd: gitDir, maxBuffer: 10 * 1024 * 1024 },
+  if (!repo.branch) {
+    throw new AxiError(
+      "Couldn't determine current branch (detached HEAD?)",
+      'REF_ERROR',
+      ['Pass --branch explicitly, e.g. `gitsheets-axi push --branch main`'],
     );
-    stderr = result.stderr;
+  }
+  let r;
+  try {
+    r = await repo.push({ remote: flags.remote, ...(flags.to !== undefined ? { to: flags.to } : {}) });
   } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; message?: string };
-    const combined = `${err.stderr ?? ''}\n${err.stdout ?? ''}\n${err.message ?? ''}`;
-    const code = classifyPushError(combined);
-    const suggestions =
+    throw translateError(error);
+  }
+  if (r.outcome === 'non-fast-forward' || r.outcome === 'failed') {
+    const code = r.outcome === 'non-fast-forward' ? 'NON_FAST_FORWARD' : 'PUSH_FAILED';
+    throw new AxiError(
+      `git push to ${r.remote} ${r.branch} failed: ${(r.error ?? 'unknown error').split('\n')[0]}`,
+      code,
       code === 'NON_FAST_FORWARD'
         ? [
             "Remote has commits the local doesn't — reconcile externally before retrying",
             'Stop the writer, fetch + rebase or pull, then restart',
           ]
-        : ['Network or auth failure — retry, or check the remote configuration'];
-    throw new AxiError(
-      `git push to ${flags.remote} ${branch} failed: ${(err.message ?? '').split('\n')[0] ?? 'unknown error'}`,
-      code,
-      suggestions,
+        : ['Network or auth failure — retry, or check the remote configuration'],
     );
   }
-
-  // git's "Everything up-to-date" lands in stderr without an error code.
-  // Treat as no-op.
-  const upToDate = /everything up.to.date/i.test(stderr);
-  if (upToDate) {
-    return renderObject({
-      result: 'no-op',
-      remote: flags.remote,
-      branch,
-      reason: 'remote already up-to-date',
-    });
+  if (r.outcome === 'up-to-date') {
+    return renderObject({ result: 'no-op', remote: r.remote, branch: r.branch, commit: r.commit, reason: 'remote already up-to-date' });
   }
-
-  return renderObject({
-    result: 'pushed',
-    remote: flags.remote,
-    branch,
-    // Strip git's noisy "To <url>" / hash lines into a compact summary.
-    detail: stderr.split('\n').filter((l) => l.trim()).slice(0, 3).join('\n'),
-  });
+  return renderObject({ result: 'pushed', remote: r.remote, branch: r.branch, commit: r.commit });
 }
