@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/transactions.md
@@ -13,6 +13,7 @@ specs:
   - specs/api/axi.md
   - specs/api/python-binding.md
 issues: []
+pr: 382
 ---
 
 # Plan: commit-shape options (trailers from the CLI, additional parents, replace-tip, empty commits, push --to)
@@ -119,122 +120,122 @@ library (its `trailers` is a record), any override of `tip_published`.
 
 Core (`cargo test -p gitsheets-core`, `src/commit_shape_tests.rs`):
 
-- [ ] A trailer with a bad key or a newline in a value fails `begin` with
+- [x] A trailer with a bad key or a newline in a value fails `begin` with
       `trailer_invalid`, no tree work.
-- [ ] `also_parents` writes parents `[first, ...also]` in order; the tree is
+- [x] `also_parents` writes parents `[first, ...also]` in order; the tree is
       the first parent's plus the change.
-- [ ] An `also_parents` entry that does not resolve, or names a tree, is
+- [x] An `also_parents` entry that does not resolve, or names a tree, is
       `parent_not_found`; a duplicate, the first parent itself, or use with
       `orphan` is `commit_failed`; nothing moves.
-- [ ] A transaction with `also_parents` that changes nothing commits nothing.
-- [ ] `allow_empty` commits the tip's tree with message, trailers, parents.
-- [ ] Replace with the right tip: tip's first parent, tip's tree plus the
+- [x] A transaction with `also_parents` that changes nothing commits nothing.
+- [x] `allow_empty` commits the tip's tree with message, trailers, parents.
+- [x] Replace with the right tip: tip's first parent, tip's tree plus the
       change, tip's extra parents kept by default; `also_parents` replaces
       them, `[]` drops them; a tip's merge parent is kept.
-- [ ] **Replace refused when the tip moved**: at open `tip_mismatch`
+- [x] **Replace refused when the tip moved**: at open `tip_mismatch`
       (`expected`, `actual`) before the handler runs; moved between open and
       commit, `tip_mismatch` at commit and the other writer's tip stays.
-- [ ] Replace on an unborn branch is `tip_mismatch` with no actual.
-- [ ] **Replace refused when the replaced commit is on a remote**: a
+- [x] Replace on an unborn branch is `tip_mismatch` with no actual.
+- [x] **Replace refused when the replaced commit is on a remote**: a
       remote-tracking ref at the tip or a descendant is `tip_published` at
       open; one that arrives after open, at commit; the unpublished tip above
       a published commit can be replaced.
-- [ ] Replace with a commit-hash `parent`, an orphan, or a different
+- [x] Replace with a commit-hash `parent`, an orphan, or a different
       `branch` is `commit_failed`.
-- [ ] Replace no-op rules: a message-only replacement of a tip that changed
+- [x] Replace no-op rules: a message-only replacement of a tip that changed
       records commits; an empty tip replaced without `allow_empty` commits
       nothing and stays; with it, commits.
-- [ ] Replacing a root commit produces a root commit.
-- [ ] **The main loop**: an empty commit with an extra parent, replaced five
+- [x] Replacing a root commit produces a root commit.
+- [x] **The main loop**: an empty commit with an extra parent, replaced five
       times with new trailers and no `also_parents`, keeps the extra parent
       and the first parent each time; the last trailers read back.
-- [ ] Rollup pass in replace mode: a reverted partition leaves no stale
+- [x] Rollup pass in replace mode: a reverted partition leaves no stale
       rollup; a partition only the replacement touches is regenerated
       (`rollup_tests.rs`).
-- [ ] `commit_info` round-trips subject, body, trailers (order, repeated
+- [x] `commit_info` round-trips subject, body, trailers (order, repeated
       keys), parents, ISO dates; `ref_not_found` for an unknown rev.
-- [ ] The existing sync and merge test suites pass unchanged.
+- [x] The existing sync and merge test suites pass unchanged.
 
 Bindings:
 
-- [ ] napi `node --test`: the existing suite passes with the new options and
+- [x] napi `node --test`: the existing suite passes with the new options and
       exports.
-- [ ] pytest (`tests/test_commit_shape.py`): `also_parents`, `replace`,
+- [x] pytest (`tests/test_commit_shape.py`): `also_parents`, `replace`,
       `allow_empty`, `commit_read` (default branch, explicit rev, unborn ⇒
       `None`), `tip_mismatch` with `expected` / `actual`, `tip_published`,
       `trailer_invalid`, `parent_not_found`.
-- [ ] Cross-binding parity (`test_cross_binding.py`): an extra-parent empty
+- [x] Cross-binding parity (`test_cross_binding.py`): an extra-parent empty
       commit and its replacement are byte-identical from Node and Python.
 
 JS library (vitest, `src/commit-shape.test.ts`, `src/submodule-mode.test.ts`):
 
-- [ ] Extra parents and trailers round-trip through `readCommit`; malformed
+- [x] Extra parents and trailers round-trip through `readCommit`; malformed
       trailers are `trailer_invalid`; an unknown parent is `parent_not_found`.
-- [ ] Replace: `tip_mismatch` with `expected` / `actual`; on success
+- [x] Replace: `tip_mismatch` with `expected` / `actual`; on success
       `replacedCommitHash`, the parent, and rebound live sheets.
-- [ ] Submodule mode on a detached `HEAD`: replace moves `HEAD` from the
+- [x] Submodule mode on a detached `HEAD`: replace moves `HEAD` from the
       replaced tip, and a mismatched tip moves nothing.
-- [ ] `replace` while this repository's push daemon runs is
+- [x] `replace` while this repository's push daemon runs is
       `replace_daemon_running`, nothing changed.
-- [ ] `readCommit()` on an unborn default branch is `null`; an unknown rev is
+- [x] `readCommit()` on an unborn default branch is `null`; an unknown rev is
       `ref_not_found`.
-- [ ] `push({ to })` publishes exactly that commit and sets the tracking ref;
+- [x] `push({ to })` publishes exactly that commit and sets the tracking ref;
       again is `up-to-date`; `to` off the first-parent line is
       `not_an_ancestor`, unknown is `ref_not_found`; a remote ahead gives
       `non-fast-forward`, nothing forced.
-- [ ] **The main loop, library level**: an empty commit with an extra parent
+- [x] **The main loop, library level**: an empty commit with an extra parent
       replaced five times with new trailers; the next open tip on top;
       `push({ to })` of the closed one; the open tip still replaceable; the
       published one `tip_published`.
 
 Human CLI (vitest, `src/cli/cli-commit-shape.test.ts`):
 
-- [ ] Both trailer forms land; a bad key exits 69; no separator exits 2.
-- [ ] Unknown `--also-parent` exits 65; wrong `--replace` exits 69 with
+- [x] Both trailer forms land; a bad key exits 69; no separator exits 2.
+- [x] Unknown `--also-parent` exits 65; wrong `--replace` exits 69 with
       nothing moved; `--replace` with a hash `--ref` or a different
       `--commit-to` exits 2.
-- [ ] `GITSHEETS_REPLACE` in the environment is ignored.
-- [ ] `commit` without `--message`, or without `--allow-empty` /
+- [x] `GITSHEETS_REPLACE` in the environment is ignored.
+- [x] `commit` without `--message`, or without `--allow-empty` /
       `--replace`, exits 2; `head` prints `CommitInfo` JSON or `null`;
       `push --to` prints `pushed <hash>`, an unknown `--to` exits 65.
 
 gitsheets-axi (vitest, `test/commit-shape.test.ts`, `test/submodule.test.ts`):
 
-- [ ] **Flag validation**: committing commands take `--trailer` (both forms),
+- [x] **Flag validation**: committing commands take `--trailer` (both forms),
       `--also-parent`, `--replace`; a read command refuses them and
       `--allow-empty` outside `commit` (`VALIDATION_ERROR`, exit 2); a
       trailer with no separator, a bad key, or a repeated key is
       `TRAILER_INVALID` and commits nothing; unknown `--also-parent` is
       `PARENT_NOT_FOUND`.
-- [ ] `upsert --replace <tip>` replaces it (`replaced:` in the output); a
+- [x] `upsert --replace <tip>` replaces it (`replaced:` in the output); a
       wrong tip is `TIP_MISMATCH` and nothing moves; `upsert --also-parent`
       of an unchanged record is a no-op.
-- [ ] `commit` needs `--message` and `--allow-empty` / `--replace`.
-- [ ] **An empty commit with trailers and an extra parent**; `head` shows it;
+- [x] `commit` needs `--message` and `--allow-empty` / `--replace`.
+- [x] **An empty commit with trailers and an extra parent**; `head` shows it;
       **`--json-out` shape**: keys `author`, `body`, `branch`, `committer`,
       `hash`, `parents` (hashes), `subject`, `trailers` (`{key,value}`),
       `tree`, file mode `0600`; an unborn branch prints `commit: null` and
       writes `null`; `commit --allow-empty` bootstraps it.
-- [ ] `head <commit>` reads that commit; unknown is `REF_ERROR`.
-- [ ] **Headless branch**: `--branch log`, `GITSHEETS_BRANCH`, and
+- [x] `head <commit>` reads that commit; unknown is `REF_ERROR`.
+- [x] **Headless branch**: `--branch log`, `GITSHEETS_BRANCH`, and
       `gitsheets.branch` bind `commit` / `head`; `main` and the working tree
       stay untouched, no materialize hint.
-- [ ] **The main loop through the CLI** on `--branch log` against a remote:
+- [x] **The main loop through the CLI** on `--branch log` against a remote:
       `commit --allow-empty --also-parent main --trailer …`, then
       `commit --allow-empty --replace <tip> --trailer …` three times without
       `--also-parent` (the extra parent kept each time); `head` shows the
       last trailer; `commit` the next open tip; `push --to <closed>`; the open
       tip replaceable; the published one `TIP_PUBLISHED`.
-- [ ] `push --to` off the first-parent line is `REF_ERROR`; plain `push`
+- [x] `push --to` off the first-parent line is `REF_ERROR`; plain `push`
       keeps its outputs (`test/push.test.ts`).
-- [ ] Under `--at`, `commit` is refused and `head` shows the pinned commit.
+- [x] Under `--at`, `commit` is refused and `head` shows the pinned commit.
 
 Housekeeping:
 
-- [ ] `cargo clippy` (core, napi, py) with `-D warnings`, `npm run
+- [x] `cargo clippy` (core, napi, py) with `-D warnings`, `npm run
       type-check`, `npm test`, `cargo test -p gitsheets-core`, pytest,
       markdownlint clean; CI green.
-- [ ] Docs and skill updated.
+- [x] Docs and skill updated.
 
 ## Risks / unknowns
 
@@ -248,8 +249,37 @@ Housekeeping:
 
 ## Notes
 
-Populated at closeout.
+- **Scope was cut twice in review, and the build followed.** Round 1 added
+  `push --to`, the daemon refusal (`replace_daemon_running`), and a gated
+  lineage-aware walk for `sync` / `merge`. The owner then dropped the
+  `Gitsheets-Lineage` marker, parent roles, and every change to `sync` and
+  `merge`: `alsoParents` just writes extra parents, `readCommit` returns
+  parents as hashes, and the two history operations keep git's meaning, with
+  one sentence each saying they are not for a branch that records additional
+  parents. The marker / role code was written, then removed; `sync.rs` and
+  `merge.rs` are byte-identical to `develop`.
+- **`TRAILER_INVALID` exits 1, not 2.** The AXI SDK maps only
+  `VALIDATION_ERROR` to exit 2; the spec says so.
+- **A record command's no-op preflight stands under `--replace`.** Rewriting
+  only the tip's message, trailers, or parents is `commit --replace`'s job,
+  so the axi wrapper injects the options into `repo.transact` without
+  touching each command's preflight.
+- **`repo.push` sets the tracking ref itself** (`git update-ref`), because
+  `git push <hash>:refs/heads/<b>` updates it only when a fetch refspec maps
+  the branch.
+- **The axi test harness** (`test/run-cli.ts`) now imports the production
+  command table from `src/cli.ts`, so the commit-shape wrappers are under
+  test.
+- **gix's hidden-set walk leans on commit dates**: test histories that give
+  every commit the same timestamp make `rev_walk().with_hidden()` leak an
+  ancestor. Not relevant once sync was left alone, but the commit-shape
+  tests stamp increasing times.
+- Local runs used a debug napi build; `test/bulk-patch.test.ts` "a large
+  batch commits once" times out at 20s on it (unrelated to this change);
+  CI builds release.
 
 ## Follow-ups
 
-Populated at closeout.
+- None. Deferred by decision, not left undone: a `log` command, a CLI
+  spelling for dropping a replaced tip's extra parents, `--allow-empty` on
+  record commands, repeated trailer keys from the JS library.
