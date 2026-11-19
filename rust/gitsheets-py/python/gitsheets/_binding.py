@@ -35,6 +35,7 @@ _STATUS = {
     "pointer_stage_failed": 500,
     "parent_moved": 409,
     "ref_not_found": 404,
+    "tip_mismatch": 409,
 }
 
 

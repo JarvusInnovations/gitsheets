@@ -467,3 +467,53 @@ def test_default_branch_binding_identical_across_bindings(tmp_path, monkeypatch)
         assert py == node, label
         refused = "refused" in label or label.startswith(("not a", "bad"))
         assert node["ok"] is not refused, (label, node)
+
+
+def test_commit_shape_bytes_identical_across_bindings():
+    """An empty commit with an additional parent and its replacement are byte-identical
+    from both bindings (also_parents / allow_empty / replace)."""
+    seed = tempfile.mkdtemp(prefix="gs-seed-")
+    _git(["init", "-q", "-b", "main", seed])
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_DATE="2020-01-01T00:00:00Z",
+        GIT_COMMITTER_DATE="2020-01-01T00:00:00Z",
+        GIT_AUTHOR_NAME="Seed",
+        GIT_AUTHOR_EMAIL="seed@x.org",
+        GIT_COMMITTER_NAME="Seed",
+        GIT_COMMITTER_EMAIL="seed@x.org",
+    )
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=seed, check=True, capture_output=True, env=env)
+    extra = subprocess.run(
+        ["git", "commit-tree", "-m", "world", "4b825dc642cb6eb9a060e54bf8d69288fbee4904"],
+        cwd=seed, check=True, capture_output=True, env=env,
+    ).stdout.decode().strip()
+
+    py_dir = tempfile.mkdtemp(prefix="gs-py-") + "/repo"
+    node_dir = tempfile.mkdtemp(prefix="gs-node-") + "/repo"
+    try:
+        shutil.copytree(seed, py_dir)
+        shutil.copytree(seed, node_dir)
+        git_dir = os.path.join(py_dir, ".git")
+        with gitsheets.transact(
+            git_dir, "cycle 1", 1_700_000_000, offset_minutes=-300,
+            author=("Loop", "loop@x.org"), branch="refs/heads/main",
+            trailers=[("State", "0")], also_parents=[extra], allow_empty=True,
+        ) as tx:
+            pass
+        first = tx.result["commit_hash"]
+        with gitsheets.transact(
+            git_dir, "cycle 1", 1_700_000_000, offset_minutes=-300,
+            author=("Loop", "loop@x.org"), branch="refs/heads/main",
+            trailers=[("State", "1")], replace=first, allow_empty=True,
+        ) as tx2:
+            pass
+
+        node = _run_node("commit-shape", os.path.join(node_dir, ".git"), extra)
+        assert first == node["first"]
+        assert tx2.result["commit_hash"] == node["second"]
+        assert tx2.result["replaced_commit_hash"] == node["replaced"] == first
+    finally:
+        shutil.rmtree(os.path.dirname(py_dir), ignore_errors=True)
+        shutil.rmtree(os.path.dirname(node_dir), ignore_errors=True)
+        shutil.rmtree(seed, ignore_errors=True)
