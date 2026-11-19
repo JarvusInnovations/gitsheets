@@ -12,8 +12,18 @@ import pytest
 import gitsheets
 
 
+# A fixed identity: CI runners have no git config user.
+_ENV = dict(
+    os.environ,
+    GIT_AUTHOR_NAME="S",
+    GIT_AUTHOR_EMAIL="s@x.org",
+    GIT_COMMITTER_NAME="S",
+    GIT_COMMITTER_EMAIL="s@x.org",
+)
+
+
 def _git(cwd, *args) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True).stdout.decode().strip()
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=_ENV).stdout.decode().strip()
 
 
 @pytest.fixture()
