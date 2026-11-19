@@ -246,7 +246,7 @@ describe('CLI: argument errors exit 2 (specs/api/cli.md "Exit codes")', () => {
     const rec = '{"slug":"jane"}';
     const cases: Array<[string[], RegExp]> = [
       [[...g, 'query', 'users', '--filter', 'nooperator'], /^gitsheets: --filter expects /],
-      [[...g, '--trailer', 'NoEquals', 'upsert', 'users', rec], /^gitsheets: --trailer expects Key=Value/],
+      [[...g, '--trailer', 'NoEquals', 'upsert', 'users', rec], /^gitsheets: --trailer expects 'Key: value' or Key=Value/],
       [[...g, 'upsert', 'users', rec, '--attachment', 'noequals'], /^gitsheets: --attachment expects /],
       [[...g, 'upsert', 'users', rec, '--encoding', 'klingon'], /^gitsheets: --encoding /],
       [[...g, 'upsert', 'users', rec, '--patch', '--delete-missing'], /^gitsheets: --patch and --delete-missing/],

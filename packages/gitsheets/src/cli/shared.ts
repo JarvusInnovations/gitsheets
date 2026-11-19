@@ -25,6 +25,10 @@ export interface GlobalArgs {
   authorName?: string;
   authorEmail?: string;
   trailer?: Record<string, string>;
+  /** Additional parents (`--also-parent`, repeatable). Command line only — no env tier. */
+  alsoParent?: string[];
+  /** Replace the tip, which must be this commit (`--replace`). Command line only — no env tier. */
+  replace?: string;
 }
 
 export interface TxOpts {
@@ -33,6 +37,21 @@ export interface TxOpts {
   trailers?: Record<string, string>;
   parent?: string;
   branch?: string;
+  alsoParents?: string[];
+  replace?: string;
+  allowEmpty?: boolean;
+}
+
+/** A trailer flag value: `Key: value` or `Key=value`, split at the first `:` or `=`. */
+export function parseTrailerFlag(item: string): [string, string] {
+  const colon = item.indexOf(':');
+  const eq = item.indexOf('=');
+  const at = colon === -1 ? eq : eq === -1 ? colon : Math.min(colon, eq);
+  if (at <= 0) throw new CliUsageError(`--trailer expects 'Key: value' or Key=Value, got ${item}`);
+  const key = item.slice(0, at);
+  let value = item.slice(at + 1);
+  if (item[at] === ':') value = value.replace(/^\s+/, '');
+  return [key, value];
 }
 
 /** Build `repo.transact` options from the global CLI flags shared by every mutating command. */
@@ -46,6 +65,17 @@ export function buildTxOpts(argv: GlobalArgs, defaultMessage: string): TxOpts {
   }
   if (argv.ref) opts.parent = argv.ref;
   if (argv.commitTo) opts.branch = argv.commitTo;
+  if (argv.alsoParent && argv.alsoParent.length > 0) opts.alsoParents = argv.alsoParent;
+  if (argv.replace !== undefined) {
+    // Replace mode moves the branch it reads from (specs/api/cli.md "Commit-shape flags").
+    if (argv.ref && /^[0-9a-f]{4,64}$/i.test(argv.ref)) {
+      throw new CliUsageError('--replace needs a branch to move: --ref names a commit');
+    }
+    if (argv.commitTo && argv.commitTo !== argv.ref) {
+      throw new CliUsageError('--replace moves the branch it reads from: --commit-to must be omitted or equal --ref');
+    }
+    opts.replace = argv.replace;
+  }
   return opts;
 }
 
