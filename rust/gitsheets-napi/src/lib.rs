@@ -1822,6 +1822,14 @@ fn throw_structured_error(env: &Env, err: &gitsheets_core::Error) -> Result<()> 
         obj.set_named_property("conflictingPaths", arr)?;
     }
 
+    if let Some((expected, actual)) = err.tip() {
+        obj.set_named_property("expected", env.create_string(expected)?)?;
+        match actual {
+            Some(a) => obj.set_named_property("actual", env.create_string(a)?)?,
+            None => obj.set_named_property("actual", env.get_null()?)?,
+        }
+    }
+
     if let Some(contract) = err.contract() {
         obj.set_named_property("contract", env.create_string(contract)?)?;
     }
@@ -1887,6 +1895,12 @@ pub struct JsTransactionOptions {
     pub trailers: Option<Vec<JsTrailer>>,
     pub time_seconds: i64,
     pub offset_minutes: i32,
+    /// Additional parents after the first (specs/behaviors/transactions.md).
+    pub also_parents: Option<Vec<String>>,
+    /// Replace mode: the tip the caller expects to replace.
+    pub replace: Option<String>,
+    /// Commit even when nothing changed.
+    pub allow_empty: Option<bool>,
 }
 
 /// The outcome of [`CoreTransaction::finalize`]. A no-op (no mutation, or the
@@ -1897,6 +1911,7 @@ pub struct JsTransactionResult {
     pub tree_hash: Option<String>,
     pub ref_name: Option<String>,
     pub parent_commit_hash: Option<String>,
+    pub replaced_commit_hash: Option<String>,
 }
 
 /// The outcome of [`CoreTransaction::stage_upsert`].
@@ -1953,6 +1968,9 @@ impl CoreTransaction {
                 .collect(),
             time_seconds: opts.time_seconds,
             offset_minutes: opts.offset_minutes,
+            also_parents: opts.also_parents,
+            replace: opts.replace,
+            allow_empty: opts.allow_empty.unwrap_or(false),
         };
         match Transaction::begin(&git_dir, core_opts) {
             Ok(tx) => Ok(CoreTransaction {
@@ -2582,6 +2600,7 @@ impl CoreTransaction {
                 tree_hash: r.tree_hash,
                 ref_name: r.ref_name,
                 parent_commit_hash: r.parent_commit_hash,
+                replaced_commit_hash: r.replaced_commit_hash,
             }),
             Err(err) => Err(raise_core_error(&env, &err)),
         }
@@ -2844,6 +2863,58 @@ pub fn sync_branch(env: Env, git_dir: String, opts: JsSyncOptions) -> Result<JsS
 pub fn is_ancestor(env: Env, git_dir: String, a: String, b: String) -> Result<bool> {
     let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
     gitsheets_core::is_ancestor(&repo, &a, &b).map_err(|err| raise_core_error(&env, &err))
+}
+
+#[napi(object)]
+pub struct JsCommitSignature {
+    pub name: String,
+    pub email: String,
+    /// ISO 8601 with the commit's own offset.
+    pub date: String,
+}
+
+/// One commit as data (specs/behaviors/transactions.md "Reading a commit back").
+#[napi(object)]
+pub struct JsCommitInfo {
+    pub hash: String,
+    pub tree: String,
+    /// Full hashes, first parent first.
+    pub parents: Vec<String>,
+    pub author: JsCommitSignature,
+    pub committer: JsCommitSignature,
+    pub subject: String,
+    pub body: String,
+    pub trailers: Vec<JsTrailer>,
+}
+
+/// Read one commit (`rev` is any commit-ish).
+#[napi]
+pub fn read_commit(env: Env, git_dir: String, rev: String) -> Result<JsCommitInfo> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    let info = gitsheets_core::history::commit_info(&repo, &rev).map_err(|err| raise_core_error(&env, &err))?;
+    let sig = |s: gitsheets_core::history::Signature| JsCommitSignature {
+        name: s.name,
+        email: s.email,
+        date: s.date,
+    };
+    Ok(JsCommitInfo {
+        hash: info.hash,
+        tree: info.tree,
+        parents: info.parents,
+        author: sig(info.author),
+        committer: sig(info.committer),
+        subject: info.subject,
+        body: info.body,
+        trailers: info.trailers.into_iter().map(|(key, value)| JsTrailer { key, value }).collect(),
+    })
+}
+
+/// Whether commit `a` is `tip` or reachable from it by first parents only
+/// (the `repo.push({ to })` check). `RefError` when either does not resolve.
+#[napi]
+pub fn is_first_parent_ancestor(env: Env, git_dir: String, a: String, tip: String) -> Result<bool> {
+    let repo = record::open_repo(&git_dir).map_err(|err| raise_core_error(&env, &err))?;
+    gitsheets_core::history::is_first_parent_ancestor_spec(&repo, &a, &tip).map_err(|err| raise_core_error(&env, &err))
 }
 
 // ── sheet-aware merge (specs/behaviors/merge.md) ───────────────────────────────

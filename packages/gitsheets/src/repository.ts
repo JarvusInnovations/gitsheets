@@ -186,6 +186,43 @@ export interface FetchOptions {
   readonly branch?: string;
 }
 
+/** Options for {@link Repository.push}. See specs/api/repository.md#repopushopts. */
+export interface PushOptions {
+  /** Remote name; default `origin`. */
+  readonly remote?: string;
+  /** Branch to push; default: the repository's default branch (RefError when bound to a detached HEAD). */
+  readonly branch?: string;
+  /** Push the branch up to this commit: the tip or a first-parent ancestor of it. Default: the tip. */
+  readonly to?: string;
+}
+
+/** The outcome of {@link Repository.push}: a rejection or failure is a value, not a throw. */
+export interface PushResult {
+  readonly outcome: 'pushed' | 'up-to-date' | 'non-fast-forward' | 'failed';
+  readonly remote: string;
+  /** The short branch name. */
+  readonly branch: string;
+  /** The commit pushed (`to`, resolved). */
+  readonly commit: string;
+  /** `non-fast-forward` / `failed`: git's message. */
+  readonly error?: string;
+}
+
+/** One commit as data. See specs/api/repository.md#reporeadcommitrev. */
+export interface CommitInfo {
+  readonly hash: string;
+  readonly tree: string;
+  /** The qualified ref read when `rev` was omitted; `null` when `rev` was given or HEAD is detached. */
+  readonly branch: string | null;
+  /** Full hashes, first parent first. */
+  readonly parents: readonly string[];
+  readonly author: { readonly name: string; readonly email: string; readonly date: string };
+  readonly committer: { readonly name: string; readonly email: string; readonly date: string };
+  readonly subject: string;
+  readonly body: string;
+  readonly trailers: ReadonlyArray<{ readonly key: string; readonly value: string }>;
+}
+
 /** The outcome of {@link Repository.fetch}: a failure is a value, not a throw. */
 export type FetchResult =
   | { readonly ok: true; readonly remoteRef: string; readonly remoteCommit: string }
@@ -606,6 +643,14 @@ export class Repository {
 
     this.#assertWritable('repo.transact');
     const normalized = Transaction.normalizeOptions(opts);
+    if (normalized.replace !== undefined && this.#pushDaemon !== null) {
+      // The daemon would publish the open tip after every replacement
+      // (specs/behaviors/push-sync.md "The push daemon and an open tip").
+      throw new TransactionError(
+        'replace_daemon_running',
+        'replace is refused while this repository runs a push daemon: the daemon would publish the tip being replaced — stop the daemon and publish with repo.push({ to })',
+      );
+    }
     const author = await resolveAuthor(this.#gitDir, normalized.author);
     const committer = normalized.committer ?? author;
 
@@ -624,6 +669,9 @@ export class Repository {
       if (normalized.parent !== undefined) coreOpts.parent = normalized.parent;
       if (normalized.orphan) coreOpts.orphan = true;
       if (normalized.branch !== undefined) coreOpts.branch = normalized.branch;
+      if (normalized.alsoParents !== undefined) coreOpts.alsoParents = normalized.alsoParents;
+      if (normalized.replace !== undefined) coreOpts.replace = normalized.replace;
+      if (normalized.allowEmpty) coreOpts.allowEmpty = true;
       // No parent named: start from the default branch (specs/behaviors/default-branch.md).
       const start =
         normalized.parent === undefined && !normalized.orphan
@@ -632,6 +680,12 @@ export class Repository {
       if (start.kind === 'tip') {
         coreOpts.parent = start.ref;
         coreOpts.branch ??= start.ref;
+      } else if (start.kind === 'unborn' && normalized.replace !== undefined) {
+        throw new TransactionError(
+          'tip_mismatch',
+          `the default branch ${start.ref} is unborn, so its tip is not ${normalized.replace}: nothing to replace`,
+          { expected: normalized.replace, actual: null },
+        );
       } else if (start.kind === 'unborn') {
         // Bootstrap an unborn default branch with a root commit. The core
         // resolves only HEAD's own unborn branch implicitly, so this rides
@@ -666,9 +720,9 @@ export class Repository {
         tx.discard();
         throw err;
       }
-      if (start.kind === 'unborn' && !coreTx.isMutated()) {
+      if (start.kind === 'unborn' && !coreTx.isMutated() && !normalized.allowEmpty) {
         tx.discard();
-        return { value, commitHash: null, treeHash: null, ref: null, parentCommitHash: null };
+        return { value, commitHash: null, treeHash: null, ref: null, parentCommitHash: null, replacedCommitHash: null };
       }
       let result = await tx.finalize(value);
       let pointerMoved = false;
@@ -731,6 +785,75 @@ export class Repository {
       return { ok: false, remoteRef, error: `fetch succeeded but ${remoteRef} does not resolve` };
     }
     return { ok: true, remoteRef, remoteCommit };
+  }
+
+  /**
+   * Push the branch, or the part of it up to `opts.to` (the tip or a
+   * first-parent ancestor of it), to a remote — never forced — and set the
+   * remote-tracking ref on success. Runs under the write lock. A rejection or
+   * a network failure is a value. See specs/api/repository.md#repopushopts.
+   */
+  async push(opts: PushOptions = {}): Promise<PushResult> {
+    this.#assertWritable('repo.push');
+    const remote = opts.remote ?? 'origin';
+    const bare = (await this.#syncBranch(opts.branch, 'repo.push')).replace(/^refs\/heads\//, '');
+    const branchRef = `refs/heads/${bare}`;
+    return this.withLock(async () => {
+      const tip = await resolveCommit(this.#gitDir, branchRef);
+      if (tip === null) throw new RefError('ref_not_found', `repo.push: branch ${bare} has no commits`);
+      let commit = tip;
+      if (opts.to !== undefined) {
+        const ok = callCore(() => addon.isFirstParentAncestor(this.#gitDir, opts.to!, tip));
+        if (!ok) {
+          throw new RefError(
+            'not_an_ancestor',
+            `repo.push: ${opts.to} is not ${bare}'s tip or a first-parent ancestor of it`,
+          );
+        }
+        commit = (await resolveCommit(this.#gitDir, opts.to))!;
+      }
+      const base = { remote, branch: bare, commit };
+      let output = '';
+      try {
+        const r = await gitExec(this.#gitDir, ['push', remote, `${commit}:${branchRef}`]);
+        output = `${r.stdout}\n${r.stderr}`;
+      } catch (err) {
+        const e = err as { stdout?: string; stderr?: string; message?: string };
+        const text = `${e.stderr ?? ''}\n${e.stdout ?? ''}\n${e.message ?? String(err)}`;
+        const nonFf = /!\s*\[rejected\]/.test(text) && /(non-fast-forward|fetch first)/i.test(text);
+        return { ...base, outcome: nonFf ? 'non-fast-forward' : 'failed', error: (e.stderr ?? e.message ?? String(err)).trim() };
+      }
+      // Set the tracking ref ourselves: git does only when a fetch refspec maps the branch.
+      await gitExec(this.#gitDir, ['update-ref', '-m', 'gitsheets: push', `refs/remotes/${remote}/${bare}`, commit]);
+      return { ...base, outcome: /everything up.to.date/i.test(output) ? 'up-to-date' : 'pushed' };
+    });
+  }
+
+  /**
+   * One commit as data (subject, body, trailers, parents with roles). With no
+   * `rev`, the default branch's tip — `null` when it is unborn.
+   * See specs/api/repository.md#reporeadcommitrev.
+   */
+  async readCommit(rev?: string): Promise<CommitInfo | null> {
+    let ref = rev;
+    let branch: string | null = null;
+    if (ref === undefined) {
+      ref = this.#pinnedAt ?? (await this.#defaultBranchRef()) ?? 'HEAD';
+      if (this.#pinnedAt === null && ref !== 'HEAD') branch = ref;
+      if ((await resolveCommit(this.#gitDir, ref)) === null) return null;
+    }
+    const raw = callCore(() => addon.readCommit(this.#gitDir, ref!));
+    return {
+      hash: raw.hash,
+      tree: raw.tree,
+      branch,
+      parents: [...raw.parents],
+      author: raw.author,
+      committer: raw.committer,
+      subject: raw.subject,
+      body: raw.body,
+      trailers: raw.trailers.map((t) => ({ key: t.key, value: t.value })),
+    };
   }
 
   /** The branch a sync/fetch acts on: `explicit`, else the default branch. */
@@ -996,9 +1119,11 @@ export class Repository {
     message: string,
   ): Promise<{ result: TransactionResult<T>; pointerMoved: boolean }> {
     const commit = result.commitHash!;
-    if (this.#branch === null && defaultStarted && result.ref === null && result.parentCommitHash !== null) {
+    // Replace mode moves HEAD from the replaced tip, not from the new parent.
+    const old = result.replacedCommitHash ?? result.parentCommitHash;
+    if (this.#branch === null && defaultStarted && result.ref === null && old !== null) {
       const subject = message.split('\n', 1)[0] ?? '';
-      await advanceDetachedHead(this.#gitDir, commit, result.parentCommitHash, `gitsheets: ${subject}`);
+      await advanceDetachedHead(this.#gitDir, commit, old, `gitsheets: ${subject}`);
       return { result: { ...result, ref: 'HEAD' }, pointerMoved: true };
     }
     return { result, pointerMoved: result.ref !== null && (await this.#movesPointer(result.ref)) };

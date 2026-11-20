@@ -120,6 +120,27 @@ tree_entry_hash = _tree_ref_defaults(_core.tree_entry_hash)
 merge_record_texts = _tree_ref_defaults(_core.merge_record_texts)
 
 
+def commit_read(git_dir: str, rev: Optional[str] = None) -> Optional[dict]:
+    """One commit as a dict: ``hash``, ``tree``, ``branch``, ``parents`` as a
+    list of hashes (first parent first), ``author`` /
+    ``committer`` as ``{name, email, date}``, ``subject``, ``body``,
+    ``trailers`` as ``[{key, value}]`` (Node's ``repo.readCommit``). With no
+    ``rev`` it reads the bound default branch's tip and returns ``None`` when
+    that branch is unborn; ``branch`` is then the qualified ref read (``None``
+    on a detached ``HEAD``, and whenever ``rev`` is given)."""
+    if rev is None:
+        binding = _binding.as_binding(git_dir)
+        ref = binding.ref
+        if _binding._resolve_commit(binding.git_dir, ref) is None:
+            return None
+        info = _core.commit_read(binding, ref)
+        info["branch"] = ref if ref != "HEAD" else None
+        return info
+    info = _core.commit_read(git_dir, rev)
+    info["branch"] = None
+    return info
+
+
 def tag_set(git_dir: str, name: str, target: Optional[str] = None, force: bool = False) -> str:
     """Point the lightweight tag ``refs/tags/<name>`` at ``target`` — by
     default the bound default branch's tip (``HEAD`` when bound to a detached
@@ -176,6 +197,7 @@ __all__ = [
     "blob_header",
     "sync_branch",
     "is_ancestor",
+    "commit_read",
     "tree_list",
     "tag_set",
     "merge_sheets",
@@ -322,6 +344,9 @@ def transact(
     committer: Optional[tuple[str, str]] = None,
     trailers: Optional[list[tuple[str, str]]] = None,
     orphan: bool = False,
+    also_parents: Optional[list[str]] = None,
+    replace: Optional[str] = None,
+    allow_empty: bool = False,
 ) -> Iterator[Transaction]:
     """Open a transaction, commit on success, discard on error.
 
@@ -340,6 +365,13 @@ def transact(
     ``parent`` is ignored, the commit has no parents and always lands;
     ``branch`` is created and must not already exist
     (specs/api/transaction.md "Parent ref handling").
+
+    ``also_parents``, ``replace`` and ``allow_empty`` shape the commit itself
+    (specs/api/transaction.md "Commit shape"): additional parents after the
+    first (gitsheets attaches no behaviour to them); replace the branch tip,
+    which must be ``replace`` (``tip_mismatch`` otherwise, ``tip_published``
+    when a remote-tracking ref has it); commit even when nothing changed.
+    The result gains ``replaced_commit_hash``.
 
     Yields a :class:`Transaction`. On clean exit the transaction is finalized
     (commit-on-success-only, with no-op detection); on exception it is
@@ -360,6 +392,14 @@ def transact(
             parent = start[1]
             if branch is None:
                 branch = start[1]
+        elif start[0] == "unborn" and replace is not None:
+            raise _binding._error(
+                TransactionError,
+                "tip_mismatch",
+                f"the default branch {start[1]} is unborn, so its tip is not {replace}: nothing to replace",
+                expected=replace,
+                actual=None,
+            )
         elif start[0] == "unborn":
             # Bootstrap an unborn default branch with a root commit: the core
             # resolves only HEAD's own unborn branch implicitly, so this rides
@@ -387,6 +427,9 @@ def transact(
         committer,
         trailers,
         orphan,
+        also_parents,
+        replace,
+        allow_empty,
     )
     facade = Transaction(inner)
     try:
@@ -394,13 +437,14 @@ def transact(
     except BaseException:
         inner.discard()
         raise
-    if start[0] == "unborn" and not inner.is_mutated():
+    if start[0] == "unborn" and not inner.is_mutated() and not allow_empty:
         inner.discard()
         facade.result = {  # type: ignore[attr-defined]
             "commit_hash": None,
             "tree_hash": None,
             "ref_name": None,
             "parent_commit_hash": None,
+            "replaced_commit_hash": None,
         }
         return
     result = inner.finalize()
@@ -417,14 +461,16 @@ def _advance_pointer(binding: Binding, result: dict, default_started: bool, mess
     gitlink (``pointer_stage_failed`` on failure — the commit has landed).
     See specs/behaviors/default-branch.md "The pointer" / "After a commit"."""
     commit = result["commit_hash"]
+    # Replace mode moves HEAD from the replaced tip, not from the new parent.
+    old = result.get("replaced_commit_hash") or result.get("parent_commit_hash")
     if (
         binding.branch is None
         and default_started
         and result.get("ref_name") is None
-        and result.get("parent_commit_hash") is not None
+        and old is not None
     ):
         subject = message.split("\n", 1)[0]
-        _binding.advance_detached_head(binding.git_dir, commit, result["parent_commit_hash"], f"gitsheets: {subject}")
+        _binding.advance_detached_head(binding.git_dir, commit, old, f"gitsheets: {subject}")
         result["ref_name"] = "HEAD"
         moved = True
     else:

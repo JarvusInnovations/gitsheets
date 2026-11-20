@@ -231,6 +231,13 @@ permissive-mode auto-transaction, `repo.merge`'s merge commit, each commit
    tree and stage it (or its deletion, when the partition is gone or empty)
    at `<rollup root>/<prefix>/…` in the same tree.
 
+The "parent tree" of a transaction is its first parent's: additional
+parents never feed the pass. A transaction that [replaces the
+tip](transactions.md#replacing-the-tip) diffs both the result and the
+replaced tip against the new first parent and regenerates the union, so a
+partition the replaced commit changed and the replacement put back is
+regenerated too.
+
 When the `.gitsheets/` directory's tree differs between the parent and the
 new tree (a config added, edited, or removed — including a rollup config
 added over existing data), and for an orphan commit, which has no parent,

@@ -116,7 +116,9 @@ gitsheets-axi infer <sheet>              # observe records → schema
 gitsheets-axi migrate-config <sheet>     # pre-v1.0 [fields] → [schema]
 gitsheets-axi attachment <list|get|set|delete> <sheet> <path> [<name>]
 gitsheets-axi contracts [list|verify|test] # schema contracts
-gitsheets-axi push                       # one-shot git push
+gitsheets-axi push [--to <commit>]      # one-shot git push (optionally only up to a commit)
+gitsheets-axi commit --message m …       # empty commit / replace the tip, no record written
+gitsheets-axi head [<commit>]            # the tip commit: parents, trailers (TOON; --json-out)
 gitsheets-axi setup hooks                # install opt-in SessionStart hooks
 gitsheets-axi rollup <sheet> [--check]   # materialize / check a rollup sheet
 ```
@@ -124,6 +126,35 @@ gitsheets-axi rollup <sheet> [--check]   # materialize / check a rollup sheet
 Every command supports `--help` with its specific flags and 2-3 examples.
 The full contract — every command, flag, and error code — is specified in
 [`specs/api/axi.md`](../specs/api/axi.md).
+
+### Commit shape
+
+Every committing command takes `--trailer 'Key: value'` (repeatable; `Key=value`
+also works), `--also-parent <commit>` (repeatable), and `--replace <commit>`.
+
+- **Trailers** land at the end of the commit message. A malformed or repeated key is `TRAILER_INVALID`.
+- **`--also-parent`** adds a parent after the first. What it means is the caller's: a
+  later parent here records lineage, "this truth was built on top of the world of that
+  truth". gitsheets attaches no behaviour to it, and `sync` / `merge` are not for a
+  branch that carries them: keep such a branch single-writer and append-only, and
+  publish it with `push`.
+- **`--replace <tip>`** commits in place of the branch tip, which must be `<tip>`
+  (`TIP_MISMATCH` otherwise) and must not be on a remote yet (`TIP_PUBLISHED`). The new
+  commit keeps the tip's parents unless `--also-parent` is given.
+- **`commit --allow-empty`** commits with no record change.
+
+A single writer that keeps a running record on a headless branch can rewrite its
+latest entry until it is final, then publish everything below it:
+
+```text
+gitsheets-axi --branch log commit --allow-empty --message 'cycle 42' \
+    --also-parent <snapshot> --trailer 'State: running'          # open entry
+gitsheets-axi --branch log commit --allow-empty --replace <tip> \
+    --message 'cycle 42' --trailer 'State: done'                  # rewrite it (keeps its parents)
+gitsheets-axi --branch log commit --allow-empty --message 'cycle 43'   # next open entry
+gitsheets-axi --branch log push --to <cycle 42 commit>            # publish all but the open one
+gitsheets-axi --branch log head --json-out=/tmp/tip.json          # read back: parents, trailers
+```
 
 ### Default branch
 
@@ -228,7 +259,7 @@ Stable codes the agent can switch on (agents switch on `code`, never on the mess
 
 - `VALIDATION_ERROR` — a usage error: unknown command or flag, missing argument, malformed `--filter` / `--agg` or global flag, a command applied to the wrong kind of sheet. The only code that exits `2`.
 - `VALIDATION_FAILED` — a record failed the sheet's JSON Schema or a contract (a data error, not a usage error).
-- `NOT_FOUND`, `CONFIG_MISSING` (the data submodule is not set up), `CONFIG_INVALID`, `CONFIG_EXISTS`, `INVALID_JSON`, `NO_RECORDS`, `NOT_A_REPOSITORY`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `SHEET_DERIVED`, `TRANSACTION_ERROR`, `ROLLUP_STALE`, `AGGREGATION_FAILED`, `CONTRACT_MISSING` / `CONTRACT_INVALID` / `CONTRACT_UNSATISFIED`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`, `HOOK_INSTALL_FAILED`, `UNKNOWN_ERROR`.
+- `NOT_FOUND`, `CONFIG_MISSING` (the data submodule is not set up), `CONFIG_INVALID`, `CONFIG_EXISTS`, `INVALID_JSON`, `NO_RECORDS`, `NOT_A_REPOSITORY`, `NOT_CANONICAL`, `INDEX_CONFLICT`, `PATH_TEMPLATE_ERROR`, `REF_ERROR`, `SHEET_DERIVED`, `TRANSACTION_ERROR`, `ROLLUP_STALE`, `AGGREGATION_FAILED`, `CONTRACT_MISSING` / `CONTRACT_INVALID` / `CONTRACT_UNSATISFIED`, `WRITE_ERROR`, `NON_FAST_FORWARD`, `PUSH_FAILED`, `HOOK_INSTALL_FAILED`, `TRAILER_INVALID`, `PARENT_NOT_FOUND`, `TIP_MISMATCH`, `TIP_PUBLISHED`, `UNKNOWN_ERROR`.
 
 Exit codes are stable: `0` for success (incl. no-ops), `2` for `VALIDATION_ERROR`, `1` for every other code. See [`specs/api/axi.md`](../specs/api/axi.md#errors) for what raises each code.
 

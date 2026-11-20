@@ -351,6 +351,10 @@ Manage binary blobs colocated with records. Subcommands:
 | `set <sheet> <path> <name> [--file f / --data t / stdin]` | Idempotent on byte-match |
 | `delete <sheet> <path> [<name>]` | Delete one (idempotent on already-missing) or all if name omitted |
 
+### `gitsheets-axi commit` / `head` / commit-shape flags (v2.15+)
+
+Every committing command takes `--trailer 'Key: value'`, `--also-parent <commit>`, `--replace <tip>`. `commit --message m [--allow-empty] [--replace <tip>]` commits with no record change; `head [<commit>] [--json-out]` shows the tip (parents, trailers one per row). `push --to <commit>` publishes only up to a commit, so an open tip can keep being replaced. Codes: `TRAILER_INVALID`, `PARENT_NOT_FOUND`, `TIP_MISMATCH`, `TIP_PUBLISHED`.
+
 ### `gitsheets-axi push [--remote r] [--branch b]`
 
 One-shot `git push <remote> <branch>` from the repo's git dir. Defaults: `origin`, the repo's default branch (`--branch` is the global flag every command accepts: `GITSHEETS_BRANCH`, `gitsheets.branch` git config, else HEAD's branch). With `--submodule <path>` (also global: `GITSHEETS_SUBMODULE`, `gitsheets.submodule`) every command — `push` included — acts on the data submodule's repository; a detached submodule `HEAD` has no branch to push. Two more global flags work with `--submodule`: `--stage-pointer` (else `GITSHEETS_STAGE_POINTER`, else `gitsheets.stagePointer`; `--no-stage-pointer` turns it off) also stages the moved gitlink in the superproject after each write, and `--at <superproject-ref>` (else `GITSHEETS_AT`) reads the data snapshot that superproject commit pins and refuses writes. `--no-submodule` / `--no-branch` (no value) opt out of an inherited binding for one run — the superproject itself / `HEAD`'s branch — ignoring env and git config; an empty `GITSHEETS_SUBMODULE=` is unset, not an opt-out. Reports `result: "pushed"` or `result: "no-op"` when the remote is already up to date.

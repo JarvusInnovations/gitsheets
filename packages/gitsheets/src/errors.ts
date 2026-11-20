@@ -32,8 +32,13 @@ const STATUS_BY_CODE = {
   transaction_closed: 409,
   sheet_derived: 409,
   lock_held: 409,
+  trailer_invalid: 422,
+  tip_mismatch: 409,
+  tip_published: 409,
+  replace_daemon_running: 409,
   ref_not_found: 404,
   not_an_ancestor: 409,
+  parent_not_found: 404,
   path_render_failed: 422,
   path_invalid_chars: 422,
   record_not_found: 404,
@@ -95,20 +100,34 @@ export type TransactionErrorCode =
   | 'push_daemon_running'
   | 'transaction_closed'
   | 'sheet_derived'
-  | 'lock_held';
+  | 'lock_held'
+  | 'trailer_invalid'
+  | 'tip_mismatch'
+  | 'tip_published'
+  | 'replace_daemon_running';
 
 interface TransactionErrorOptions extends GitsheetsErrorOptions {
   /** `pointer_stage_failed`: the data commit that landed. */
   readonly commitHash?: string;
+  /** `tip_mismatch`: the tip the caller passed as `replace`. */
+  readonly expected?: string;
+  /** `tip_mismatch`: the tip found (`null` when the branch is unborn). */
+  readonly actual?: string | null;
 }
 
 export class TransactionError extends GitsheetsError {
   /** `pointer_stage_failed`: the data commit that landed before staging failed. */
   readonly commitHash?: string;
+  /** `tip_mismatch`: the tip the caller passed as `replace`. */
+  readonly expected?: string;
+  /** `tip_mismatch`: the tip found (`null` when the branch is unborn). */
+  readonly actual?: string | null;
 
   constructor(code: TransactionErrorCode, message: string, options?: TransactionErrorOptions) {
     super(code, message, options?.cause === undefined ? undefined : { cause: options.cause });
     if (options?.commitHash !== undefined) this.commitHash = options.commitHash;
+    if (options?.expected !== undefined) this.expected = options.expected;
+    if (options?.actual !== undefined) this.actual = options.actual;
   }
 }
 
@@ -129,7 +148,7 @@ export class IndexError extends GitsheetsError {
   }
 }
 
-export type RefErrorCode = 'ref_not_found' | 'not_an_ancestor';
+export type RefErrorCode = 'ref_not_found' | 'not_an_ancestor' | 'parent_not_found';
 
 export class RefError extends GitsheetsError {
   constructor(code: RefErrorCode, message: string, options?: GitsheetsErrorOptions) {

@@ -401,6 +401,12 @@ export interface JsTransactionOptions {
   trailers?: Array<JsTrailer>
   timeSeconds: number
   offsetMinutes: number
+  /** Additional parents after the first (specs/behaviors/transactions.md). */
+  alsoParents?: Array<string>
+  /** Replace mode: the tip the caller expects to replace. */
+  replace?: string
+  /** Commit even when nothing changed. */
+  allowEmpty?: boolean
 }
 /**
  * The outcome of [`CoreTransaction::finalize`]. A no-op (no mutation, or the
@@ -411,6 +417,7 @@ export interface JsTransactionResult {
   treeHash?: string
   refName?: string
   parentCommitHash?: string
+  replacedCommitHash?: string
 }
 /** The outcome of [`CoreTransaction::stage_upsert`]. */
 export interface JsStageOutcome {
@@ -497,6 +504,31 @@ export interface JsSyncResult {
 export declare function syncBranch(gitDir: string, opts: JsSyncOptions): JsSyncResult
 /** Whether commit `a` is reachable from commit `b` (or equal). */
 export declare function isAncestor(gitDir: string, a: string, b: string): boolean
+export interface JsCommitSignature {
+  name: string
+  email: string
+  /** ISO 8601 with the commit's own offset. */
+  date: string
+}
+/** One commit as data (specs/behaviors/transactions.md "Reading a commit back"). */
+export interface JsCommitInfo {
+  hash: string
+  tree: string
+  /** Full hashes, first parent first. */
+  parents: Array<string>
+  author: JsCommitSignature
+  committer: JsCommitSignature
+  subject: string
+  body: string
+  trailers: Array<JsTrailer>
+}
+/** Read one commit (`rev` is any commit-ish). */
+export declare function readCommit(gitDir: string, rev: string): JsCommitInfo
+/**
+ * Whether commit `a` is `tip` or reachable from it by first parents only
+ * (the `repo.push({ to })` check). `RefError` when either does not resolve.
+ */
+export declare function isFirstParentAncestor(gitDir: string, a: string, tip: string): boolean
 export interface JsMergeOptions {
   ours: string
   theirs: string

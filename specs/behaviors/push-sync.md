@@ -53,6 +53,29 @@ The fetch step is also available on its own as **`repo.fetch({ remote?, branch? 
 
 The replay is pure object-database work (no working tree, no index, nothing to abort), done in the core; only the fetch and the conflict-branch push spawn git, because the network layer stays with git's own auth and transport. `sync` never force-pushes and never rewrites the remote: the only remote writes are the push daemon's fast-forward pushes and the conflict branch.
 
+### Additional parents
+
+`sync` gives a commit's parents git's own meaning: every parent is history, counted in `ahead` / `behind` and replayed. It is not for a branch on which a writer records [additional parents](transactions.md#additional-parents); such a branch is single-writer and append-only, and is published with [`push`](#pushing-part-of-a-branch).
+
+### Replaced commits and the remote
+
+A transaction in [replace mode](transactions.md#replacing-the-tip) refuses to replace a tip that any remote-tracking ref already contains (`tip_published`), so a single writer that pushes through gitsheets never creates a commit its remote would reject. When the check cannot see the push (the tip reached the remote some other way), the next push is rejected as non-fast-forward and reported as below; nothing is forced. `sync` after a replacement treats the replaced commit like any other unreferenced object: it is not in `B..L`.
+
+### Pushing part of a branch
+
+A single writer that keeps an **open tip** (a commit it is still replacing) on top of published history publishes everything below that tip with an explicit, partial push: `repo.push({ to })` / `git sheet push --to <commit>` / `gitsheets-axi push --to <commit>` ([api/repository.md](../api/repository.md#repopushopts)).
+
+- `to` must be the branch tip or reachable from it **by first parents** (`RefError` `not_an_ancestor` otherwise; `ref_not_found` when it does not resolve). A commit reachable only through a later parent is not part of the branch's own line and is refused.
+- The push is `git push <remote> <to>:refs/heads/<branch>`: a plain fast-forward, never forced. A rejection is the `non-fast-forward` outcome, as for the daemon.
+- On success the remote-tracking ref `refs/remotes/<remote>/<branch>` is set to `to` (git does this itself only when a fetch refspec maps the branch; gitsheets does it regardless), so `tip_published` sees exactly what reached the remote: the published commit can no longer be replaced, and the open tip above it still can.
+- The push runs under the write lock, so no transaction (a replacement in particular) can move the branch between the ancestry check and the tracking-ref update.
+
+The loop that results: append or replace the open tip as often as needed; when a state is final, commit the next open tip on top of it and `push --to` the final one.
+
+### The push daemon and an open tip
+
+The push daemon pushes every commit as it lands, so it would publish an open tip moments after each replacement, and the next replacement would be `tip_published` (or, if it raced the push, a terminal `non-fast-forward`). **The daemon is not for this pattern.** A transaction with `replace` on a `Repository` whose push daemon is running is refused up front with `TransactionError` (`replace_daemon_running`), nothing changed. A writer that replaces its tip pushes with `push --to` instead. The refusal is explicit rather than a documented hazard because the hazard ends in a terminal daemon error that needs a person, and the check is free: the library knows whether it started a daemon. (A daemon in another process is invisible to it; `tip_published` and the never-force rule still hold there.)
+
 ### `repo.isAncestor(a, b)`
 
 `true` when commit `a` is reachable from commit `b` (or `a == b`). The short-circuit consumers use before a sync or a hot reload ("do I already have this commit?"). `RefError` (`ref_not_found`) if either does not resolve to a commit.
@@ -83,6 +106,8 @@ The underlying operation is `git push <remote> <branch>` with no `--force`. **Re
 If the remote rejects the push (non-fast-forward, "remote contains work that you do not have"), the daemon does not retry — it emits an `error` event with `reason: 'non-fast-forward'` and surfaces a hard error in `daemon.status()` (also with `lastError.reason === 'non-fast-forward'`). The consumer needs to intervene; a never-force-push policy is non-negotiable.
 
 The daemon does *not* attempt to merge or rebase. The local commit history is the source of truth.
+
+The push transfers every object reachable from the branch, including the history behind any [additional parent](transactions.md#additional-parents). A tip replaced locally after the remote already had it (see [Replaced commits and the remote](#replaced-commits-and-the-remote)) lands here as a `non-fast-forward` error.
 
 Subsequent `repo.transact` commits will trigger fresh push attempts. If the remote is still ahead, those attempts also fail and emit their own `non-fast-forward` errors — each commit gets one classified error, never a retry storm.
 

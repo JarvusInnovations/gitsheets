@@ -37,7 +37,7 @@ import {
   type OutputFormat,
 } from './formats.js';
 import { registerContractsCommands } from './contracts.js';
-import { buildTxOpts, CliUsageError, openCliRepo, readRef, type GlobalArgs } from './shared.js';
+import { buildTxOpts, CliUsageError, openCliRepo, parseTrailerFlag, readRef, type GlobalArgs } from './shared.js';
 import { registerSubmoduleCommands } from './submodule.js';
 
 export type { GlobalArgs } from './shared.js';
@@ -68,6 +68,17 @@ interface AggregateArgs extends GlobalArgs {
   agg: Array<[string, AggregateSpec]>;
   groupBy?: string;
   format?: string;
+}
+
+interface CommitArgs extends GlobalArgs {
+  allowEmpty: boolean;
+}
+
+type HeadArgs = GlobalArgs;
+
+interface PushArgs extends GlobalArgs {
+  remote: string;
+  to?: string;
 }
 
 interface RollupArgs extends GlobalArgs {
@@ -1211,6 +1222,38 @@ async function runNormalize(argv: NormalizeArgs): Promise<void> {
   });
 }
 
+// --- commit / head / push (specs/api/cli.md) ---
+
+async function runCommit(argv: CommitArgs): Promise<void> {
+  if (!argv.message) throw new CliUsageError('commit: --message is required');
+  if (!argv.allowEmpty && argv.replace === undefined) {
+    throw new CliUsageError('commit: nothing to commit — pass --allow-empty, --replace <tip>, or both');
+  }
+  const repo = await openCliRepo(argv);
+  const txOpts = buildTxOpts(argv, argv.message);
+  if (argv.allowEmpty) txOpts.allowEmpty = true;
+  const result = await repo.transact(txOpts, async () => undefined);
+  if (result.commitHash !== null) process.stdout.write(`${result.commitHash}\n`);
+}
+
+async function runHead(argv: HeadArgs): Promise<void> {
+  const repo = await openCliRepo(argv);
+  const info = await repo.readCommit(argv.ref);
+  process.stdout.write(`${JSON.stringify(info, null, 2)}\n`);
+}
+
+async function runPush(argv: PushArgs): Promise<void> {
+  const repo = await openCliRepo(argv);
+  const opts: { remote: string; to?: string } = { remote: argv.remote };
+  if (argv.to !== undefined) opts.to = argv.to;
+  const r = await repo.push(opts);
+  if (r.outcome === 'pushed' || r.outcome === 'up-to-date') {
+    process.stdout.write(`${r.outcome} ${r.commit}\n`);
+    return;
+  }
+  throw new Error(`push ${r.outcome} (never forced): ${r.error ?? ''}`);
+}
+
 // --- Entry ---
 
 /**
@@ -1226,6 +1269,8 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
   const stagePointerOnCommandLine = (end === -1 ? args : args.slice(0, end)).some((a) =>
     /^--(no-)?stage-pointer(=|$)/.test(a),
   );
+  const onCommandLine = (flag: string): boolean =>
+    (end === -1 ? args : args.slice(0, end)).some((a) => a === `--${flag}` || a.startsWith(`--${flag}=`));
   const parser = yargs(args)
     .scriptName('gitsheets')
     .usage('Usage: $0 <command> [options]')
@@ -1275,25 +1320,42 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
     .option('trailer', {
       type: 'string',
       array: true,
-      describe: 'Commit trailers in Key=Value form (repeatable)',
+      describe: "Commit trailers, 'Key: value' or Key=Value (repeatable)",
       coerce: (raw: string[] | string): Record<string, string> => {
         const items = Array.isArray(raw) ? raw : [raw];
         const out: Record<string, string> = {};
         for (const item of items) {
-          const eq = item.indexOf('=');
-          if (eq === -1) throw new CliUsageError(`--trailer expects Key=Value, got ${item}`);
-          out[item.slice(0, eq)] = item.slice(eq + 1);
+          const [key, value] = parseTrailerFlag(item);
+          out[key] = value;
         }
         return out;
       },
+    })
+    .option('also-parent', {
+      type: 'string',
+      array: true,
+      describe: 'Additional parent for the commit (repeatable): what this was built on; gitsheets attaches no behaviour',
+    })
+    .option('replace', {
+      type: 'string',
+      describe: 'Replace the branch tip, which must be this commit (compare-and-swap; refused when a remote has it)',
     })
     .env('GITSHEETS')
     .middleware((argv) => {
       // yargs' env folding reads only "true" as true, so GITSHEETS_STAGE_POINTER
       // and gitsheets.stagePointer are left to openRepo, which parses git
       // booleans. Keep the value only when the flag is on the command line.
-      if (stagePointerOnCommandLine) return;
       const a = argv as Record<string, unknown>;
+      // Per-call options have no environment tier (specs/api/cli.md
+      // "Commit-shape flags"): drop whatever yargs folded in from GITSHEETS_*.
+      for (const [flag, keys] of [
+        ['also-parent', ['alsoParent', 'also-parent']],
+        ['replace', ['replace']],
+        ['allow-empty', ['allowEmpty', 'allow-empty']],
+      ] as const) {
+        if (!onCommandLine(flag)) for (const k of keys) delete a[k];
+      }
+      if (stagePointerOnCommandLine) return;
       delete a['stagePointer'];
       delete a['stage-pointer'];
     }, true)
@@ -1541,6 +1603,36 @@ export async function main(args: string[] = hideBin(process.argv)): Promise<numb
           .positional('theirs', { type: 'string', demandOption: true })
           .positional('path', { type: 'string', demandOption: true }),
       runMergeDriver,
+    )
+    .command<CommitArgs>(
+      'commit',
+      'Commit without writing a record: an empty commit (--allow-empty) or a replacement of the tip (--replace)',
+      (y) =>
+        y
+          .option('allow-empty', {
+            type: 'boolean',
+            default: false,
+            describe: 'Commit even though no record changes',
+          }),
+      runCommit,
+    )
+    .command<HeadArgs>(
+      'head',
+      'Print the tip commit of the branch being read (--ref, default the default branch) as JSON',
+      (y) => y,
+      runHead,
+    )
+    .command<PushArgs>(
+      'push',
+      'Push the branch (or the part of it up to --to) to a remote; never forced',
+      (y) =>
+        y
+          .option('remote', { type: 'string', default: 'origin', describe: 'Remote to push to' })
+          .option('to', {
+            type: 'string',
+            describe: "Push up to this commit: the tip or a first-parent ancestor of it (publish all but an open tip)",
+          }),
+      runPush,
     )
     .command(
       'contracts',

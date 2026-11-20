@@ -100,6 +100,8 @@ Backed by the Rust core's git repository discovery (gix). Fresh-but-initialized 
 
 ### `repo.transact`
 
+Commit-shape options (v2.15+): `alsoParents` (extra parents; provenance only, gitsheets attaches no behaviour — keep such a branch single-writer, append-only, published with `repo.push`), `replace: '<expected tip>'` (compare-and-swap amend; `tip_mismatch` / `tip_published` / `replace_daemon_running`), `allowEmpty`. `repo.readCommit(rev?)` reads a commit back (parents as hashes, trailers as `[{key, value}]`); `repo.push({ to })` publishes up to a first-parent ancestor of the tip.
+
 ```typescript
 const result = await repo.transact(
   {
